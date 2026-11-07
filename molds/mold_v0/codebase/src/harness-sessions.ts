@@ -40,7 +40,8 @@ import { canAccount, type AccountRole } from "./account-roles.js";
 import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, freeWorkspaceTools, hostAllowed, resolveHooks, validHost, workspaceToolName, workspaceToolOf, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
 import { mintToolToken, revokeToolTokens, sweepToolTokens, workspaceReach } from "./harness-reach.js";
 import { applyOnStart } from "./agent-profile-spec.js";
-import type { Effective } from "./agent-profiles.js";
+import { governedEgressHosts, type FrozenGovernance } from "./agent-governance.js";
+import { governanceWords, uploadParts } from "./agent-profiles.js";
 import { settingNumber } from "./settings.js";
 
 // ---------------------------------------------------------------- types
@@ -48,7 +49,8 @@ import { settingNumber } from "./settings.js";
 export type HarnessState = "starting" | "live" | "parked" | "waking" | "paused" | "awaiting" | "stopped" | "failed";
 export type AgentPhase = "starting" | "working" | "waiting" | "parked" | "waking" | "paused" | "awaiting_approval" | "stopped" | "failed" | "archived";
 export type RequestKind = "web" | "tool" | "budget";
-export type EndReason = "parked" | "paused" | "awaiting" | "budget" | "stopped" | "done" | "web_limit" | "failed";
+/** "policy" (mold_v0-267): its governance policy refused a call outright, and the session ends with the reference's code. */
+export type EndReason = "parked" | "paused" | "awaiting" | "budget" | "stopped" | "done" | "web_limit" | "policy" | "failed";
 
 /** Who acts: a signed-in person (with their account role), an account key (no person), platform staff, or the platform. */
 export interface Actor { kind: "person" | "key" | "staff" | "system"; user: string | null; name: string | null; role: AccountRole | null }
@@ -89,6 +91,8 @@ export interface SessionDetail extends SessionView {
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
     /** mold_v0-261: the files its profile gave its workspace (their paths), and the tools its profile hides. */
     files: string[]; hidden_tools: string[];
+    /** mold_v0-267: the uploaded files made executable, and its governance policy in words (null: the platform settings). */
+    executables: string[]; governance: string | null;
     /** mold_v0-262: the workspace credentials each wake receives (their names, never a value). */
     credentials: string[] };
   /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
@@ -252,12 +256,13 @@ async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): P
 export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown }
 
 /**
- * The most a person may give a session they start (mold_v0-249): the budget (its agent profile's, mold_v0-261, else the
- * setting's); a billing manager, an owner or a key up to the ceiling (the profile's, else the setting's).
+ * The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a
+ * key up to the setting's ceiling.
  */
-export async function startBudgetMax(orgId: number, actor: Actor, eff?: Pick<Effective, "budget_usd" | "ceiling_usd">): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
-  const ceiling = Math.min(eff?.ceiling_usd ?? settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
-  const def = money(Math.min(eff?.budget_usd ?? settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
+  // mold_v0-267: budgets are the platform's settings, never a profile's.
+  const ceiling = Math.min(settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
+  const def = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
   const raises = actor.kind === "key" || canAccount(actor.role, "budget");
   return { default_usd: def, max_usd: raises ? money(ceiling) : def, ceiling_usd: money(ceiling) };
 }
@@ -277,20 +282,31 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
   // Its agent profile, for this workspace (its override): refused when unknown, archived, not this role's, or unpriced.
   const { profileForStart } = await import("./agent-profiles.js");
-  const [ws] = await read((q) => q.query<{ slug: string }>("SELECT slug FROM organizations WHERE id = $1", [orgId]));
-  const { row: prof, eff } = await profileForStart(typeof input.profile === "string" ? input.profile : null, ws?.slug ?? null, actor);
+  const { row: prof, eff } = await profileForStart(typeof input.profile === "string" ? input.profile : null, actor);
   const policy = currentPolicy(mode);
-  const flavour = flavourOf(policy.flavour)!;
+  // mold_v0-267: the profile's five items over the platform's settings (every limit stays the platform's).
+  const flavour = flavourOf(eff.harness) ?? flavourOf(policy.flavour)!;
+  const workspaceKeys = eff.keys.flatMap((k) => (k.kind === "workspace" ? [k.name] : []));
+  const vaultKeys = eff.keys.flatMap((k) => (k.kind === "platform" ? [{ provider: k.provider, label: k.label, env: k.env }] : []));
   Object.assign(policy, {
-    model: eff.model, provider: eff.provider, max_turns: eff.max_turns, wake_max_seconds: eff.wake_max_minutes * 60, budget_ceiling_usd: eff.ceiling_usd,
-    web: { tools: eff.web.tools, hosts: [...eff.web.hosts], calls_max: policy.web.calls_max },
-    hooks: resolveHooks(flavour, {}, eff.instructions),
+    flavour: flavour.id, model: eff.model, provider: eff.provider, hooks: resolveHooks(flavour, {}),
     profile: { id: prof.id, name: prof.name, version: prof.version },
-    ...(eff.files.length ? { files: eff.files } : {}),
+    ...(eff.key ? { inference_key: eff.key } : {}),
+    ...(eff.uploads.length ? { uploads: eff.uploads.map((u) => ({ ...u })) } : {}),
     // mold_v0-262: its profile's workspace credentials, for a session a workspace owner starts (anyone else's: none).
-    ...(eff.credentials.length && actor.kind === "person" && actor.role === "owner" ? { credentials: [...eff.credentials] } : {}),
+    ...(workspaceKeys.length && actor.kind === "person" && actor.role === "owner" ? { credentials: workspaceKeys } : {}),
+    ...(vaultKeys.length ? { vault_keys: vaultKeys } : {}),
   });
-  const limits = await startBudgetMax(orgId, actor, eff);
+  if (eff.governance) {
+    // Its governance policy, frozen as the reference freezes a run's (later edits apply to new sessions only); the web
+    // fields every runner reads say the same, so its egress proxy opens exactly the hosts it names.
+    const g = JSON.parse(JSON.stringify(eff.governance)) as FrozenGovernance;
+    policy.governance = g;
+    const w = g.web;
+    policy.web = { tools: w?.enabled && w.web_fetch_enabled ? (w.web_search_enabled ? "search" : "fetch") : "off",
+      hosts: w?.enabled ? w.web_fetch_allowed_domains.filter((d) => d !== "*") : [], calls_max: w?.enabled ? w.max_calls : 0 };
+  }
+  const limits = await startBudgetMax(orgId, actor);
   let budget = limits.default_usd;
   if (input.budget_usd !== undefined && input.budget_usd !== null && input.budget_usd !== "") {
     const b = Number(input.budget_usd);
@@ -302,9 +318,9 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   }
   // What it reaches of the workspace (mold_v0-250): the app's own tools as this person, and the workspace's context.
   try {
-    const reach = await workspaceReach(orgId, actor, eff.tools);
+    const reach = await workspaceReach(orgId, actor, eff.governance?.tools ? { only: eff.governance.tools.allowed } : null);
     policy.workspace = reach;
-    for (const t of freeWorkspaceTools(reach.tools, reach.free, reach.named, eff.tools.ask)) policy.tools.push(workspaceToolName(t));
+    for (const t of freeWorkspaceTools(reach.tools, reach.free, reach.named)) policy.tools.push(workspaceToolName(t));
   } catch (e) {
     console.error(`agent session: the workspace's tools could not be listed (${(e as Error).message}): it starts without them`);
   }
@@ -436,7 +452,9 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
       hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
       policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
         web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
-        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: (p?.files ?? []).map((f) => f.path), hidden_tools: p?.workspace?.hidden ?? [], credentials: p?.credentials ?? [] },
+        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: [...(p?.files ?? []).map((f) => f.path), ...(p?.uploads ?? []).map((u) => u.path)], hidden_tools: p?.workspace?.hidden ?? [],
+        credentials: [...(p?.credentials ?? []), ...(p?.vault_keys ?? []).map((k) => `${k.provider}/${k.label}`)],
+        executables: (p?.uploads ?? []).filter((u) => u.executable).map((u) => u.path), governance: p?.governance ? governanceWords(p.governance) : null },
       reach: reachView(p),
     };
   });
@@ -529,8 +547,10 @@ export async function stopSession(orgId: number | null, id: string, actor: Actor
   return read(async (q) => view(await rowOf(q, orgId, id), actor, null));
 }
 
-async function endSession(q: Queryable, x: { id: string; org_id: number }, state: "stopped" | "failed", reason: string) {
-  const days = settingNumber("AGENT_RETENTION_DAYS");
+async function endSession(q: Queryable, x: { id: string; org_id: number; policy?: AgentPolicy }, state: "stopped" | "failed", reason: string) {
+  // mold_v0-267: a governance policy may keep the conversation for less than the platform does, never longer.
+  const own = x.policy?.governance?.retention_days;
+  const days = Math.min(settingNumber("AGENT_RETENTION_DAYS"), own && own > 0 ? own : Number.POSITIVE_INFINITY);
   await q.query(
     `UPDATE harness_sessions SET state = $3, state_reason = $4, in_turn = false, current_run_id = NULL, ended_at = coalesce(ended_at, now()),
             retention_until = coalesce(retention_until, now() + make_interval(days => $5)), pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now()
@@ -557,6 +577,9 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
   if (!REQUEST_ID.test(String(requestId))) throw new PackError("no such request", 404);
   const r = await read((q) => rowOf(q, orgId, sessionId));
   if (!permissions(r, actor).decide && !(actor.kind === "staff")) throw new PackError("Only the person who started this session or an owner can decide what it asked for", 403);
+  // mold_v0-267: under a governance policy, egress approvals are a governing decision, as the reference's: deciding one
+  // needs the workspace's owner (who governs it), not only the person who started the session (who runs it).
+  const governed = !!r.policy?.governance;
   const why = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
   const wake = await tx(async (q) => {
     const x = await rowOf(q, orgId, sessionId, true);
@@ -566,6 +589,16 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     if (req.status !== "pending") throw new PackError(`This request was already ${req.status}`, 409);
     if (req.kind === "budget" && decision === "approve") throw new PackError("Approve a budget request with Raise budget (an amount and a reason)", 400);
     if (decision === "approve" && actor.kind === "staff") throw new PackError("Staff may decline a request, not grant a session more than its workspace allows", 403);
+    if (governed && req.kind === "web" && actor.kind === "person" && !canAccount(actor.role, "manage"))
+      throw new PackError("This session's governance policy has a workspace owner decide where it may reach: ask an owner", 403);
+    if (governed && req.kind === "web" && decision === "decline") {
+      // The reference's Deny: the session ends with the refused host as its reason, never offered a resume back into it.
+      await q.query("UPDATE harness_session_requests SET status = 'declined', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
+      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject)}${why ? `: ${why}` : ""}. The session ended (egress_approval_denied).`);
+      if (!x.current_run_id) await endSession(q, x, "failed", `egress_approval_denied: ${req.subject}`);
+      else await q.query("UPDATE harness_sessions SET stop_requested_at = coalesce(stop_requested_at, now()), state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, `egress_approval_denied: ${req.subject}`]);
+      return false;
+    }
     if (decision === "decline") {
       await q.query("UPDATE harness_session_requests SET status = 'declined', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
       await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject)}${why ? `: ${why}` : ""}.`);
@@ -577,7 +610,18 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     const hiddenTool = req.kind === "tool" ? workspaceToolOf(req.subject) : null;
     if (hiddenTool && (x.policy.workspace?.hidden ?? []).includes(hiddenTool)) throw new PackError(`This session's agent profile does not give it ${hiddenTool}: it cannot be approved`, 403);
     const p = { ...x.policy, web: { ...x.policy.web, hosts: [...(x.policy.web?.hosts ?? [])] }, tools: [...(x.policy.tools ?? [])] };
-    if (req.kind === "web" && !hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
+    if (governed && req.kind === "web") {
+      // The reference's Approve: exactly that host, to exactly this session. A website reaches the network too when
+      // WebFetch is on (its web allowlist); a package host never does (it only stops the session asking again).
+      const g: FrozenGovernance = { ...p.governance!, approved_domains: [...(p.governance!.approved_domains ?? [])], approved_websites: [...(p.governance!.approved_websites ?? [])] };
+      const kind = (await q.query<{ detail: Record<string, unknown> }>("SELECT detail FROM harness_session_requests WHERE org_id = $1 AND id = $2", [x.org_id, req.id]))[0]?.detail?.egress;
+      if (!g.approved_domains!.includes(req.subject)) g.approved_domains!.push(req.subject);
+      if (kind !== "package" && g.web?.enabled && g.web.web_fetch_enabled) {
+        if (!g.approved_websites!.includes(req.subject)) g.approved_websites!.push(req.subject);
+        if (!hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
+      }
+      p.governance = g;
+    } else if (req.kind === "web" && !hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
     if (req.kind === "tool" && !p.tools.includes(req.subject)) p.tools.push(req.subject);
     await q.query("UPDATE harness_session_requests SET status = 'approved', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
     await q.query("UPDATE harness_sessions SET policy = $3, state_reason = $4, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, JSON.stringify(p), `approved: ${requestWords(req.kind, req.subject)}`]);
@@ -650,6 +694,8 @@ export interface WakeStart {
   first: { id: number; uuid: string; text: string }[]; preface: string | null; web_calls: number;
   /** The workspace's own tools for this wake (mold_v0-250): the MCP server's name and this wake's token; null when it reaches none. */
   workspace: { server: string; token: string; expires_at: string } | null;
+  /** mold_v0-267: the files its profile uploads into the workspace, each in parts the wake fetches with its lease. */
+  uploads: { id: string; path: string; bytes: number; sha256: string; executable: boolean; parts: number }[];
 }
 
 /** The wake started: what it is told (its policy, the session to resume, the first turn), its messages marked delivered. */
@@ -684,8 +730,20 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     await q.query("UPDATE harness_sessions SET state = 'live', in_turn = true, last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]);
     await runEvent(q, w.id, s.org_id, "agent_wake", { session: s.id, resume: !!s.harness_session, messages: first.length, checkpoint: s.checkpoint?.seq ?? null });
     return { session_id: s.id, title: s.title, policy: s.policy, resume: s.harness_session, checkpoint: s.checkpoint ? { seq: s.checkpoint.seq, sha256: s.checkpoint.sha256, bytes: s.checkpoint.bytes } : null,
-      charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls, workspace };
+      charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls, workspace,
+      uploads: (s.policy.uploads ?? []).map((u) => ({ ...u, parts: uploadParts(u.bytes) })) };
   });
+}
+
+/**
+ * One part of a file the wake's session froze from its profile (mold_v0-267): only an upload its own policy names, only
+ * with the run's lease. Read from the object store, never sealed per workspace (it is the platform's, given to sessions).
+ */
+export async function wakeUploadPart(runId: string, leaseToken: string, uploadId: string, part: number): Promise<Buffer> {
+  const s = await read(async (q) => (await wakeOf(q, runId, leaseToken)).session);
+  if (!(s.policy.uploads ?? []).some((u) => u.id === uploadId)) throw new PackError("this session was given no such file", 404);
+  const { readUploadPart } = await import("./agent-profiles.js");
+  return readUploadPart(uploadId, part);
 }
 
 export interface BeatInput {
@@ -789,7 +847,7 @@ export async function wakeRequest(runId: string, leaseToken: string, r: { kind?:
 
 /** How the wake ends, as the harness saw it (before it completes its run): the session's next state. */
 export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: unknown; detail?: unknown }): Promise<{ state: HarnessState }> {
-  const reasons: EndReason[] = ["parked", "paused", "awaiting", "budget", "stopped", "done", "web_limit", "failed"];
+  const reasons: EndReason[] = ["parked", "paused", "awaiting", "budget", "stopped", "done", "web_limit", "policy", "failed"];
   const reason = reasons.includes(e.reason as EndReason) ? (e.reason as EndReason) : "failed";
   const detail = typeof e.detail === "string" ? e.detail.slice(0, 300) : null;
   return tx(async (q) => {
@@ -804,6 +862,7 @@ export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: u
     else if (reason === "parked" || reason === "web_limit") state = "parked";
     else if (reason === "paused") state = "paused";
     else if (reason === "stopped" || reason === "done") state = "stopped";
+    else if (reason === "policy") state = "failed";
     if (state !== s.state) await q.query("UPDATE harness_sessions SET state = $3, state_reason = $4, in_turn = false, updated_at = now() WHERE id = $1 AND org_id = $2",
       [s.id, s.org_id, state, reason === "web_limit" ? "web calls used up" : detail ?? reason]);
     return { state };
@@ -814,6 +873,8 @@ export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: u
 export async function wakeEgressHosts(runId: string): Promise<string[]> {
   const [r] = await read((q) => q.query<{ policy: AgentPolicy }>(
     "/* tenant: the claimed run's own session, by run id */ SELECT s.policy FROM runs r JOIN harness_sessions s ON s.id = r.harness_session_id AND s.org_id = r.org_id WHERE r.id = $1", [runId]));
+  // mold_v0-267: under a governance policy, its named WebFetch hosts, the websites approved and its exceptions in force.
+  if (r?.policy?.governance) return governedEgressHosts(r.policy.governance).filter(validHost);
   if (!r || (r.policy?.web?.tools ?? "off") === "off") return [];
   return (r.policy.web.hosts ?? []).map((h) => h.replace(/^\*\./, "")).filter(validHost);
 }
@@ -881,6 +942,11 @@ export async function reconcileWake(runId: string): Promise<void> {
     const [w] = await q.query<{ end_reason: string | null; charged_usd: string }>("SELECT end_reason, charged_usd FROM harness_wake_spend WHERE run_id = $1 AND org_id = $2", [run.id, s.org_id]);
     const said = w?.end_reason?.split(":")[0] as EndReason | undefined;
     const clear = "current_run_id = NULL, in_turn = false, pause_requested_at = NULL, updated_at = now()";
+    // mold_v0-267: refused by its governance policy, or an egress request declined under it: the session ends, failed.
+    if (said === "policy" || /^egress_approval_denied/.test(s.state_reason ?? "")) {
+      await endSession(q, s, "failed", said === "policy" ? (w!.end_reason ?? "policy").slice(0, 300) : s.state_reason!);
+      return null;
+    }
     if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" ? "done" : "stopped"); return null; }
     // What arrived while the wake was ending wakes it again: a message (a parked session), or a decision made meanwhile.
     const next = async (state: HarnessState) => {
@@ -963,6 +1029,13 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
           AND x.created_at < $1::timestamptz - make_interval(hours => coalesce((s.policy->>'approval_window_hours')::int, 24))
         RETURNING x.id, x.session_id, x.org_id, x.kind, x.subject`, [now]);
     for (const r of rows) {
+      // mold_v0-267: under a governance policy a request left past its window closes the session (approval_timeout).
+      const [gs] = await q.query<SessionRow>(`SELECT ${COLS} FROM harness_sessions WHERE id = $1 AND org_id = $2`, [r.session_id, r.org_id]);
+      if (gs?.policy?.governance && r.kind === "web" && gs.state === "awaiting" && !gs.current_run_id) {
+        await endSession(q, gs, "failed", `approval_timeout: ${r.subject}`);
+        await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject)} in time: the session ended (approval_timeout).`);
+        continue;
+      }
       await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2 AND state = 'awaiting'",
         [r.session_id, r.org_id, `expired: ${requestWords(r.kind, r.subject)}`]);
       await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject)} in time: it expired.`);
@@ -971,7 +1044,7 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
   });
   // 3. Sessions quiet for AGENT_ARCHIVE_AFTER_DAYS: archived (read only), retention counted from now.
   out.archived = await tx(async (q) => (await q.query(
-    `/* tenant: platform sweep across workspaces */ UPDATE harness_sessions SET archived_at = $1, retention_until = coalesce(retention_until, $1::timestamptz + make_interval(days => $3)), updated_at = now()
+    `/* tenant: platform sweep across workspaces */ UPDATE harness_sessions SET archived_at = $1, retention_until = coalesce(retention_until, $1::timestamptz + make_interval(days => LEAST($3, coalesce(NULLIF((policy->'governance'->>'retention_days')::int, 0), $3)))), updated_at = now()
       WHERE id IN (SELECT id FROM harness_sessions WHERE archived_at IS NULL AND current_run_id IS NULL AND state IN ('parked', 'paused', 'awaiting', 'stopped', 'failed')
                      AND last_activity_at < $1::timestamptz - make_interval(days => $2) ORDER BY last_activity_at LIMIT 200 FOR UPDATE SKIP LOCKED) RETURNING id`,
     [now, settingNumber("AGENT_ARCHIVE_AFTER_DAYS"), settingNumber("AGENT_RETENTION_DAYS")])).length);

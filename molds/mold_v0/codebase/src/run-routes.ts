@@ -31,6 +31,7 @@
  *   POST /:id/agent/request   {kind: web | tool, subject, detail} what it asks for that its policy does not allow
  *   POST /:id/agent/end       {reason, detail} how the wake ended, before it completes
  *   PUT  /:id/agent/checkpoint?seq=&sha256=  a bundle of its state (sealed and kept by the API); GET: the last one (204: none)
+ *   GET  /:id/agent/uploads/:upload/:part   a part of a file its profile uploads into its workspace (mold_v0-267)
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
@@ -126,6 +127,12 @@ export function runWorkerRouter(): Router {
       if (!cp) return void res.status(204).end();
       res.set({ "content-type": "application/octet-stream", "x-checkpoint-seq": String(cp.seq), "x-checkpoint-sha256": cp.sha256 });
       res.end(cp.body);
+    }));
+    // mold_v0-267: a part of a file the session's profile uploads into its workspace (only one its frozen policy names).
+    r.get("/:id/agent/uploads/:upload/:part", answer(async (req, res) => {
+      const body = await (await h()).wakeUploadPart(String(req.params.id), leaseOf(req), String(req.params.upload), Number(req.params.part));
+      res.set({ "content-type": "application/octet-stream" });
+      res.end(body);
     }));
   }
   const maxBundle = maxBundleBytes();

@@ -8772,247 +8772,6 @@
       "items": {
         "type": "object",
         "properties": {
-          "instructions": {
-            "type": "object",
-            "properties": {
-              "append_system": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "maxLength": 20000
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "on_start": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "maxLength": 20000
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "on_resume": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "maxLength": 20000
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9@._/:-]{1,100}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[a-z][a-z0-9-]{1,40}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "budget_usd": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.5,
-                "maximum": 500
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "ceiling_usd": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 1,
-                "maximum": 1000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "max_turns": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 1000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "wake_max_minutes": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 5,
-                "maximum": 720
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "type": "object",
-            "properties": {
-              "base": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": [
-                      "reads",
-                      "all",
-                      "none"
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "free": {
-                "maxItems": 200,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
-                }
-              },
-              "ask": {
-                "maxItems": 200,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
-                }
-              },
-              "hidden": {
-                "maxItems": 200,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
-                }
-              }
-            },
-            "additionalProperties": false
-          },
-          "web": {
-            "type": "object",
-            "properties": {
-              "tools": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": [
-                      "off",
-                      "fetch",
-                      "search"
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "hosts": {
-                "anyOf": [
-                  {
-                    "maxItems": 100,
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "pattern": "^(\\*\\.)?(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\\.[a-z0-9-]{1,63})+$"
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          "files": {
-            "maxItems": 20,
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "maxLength": 200,
-                  "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))[A-Za-z0-9._@+-]+(?:\\/[A-Za-z0-9._@+-]+){0,7}$"
-                },
-                "content": {
-                  "type": "string",
-                  "maxLength": 65536
-                }
-              },
-              "required": [
-                "path",
-                "content"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "roles": {
-            "anyOf": [
-              {
-                "minItems": 1,
-                "maxItems": 3,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "member",
-                    "billing",
-                    "owner"
-                  ]
-                }
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "credentials": {
-            "maxItems": 20,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_]{1,30}\\/[a-z][a-z0-9_]{1,62}$"
-            }
-          },
           "id": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{1,39}$"
@@ -9025,6 +8784,137 @@
           "description": {
             "type": "string",
             "maxLength": 500
+          },
+          "harness": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "inference": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{1,40}$"
+              },
+              "model": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9@._/:-]{1,100}$"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          },
+          "keys": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "workspace"
+                },
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,30}\\/[a-z][a-z0-9_]{1,62}$"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "governance": {
+            "type": "object",
+            "properties": {
+              "web": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "web_search_enabled": {
+                    "type": "boolean"
+                  },
+                  "web_fetch_enabled": {
+                    "type": "boolean"
+                  },
+                  "web_fetch_allowed_domains": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 300
+                    }
+                  },
+                  "max_calls": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "web_search_enabled",
+                  "web_fetch_enabled",
+                  "web_fetch_allowed_domains",
+                  "max_calls"
+                ],
+                "additionalProperties": false
+              },
+              "egress_approvals": {
+                "type": "boolean"
+              },
+              "tools": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "allowed": {
+                        "minItems": 1,
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+                        }
+                      },
+                      "max_calls": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000
+                      }
+                    },
+                    "required": [
+                      "allowed",
+                      "max_calls"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retention_days": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           },
           "$comment": {
             "type": "string",

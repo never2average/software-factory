@@ -1284,6 +1284,54 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} the early-access form and sign-in words (two staff tables the tenant role cannot read, a version once per page); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Agent profiles redesigned (mold_v0-267, agent_profile_redesign, found by name): a profile in the earlier shape is
+  // rewritten as its next version (its model as the primary inference provider's, its credentials as keys, its web
+  // access as the governance policy's), what had no place listed in the 'migrated' change, the uploads' table made; its
+  // rollback puts the earlier config back exactly, leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "agent_profile_redesign")!.version;
+    const old = { instructions: { append_system: "Plan first." }, model: "claude-sonnet-5-5", provider: "anthropic", budget_usd: 2, credentials: ["p_a/deploy_token"],
+      web: { tools: "search", hosts: ["Docs.Example.com", "*.example.org"] }, tools: { free: ["x"] }, roles: ["owner"] };
+    const seed = async (d: Db) => {
+      await d.query("INSERT INTO agent_profiles (id, name, created_by, updated_by, config) VALUES ('builder', 'Builder', 'staff', 'staff', $1), ('asks', 'Asks', 'staff', 'staff', $2), ('default', 'Default', 'p', 'p', '{}')",
+        [JSON.stringify(old), JSON.stringify({ web: { tools: "fetch", hosts: [] } })]);
+      await d.query("INSERT INTO agent_profile_versions (profile_id, version, name, config, created_by) VALUES ('builder', 1, 'Builder', $1, 'staff'), ('asks', 1, 'Asks', '{}', 'staff'), ('default', 1, 'Default', '{}', 'p')", [JSON.stringify(old)]);
+    };
+    const d = await shellAt(kind, v - 1);
+    await seed(d);
+    await runMigrations(d, { packDirs: [] });
+    const [b] = await d.query<{ version: number; config: any }>("SELECT version, config FROM agent_profiles WHERE id = 'builder'");
+    assert.deepEqual(b, { version: 2, config: { inference: { provider: "anthropic", model: "claude-sonnet-5-5" }, keys: [{ kind: "workspace", name: "p_a/deploy_token" }],
+      governance: { egress_approvals: true, web: { enabled: true, web_search_enabled: true, web_fetch_enabled: true, web_fetch_allowed_domains: ["*.example.org", "docs.example.com"], max_calls: 20 } } } },
+      "the earlier profile as its next version, in the five items' shape");
+    const [ch] = await d.query<{ action: string; before: any; after: any }>("SELECT action, before, after FROM agent_profile_changes WHERE profile_id = 'builder'");
+    assert.deepEqual([ch!.action, ch!.before.config, ch!.after.dropped], ["migrated", old, ["instructions", "budget_usd", "tools", "roles"]], "the change says what was dropped, and keeps what it was");
+    assert.deepEqual((await d.query<{ after: any }>("SELECT after FROM agent_profile_changes WHERE profile_id = 'asks'"))[0]!.after.dropped, ["web (it asked for every host: a governance policy names its hosts)"]);
+    assert.deepEqual((await d.query<{ version: number }>("SELECT version FROM agent_profiles WHERE id = 'default'"))[0]!.version, 1, "the Default, which set nothing, is left alone");
+    assert.equal((await d.query("SELECT 1 FROM agent_profile_versions WHERE profile_id = 'builder' AND version = 2")).length, 1, "its new version kept");
+    await d.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by) VALUES ('upl_abcdefghijklmnopqrstuvwx', 10, 1, 's')");
+    await assert.rejects(d.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by, completed_at) VALUES ('upl_bbcdefghijklmnopqrstuvwx', 10, 1, 's', now())"), /check constraint/, "finished only with its sha256");
+    const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'agent_profile_uploads' AND grantee = app_tenant_role()");
+    assert.equal(grants.length, 0, "the tenant role has no grant on the uploads");
+    await d.query("DELETE FROM agent_profile_uploads");
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_agent_profile_redesign.sql`), "utf8");
+    await rollBackAfter(d, v);
+    await d.exec(rb);
+    const [back] = await d.query<{ version: number; config: any }>("SELECT version, config FROM agent_profiles WHERE id = 'builder'");
+    assert.deepEqual(back, { version: 3, config: old }, "rolled back: exactly the earlier config, as its next version");
+    assert.equal((await d.query("SELECT 1 FROM agent_profile_changes WHERE action = 'migrated'")).length, 0, "no change the older release has no word for");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_agent_profile_redesign")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} agent profiles redesigned (an earlier profile rewritten as its next version in the five items' shape, what had no place listed; the uploads' table, no tenant grant); its rollback puts the earlier config back exactly, leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

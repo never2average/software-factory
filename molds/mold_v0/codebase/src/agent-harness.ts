@@ -34,6 +34,7 @@ import type { Claim } from "./runs.js";
 import type { AgentPolicy } from "./agent-harness-config.js";
 import type { BeatAnswer, BeatInput, EndReason, WakeStart } from "./harness-sessions.js";
 import { redactText, type Secret } from "./credential-redact.js";
+import { governToolUse, VIOLATION_WORDS, type GovernanceViolation } from "./agent-governance.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { linkTools, RUN_TOOL_CATALOG, verifyToolSet } from "./run-tools.js";
 import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-users.js";
@@ -62,6 +63,8 @@ export interface AgentRunnerClient {
   end(runId: string, lease: string, e: { reason: EndReason; detail?: string }): Promise<{ state: string }>;
   checkpointPut(runId: string, lease: string, seq: number, body: Buffer): Promise<{ seq: number; stored: boolean }>;
   checkpointGet(runId: string, lease: string): Promise<Buffer | null>;
+  /** mold_v0-267: one part of a file its profile uploads into the session's workspace. */
+  uploadPart(runId: string, lease: string, uploadId: string, part: number): Promise<Buffer>;
 }
 
 // ---------------------------------------------------------------- stream-json (pure; the tests drive these)
@@ -160,8 +163,24 @@ export class SteerLedger {
   }
 }
 
-/** What a tool call needs under the session's policy: allowed, a request (a host or a tool), or the web calls are used up. */
-export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number): { ok: true; web: boolean } | { ok: false; request: { kind: "web" | "tool"; subject: string } } | { ok: false; limit: true } | { ok: false; hidden: true } {
+export type ToolCheckResult =
+  | { ok: true; web: boolean; mcp?: boolean }
+  | { ok: false; request: { kind: "web" | "tool"; subject: string; egress?: "website" | "package"; url?: string | null } }
+  | { ok: false; limit: true } | { ok: false; hidden: true }
+  /** mold_v0-267: refused outright by its governance policy (the reference's code): the session ends with it. */
+  | { ok: false; violation: GovernanceViolation };
+/**
+ * What a tool call needs under the session's policy: allowed, a request (a host or a tool), or the web calls are used
+ * up. Under a governance policy (mold_v0-267) its rules decide first (src/agent-governance.ts governToolUse): a web call
+ * or one of the app's tools, a shell command that downloads; `mcpCalls` is this wake's calls of the app's tools.
+ */
+export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number, mcpCalls = 0, now = Date.now()): ToolCheckResult {
+  if (policy.governance) {
+    const g = governToolUse(t, policy.governance, { webCalls, mcpCalls, now, appServer: WORKSPACE });
+    if (g.decision === "allow") return { ok: true, web: g.web, mcp: g.mcp };
+    if (g.decision === "deny") return { ok: false, violation: g.code };
+    if (g.decision === "ask") return { ok: false, request: { kind: "web", subject: g.host, egress: g.kind, url: g.url } };
+  }
   // mold_v0-261: a workspace tool its agent profile hides is not the session's: never asked for (the CLI's own rules and
   // the server refuse the call).
   const own = t.name.startsWith(`mcp__${WORKSPACE}__`) ? t.name.slice(`mcp__${WORKSPACE}__`.length) : null;
@@ -292,6 +311,22 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
       writeFileSync(dest, f.content, { mode: 0o600 });
     }
+    // mold_v0-267: the files its profile uploads (runtime binaries too), fetched part by part with the lease, checked
+    // against their sha256 and written into the working directory on every wake (a checkpoint never carries them, so it
+    // stays small), executables made so. A path that would leave the working directory is never written.
+    const uploaded = new Set<string>();
+    for (const u of w.uploads ?? []) {
+      const dest = path.resolve(work, u.path);
+      if (!dest.startsWith(work + path.sep)) continue;
+      const h = createHash("sha256"), parts: Buffer[] = [];
+      for (let n = 0; n < u.parts; n++) { const b = await agent.uploadPart(run.id, lease, u.id, n); h.update(b); parts.push(b); }
+      if (h.digest("hex") !== u.sha256) throw new Error(`the uploaded file ${u.path} did not arrive as it was uploaded`);
+      mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+      if (isLink(dest)) rmSync(dest, { force: true });
+      writeFileSync(dest, Buffer.concat(parts), { mode: u.executable ? 0o700 : 0o600 });
+      chmodSync(dest, u.executable ? 0o700 : 0o600);
+      uploaded.add(path.relative(state, dest).split(path.sep).join("/"));
+    }
     // The hooks as resolved at the session's start, written beside the agent: which text it got, from where.
     for (const h of policy.hooks ?? []) {
       mkdirSync(path.join(hooksDir, h.event), { recursive: true });
@@ -338,10 +373,11 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_HOOKS_DIR: hooksDir, DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1",
       ...claim.gateway.env, ...(proxy?.env ?? {}), ...(w.workspace ? { [WORKSPACE_TOKEN_ENV]: w.workspace.token, ENABLE_TOOL_SEARCH: "false" } : {}),
     };
-    // mold_v0-262: the workspace credentials its profile gives the session (a workspace owner's), fetched with the lease
+    // mold_v0-262: the workspace credentials its profile gives the session (a workspace owner's), and (mold_v0-267) its
+    // platform key vault entries, fetched with the lease
     // as a run's are (the engine records which were delivered): each in its env (never over one the wake sets itself) or
     // its file, and redacted from everything the wake writes.
-    if (policy.credentials?.length) {
+    if (policy.credentials?.length || policy.vault_keys?.length) {
       const got = await client.credentials(run.id, lease);
       const dir = path.join(scratch, "credentials");
       for (const c of got.credentials) {
@@ -362,7 +398,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     const ledger = new SteerLedger();
     const consumed: string[] = [];
     const t0 = now();
-    const s = { sessionId: w.resume as string | null, inTurn: true, lastActivity: t0, cost: null as number | null, webCalls: w.web_calls, turnText: [] as string[],
+    const s = { sessionId: w.resume as string | null, inTurn: true, lastActivity: t0, cost: null as number | null, webCalls: w.web_calls, mcpCalls: 0, turnText: [] as string[],
       transientRetries: 0, baselineSent: false, checkpointSeq: checkpointBase(w), stdinClosed: false, idleTimer: null as NodeJS.Timeout | null, uuidIds: new Map<string, number[]>() };
     const discarded: number[] = [];
     const holds = flavourHoldsStdin(flavour);
@@ -407,14 +443,24 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
         const t = assistantText(e); if (t) s.turnText.push(t);
         for (const u of toolUses(e)) {
           if (e.parent_tool_use_id) continue;
-          const c = checkToolUse(u, policy, s.webCalls);
-          if (c.ok) { if (c.web) s.webCalls++; continue; }
+          const c = checkToolUse(u, policy, s.webCalls, s.mcpCalls, now());
+          if (c.ok) { if (c.web) s.webCalls++; if (c.mcp) s.mcpCalls++; continue; }
           if ("hidden" in c) continue;
+          if ("violation" in c) {
+            // mold_v0-267: refused outright by its governance policy, as the reference's harness does: the wake stops and
+            // the session ends with the code (and what it tried, its credentials taken out).
+            if (u.name === "WebFetch" || u.name === "WebSearch") s.webCalls++;
+            await say(`Stopped by this session's governance policy: ${VIOLATION_WORDS[c.violation]} (${c.violation}: ${clean(u.name)}).`);
+            stop({ reason: "policy", detail: c.violation });
+            return;
+          }
           if ("limit" in c) { await say(`the session used its ${policy.web.calls_max} web calls`); stop({ reason: "web_limit" }); return; }
           // Outside its policy: asked, and the wake stops for the decision (the egress proxy refuses the host meanwhile).
           // A workspace tool (mold_v0-250): what it wanted to send, so the person sees the change before approving it.
           const own = u.name.startsWith(`mcp__${WORKSPACE}__`) ? u.name.slice(`mcp__${WORKSPACE}__`.length) : null;
-          await agent.request(run.id, lease, { ...c.request, detail: { tool: u.name, ...(u.name === "WebFetch" ? { url: clean(String(u.input.url ?? "")).slice(0, 500) } : {}),
+          const { egress, url: egressUrl, ...asked } = c.request;
+          await agent.request(run.id, lease, { ...asked, detail: { tool: u.name, ...(u.name === "WebFetch" ? { url: clean(String(u.input.url ?? "")).slice(0, 500) } : {}),
+            ...(egress ? { egress, ...(egressUrl ? { url: clean(egressUrl).slice(0, 500) } : {}), ...(u.name === "Bash" ? { command: clean(String(u.input.command ?? "")).slice(0, 500) } : {}) } : {}),
             ...(own ? { workspace_tool: own, input: clean(JSON.stringify(u.input)).slice(0, 1500) } : {}) } });
           stop({ reason: "awaiting", detail: `${c.request.kind} ${c.request.subject}` });
           return;
@@ -510,7 +556,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     const checkpoint = async () => {
       if (!s.sessionId && !existsSync(path.join(home, ".claude"))) return;
       try {
-        const { bundle } = packBundle(state);
+        const { bundle } = packBundle(state, (f) => uploaded.has(f));
         await agent.checkpointPut(run.id, lease, ++s.checkpointSeq, bundle);
       } catch (e) { console.error(`agent ${run.id}: checkpoint: ${(e as Error).message}`); }
     };

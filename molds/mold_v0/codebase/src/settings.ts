@@ -141,6 +141,9 @@ export const AGENT_SETTINGS: SettingDef[] = [
     help: "A session reaches this app's own tools as the person who started it, with their role. Reads: it reads records and memory without asking, and asks the person before any tool that changes something. Reads and named: also the tools named below. All: every tool the person may use, without asking. Fixed when a session starts." },
   { key: "AGENT_WORKSPACE_TOOLS_NAMED", group: "agent", label: "Workspace tools allowed without asking", kind: "text", format: "tools", default: "",
     help: "Tool names, separated by commas, that a session may use without asking when the choice above is Reads and named (as the app's connect page lists them). Empty: none besides reads." },
+  // mold_v0-267: what an agent profile may upload into its sessions' workspace (files, folders, runtime binaries).
+  { key: "AGENT_UPLOAD_MAX_MB", group: "agent", label: "Uploads per agent profile (MB)", kind: "int", default: 200, min: 1, max: 4096,
+    help: "The most an agent profile may upload into its sessions' workspace, in all (files, folders and the programs a session needs). The files are kept in the object store and written into each session's workspace when it wakes." },
   { key: "AGENT_CONTEXT_MAX_CHARS", group: "agent", label: "Workspace context in a session (characters)", kind: "int", default: 12000, min: 0, max: 60000,
     help: "The most of the workspace's context a session is given as standing instructions when it starts: the app's own instructions for its tools, then the company's and the person's context and memory, each shortened to its share. 0 gives none (the session can still search memory with its tools)." },
 ];

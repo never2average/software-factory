@@ -25,10 +25,14 @@
 //   system          (mold_v0-261) the answer is "System: <its --append-system-prompt, lines joined by " | ">"
 //   files           (mold_v0-261) the answer is "Files: <every file under its working directory, relative, sorted>"
 //   cat <path>      (mold_v0-261) the answer is "File <path>: <its text, lines joined by " | ">" (or "File <path>: none")
+//   run <command>   (mold_v0-267) a Bash tool call of <command> (the harness checks it against the governance policy),
+//                   then the command itself in its working directory; the answer is "Ran: <exit code> <stdout, trimmed>"
+//   search <words>  (mold_v0-267) a WebSearch tool call
 // Its answer is "Echo: <the turn's text>"; a resumed session's first answer starts "(resumed <id>) ".
 // --script <file> (the lane shots): a JSON list of {match, say, delay_ms, fetch, cost}; the first whose match (a regular
 // expression) finds the turn's text decides the turn instead: its words, how long it takes, a WebFetch it makes first.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 /** The workspace server's config (--mcp-config), its headers' ${VAR} expanded from the environment. */
 function workspaceServer() {
@@ -121,6 +125,15 @@ async function turn(m) {
       const got = await callWorkspace(mc[1], mc[2] ? JSON.parse(mc[2]) : {}).catch((e) => `failed: ${e.message}`);
       mcpSaid.push(got.startsWith("refused: ") ? `MCP ${mc[1]} refused: ${got.slice(9)}` : `MCP ${mc[1]}: ${got.slice(0, 4000)}`);
     }
+    const run = /^run (.+)$/.exec(w);
+    if (run) {
+      say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `b${turns}`, name: "Bash", input: { command: run[1] } }] } });
+      await new Promise((r) => setTimeout(r, 300));
+      const r = spawnSync("/bin/sh", ["-c", run[1]], { cwd: process.cwd(), encoding: "utf8", timeout: 20_000 });
+      mcpSaid.push(`Ran: ${r.status ?? "signal"} ${String(r.stdout ?? "").trim().split("\n").join(" | ").slice(0, 2000)}`);
+    }
+    const se = /^search (.+)$/.exec(w);
+    if (se) { say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `s${turns}`, name: "WebSearch", input: { query: se[1] } }] } }); await new Promise((r) => setTimeout(r, 300)); }
     const u = /^use (\S+)/.exec(w);
     if (u) { say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `u${turns}`, name: u[1], input: {} }] } }); await new Promise((r) => setTimeout(r, 300)); }
   }
