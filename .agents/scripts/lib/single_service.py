@@ -232,13 +232,16 @@ def platform_account_parse(out, spec):
     if not m: return False, VR.redact("not ensured: " + (" | ".join([l.strip() for l in (out or "").splitlines() if l.strip()][-2:]) or "the step said nothing"))[:400]
     return platform_account_said(int(m.group(1)), m.group(2))
 
-def record_platform_account(adir, ok_, said, how, save_fn=None):
-    """infrastructure.json platform_account: what the deploy's call said (mold_v0-276). Never a verdict on the deploy."""
+def record_platform_account(adir, ok_, said, how, save_fn=None, infra=None):
+    """infrastructure.json platform_account: what the deploy's call said (mold_v0-276). Never a verdict on the deploy.
+    With `infra` (the deploy's own copy, saved again after this), the record goes into it too, so that save keeps it."""
     ip = os.path.join(adir, "infrastructure.json")
-    try: infra = load(ip)
+    rec = {"at": now(), "ok": bool(ok_), "said": said, "how": how}
+    if infra is not None: infra["platform_account"] = rec
+    try: on_disk = load(ip)
     except (OSError, ValueError): return
-    infra["platform_account"] = {"at": now(), "ok": bool(ok_), "said": said, "how": how}
-    (save_fn or save)(ip, infra)
+    on_disk["platform_account"] = rec
+    (save_fn or save)(ip, on_disk)
 
 def platform_account_vercel(P, cb, api, api_url, spec, http=None):
     """Vercel: POST <api>/<path> with the api project's CRON_SECRET (pulled, held in memory, never printed). -> (ok, said).
@@ -1941,7 +1944,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     if pspec:   # every platform admin in the platform account (mold_v0-276): after the deploy, said and recorded, never a reason to go back
         pok, psaid = platform_account_vercel(P, cb, api, api_url, pspec, http=PLATFORM_HTTP)
         say(f"  {api}: {psaid}")
-        record_platform_account(adir, pok, psaid, f"by provision.py --deploy, POST {pspec['path']} on the api project with its {pspec.get('vercel_secret') or 'CRON_SECRET'}")
+        record_platform_account(adir, pok, psaid, f"by provision.py --deploy, POST {pspec['path']} on the api project with its {pspec.get('vercel_secret') or 'CRON_SECRET'}", infra=infra)
     fr = ((ck or {}).get("facts") or {}).get("frontend")
     if fr:    # Clerk's own setting (mold_v0-116): said after the deploy, never a reason to roll it back
         reg = clerk_mcp.registration(fr, read_json)

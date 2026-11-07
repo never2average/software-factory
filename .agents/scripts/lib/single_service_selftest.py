@@ -9,6 +9,8 @@ sys.path.insert(0, HERE)
 import single_service as SS, vm_remote as VR
 # The sign-in return addresses (mold_v0-270) are read from the providers: never here (a case below puts a reading in).
 SS.SIGN_IN = lambda *a, **k: None
+# The platform account's call after a Vercel deploy (mold_v0-276) would reach the app: never here (cases below pass their own).
+SS.PLATFORM_HTTP = lambda *a, **k: {"status": 0, "body": ""}
 
 ROOT = SS.ROOT
 COMPOSE = """name: shop
@@ -731,6 +733,9 @@ def run():
         ok(pa["ok"] is True and pa["said"].startswith("the platform account") and "+00:00" in pa["at"], f"the call's summary lands in infrastructure.json platform_account: {pa}")
         pschema = json.load(open(os.path.join(ROOT, "state", "application", "app_id", "infrastructure.schema.json")))["properties"]["platform_account"]["properties"]
         ok(set(pa) <= set(pschema), f"every field it writes is in the schema: {sorted(set(pa) - set(pschema))}")
+        mem = {"target": "vercel"}; SS.record_platform_account(adp, False, "not ensured: x", "by provision.py --deploy", infra=mem)
+        ok(mem["platform_account"] == json.load(open(os.path.join(adp, "infrastructure.json")))["platform_account"],
+           "the deploy's own copy of the state gets the record too, so its later save keeps it")
         class PVP:
             def __init__(self, vals): self.vals = vals
             def pull_env(self, cb_, proj, required=False, environment="production"): return dict(self.vals)
