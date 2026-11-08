@@ -150,6 +150,12 @@ try {
     assert.ok(JobKindSchema.safeParse({ name: "kk", label: "K", runner: "workspace-harness", entry: "packs/x/run.mjs", args: [{ name: "aa", label: "A", type: "text" }] }).success, "a kind with a text argument is right");
     assert.match(JSON.stringify(JobKindSchema.safeParse({ name: "kk", label: "K", runner: "workspace-harness", entry: "packs/x/run.mjs", args: [{ name: "rr", label: "R", type: "repository" }] }).error?.issues), /repository and database are a shared record area's fields, not a job kind's arguments/);
     assert.ok(bad(PACK.record_areas[0]).success, "the fixture's shared area with both fields is declared right");
+    // The admin MCP's generated tools: a repository is owner/name; a database is no input at all.
+    const { generateCatalog } = await import("../src/mcp-catalog.js");
+    const cat = generateCatalog([{ id: "fixture_resources", name: "Fixture resources", definition: compileDeclarations(PACK) as never }]);
+    const create = cat.tools.find((t) => t.op === "admin_create" && t.area === "fx_molds") as unknown as { input: { data: { shape: Record<string, { safeParse: (v: unknown) => { success: boolean } }> } } };
+    assert.deepEqual(Object.keys(create.input.data.shape), ["summary", "repo"], "the admin MCP's create tool takes no database value");
+    assert.ok(create.input.data.shape.repo!.safeParse("acme/widgets").success && !create.input.data.shape.repo!.safeParse("not a repo").success, "its repository is owner/name");
     F.setFeatureForTest("record_resources", false);
     assert.equal((await call("POST", "/api/admin/data/fx_molds", { key: "off-one", title: "Off", data: { summary: "x" } })).status, 201, "flag off: the area writes as any other");
     assert.equal((await resourcesOf("off-one")).status, 404, "flag off: a record's resources answer not found");
