@@ -52,10 +52,12 @@ export const adminNav: NavGroup[] = withRecordsPlaced([
 /**
  * mold_v0-271: a shell staff page the Records group lists (profile.json or pack.json console.admin_records: Journeys,
  * Recipes, Agent profiles, Data repositories) is there only: it leaves the group it is otherwise in (a group left empty
- * goes), at the same address. Nothing moves when the group lists record areas alone.
+ * goes), at the same address. Nothing moves when the group lists record areas alone. mold_v0-281: a shell page that is an
+ * in-page tab of one of its entries leaves its group the same way (its address then leads to that tab).
  */
 function withRecordsPlaced(groups: NavGroup[]): NavGroup[] {
-  const placed = new Set(recordAdminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => !u.startsWith('/admin/records/')));
+  // mold_v0-281: an entry of in-page tabs places each of its members (a shell page among them leaves its group too).
+  const placed = new Set(recordAdminNav.flatMap((g) => g.items).flatMap((i) => (i.inPageTabs?.length ? i.inPageTabs.map((t) => t.url) : [i.url])).filter((u) => !u.startsWith('/admin/records/')));
   if (!placed.size) return groups;
   return groups.map((g) => (g.label === 'Records' && recordAdminNav.includes(g) ? g : { ...g, items: g.items.filter((i) => !placed.has(i.url)) })).filter((g) => g.items.length > 0);
 }

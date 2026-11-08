@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { useQueryClient } from '@tanstack/react-query';
-import PageContainer from '@/components/layout/page-container';
+import PageContainer, { PageFrame } from '@/components/layout/page-container';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { StatStrip } from '@/components/layout/section';
 import { Icons } from '@/components/icons';
@@ -50,7 +50,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString
 // ---------------------------------------------------------------- the list
 
 /** Admin › Recipes: the proposals waiting, the four cards, the search row with New recipe, the table; a row opens its page. */
-export function RecipesPage() {
+export function RecipesPage({ bare = false }: { bare?: boolean } = {}) {
   const { data, error, isLoading } = useAdmin<ListAnswer>(BASE);
   const [creating, setCreating] = useQueryState('new');
   // mold_v0-278: a row opens its recipe in the panel beside the list (?recipe=<id>); its own page stays a link away.
@@ -68,7 +68,7 @@ export function RecipesPage() {
   const active = rows.filter((r) => r.status === 'active');
   const pending = data?.proposals ?? [];
   return (
-    <PageContainer>
+    <PageFrame bare={bare}>
       <ErrorBox error={error} />
       {pending.length > 0 && <ProposalsWaiting proposals={pending} />}
       <RecordView<Summary>
@@ -89,7 +89,7 @@ export function RecipesPage() {
         empty={<p className='text-muted-foreground text-sm'>No recipes yet. A recipe is a bundle of files and programs an agent works with: add one, then pick it in an agent profile&apos;s workspace upload.</p>}
       />
       {data && creating && <RecipeModal recipe={null} limits={data.limits} onClose={() => void setCreating(null)} onSaved={(id) => void setOpen(id)} />}
-    </PageContainer>
+    </PageFrame>
   );
 }
 

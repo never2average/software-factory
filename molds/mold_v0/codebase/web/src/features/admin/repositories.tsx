@@ -3,7 +3,7 @@
 // mold_v0-283: a page of the build only with a workspace_files repository (files an agent writes into a workspace, turned
 // into that workspace's rows: scripts/gen-packs.mjs leaves the page and its sidebar entry out otherwise). There are no
 // upstream catalogs: shared lists are platform records staff keep with New, Edit and Import on their own pages.
-import PageContainer from '@/components/layout/page-container';
+import { PageFrame } from '@/components/layout/page-container';
 import { useQuery } from '@tanstack/react-query';
 import { adminDataApi } from '@/lib/api-client';
 import { ErrorBox, LoadingCards, Section } from './ui';
@@ -22,10 +22,11 @@ export function useRepositories(enabled = true) {
   return useQuery<Status>({ queryKey: ['admin', 'data', '_repositories'], queryFn: () => adminDataApi<Status>('GET', '/_repositories'), enabled, staleTime: 10_000 });
 }
 
-export function AdminRepositories() {
+/** `bare` (mold_v0-281): drawn as an in-page tab of a staff Records entry, without its own page frame. */
+export function AdminRepositories({ bare = false }: { bare?: boolean } = {}) {
   const { data, error, isLoading } = useRepositories();
   return (
-    <PageContainer pageTitle='Data repositories' pageDescription="Where the record areas get their rows: each workspace's files, after its runs commit them, and any other repository the packs declare.">
+    <PageFrame bare={bare} pageTitle='Data repositories' pageDescription="Where the record areas get their rows: each workspace's files, after its runs commit them, and any other repository the packs declare.">
       <ErrorBox error={error} />
       {isLoading || !data ? <LoadingCards count={2} /> : (
         <div className='flex max-w-5xl flex-col gap-8'>
@@ -43,6 +44,6 @@ export function AdminRepositories() {
           </Section>
         </div>
       )}
-    </PageContainer>
+    </PageFrame>
   );
 }

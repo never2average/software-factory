@@ -3791,6 +3791,26 @@ self-tests.
   leaves the group it is otherwise in (`web/src/config/nav-config.ts` `withRecordsPlaced`; a group left empty goes), at
   the same address, and is lit there. Undeclared, the group is every shared area as before and nothing generated changes.
   `npm run test:console-sidebar` (section 9).
+- **An entry of in-page tabs** (mold_v0-281). One entry of the group may hold 2 to 6 of those lists, as the customer
+  side's sections tabs hold several lists:
+
+  ```json
+  { "id": "library", "label": "Library", "tabs": [{ "id": "recipes", "label": "Recipes" }, "design_systems", "papers"] }
+  ```
+
+  It is one sidebar entry (its label, its first member's icon) at `/admin/records-group/<id>`: the console's one in-page
+  tab strip (`web/src/features/tabs/in-page-tabs.tsx` `InPageTabs`, which the customer sections tabs draw too; the
+  selection in `?tab=<member>`) and below it the selected member's own staff list, the very component its own page draws
+  (`StaffRecordListPage`, `AdminJourneys`, `RecipesPage`, `AgentProfilesPage`, `AdminRepositories`, each with `bare`: no
+  frame of its own), so a row opens its side panel as there. Each member's list address of before
+  (`/admin/records/<area>`, `/admin/recipes` ...) leads to its tab (next.config redirects); a record's own page
+  (`/admin/records/<area>/<key>`) and a recipe's (`/admin/recipes/<id>`) stay where they are, and light the entry. A shell
+  page among the members leaves its own group as a plain entry does. The server reads every member as listed
+  (`profile.admin_records.show`: Recipes in a tab asks for `workspace_recipes`). `gen-packs --sidebar` and
+  `packs.py sidebar|check` print it with its in-page tabs. Refused, with the reason: fewer than 2 tabs or more than 6, a
+  member twice (in one entry, in two, or also a plain entry), an unknown member or one the build lacks (the plain
+  entries' rules), an id that is a shared area's name or a staff page's, no label, tabs inside a tab.
+  `npm run test:console-sidebar` (section 12).
 - **Files in a shared area** (with `document_preview`). A `file` field of a platform-scope area takes files staff upload
   from the staff record page's New form (`POST /api/admin/records/<area>/<key>/files/<field>`, the `library` right, as
   the staff data API; `DELETE` discards one kept but never written, never one the record holds; the staff form's

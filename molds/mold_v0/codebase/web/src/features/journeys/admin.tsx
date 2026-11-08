@@ -4,7 +4,7 @@
 // the tips delivered in chat and on /app (from PostHog Workflows, or sent by hand), each only where its component is on.
 // Views split the two kinds; every action sits in a row's ⋯ menu, the bulk bar or the peek. Journeys are not ordered.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import PageContainer from '@/components/layout/page-container';
+import { PageFrame } from '@/components/layout/page-container';
 import { Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
@@ -119,7 +119,7 @@ const cols = (): RecordCol<Row>[] => [
     render: (r) => <When d={r.kind === 'journey' ? r.p.updated_at : r.t.created_at} className='text-muted-foreground text-xs' /> }
 ];
 
-export function AdminJourneys() {
+export function AdminJourneys({ bare = false }: { bare?: boolean } = {}) {
   const { lock } = useAdminRole();
   // Each half only where its component is on (a build may have tips without journeys, or journeys without tips).
   const { data: pb, error, isLoading } = useAdmin<{ playbooks: Playbook[]; tools: string[] }>(journeysOn() ? '/playbooks' : null);
@@ -170,7 +170,7 @@ export function AdminJourneys() {
   };
 
   return (
-    <PageContainer>
+    <PageFrame bare={bare}>
       <ErrorBox error={error} />
       <RecordView<Row>
         id='admin-journeys-v2' noun='items' exportName='journeys' groupable views={VIEWS()} defaultSort={[{ key: 'name', dir: 'asc' }]}
@@ -204,7 +204,7 @@ export function AdminJourneys() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </PageContainer>
+    </PageFrame>
   );
 }
 
