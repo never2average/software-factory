@@ -301,6 +301,10 @@ const JobKindJson = z.discriminatedUnion("runner", [JobKindSchema, AgentJobKindS
 
 /** pack.json, whole: the manifest (mold_v0-038) and the declarations (mold_v0-057). */
 /** An earlier migration file's checksum (host.schema.split). */
+/** console.admin_records' lists (mold_v0-271): a shared area's name or a staff page's id, optionally relabelled. */
+const AdminRecordsId = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const AdminRecordsLabel = z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/);
+const AdminRecordsLabelled = z.object({ id: AdminRecordsId, label: AdminRecordsLabel }).strict();
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/, "the earlier file's sha256 (64 hex)");
 export const PackJsonSchema = z.object({
   $schema: z.string().optional(),
@@ -507,10 +511,12 @@ export const PackJsonSchema = z.object({
      * The staff sidebar's Records group (mold_v0-271; src/console-pages.ts adminRecordsProblems): exactly these entries,
      * in this order: shared record areas by name and the shell's staff pages by id (journeys, recipes, agent-profiles,
      * repositories), each optionally relabelled ({"id", "label"}). A shared area left out stays reachable by link, API and MCP.
+     * mold_v0-281: an entry {"id", "label", "tabs": [2 to 6 of those]} is one sidebar entry whose page shows them as in-page tabs.
      */
     admin_records: z.object({
       $comment: z.string().max(2000).optional(),
-      show: z.array(z.union([z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({ id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/) }).strict()])).min(1).max(30),
+      show: z.array(z.union([AdminRecordsId, AdminRecordsLabelled,
+        z.object({ id: AdminRecordsId, label: AdminRecordsLabel, tabs: z.array(z.union([AdminRecordsId, AdminRecordsLabelled])).min(2).max(6) }).strict()])).min(1).max(30),
     }).strict().optional(),
     /** The shell's console sections shown from the start, not only once they hold something (mold_v0-171; src/console-pages.ts SHOWABLE_SECTIONS). */
     show: z.array(z.enum(SHOWABLE_SECTIONS)).max(SHOWABLE_SECTIONS.length).refine((h) => new Set(h).size === h.length, "each section once").optional(),

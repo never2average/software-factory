@@ -20,6 +20,25 @@ function PageSkeleton() {
   );
 }
 
+export interface PageContainerProps {
+  children: React.ReactNode;
+  isLoading?: boolean;
+  access?: boolean;
+  accessFallback?: React.ReactNode;
+  pageTitle?: string;
+  pageDescription?: string;
+  infoContent?: InfobarContent;
+  pageHeaderAction?: React.ReactNode;
+}
+
+/**
+ * A page's frame, or none when the page is drawn as an in-page tab of another (mold_v0-281: a staff Records entry of
+ * in-page tabs draws each member's own page body below its strip, inside its own frame).
+ */
+export function PageFrame({ bare = false, ...props }: PageContainerProps & { bare?: boolean }) {
+  return bare ? <>{props.children}</> : <PageContainer {...props} />;
+}
+
 export default function PageContainer({
   children,
   isLoading = false,
@@ -29,16 +48,7 @@ export default function PageContainer({
   pageDescription,
   infoContent,
   pageHeaderAction
-}: {
-  children: React.ReactNode;
-  isLoading?: boolean;
-  access?: boolean;
-  accessFallback?: React.ReactNode;
-  pageTitle?: string;
-  pageDescription?: string;
-  infoContent?: InfobarContent;
-  pageHeaderAction?: React.ReactNode;
-}) {
+}: PageContainerProps) {
   if (!access) {
     return (
       <div role='status' className='flex flex-1 items-center justify-center p-4 md:px-6'>

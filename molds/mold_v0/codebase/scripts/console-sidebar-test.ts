@@ -39,6 +39,15 @@
 //    sidebar, each a tab of Settings' Access group under its label (its roles kept), /app/team and /app/keys leading
 //    there, printed as Settings' in-page tabs; refused: inside on another kind, with a group, the page also opened from
 //    the sidebar, two tabs for one page, an id of a Settings tab, a declared sidebar listing it.
+// 12. A staff Records entry of in-page tabs (mold_v0-281, console.admin_records `{"id", "label", "tabs"}`): one sidebar
+//    entry at /admin/records-group/<id>, its members (shared areas and shell staff pages, relabelled where it says) its
+//    in-page tabs; a shell page among them leaves its own group; each member's list address of before leads to its tab
+//    (a record's own page and a recipe's stay); lit on its page, each tab, a member area's record and a recipe's page;
+//    the Recipes member asks for workspace_recipes; the page is a page of the build (console-routes) and an unknown entry
+//    is not; printed by --sidebar with its in-page tabs; drawn with the console's one in-page tab strip
+//    (features/tabs/in-page-tabs.tsx, the customer sections tabs' too), each member's own list component below it;
+//    refused: one tab, a member twice (in one entry, in two, or also a plain entry), an unknown member, an id that is an
+//    area's name or a staff page's, no label, tabs inside a tab.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -268,6 +277,8 @@ for (const r of routes.routes as string[]) {
     continue;
   }
   if (r === '/app/settings/[group]') { if (settingsLayout() === 'groups') pages.push(...settingsGroups().flatMap((g) => [g.url, ...g.tabs.slice(1).map((t) => \`\${g.url}?tab=\${t.id}\`)])); continue; }
+  // mold_v0-281: a staff Records entry of in-page tabs, on its own and on each of its tabs.
+  if (r === '/admin/records-group/[group]') { pages.push(...adminNav.flatMap((g) => g.items).filter((i) => i.inPageTabs?.length).flatMap((i) => [i.url, ...i.inPageTabs!.map((t) => \`\${i.url}?tab=\${t.id}\`)])); continue; }
   if (r === '/admin/packs/[pack]/[page]') { pages.push(...adminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => u.startsWith('/admin/packs/'))); continue; }
   pages.push(r.replace('[slug]', 'acme').replace('/[[...section]]', ''));
 }
@@ -602,6 +613,88 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     const declared = probe(built("inside-declared", ["fixture_vulns"], INSIDE, { console: { sidebar: SIDEBAR.map((g) => ({ ...g, items: g.items.filter((x) => x !== "team" && x !== "keys") })) } }));
     assert.ok(!lines(declared.portalNav).some((x) => / \/app\/(team|keys)$/.test(x)) && declared.layout.built.includes("access:people"), lines(declared.portalNav).join(", "));
     console.log(`✓ team and keys tabs inside Settings (mold_v0-280): out of the sidebar, Settings' Access tabs under their labels (roles kept), /app/team and /app/keys lead there, printed as Settings' in-page tabs; refused: ${bad.map((x) => x[0]).join("; ")}`);
+  }
+  // ---------- 12. a staff Records entry of in-page tabs (mold_v0-281) ----------
+  {
+    const PACKS = ["fixture_catalog", "fixture_journeys"];
+    const declare = (show: unknown[]) => (id: string, j: any) => { if (id === "fixture_catalog") j.console = { ...(j.console ?? {}), admin_records: { show } }; };
+    const GROUP = { id: "library", label: "Library", tabs: ["regulators", { id: "journeys", label: "Playbooks" }, "recipes"] };
+    const b = built("records-tabs", PACKS, declare([GROUP, "controls"]), { features: { agent_harness: true } });
+    const PROBE12 = `import { adminNav } from '@/config/nav-config';
+import { features } from '@/config/features.generated';
+import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
+import { RESOLVED } from '@/lib/console-routes';
+const urls = navUrls(adminNav, []);
+const pages = ['/admin/records-group/library', '/admin/records-group/library?tab=journeys', '/admin/records-group/library?tab=recipes&recipe=r1',
+  '/admin/records/regulators/rbi', '/admin/recipes/r1', '/admin/records/controls', '/admin/records/controls/c-1', '/admin/health'];
+process.stdout.write('\\u0001' + JSON.stringify({ adminNav, features, lit: Object.fromEntries(pages.map((p) => [p, activeNavUrl(p, urls, navOptions('admin'))])),
+  resolved: ['library', 'nope'].map((g) => RESOLVED['/admin/records-group/[group]']!({ group: [g] })) }));
+`;
+    const web = path.join(b, "web"), file = path.join(web, "probe-records-tabs.tsx");
+    writeFileSync(file, PROBE12);
+    let p: any;
+    try {
+      const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      assert.equal(r.status, 0, `records tabs probe: ${r.stderr.slice(0, 2000)}`);
+      p = JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
+    } finally { rmSync(file, { force: true }); }
+    const records = p.adminNav.find((g: any) => g.label === "Records")?.items ?? [];
+    assert.deepEqual(records.map((i: any) => `${i.title} ${i.url}`), ["Library /admin/records-group/library", "Controls /admin/records/controls"], "one entry for the three lists, then the plain one");
+    assert.deepEqual(records[0].inPageTabs, [
+      { id: "regulators", label: "Regulators", url: "/admin/records/regulators", area: "regulators" },
+      { id: "journeys", label: "Playbooks", url: "/admin/journeys" },
+      { id: "recipes", label: "Recipes", url: "/admin/recipes" },
+    ], "its in-page tabs: each member's label (relabelled where it says), its own address and its area");
+    assert.ok(records[0].icon, "the entry has an icon (its first member's)");
+    const everywhere = (url: string) => p.adminNav.flatMap((g: any) => g.items.filter((i: any) => i.url === url).map(() => g.label));
+    for (const u of ["/admin/journeys", "/admin/recipes", "/admin/records/regulators"]) assert.deepEqual(everywhere(u), [], `${u} is no sidebar entry of its own`);
+    assert.ok(!p.adminNav.some((g: any) => g.label === "Engagement"), "Journeys left its Engagement group (left empty, it goes)");
+    assert.equal(p.features.workspace_recipes, true, "the Recipes member asks for workspace_recipes");
+    const L = "/admin/records-group/library";
+    assert.deepEqual(p.lit, {
+      [L]: L, [`${L}?tab=journeys`]: L, [`${L}?tab=recipes&recipe=r1`]: L, "/admin/records/regulators/rbi": L, "/admin/recipes/r1": L,
+      "/admin/records/controls": "/admin/records/controls", "/admin/records/controls/c-1": "/admin/records/controls", "/admin/health": "/admin/health",
+    }, "lit on its page, each tab (a panel open too), a member area's record and a recipe's page; the rest as before");
+    assert.deepEqual(p.resolved, [true, false], "its page is a page of the build; an unknown entry is not (the server's 404)");
+    const routes = JSON.parse(readFileSync(path.join(b, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    const to = (src: string) => routes.redirects.filter((r: any) => r.source === src).map((r: any) => r.destination);
+    assert.deepEqual(to("/admin/records/regulators"), [`${L}?tab=regulators`]);
+    assert.deepEqual(to("/admin/journeys"), [`${L}?tab=journeys`]);
+    assert.deepEqual(to("/admin/recipes"), [`${L}?tab=recipes`]);
+    assert.ok(!routes.redirects.some((r: any) => /^\/admin\/(records\/regulators|recipes)\/./.test(r.source)), "a record's own page and a recipe's stay where they are");
+    assert.deepEqual(to("/admin/records/controls"), [], "a plain entry keeps its address");
+    const tree = spawnSync(process.execPath, ["scripts/gen-packs.mjs", "--sidebar"], { cwd: b, encoding: "utf8" });
+    assert.equal(tree.status, 0, tree.stderr);
+    assert.match(tree.stdout, /  Records\n    Library  \/admin\/records-group\/library\n      in-page tabs: Regulators, Playbooks, Recipes\n    Controls  \/admin\/records\/controls\n/, tree.stdout);
+    // Drawn with the console's one in-page tab strip, the customer sections tabs' too; each member's own list below it.
+    const read = (f: string) => readFileSync(path.join(ROOT, "web", "src", f), "utf8");
+    const strip = read("features/tabs/in-page-tabs.tsx"), sections = read("features/tabs/tab-page.tsx"), staff = read("features/records/staff-record-group.tsx");
+    assert.match(strip, /useQueryState\('tab'/, "the strip keeps the selection in ?tab=");
+    for (const [name, src] of [["the customer sections tab", sections], ["the staff entry", staff]] as const) {
+      assert.match(src, /import \{ InPageTabs \} from '(\.\/|@\/features\/tabs\/)in-page-tabs'/, `${name} draws the shared strip`);
+      assert.doesNotMatch(src, /<TabsList|<TabsTrigger/, `${name} draws no strip of its own`);
+    }
+    for (const c of ["<StaffRecordListPage key={tab.id} area={area} bare />", "<AdminJourneys key={tab.id} bare />", "<RecipesPage key={tab.id} bare />", "<AgentProfilesPage key={tab.id} bare />", "<AdminRepositories key={tab.id} bare />"])
+      assert.ok(staff.includes(c), `each member's own list component (its row opens the side panel as on its own page): ${c}`);
+    // Refused, each with its reason.
+    const bad: [string, unknown[], RegExp, unknown?][] = [
+      ["one tab", [{ id: "g", label: "G", tabs: ["regulators"] }], /2 to 6|too_small|>=2/],
+      ["twice in one entry", [{ id: "g", label: "G", tabs: ["regulators", "regulators"] }], /listed twice/],
+      ["in two entries", [{ id: "a", label: "A", tabs: ["regulators", "controls"] }, { id: "b", label: "B", tabs: ["controls", "journeys"] }], /controls is listed twice/],
+      ["also a plain entry", ["controls", { id: "a", label: "A", tabs: ["regulators", "controls"] }], /controls is listed twice/],
+      ["an unknown member", [{ id: "g", label: "G", tabs: ["regulators", "nope"] }], /no shared record area is named nope/],
+      ["an area's name", [{ id: "controls", label: "G", tabs: ["regulators", "journeys"] }], /is a record area's name/],
+      ["a staff page's id", [{ id: "journeys", label: "G", tabs: ["regulators", "controls"] }], /is a staff page/],
+      ["no label", [{ id: "g", tabs: ["regulators", "controls"] }], /label/],
+      ["tabs inside a tab", [{ id: "g", label: "G", tabs: ["regulators", { id: "h", label: "H", tabs: ["controls", "journeys"] }] }], /unknown field tabs|Unrecognized key|tabs/],
+    ];
+    let i = 0;
+    for (const [what, show, re] of bad) {
+      const r = buildCopy(`records-tabs-bad-${i++}`, PACKS, declare(show));
+      assert.notEqual(r.status, 0, `${what}: refused (${r.out.slice(-500)})`);
+      assert.match(r.out, re, `${what}: ${r.out.slice(-800)}`);
+    }
+    console.log(`✓ a staff Records entry of in-page tabs (mold_v0-281): one entry, its members its tabs (a shell page among them leaves its group), their old addresses lead to their tabs (records' and recipes' own pages stay), lit on its page, tabs and members' records, printed with its tabs, the console's one strip (features/tabs/in-page-tabs.tsx) over each member's own list; refused: ${bad.map((x) => x[0]).join("; ")}`);
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {

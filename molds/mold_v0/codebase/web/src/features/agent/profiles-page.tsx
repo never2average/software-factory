@@ -12,7 +12,7 @@
 // Save and Cancel are at the bottom. Budgets, turns and limits are the platform's (Agent configuration).
 import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
-import PageContainer from '@/components/layout/page-container';
+import { PageFrame } from '@/components/layout/page-container';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { StatStrip } from '@/components/layout/section';
 import { Icons } from '@/components/icons';
@@ -64,7 +64,7 @@ const size = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}
 // ---------------------------------------------------------------- the list
 
 /** Admin › Agent profiles: the four cards, the search row with New profile, the table; a row opens its modal. */
-export function AgentProfilesPage() {
+export function AgentProfilesPage({ bare = false }: { bare?: boolean } = {}) {
   const { data, error, isLoading } = useAdmin<ListAnswer>(BASE);
   const [open, setOpen] = useQueryState('profile');
   const rows = data?.profiles ?? [];
@@ -83,7 +83,7 @@ export function AgentProfilesPage() {
   ];
   const active = rows.filter((p) => p.status === 'active');
   return (
-    <PageContainer>
+    <PageFrame bare={bare}>
       <ErrorBox error={error} />
       <RecordView<Summary>
         id='admin-agent-profiles' noun={rows.length === 1 ? 'profile' : 'profiles'} loading={isLoading}
@@ -104,7 +104,7 @@ export function AgentProfilesPage() {
         empty={<p className='text-muted-foreground text-sm'>No profiles yet: the Default profile appears once the workspace agent is used.</p>}
       />
       {data && open === 'new' && <ProfileModal key={open} id={open === 'new' ? null : open} facts={data} onClose={() => void setOpen(null)} />}
-    </PageContainer>
+    </PageFrame>
   );
 }
 
