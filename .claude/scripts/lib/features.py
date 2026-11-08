@@ -62,6 +62,8 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "always": return True
     # mold_v0-271: the staff Records group (a pack's console.admin_records; the app's profile says it in its own console) lists the recipes page
     if by == "recipes": return any("recipes" in [x if isinstance(x, str) else (x or {}).get("id") for x in (((d.get("console") or {}).get("admin_records") or {}).get("show") or [])] for d in docs)
+    # mold_v0-282: a shared area declares a repository or a database field (the shell's src/features.ts and gen-packs say the same)
+    if by == "resources": return any(a.get("scope") == "platform" and any(isinstance(f, dict) and f.get("type") in ("repository", "database") for f in a.get("fields") or []) for a in _areas(docs))
     if by == "credentials": return any(d.get("credentials") for d in docs)
     if by == "email": return any(isinstance(d.get("email"), dict) and ((d["email"].get("sender") or {}).get("allow") is True or d["email"].get("intake")) for d in docs)
     if by == "clocks": return any(a.get("scope") == "workspace" and a.get("clocks") for a in _areas(docs))
@@ -147,7 +149,8 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
             if re.search(r'"clock"\s*:', json.dumps([d.get("metrics") or [], d.get("charts") or [], d.get("tabs") or []])):
                 errs.append(f"{at}.record_clocks is false but pack {d.get('id', '?')} has a metric, chart or tab that counts by a clock: take it out, or leave the clocks on")
     # mold_v0-260: what these flags check is never quietly dropped (gen-packs refuses the same)
-    for i, what in (("wide_lists", "a list with more than 8 columns"), ("record_rules", "a reference field's where or an area's on_save"), ("credential_sets", "a credential with entries or bound to a tenant"), ("overview_cards", "a home tab's fifth number or its recent_runs or attention card")):
+    for i, what in (("wide_lists", "a list with more than 8 columns"), ("record_rules", "a reference field's where or an area's on_save"), ("credential_sets", "a credential with entries or bound to a tenant"), ("overview_cards", "a home tab's fifth number or its recent_runs or attention card"),
+                    ("record_resources", "a repository or database field")):   # mold_v0-282
         st = states.get(i)
         if st and not st["setting"] and st["requested"]:
             errs.append(f"{at}.{i} is off but a pack declares {what}: turn it on (features.{i} = true) or take the declaration out")
@@ -161,7 +164,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 26 and len(set(ids(root))) == 26, "the registry names 26 flags, each once")
+    ok(len(flags) == 27 and len(set(ids(root))) == 27, "the registry names 27 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -211,4 +214,11 @@ def self_test(root):
        "workspace recipes: on when the staff Records group lists them, a pack's or the profile's (mold_v0-271)")
     ok(any("needs agent_harness" in e for e in problems({}, listed, root)) and not problems({"features": {"agent_harness": True}}, listed, root), "workspace recipes need the workspace agent")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
+    # mold_v0-282: record resources, asked for by a shared area's repository or database field; off by default, refused off
+    owning = [{"id": "m", "record_areas": [{"name": "molds", "scope": "platform", "fields": [{"name": "repo", "type": "repository"}, {"name": "db", "type": "database", "provider": "neon"}]}]}]
+    ok("resources" not in words(effective({}, owning, root)) and "resources" in words(effective({"features": {"record_resources": True}}, owning, root))
+       and "resources" not in words(effective({"features": {"record_resources": True}}, [], root)),
+       "record resources: off by default; on when the profile says and a shared area declares a repository or database field (mold_v0-282)")
+    ok(any("record_resources is off but a pack declares a repository or database field" in e for e in problems({}, owning, root)) and not problems({"features": {"record_resources": True}}, owning, root),
+       "a repository or database field is refused while record_resources is off (mold_v0-282)")
     return checks

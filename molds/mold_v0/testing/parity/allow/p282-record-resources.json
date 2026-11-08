@@ -1,0 +1,7 @@
+{
+  "phase": "mold_v0-282: record-owned resources (flag record_resources, off for Octillion: no pack declares a repository or database field). What Octillion's people and AI clients see (the MCP surface, the landing, every customer and staff page) is unchanged; the schema gains record_resources and Neon's key vault provider row (listed nowhere while no area owns a database)",
+  "allow": [
+    { "key": "api::/api/admin/onboarding/health/status::body::release::**", "reason": "the schema is at 0061_record_resources" },
+    { "key": "api::/api/admin/onboarding/spend/storage::**", "reason": "the database's size with the new (empty) record_resources table" }
+  ]
+}

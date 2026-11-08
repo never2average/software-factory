@@ -8,5 +8,6 @@ export type FeatureId =
   | 'audit.sign' | 'onprem_runners' | 'developer_surface' | 'declarative_checks' | 'encrypted_fields' | 'health_history' | 'document_preview'
   | 'agent_harness' | 'record_pages' | 'side_panel_forms' | 'teams'
   | 'record_run_inputs' | 'wide_lists' | 'record_rules' | 'credential_sets' | 'overview_cards' | 'run_analytics' | 'filters_in_address' | 'usage_tool'
-  | 'workspace_recipes';
+  | 'workspace_recipes'
+  | 'record_resources';
 export const featureOn = (id: FeatureId): boolean => features[id] === true;

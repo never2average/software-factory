@@ -419,7 +419,9 @@
                     "person",
                     "reference",
                     "file",
-                    "url"
+                    "url",
+                    "repository",
+                    "database"
                   ]
                 },
                 "help": {
@@ -674,6 +676,12 @@
                   "type": "string",
                   "enum": [
                     "chips"
+                  ]
+                },
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "neon"
                   ]
                 }
               },
@@ -4205,7 +4213,9 @@
                         "person",
                         "reference",
                         "file",
-                        "url"
+                        "url",
+                        "repository",
+                        "database"
                       ]
                     },
                     "help": {
@@ -4460,6 +4470,12 @@
                       "type": "string",
                       "enum": [
                         "chips"
+                      ]
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "neon"
                       ]
                     }
                   },
@@ -4775,7 +4791,9 @@
                         "person",
                         "reference",
                         "file",
-                        "url"
+                        "url",
+                        "repository",
+                        "database"
                       ]
                     },
                     "help": {
@@ -5030,6 +5048,12 @@
                       "type": "string",
                       "enum": [
                         "chips"
+                      ]
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "neon"
                       ]
                     }
                   },

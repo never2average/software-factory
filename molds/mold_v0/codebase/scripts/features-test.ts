@@ -70,8 +70,10 @@ try {
       // mold_v0-260
       "record_run_inputs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool",
       // mold_v0-271
-      "workspace_recipes"]);
-    assert.equal(reg.flags.length, 26);
+      "workspace_recipes",
+      // mold_v0-272
+      "record_resources"]);
+    assert.equal(reg.flags.length, 27);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
@@ -79,7 +81,7 @@ try {
     // defaults: on for what a pack declared before the registry, off for the opt-in toggles
     const off = F.FEATURES.filter((f) => !f.default).map((f) => f.id);
     assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages", "side_panel_forms", "teams",
-      "record_run_inputs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool"]);
+      "record_run_inputs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool", "record_resources"]);
     // mold_v0-260: every one of the batch's flags is quiet while off (the generated files are what they were).
     for (const id of off.slice(8)) assert.equal(F.featureSpec(id).quiet_off, true, `${id}: quiet while off`);
     // the profile's features over the legacy key over the default
@@ -90,7 +92,8 @@ try {
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
     assert.equal(F.featureSpec("workspace_recipes").quiet_off, true, "workspace_recipes: quiet while off (asked for only by the staff Records group)");
-    console.log("✓ the registry: 26 flags, each documented with a default; profile.features over the legacy key over the default");
+    assert.equal(F.featureSpec("record_resources").quiet_off, true, "record_resources: quiet while off (asked for only by a shared area's repository or database field)");
+    console.log("✓ the registry: 27 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------

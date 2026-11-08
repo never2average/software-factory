@@ -27,8 +27,12 @@ import { adminInstallations, appConfig, beginInstall, completeInstall, configSum
   InstallRefused, setAppConfig, setAssetRepositories, TOKEN_PERMISSIONS, webhookSignatureValid, workspaceView } from "./github-app.js";
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
+import { recordAreas } from "./record-areas.js";
 import { browserOrigin } from "./builtin-auth.js";
 import { noteCallback } from "./sign-in-check.js";
+
+/** mold_v0-282: a shared area's `repository` field is read with the platform's GitHub App (src/github-app.ts readRecordRepository). */
+const recordRepositoriesNeedApp = () => featureOn("record_resources") && recordAreas().some((a) => a.scope === "platform" && a.fields.some((f) => f.type === "repository"));
 
 const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -124,7 +128,9 @@ export function githubAppRouter(): Router {
 type Need = (p: "keys" | "accounts") => express.RequestHandler;
 /** Staff routes on the admin router (already behind requirePlatformAdmin, JSON and the access log). */
 export function githubAppAdminRoutes(admin: Router, need: Need, actor: (req: Request, res: Response) => string) {
-  if (!githubAppFields().length) return;
+  // mold_v0-283: also when a shared record links a GitHub repository (mold_v0-282, flag record_resources: read with the
+  // platform's own GitHub App, set here), now that no private catalog asks for it.
+  if (!githubAppFields().length && !recordRepositoriesNeedApp()) return;
   admin.get("/github-app", answerWith(async () => ({
     available: true,
     app: await configSummary(),

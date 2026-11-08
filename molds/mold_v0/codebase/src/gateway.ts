@@ -184,8 +184,8 @@ export const orchestratorBrain = () => ({
 /** Path SDKs expect after the provider's host (OpenAI-style clients append /responses, /chat/completions to .../v1). */
 const SDK_BASE_SUFFIX: Record<string, string> = { openai: "/v1", dashscope: "/compatible-mode/v1" };
 
-/** Direct-mode providers whose key only the orchestrator (or the autoscaler: freestyle, mold_v0-274) uses; never brokered to an agent session. */
-export const ORCHESTRATOR_ONLY_PROVIDERS = new Set(["boat", "vertex", "freestyle"]);
+/** Direct-mode providers whose key only the orchestrator (or the autoscaler: freestyle, mold_v0-274; the server: neon, mold_v0-282) uses; never brokered to an agent session. */
+export const ORCHESTRATOR_ONLY_PROVIDERS = new Set(["boat", "vertex", "freestyle", "neon"]);
 /** Real vendor keys in agent sessions are off unless APP_DIRECT_KEYS=allow (see docs/security.md). */
 export const directKeysAllowed = () => ENV.APP_DIRECT_KEYS === "allow";
 function directKeyAllowed(provider: string, taskSource: string | null): boolean {

@@ -562,6 +562,45 @@ export async function installationTokenForServer(orgId: number): Promise<string 
   return t.token;
 }
 
+/**
+ * mold_v0-282 (flag record_resources; src/record-resources.ts): a repository a shared record links (owner/name), read
+ * through the platform's GitHub App: its installation on the repository's owner found with the app's own key, a token
+ * for that one repository (read contents) minted, the repository's default branch and that branch's last commit read,
+ * and the token revoked. Every refusal says, in plain words, what to change and where; never a token in a message.
+ */
+export async function readRecordRepository(full: string): Promise<{ repository: string; url: string; default_branch: string; private: boolean;
+  last_commit: { sha: string; message: string; date: string | null; author: string | null } | null }> {
+  const [owner, name] = full.split("/") as [string, string];
+  const c = await appConfig();
+  if (!c) throw new PackError(`The platform's GitHub App is not set up, so ${full} cannot be read: a platform owner sets it up in Admin › Key vault, GitHub App`, 409);
+  const fix = `On GitHub, open the ${c.slug} app's installation on ${owner} (Settings › GitHub Apps › ${c.slug} › Configure) and give it access to ${name}; if the app is not installed on ${owner}, install it there first`;
+  const repoPath = `${endpoints.api}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+  const inst = await gh<{ id?: number }>("GET", `${repoPath}/installation`, `Bearer ${appJwt(c)}`);
+  if (inst.status === 404) throw new PackError(`The platform's GitHub App cannot read ${full}: the repository does not exist, or the app is not installed where it can see it. ${fix}.`, 400);
+  ok(inst, `the app's installation for ${full}`);
+  const id = Number(inst.json?.id);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new GithubError("GitHub's installation answer was not understood", 502);
+  let t: MintedToken;
+  try { t = await mintToken(c, id, { repositories: [name], permissions: { ...TOKEN_PERMISSIONS } }); }
+  catch { throw new PackError(`The platform's GitHub App is installed on ${owner} but may not read ${full}. ${fix}.`, 400); }
+  try {
+    const r = await gh<{ full_name?: string; default_branch?: string; private?: boolean; html_url?: string }>("GET", repoPath, `token ${t.token}`);
+    if (r.status === 404 || r.status === 403) throw new PackError(`The platform's GitHub App may not read ${full}. ${fix}.`, 400);
+    ok(r, `repository ${full}`);
+    const branch = typeof r.json?.default_branch === "string" && r.json.default_branch ? r.json.default_branch : null;
+    if (!branch) throw new GithubError(`GitHub's answer for ${full} has no default branch`, 502);
+    const cm = await gh<{ sha?: string; commit?: { message?: string; author?: { name?: string; date?: string } } }>("GET", `${repoPath}/commits/${encodeURIComponent(branch)}`, `token ${t.token}`);
+    // 409: an empty repository (no commit yet).
+    if (cm.status !== 409) ok(cm, `the last commit of ${full}`);
+    const last = cm.status === 409 || typeof cm.json?.sha !== "string" ? null : {
+      sha: cm.json.sha, message: String(cm.json.commit?.message ?? "").split("\n")[0]!.slice(0, 200),
+      date: typeof cm.json.commit?.author?.date === "string" ? cm.json.commit.author.date : null,
+      author: typeof cm.json.commit?.author?.name === "string" ? cm.json.commit.author.name.slice(0, 100) : null };
+    const fullName = typeof r.json?.full_name === "string" ? r.json.full_name : full;
+    return { repository: fullName, url: `${endpoints.web}/${fullName}`, default_branch: branch, private: r.json?.private === true, last_commit: last };
+  } finally { await revokeOnGithub(t.token).catch(() => false); }
+}
+
 // ---------- staff ----------
 
 /** Every installation across workspaces, live and ended, for /admin (never a token). */

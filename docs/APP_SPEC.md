@@ -113,6 +113,16 @@ through the same check `factory.py validate` and the build use.
   | `filters_in_address` | false | always (the profile alone) | filters |
   | `usage_tool` | false | always (the profile alone) | usage |
   | `workspace_recipes` | true | the staff Records group (`console.admin_records`) lists `recipes`; needs `agent_harness` | recipes |
+  | `record_resources` | false | a shared area's `repository` or `database` field (refused while off) | resources |
+
+  Record-owned resources (mold_v0-282, `record_resources`): a shared (platform) area's field may be `"type":
+  "repository"` (an existing GitHub repository, owner/name, that staff link to a record: read through the platform's
+  GitHub App on save, its default branch and last commit on the record's page) or `"type": "database", "provider":
+  "neon"` (one Postgres database per record, created in Neon when the record is created and deleted with it; it takes no
+  value, its connection string is sealed apart from the record's fields). The app then needs the Neon API key in its Key
+  vault (Admin › Key vault, Neon; or `NEON_API_KEY` on the server, imported once) and its GitHub App given access to each
+  linked repository; neither is ever in the spec or a pack. From the brief: `features.record_resources = true` in
+  `## Profile`.
 
   The staff sidebar's Records group (mold_v0-271) is a pack's `console.admin_records` or the profile's
   (`profile.console.admin_records`): `{"show": [...]}`, exactly those entries in that order (shared areas by name, the

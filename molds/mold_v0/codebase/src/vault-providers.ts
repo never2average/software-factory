@@ -22,13 +22,13 @@ export const PROVIDER_NAME: Record<string, string> = {
   anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", cloudflare: "Cloudflare Workers AI", dashscope: "Alibaba DashScope",
   vertex: "Vertex AI (Google Cloud)", boat: "boat.dev", exa: "Exa", libraries_io: "Libraries.io", resend: "Resend", amp: "Amp", cursor: "Cursor",
   factory: "Factory", github_copilot: "GitHub Copilot", oauth_clients: "OAuth app clients", pack_credentials: "Staff-held run credentials",
-  object_storage: "Object storage (R2 / S3)", freestyle: "Freestyle",
+  object_storage: "Object storage (R2 / S3)", freestyle: "Freestyle", neon: "Neon",
 };
 export const PROVIDER_CATEGORY: Record<string, string> = {
   anthropic: "Inference", openai: "Inference", google: "Inference", cloudflare: "Inference", dashscope: "Inference", vertex: "Inference",
   boat: "Sandbox", freestyle: "Sandbox", exa: "Search", libraries_io: "Search", resend: "Email",
   amp: "Coding agent", cursor: "Coding agent", factory: "Coding agent", github_copilot: "Coding agent",
-  oauth_clients: "Connection", pack_credentials: "Run credential", object_storage: "Storage",
+  oauth_clients: "Connection", pack_credentials: "Run credential", object_storage: "Storage", neon: "Storage",
 };
 export const providerName = (slug: string) => PROVIDER_NAME[slug] ?? slug;
 export const providerCategory = (slug: string) => PROVIDER_CATEGORY[slug] ?? "Other";
@@ -65,6 +65,8 @@ export async function providerInBuild(slug: string, keys: number): Promise<boole
   if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
   if (slug === "freestyle") return (await import("./run-sandboxes.js")).RUN_SANDBOXES.mode() === "freestyle";
   if (slug === OBJECT_STORAGE) return sessionEngine() || (await storeKinds()).length > 0;
+  // mold_v0-282: Neon only while a shared area's records own a database (flag record_resources).
+  if (slug === "neon") { const { featureOn } = await import("./features.js"); return featureOn("record_resources") && (await import("./record-areas.js")).recordAreas().some((a) => a.fields.some((f) => f.type === "database")); }
   if (kinds.some((k) => k.providers.includes(slug))) return true;
   return ENGINE_PROVIDERS.has(slug) ? sessionEngine() : true;
 }

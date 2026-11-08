@@ -36,7 +36,9 @@ const NAME: Record<string, string> = {
   // The bucket's four settings, one entry (mold_v0-181: src/storage.ts uses it when the server has no R2_*).
   object_storage: 'Object storage (R2 / S3)',
   // mold_v0-274: the runs' sandboxes as Freestyle VMs (listed only while the Sandbox provider setting says freestyle).
-  freestyle: 'Freestyle'
+  freestyle: 'Freestyle',
+  // mold_v0-282: the shared records' own databases (listed only while an area's records own one: flag record_resources).
+  neon: 'Neon'
 };
 const nameOf = (slug: string) => NAME[slug] ?? slug;
 interface Credential { id: number; provider: string; label: string; hint: string; enabled: boolean; uses: number; last_used_at: string | null; project_id?: string | null; client_email?: string; bucket?: string; endpoint?: string; access_key_hint?: string | null }
@@ -47,7 +49,7 @@ const TYPE: Record<string, string> = {
   anthropic: 'Inference', openai: 'Inference', google: 'Inference', cloudflare: 'Inference', dashscope: 'Inference', vertex: 'Inference',
   boat: 'Sandbox', freestyle: 'Sandbox', exa: 'Search', libraries_io: 'Search', resend: 'Email',
   amp: 'Coding agent', cursor: 'Coding agent', factory: 'Coding agent', github_copilot: 'Coding agent',
-  oauth_clients: 'Connection', pack_credentials: 'Run credential', object_storage: 'Storage'
+  oauth_clients: 'Connection', pack_credentials: 'Run credential', object_storage: 'Storage', neon: 'Storage'
 };
 const TYPES = ['Inference', 'Sandbox', 'Storage', 'Search', 'Email', 'Coding agent', 'Connection', 'Run credential', 'Other'];
 /** What a provider's keys are for, where its name alone does not say (on hover, and as the Add a key form's hint). */
@@ -55,12 +57,13 @@ const ABOUT: Record<string, string> = {
   oauth_clients: 'The client id and secret of each OAuth provider workspaces connect to, under the labels OAuth providers (below) names',
   pack_credentials: "Logins the platform's staff hold for a pack's runs, each labelled <pack>.<name>; never shown to a workspace",
   object_storage: "The bucket the app keeps workspace files and archives in, used when the server's environment has no R2_* settings",
-  freestyle: "The Freestyle API key the autoscaler creates, watches and deletes each run's VM with (freestyle.sh dashboard, API keys); never given to a run or a session"
+  freestyle: "The Freestyle API key the autoscaler creates, watches and deletes each run's VM with (freestyle.sh dashboard, API keys); never given to a run or a session",
+  neon: "The Neon API key the server creates and deletes each shared record's own Postgres database with (console.neon.tech, Account settings › API keys); never given to a run or a session"
 };
 const OBJECT_STORAGE = 'object_storage';
 const typeOf = (slug: string) => TYPE[slug] ?? 'Other';
 /** Server-only keys (email) are used by the API itself; never by orchestrators or agents. */
-const SERVER_ONLY = new Set(['resend', 'object_storage', 'freestyle']);
+const SERVER_ONLY = new Set(['resend', 'object_storage', 'freestyle', 'neon']);
 const useOf = (p: { slug: string; mode: string }) => (SERVER_ONLY.has(p.slug) ? 'Server only' : p.mode === 'gateway' ? 'Gateway' : 'Orchestrator');
 /** 12400 → "12.4k". */
 const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
@@ -287,7 +290,7 @@ function checkServiceAccount(text: string): { project_id: string; client_email: 
 /** Environment variable names the app knows, to the vault provider that holds them. */
 const ENV_PROVIDER: Record<string, string> = {
   ANTHROPIC_API_KEY: 'anthropic', OPENAI_API_KEY: 'openai', CODEX_API_KEY: 'openai', GEMINI_API_KEY: 'google', GOOGLE_API_KEY: 'google',
-  CLOUDFLARE_API_TOKEN: 'cloudflare', CF_API_TOKEN: 'cloudflare', DASHSCOPE_API_KEY: 'dashscope', BOAT_API_KEY: 'boat', FREESTYLE_API_KEY: 'freestyle', EXA_API_KEY: 'exa',
+  CLOUDFLARE_API_TOKEN: 'cloudflare', CF_API_TOKEN: 'cloudflare', DASHSCOPE_API_KEY: 'dashscope', BOAT_API_KEY: 'boat', FREESTYLE_API_KEY: 'freestyle', NEON_API_KEY: 'neon', EXA_API_KEY: 'exa',
   LIBRARIES_IO_API_KEY: 'libraries_io', RESEND_API_KEY: 'resend', AMP_API_KEY: 'amp', CURSOR_API_KEY: 'cursor', FACTORY_API_KEY: 'factory', COPILOT_GITHUB_TOKEN: 'github_copilot'
 };
 interface Parsed { provider: string; label: string; secret: string; source: string; status?: 'saved' | 'failed'; error?: string }

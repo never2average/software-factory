@@ -30,7 +30,7 @@ import { vaultUnlocked } from "./keyvault.js";
 import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcrypto.js";
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { conditionHolds, referenceWhereWords, type DetailCondition } from "./pack-api.js";
-import { areaLinks, DECLARABLE_ROLES, isFieldUrl, URL_MAX, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
+import { areaLinks, DECLARABLE_ROLES, isFieldUrl, REPOSITORY_NAME, URL_MAX, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
@@ -167,7 +167,19 @@ const live = () => import("./data-repositories.js");
  * platform). A query that has left that scope (a callback that lost it, a write to another workspace) is refused, never
  * run outside the transaction.
  */
-const txScope = new AsyncLocalStorage<{ tx: Queryable; orgId: number | null; changes?: RecordChange[] }>();
+const txScope = new AsyncLocalStorage<{ tx: Queryable; orgId: number | null; changes?: RecordChange[]; after?: (() => Promise<unknown>)[] }>();
+/**
+ * mold_v0-282: work that may run only once a write is stored (a record's database created for it): now, outside a batch;
+ * inside one, after it commits (a batch rolled back runs none of it).
+ */
+async function afterCommit(fn: () => Promise<unknown>) {
+  const t = txScope.getStore();
+  if (t) { (t.after ??= []).push(fn); return; }
+  await fn();
+}
+/** mold_v0-282: the record's own resources (flag record_resources), loaded only by an area that declares them. */
+const resources = () => import("./record-resources.js");
+const ownsResources = (a: RecordArea) => a.scope === "platform" && featureSetting("record_resources") && a.fields.some((f) => f.type === "repository" || f.type === "database");
 
 // ---------- record changes (mold_v0-193: the developer surface's record events) ----------
 
@@ -257,6 +269,9 @@ const expects = (f: Field) => {
     case "number": return `a number${f.min !== undefined ? ` from ${f.min}` : ""}${f.max !== undefined ? ` up to ${f.max}` : ""}`;
     case "text": return `text of up to ${f.max_length ?? 20_000} characters`;
     case "url": return `an http or https address of up to ${URL_MAX} characters, with no user name or password`;
+    // mold_v0-282 (src/record-resources.ts)
+    case "repository": return "a GitHub repository as owner/name (for example acme/widgets)";
+    case "database": return "nothing: the platform creates the record's database itself (the field takes no value)";
     default: return `a ${f.type}`;
   }
 };
@@ -281,6 +296,9 @@ function fits(f: Field, v: unknown): boolean {
     case "date": return typeof v === "string" && /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v));
     case "link": return typeof v === "string" ? KEY.test(v) : Array.isArray(v) && v.length <= 500 && v.every((x) => typeof x === "string" && KEY.test(x));
     case "json": return true;
+    // mold_v0-282: a repository is owner/name; a database field takes no value (its connection is never in the fields).
+    case "repository": return typeof v === "string" && REPOSITORY_NAME.test(v);
+    case "database": return false;
     default: return f.multiple ? Array.isArray(v) && v.length <= MAX_LIST && v.every(one) && new Set(v.map((x) => JSON.stringify(x))).size === v.length : one(v);
   }
 }
@@ -1000,7 +1018,13 @@ export async function putPlatform(pack: string | null, name: string, key: string
   const data = await checkRecord(area, value?.data, null, SYSTEM_ACTOR);
   const version = value?.version === undefined || value.version === null ? null : String(value.version).slice(0, 120);
   const t = title(value?.title);
-  return asPlatform(async () => {
+  // mold_v0-282 (flag record_resources): a repository a hand write names (new, or changed) is read through the platform's
+  // GitHub App before anything is stored; one it cannot read refuses the write, saying where to fix it.
+  if (!meta && ownsResources(area) && area.fields.some((f) => f.type === "repository")) {
+    const [prev] = await asPlatform(async () => (await q()).query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key]));
+    await (await resources()).checkRepositories(area, data, prev?.data ?? null);
+  }
+  const row = await asPlatform(async () => {
     const db = await q();
     const params = [area.pack, area.name, key, t, JSON.stringify(data), version, meta?.source ?? null, meta?.fingerprint ?? null];
     // What stays behind the row (mold_v0-221): a repository's write has nothing behind it; a hand write over a
@@ -1019,6 +1043,10 @@ export async function putPlatform(pack: string | null, name: string, key: string
     if (!r) throw mode === "create" ? new PackError(`${area.label} record ${key} already exists`, 409) : new PackError(`no ${area.name} record ${key}`, 404);
     return toRecord(area, r, null);
   });
+  // mold_v0-282: a record's database is created once it is stored (after its batch commits), one per database field; a
+  // record that has one keeps it. Creating it never undoes the write: a failure is the database's status, with a retry.
+  if (!meta && ownsResources(area) && area.fields.some((f) => f.type === "database")) await afterCommit(async () => (await resources()).ensureDatabases(area, key));
+  return row;
 }
 /**
  * Delete a shared row. A repository's writer (`source`) deletes only rows it wrote (its prune). A door (staff, a pack's
@@ -1029,6 +1057,12 @@ export async function deletePlatform(pack: string | null, name: string, key: str
   const area = platformAreaFor(pack, name);
   if (source === null && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
+  // mold_v0-282 (flag record_resources): a record's databases are deleted at their provider first; one that cannot be
+  // refuses the delete (the record and its database stay, nothing half done), saying why.
+  if (source === null && ownsResources(area) && area.fields.some((f) => f.type === "database")) {
+    if (txScope.getStore()) throw new PackError(`${area.label} records have a database of their own, deleted with the record: delete ${key} on its own, not in a batch`, 409);
+    await (await resources()).releaseDatabases(area, key);
+  }
   return asPlatform(async () => {
     const db = await q();
     if (source !== null) return (await db.query("DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 AND source = $4 RETURNING id", [area.pack, area.name, key, source])).length > 0;
@@ -1145,10 +1179,12 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   if (txScope.getStore()) throw new Error("a batch inside a batch: refused");
   // The data key is loaded before the transaction: sealing and opening inside it then need no other query.
   if (orgId !== null) await ensureOrgKey(orgId);
-  const scope: { tx: Queryable; orgId: number | null; changes?: RecordChange[] } = { tx: null as unknown as Queryable, orgId };
+  const scope: { tx: Queryable; orgId: number | null; changes?: RecordChange[]; after?: (() => Promise<unknown>)[] } = { tx: null as unknown as Queryable, orgId };
   const run = async () => (await getDb()).transaction((tx) => txScope.run(Object.assign(scope, { tx }), fn));
   const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run));
   if (scope.changes?.length) await tell(scope.changes);
+  // mold_v0-282: what waits for the commit (each on its own: one failing never stops the next).
+  for (const fn of scope.after ?? []) { try { await fn(); } catch (e) { console.error(`after commit: ${(e as Error).message}`); } }
   return out;
 }
 

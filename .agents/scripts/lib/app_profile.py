@@ -47,7 +47,7 @@ each one the factory can check. Today (mold_v0):
   features                   {"<flag>": true|false} (mold_v0-219, the shell's src/features.json and src/features.ts; the
                              factory's lib/features.py): one on/off flag per optional capability (customer_key_vault,
                              company_email, scheduled_alerts, record_clocks, audit.data, audit.platform, audit.sign,
-                             onprem_runners, developer_surface, declarative_checks, encrypted_fields, health_history, document_preview, agent_harness, record_pages, side_panel_forms, record_run_inputs, private_catalogs, wide_lists, record_rules, credential_sets, overview_cards, run_analytics, filters_in_address, usage_tool, workspace_recipes). A
+                             onprem_runners, developer_surface, declarative_checks, encrypted_fields, health_history, document_preview, agent_harness, record_pages, side_panel_forms, record_run_inputs, private_catalogs, wide_lists, record_rules, credential_sets, overview_cards, run_analytics, filters_in_address, usage_tool, workspace_recipes, record_resources). A
                              capability is on when something asks for it (a pack's declaration, or always for the audit
                              toggles) and its flag is not false; absent, the registry's default. The legacy keys (audit.*,
                              onprem_runners) still read and must agree. From the brief: `features.<flag> = true|false`

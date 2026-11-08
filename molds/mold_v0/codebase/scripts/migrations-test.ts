@@ -1393,6 +1393,43 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} the workspace recipes (three staff tables the tenant role cannot read; ids, a version once, an agent's version naming its proposal, a decided proposal checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Record-owned resources (mold_v0-282, record_resources, found by name): the shared records' databases (one per record
+  // and field, the tenant role with no grant; a ready one has its project and sealed connection string, a failed one
+  // its reason) and Neon's key vault provider (direct, NEON_API_KEY imported once); its rollback is refused while a
+  // record still has a database or the vault holds a Neon key, then leaves exactly what the migration before left, and
+  // it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "record_resources")!.version;
+    const d = await shellAt(kind, v);
+    const [p] = await d.query<{ mode: string; upstream_url: string; env_vars: string[] }>("SELECT mode, upstream_url, env_vars FROM vault_providers WHERE slug = 'neon'");
+    assert.deepEqual(p, { mode: "direct", upstream_url: "https://console.neon.tech/api/v2", env_vars: ["NEON_API_KEY"] }, "the provider: the server's own key");
+    await d.query("INSERT INTO record_resources (pack, area, record_key, field, provider, status) VALUES ('p', 'molds', 'm1', 'database', 'neon', 'provisioning')");
+    await assert.rejects(d.query("INSERT INTO record_resources (pack, area, record_key, field, provider, status) VALUES ('p', 'molds', 'm1', 'database', 'neon', 'provisioning')"), /duplicate key|unique/, "one database per record and field");
+    await assert.rejects(d.query("UPDATE record_resources SET status = 'ready', external_id = 'proj-1' WHERE record_key = 'm1'"), /check constraint/, "a ready database has its sealed connection string");
+    await assert.rejects(d.query("UPDATE record_resources SET status = 'failed' WHERE record_key = 'm1'"), /check constraint/, "a failed one says why");
+    await assert.rejects(d.query("INSERT INTO record_resources (pack, area, record_key, field, provider, status) VALUES ('p', 'molds', 'm2', 'database', 'other', 'provisioning')"), /check constraint/, "a known provider");
+    await d.query("UPDATE record_resources SET status = 'ready', external_id = 'proj-1', secret_ciphertext = 'c', secret_iv = 'i', secret_tag = 't', secret_key_id = 'k' WHERE record_key = 'm1'");
+    const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'record_resources' AND grantee = app_tenant_role()");
+    assert.equal(grants.length, 0, "record_resources: the tenant role has no grant on it");
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_record_resources.sql`), "utf8");
+    await assert.rejects(d.exec(rb), /record database\(s\) still exist/, "refused while a record still has a database");
+    await d.query("DELETE FROM record_resources");
+    await d.query("INSERT INTO vault_credentials (provider, label, ciphertext, iv, tag, key_id, hint) VALUES ('neon', 'default', 'x', 'x', 'x', 'x', 'ne…1')");
+    await assert.rejects(d.exec(rb), /holds a Neon key/, "refused while the vault holds a Neon key");
+    assert.equal((await d.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 1, "nothing changed");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    assert.equal((await r.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 0, "the provider row goes");
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_record_resources")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} the shared records' databases (one per record and field, the tenant role with no grant, a ready one sealed, a failed one with its reason) and Neon's key vault provider; its rollback refused while a database or a Neon key is there, then leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // No upstream catalogs (mold_v0-283, no_upstream_catalogs, found by name): the shared rows a catalog's index wrote become
   // staff rows (source, fingerprint and the catalog's commit cleared; titles and fields kept), a staff override drops the
   // catalog's version behind it, the index state table and the private catalogs' key vault provider go; a staff row and a
