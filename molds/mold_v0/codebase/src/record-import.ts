@@ -141,6 +141,31 @@ export async function importRecords(area: RecordArea, raw: unknown, opts: { dryR
   return { area: area.name, dry_run: opts.dryRun, rows, counts: countOf(["create", "update", "override", "unchanged", "invalid"], rows), written: opts.dryRun ? 0 : writes.length };
 }
 
+/**
+ * A staff import into a shared area, the one path it takes (mold_v0-285): the staff console's Import (POST
+ * /api/admin/records/_console/<area>/import) and the operator's `operator:import-records` both call it. importRecords
+ * (checked always, written unless dryRun; each new record's own database made after the batch commits, src/record-
+ * resources.ts), then the record of it: one IMPORT line per row written in the staff access log (admin_access_log)
+ * naming who imported, and the platform trail's staff entries when it is on. An area whose generated create or update
+ * tool a pack withholds takes no import (404, as its route answers).
+ */
+export async function staffImport(area: RecordArea, raw: unknown, opts: { dryRun: boolean; actor: string; role: string; ip: string; channel: "admin_console" | "system" }): Promise<ImportReport> {
+  const { areaOpWithheld } = await import("./mcp-withheld.js");
+  if (areaOpWithheld(area.name, "admin_create") || areaOpWithheld(area.name, "admin_update")) throw new PackError("Not found", 404);
+  const report = await importRecords(area, raw, { dryRun: opts.dryRun });
+  if (report.dry_run) return report;
+  const written = report.rows.filter((x) => x.action === "create" || x.action === "update" || x.action === "override");
+  if (!written.length) return report;
+  const actor = opts.actor.replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
+  const paths = written.map((x) => `/api/admin/records/${area.name}/${x.key} ${x.action}`.slice(0, 300));
+  const { getDb } = await import("./db.js");
+  const { asPlatform } = await import("./tenant-scope.js");
+  await asPlatform(async () => (await getDb()).query("INSERT INTO admin_access_log (actor, method, path, status, ip) SELECT $1, 'IMPORT', p, 200, $3 FROM unnest($2::text[]) AS p",
+    [actor, paths, opts.ip.slice(0, 64)])).catch((e) => console.error(`admin access log: ${(e as Error).message}`));
+  (await import("./audit-trail.js")).auditStaffRows(actor, opts.role, paths, opts.channel);
+  return report;
+}
+
 export type WorkspaceImportAction = "create" | "update" | "unchanged" | "invalid";
 export interface WorkspaceImportReport {
   area: string; dry_run: boolean; rows: { row: number; key: string; action: WorkspaceImportAction; errors: string[] }[];
