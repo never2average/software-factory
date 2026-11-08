@@ -319,7 +319,17 @@ const role = z.enum(DECLARABLE_ROLES);
  */
 const choiceValue = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$/, "a choice value: 1-80 letters, digits, spaces and _ . : / ( ) & -, starting with a letter or digit");
 const choice = z.union([choiceValue, z.object({ value: choiceValue, label: z.string().min(1).max(80).optional() }).strict()]);
-export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file", "url"] as const;
+export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file", "url", "repository", "database"] as const;
+/**
+ * mold_v0-282 (flag record_resources; src/record-resources.ts): the field types that are a record's own resource, on a
+ * shared (platform) area written by staff: `repository` links an existing GitHub repository, `database` is one Postgres
+ * database the platform creates for the record (its `provider`).
+ */
+export const RESOURCE_FIELD_TYPES = ["repository", "database"] as const;
+/** The providers a database field may name (mold_v0-282): Neon, through its API v2 with the key vault's `neon` key. */
+export const DATABASE_PROVIDERS = ["neon"] as const;
+/** A repository field's value (mold_v0-282): a GitHub repository as owner/name (GitHub's own limits on each part). */
+export const REPOSITORY_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9._-]{1,100}$/;
 /** The longest a url field's address may be (mold_v0-238). */
 export const URL_MAX = 2048;
 /**
@@ -350,6 +360,12 @@ export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "
  *   link        the 047 form of reference (a key or a list of keys, resolved through the area's `links`)
  *   url         (mold_v0-238) an absolute http or https address of up to 2048 characters, with no user name or password
  *               (isFieldUrl); `preview: "document"` makes the record's card fetch and preview its document
+ *   repository  (mold_v0-282, flag record_resources) an existing GitHub repository, owner/name, that staff link to a
+ *               shared record: checked on save through the platform's GitHub App, its default branch and last commit
+ *               shown on the record's page
+ *   database    (mold_v0-282, flag record_resources) one Postgres database of the record's own, created by the platform
+ *               when the record is created (`provider: "neon"`) and deleted with it; it takes no value: its connection
+ *               string is sealed apart from the record's fields (src/record-resources.ts)
  * `required` refuses a write that leaves it empty.
  */
 /**
@@ -428,6 +444,8 @@ export const RecordFieldSchema = z.object({
    * as chips in its list's cells, its record's sections and facts, and the peek (the first four in a cell, then +N).
    */
   display: z.enum(["chips"]).optional(),
+  /** mold_v0-282 (flag record_resources): a database field's provider ("neon": a Neon project per record). */
+  provider: z.enum(DATABASE_PROVIDERS).optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -450,6 +468,10 @@ export const RecordFieldSchema = z.object({
   if (f.copyable && (f.encrypted || f.type === "file" || f.type === "json")) bad(`copyable is for a value the page shows in full (not an encrypted, file or json field)`, "copyable");
   if (f.display === "chips" && (f.type !== "json" || f.encrypted)) bad("display: \"chips\" is for a json field holding a list of strings (not encrypted)", "display");
   if (f.preview && (!["text", "url"].includes(f.type) || f.encrypted)) bad("preview: \"document\" is for a url field, or a text field holding a URL (not encrypted)", "preview");
+  // mold_v0-282: a database field says who creates it; nothing else names a provider.
+  if (f.type === "database" && !f.provider) bad("a database field names its provider (provider: \"neon\")", "provider");
+  if (f.type !== "database" && f.provider) bad("provider is for a database field only", "provider");
+  if (f.type === "database" && f.required) bad("a database field takes no value (the platform creates it): it cannot be required", "required");
 });
 const field = RecordFieldSchema;
 /** The stored values of an enum field's options, in order. */
@@ -618,7 +640,9 @@ const jobKindBase = {
    * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
    */
   args: z.array(field).max(30).optional()
-    .refine((a) => !(a ?? []).some((f) => f.encrypted || f.searchable || f.reveal_roles), "encrypted, searchable and reveal_roles are for a record area's fields, not a job kind's arguments"),
+    .refine((a) => !(a ?? []).some((f) => f.encrypted || f.searchable || f.reveal_roles), "encrypted, searchable and reveal_roles are for a record area's fields, not a job kind's arguments")
+    // mold_v0-282: a record's own repository or database is a shared record's field, never a run's argument.
+    .refine((a) => !(a ?? []).some((f) => f.type === "repository" || f.type === "database"), "repository and database are a shared record area's fields, not a job kind's arguments"),
   unresolved_references: z.enum(["reject", "drop", "downgrade"]).default("reject"),
   max_unresolved: z.number().int().min(0).max(5000).default(100),
   /**
@@ -1788,6 +1812,13 @@ export const RecordAreaSchema = z.object({
   if (a.append_only && a.lifecycle) bad("an append-only area has no lifecycle: a move changes a record", "append_only");
   if (a.append_only && a.repository) bad("an append-only area keeps its records in the shell's own tables, not a repository's", "append_only");
   if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
+  // mold_v0-282 (flag record_resources): a record's own repository or database is a shared record's, written by staff
+  // through the record store (never a workspace's own row, never a repository's index).
+  for (const [i, f] of a.fields.entries()) if ((RESOURCE_FIELD_TYPES as readonly string[]).includes(f.type)) {
+    if (a.scope !== "platform") bad(`a ${f.type} field is for a shared (platform) area's records, which staff write`, "fields", i, "type");
+    if (a.repository) bad(`a ${f.type} field is for an area written through the record store (no repository)`, "fields", i, "type");
+    if (a.list_columns?.includes(f.name) && f.type === "database") bad(`${f.name} is a database field: it has no value to show in a list`, "list_columns");
+  }
   // mold_v0-194: an encrypted field's value is never read by the shell itself, so nothing may be computed from it.
   for (const [i, f] of a.fields.entries()) if (f.encrypted) {
     if (a.scope !== "workspace") bad("a shared (platform) area has no workspace key: encrypted is for a workspace area's fields", "fields", i, "encrypted");

@@ -50,6 +50,7 @@ import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
 import { getDb } from "./db.js";
+import { featureOn } from "./features.js";
 import { auditStaffRows } from "./audit-trail.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -151,7 +152,10 @@ export function recordAdminRouter(): Router {
       create, edit, import: create && edit,
       remove: stored && can(role, "delete") && !areaOpWithheld(a.name, "admin_delete"),
       repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
-      fields: a.fields.map(formField),
+      // mold_v0-282 (flag record_resources): a database field takes no value (the platform creates it), so the form leaves
+      // it out and says instead what is created, or that the Neon key is missing and where it is added.
+      fields: a.fields.filter((f) => f.type !== "database").map(formField),
+      ...(resourcesShown(a) ? { resources: await (await import("./record-resources.js")).formResources(a) } : {}),
       // mold_v0-271: the most bytes a file staff upload into its file fields may have (null: it takes none).
       ...(uploadMax(a, true) !== null && (create || edit) ? { upload_max: uploadMax(a, true) } : {}),
     };
@@ -173,6 +177,20 @@ export function recordAdminRouter(): Router {
   // A shared record's documents (mold_v0-220): staff see a regulator's document as its customers do.
   mountFileRoutes(r, { base: "/api/admin/records", org: () => null, actor: () => ({ role: null, userId: null }),
     who: (res) => ({ scope: "staff", person: String(res.locals.adminActor ?? "staff") }), area: platformArea }, () => open("admin_get"), need("read"));
+  // mold_v0-282 (flag record_resources): a shared record's own repository (read live: default branch, last commit) and
+  // databases (status, reason, retry); never a connection string. Retry needs "library", as the record's writes do.
+  r.get("/_resources/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
+    const a = platformArea(String(req.params.area));
+    if (!resourcesShown(a)) throw new PackError("Not found", 404);
+    const record = await getPlatform(a, String(req.params.key));
+    if (!record) throw new PackError("Not found", 404);
+    return (await import("./record-resources.js")).recordResources(a, record.key, record.data);
+  }));
+  r.post("/_resources/:area/:key/:field/retry", need("library"), open("admin_create", "admin_update"), answer(async (req) => {
+    const a = platformArea(String(req.params.area));
+    if (!resourcesShown(a)) throw new PackError("Not found", 404);
+    return { database: await (await import("./record-resources.js")).retryDatabase(a, String(req.params.key), String(req.params.field)) };
+  }));
   // mold_v0-271 (flag record_pages): a shared record's laid-out page for staff: its computed facts and related lists of shared areas.
   r.get("/_page/:area/:key", need("read"), open("admin_get"), answer(async (req) =>
     (await import("./record-page-routes.js")).staffPageData(String(req.params.area), String(req.params.key), typeof req.query.tab === "string" ? req.query.tab : null)));
@@ -205,6 +223,9 @@ export function recordAdminRouter(): Router {
   assertGuarded(r, "/api/admin/records");
   return r;
 }
+
+/** mold_v0-282: a shared area whose records own a repository or a database, with the flag on. */
+const resourcesShown = (a: RecordArea) => a.scope === "platform" && featureOn("record_resources") && a.fields.some((f) => f.type === "repository" || f.type === "database");
 
 /** Each shared row with where it comes from (mold_v0-221): staff or its repository, and what a staff override stands over. */
 async function withProvenance<T extends { key: string }>(a: RecordArea, rows: T[]): Promise<(T & { provenance?: unknown })[]> {

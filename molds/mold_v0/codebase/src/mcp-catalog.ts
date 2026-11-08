@@ -29,7 +29,7 @@
 import { z } from "zod";
 import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
-import { AgentJobKindSchema, CredentialSchema, isFieldUrl, URL_MAX, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
+import { AgentJobKindSchema, CredentialSchema, isFieldUrl, REPOSITORY_NAME, URL_MAX, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
 export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
@@ -130,6 +130,8 @@ function fieldInput(f: Field, labelOf: (area: string) => string): z.ZodType {
     }
     case "person": one = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@|-]{0,199}$/, "a person's sign-in id"); what = "a person's sign-in id"; break;
     case "reference": one = z.string().regex(RECORD_KEY, `a record key: ${KEY_TEXT}`); what = `the key of a ${labelOf(f.to!)} record (${f.to})`; break;
+    // mold_v0-282 (flag record_resources): an existing GitHub repository, read through the platform's GitHub App on save.
+    case "repository": one = z.string().regex(REPOSITORY_NAME, "a GitHub repository as owner/name"); what = "a GitHub repository as owner/name (the platform's GitHub App must be able to read it)"; break;
     case "file": one = z.strictObject({ path: z.string().min(1).max(500), name: z.string().max(200).optional(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(), size: z.number().int().min(0).optional() });
       what = "a file of the workspace: {path, name?, sha256?, size?}"; break;
     default: one = z.unknown(); what = "a value";
@@ -448,7 +450,8 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
     for (const a of areas.filter((x) => x.scope === "platform")) {
       const label = plain(a.label, 80);
       const readOnly = !!repoKind(a) && (READ_ONLY_KINDS as readonly string[]).includes(repoKind(a)!);
-      const dataShape = Object.fromEntries(a.fields.map((f) => [f.name, fieldInput(f, labelOf)]));
+      // mold_v0-282: a database field takes no value (the platform creates the record's database): not an input.
+      const dataShape = Object.fromEntries(a.fields.filter((f) => f.type !== "database").map((f) => [f.name, fieldInput(f, labelOf)]));
       const body = { title: z.string().max(500).optional().describe("The record's title"), data: z.strictObject(dataShape).describe("The record's fields") };
       add({ generated: n("admin_list", a.name), op: "admin_list", door: "admin", area: a.name, admin_needs: "read",
         title: `Shared ${label}: list`, description: `Staff: list the shared ${label} records every ${ws} reads, a page at a time (pass next as after).`,

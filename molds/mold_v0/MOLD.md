@@ -2983,6 +2983,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `run_analytics` | off | always (the profile alone) | `/app/run-analytics`, `/admin/run-analytics`, `/api/analytics/runs`, `/api/admin/onboarding/run-analytics`, their sidebar entries and the Activity page's link. `quiet_off` |
 | `filters_in_address` | off | always (the profile alone) | the dashboards' filters kept in the address (staff's Overview, a workspace's Activity, run analytics). `quiet_off` |
 | `usage_tool` | off | always (the profile alone) | the customer MCP's `get_usage`. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
+| `record_resources` | off | a shared area's `repository` or `database` field | a shared record's own GitHub repository (linked, checked on save) and its own Neon database (created with the record, deleted with it): "Record-owned resources (mold_v0-282)" below. Off, either field is refused at build. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3846,6 +3847,54 @@ self-tests.
   workspace, session and wake). Staff with the right to change profiles accept it (the recipe's next version, its source
   the agent, the proposal named) or decline it with a reason; a proposal made against an older version is refused on
   accept. `npm run test:recipes`.
+
+## Record-owned resources (mold_v0-282)
+
+Flag `record_resources` (off by default, `quiet_off`; asked for by a shared area's `repository` or `database` field, and
+refused at build while off). Two field types of a **shared (platform) area whose records staff write** (never a
+workspace area, an area fed by a repository, or a job kind's argument: refused at declaration), each a thing the record
+owns outside the record store (`src/record-resources.ts`, the only writer; `sql/migrations/0061_record_resources.sql`
+with its rollback):
+
+```json
+{ "name": "repository", "label": "Repository", "type": "repository" },
+{ "name": "database", "label": "Database", "type": "database", "provider": "neon" }
+```
+
+- **`repository`**: an existing GitHub repository, `owner/name`, that staff link to the record (linked, never created).
+  Every hand write that names one, new or changed, reads it first through the platform's GitHub App (the app private
+  catalogs are read with: Admin › Key vault, GitHub App; `src/github-app.ts readRecordRepository`): the app's
+  installation on the owner is found with the app's own key, a token for that one repository (read contents) is minted,
+  the repository and its default branch's last commit are read, and the token is revoked. A repository the app cannot
+  read refuses the write in plain words naming where to fix it (install the app on the owner, or give its installation
+  access to the repository; no app: where to set it up). An unchanged repository is not read again on save. The
+  record's page shows it with its default branch and last commit (read live, a minute's memory), or why it cannot be
+  read. The form takes `owner/name` (a pasted `https://github.com/owner/name` is trimmed to it).
+- **`database`** (`provider: "neon"`, the only provider): one Postgres database of the record's own, **created when the
+  record is created** (never linked, never shared): a Neon project per record and field, through Neon's API v2 called
+  directly (`POST /projects`, `DELETE /projects/{id}`; fetch, no SDK), with the key vault's `neon` key (a platform
+  owner's, Admin › Key vault; `NEON_API_KEY` on the server is imported once, as every provider key is). The key is the
+  server's own: never given to a session or a run (`KEYS_NEVER_INJECTED`, `ORCHESTRATOR_ONLY_PROVIDERS`), and Key vault
+  lists Neon only while an area's records own a database. The field takes no value (a value is refused; the New and Edit
+  forms leave it out). The project's connection string is sealed with the key vault's master key (AES-256-GCM, its key
+  id kept; `rekey` re-seals it) into the record's own row of `record_resources`, never into the record's fields, an
+  answer, a log line or an error (a Neon message's connection string is cut out); the server's own code opens it
+  (`recordDatabaseUrl`). The row's status is the record page's: **provisioning**, **ready** (its Neon project, region,
+  host, database and role; never the password), or **failed** with the reason, with **Retry** (staff with `library`;
+  also for one cut short after two minutes, or a record written before the flag was on: Create database). Creating it
+  never undoes the record's write; inside a batch (an import) each record's database is created once the batch commits.
+  **Deleting** the record (staff with `delete`, after the console's confirmation, which says the database goes too)
+  deletes the Neon project first; Neon refusing, or no Neon key, keeps the record and its database ("nothing was
+  deleted"), and a project Neon no longer knows counts as deleted. A database-owning record is not deleted inside a
+  batch. **A missing Neon key** is said in plain words on the New form and on Health (Status's alert and its Record
+  databases check, which also counts the databases that failed), with where to add it.
+
+Routes (staff, inside the admin router): `GET /api/admin/records/_resources/<area>/<key>` (the record's repositories and
+databases, never a secret) and `POST /api/admin/records/_resources/<area>/<key>/<field>/retry`; `_console/<area>/form`
+carries `resources` (the fields, and `database_key_missing`). Off, both routes answer not found and nothing is created.
+Proven offline by `npm run test:record-resources` (a stand-in Neon API v2 and a stand-in GitHub) and
+`npm run test:migrations` (0061: one database per record and field, the tenant role with no grant, a ready one sealed, a
+failed one with its reason; its rollback refused while a database or a Neon key is there).
 
 ## Early access and sign-in editor (mold_v0-266)
 

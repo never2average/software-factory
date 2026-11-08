@@ -31,6 +31,10 @@ export const adminApi = <T = any>(method: string, path: string, body?: unknown) 
 export const adminDataApi = <T = any>(method: string, path: string, body?: unknown) =>
   request<T>(`/api/admin/data${path}`, method, body, method === 'GET' ? {} : ADMIN_HEADERS);
 
+/** /api/admin/records/* (platform admins: the staff record pages' own routes, src/record-routes.ts; mold_v0-282 a record's resources). */
+export const adminRecordsApi = <T = any>(method: string, path: string, body?: unknown) =>
+  request<T>(`/api/admin/records${path}`, method, body, method === 'GET' ? {} : ADMIN_HEADERS);
+
 /** /api/app/* (the signed-in person's active account). `headers`: say, If-Match on a save that checks the version. */
 export const appApi = <T = any>(method: string, path: string, body?: unknown, headers?: Record<string, string>) =>
   request<T>(`/api/app${path}`, method, body, method === 'GET' ? headers : { 'X-Pack-Request': '1', ...headers });
