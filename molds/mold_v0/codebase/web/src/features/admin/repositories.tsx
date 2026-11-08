@@ -7,7 +7,7 @@
 import Link from 'next/link';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import PageContainer from '@/components/layout/page-container';
+import { PageFrame } from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { adminDataApi } from '@/lib/api-client';
@@ -47,12 +47,12 @@ function stateOf(r: RepositoryRow): { tone: Tone; text: string } {
   return { tone: 'warn', text: r.index === 'manual' ? 'Not indexed yet' : 'Not indexed yet (it starts on its own)' };
 }
 
-export function AdminRepositories() {
+export function AdminRepositories({ bare = false }: { bare?: boolean } = {}) {
   const { data, error, isLoading } = useRepositories();
   const catalogs = data?.repositories.filter((r) => r.upstream) ?? [];
   const others = data?.repositories.filter((r) => !r.upstream) ?? [];
   return (
-    <PageContainer pageTitle='Data repositories' pageDescription='Where the record areas get their rows. An upstream catalog is read at the commit its pack pins, and indexed into the shared areas every account reads.'>
+    <PageFrame bare={bare} pageTitle='Data repositories' pageDescription='Where the record areas get their rows. An upstream catalog is read at the commit its pack pins, and indexed into the shared areas every account reads.'>
       <ErrorBox error={error} />
       {isLoading || !data ? <LoadingCards count={2} /> : (
         <div className='flex max-w-5xl flex-col gap-8'>
@@ -78,7 +78,7 @@ export function AdminRepositories() {
           )}
         </div>
       )}
-    </PageContainer>
+    </PageFrame>
   );
 }
 

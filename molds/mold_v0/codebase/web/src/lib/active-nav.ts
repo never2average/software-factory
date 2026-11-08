@@ -14,7 +14,7 @@
  *      lit on itself only.
  * At most one entry is returned (the first of equals, in the sidebar's order); none for a page that belongs to none.
  */
-import { packTabs } from '@/config/pack-nav.generated';
+import { packTabs, recordAdminNav } from '@/config/pack-nav.generated';
 import type { NavGroup } from '@/types';
 
 export interface ActiveNavOptions {
@@ -106,7 +106,17 @@ export const navUrls = (groups: readonly NavGroup[], footer: readonly string[]):
   ...footer
 ];
 
+/**
+ * mold_v0-281: a staff Records entry of in-page tabs (console.admin_records `tabs`) is lit on its own page and on its
+ * members': a record of a member area (/admin/records/<area>/<key>) and a page under a member shell page
+ * (/admin/recipes/<id>). Its members' own list addresses lead to its tabs.
+ */
+const adminGroups = recordAdminNav.flatMap((g) => g.items).filter((i) => i.inPageTabs?.length);
+export const adminRecordGroupHome = (area: string): string | null => adminGroups.find((i) => i.inPageTabs!.some((t) => t.area === area))?.url ?? null;
+const ADMIN_GROUP_HOMES: Readonly<Record<string, string>> = Object.fromEntries(adminGroups.flatMap((i) => i.inPageTabs!.filter((t) => !t.area)
+  .flatMap((t) => [[t.url, i.url], [`${t.url}/`, i.url]])));
+
 /** Each console's options: the customer console's records lead to their tabs; the staff console's have entries. */
 export const navOptions = (area: 'portal' | 'admin'): ActiveNavOptions => area === 'admin'
-  ? { base: '/admin', homes: ADMIN_HOMES }
+  ? { base: '/admin', recordHome: adminRecordGroupHome, homes: { ...ADMIN_HOMES, ...ADMIN_GROUP_HOMES } }
   : { base: '/app', recordHome: packRecordHome, homes: PORTAL_HOMES };

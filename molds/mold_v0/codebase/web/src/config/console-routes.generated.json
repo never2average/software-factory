@@ -22,6 +22,7 @@
     "/admin/profile",
     "/admin/recipes",
     "/admin/recipes/[id]",
+    "/admin/records-group/[group]",
     "/admin/records/[area]",
     "/admin/records/[area]/[key]",
     "/admin/repositories",
