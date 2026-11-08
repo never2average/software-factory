@@ -541,7 +541,7 @@ export default definePack({ id: "fx_mixed",
   const as = (org: typeof A, role: "viewer" | "member" | "billing" | "owner" | null) => rec.workspaceRecords("fixture_tracker", org.orgId, { role, userId: role ? `user_${role}` : null });
   const reg = packRegistry();
   assert.deepEqual([reg.recordAreas.length, reg.jobKinds.length, reg.agentJobKinds.length, reg.credentials.length, reg.schedules.length, reg.onboarding.length, reg.metrics.length, reg.repositories.length, reg.runResults.length],
-    [3, 0, 1, 1, 1, 2, 1, 2, 1], "the registry lists every declaration (repositories and the run-results mapping for 059 and 061)");
+    [3, 0, 1, 1, 1, 2, 1, 1, 1], "the registry lists every declaration (repositories and the run-results mapping for 059 and 061; mold_v0-283: its upstream catalog gone)");
 
   await rec.putPlatform(null, "tracker_policies", "p1", { title: "Patch within 30 days", data: { summary: "Critical findings are fixed within 30 days", severity: "critical" } });
   await assert.rejects(rec.putPlatform(null, "tracker_policies", "p2", { data: { severity: "critical" } }), /field summary of area tracker_policies is required/, "a shared row's required field");
