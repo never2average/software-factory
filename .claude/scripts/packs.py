@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""packs.py list | show <pack_id> | check <pack_id> | apply <app_id> | verify <app_id> | --self-test
+"""packs.py list | show <pack_id> | check <pack_id> | apply <app_id> | verify <app_id> | sidebar <app_id> | --self-test
 
 A pack is what makes an application more than its mold WITHOUT forking the mold: a directory tree under
 packs/<pack_id>/files/ that mirrors the mold's codebase root and only ADDS files (subagents, a root-instructions
@@ -15,6 +15,11 @@ section, shared sandbox helpers). An application names its packs in application.
                    the profile is generated, with "none" it is left out and a stale copy is removed. An app with no
                    packs that asks for the library gets a build copy for that alone.
   verify <app>     the mold's own subagent checks inside build/<app_id>/
+  sidebar <app>    the app's resolved /app and /admin sidebars (headings, entries, in-page tabs) in plain text, from a
+                   scratch copy build/<app_id>.sidebar/ (the mold + the app's packs and profile settings, as a deploy builds
+                   it; removed afterwards, the deploy copy never touched), with the mold's sidebar refusals and warnings
+                   (mold_v0-279: a mold whose generator has --sidebar; others say so and pass). `check <pack>` prints it
+                   for every app that names the pack, so the plan the operator agreed can be compared before a deploy.
   lane-copy <app>  the two copies the test lanes grade, both rebuilt from scratch and unbranded:
                      build/<app_id>.lane/          mold + packs (the app's code AND its profile's words)
                      build/<app_id>.lane-default/  mold + packs WITHOUT the packs' profiles/: the default profile,
@@ -584,6 +589,50 @@ def verify(app_id):
     bad += model_surface(build, env)
     return 1 if bad else 0
 
+def _sidebar_supported(mold_dir, rules):
+    """The mold's generator prints its resolved sidebars (mold_v0-279: scripts/gen-packs.mjs --sidebar). -> its command or None."""
+    gen = (rules or {}).get("generators") or []
+    if not gen or len(gen[0]) < 2: return None
+    f = os.path.join(mold_dir, gen[0][1])
+    return gen[0] + ["--sidebar"] if os.path.isfile(f) and "--sidebar" in open(f).read() else None
+
+def sidebar(app_id, say=print):
+    """mold_v0-279: the app's resolved sidebars, built in a scratch copy (build/<app_id>.sidebar/, removed afterwards) so
+    the deploy copy and a deploy running from it are never touched. -> 0 printed (warnings included), 1 refused."""
+    import contextlib, io
+    app = app_docs(app_id); mold = app.get("mold_id"); rules = rules_for(mold)
+    mold_dir = os.path.join(ROOT, "molds", mold or "", "codebase")
+    cmd = _sidebar_supported(mold_dir, rules) if rules is not None else None
+    if cmd is None: say(f"{app_id}: {mold} prints no sidebar tree (its generator has no --sidebar); nothing to compare"); return 0
+    scratch = os.path.join(ROOT, "build", app_id + ".sidebar")
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                _apply_by_rules(app_id, app, app.get("packs") or [], mold_dir, rules, build=scratch)
+        except SystemExit as e:
+            said = (err.getvalue().strip().splitlines() or [])[-12:]
+            say(f"{app_id}: the sidebar could not be built: " + "\n  ".join(said + [str(e.code or "")]).strip())
+            return 1
+        if not os.path.isdir(scratch):   # an app with no packs and no profile settings: the mold's own sidebar
+            r = subprocess.run(cmd, cwd=mold_dir, capture_output=True, text=True)
+        else: r = subprocess.run(cmd, cwd=scratch, capture_output=True, text=True)
+        text = (r.stdout + (r.stderr if r.returncode else "")).strip()
+        say(text)
+        return 1 if r.returncode else 0
+    finally:
+        if os.path.isdir(scratch) and not os.path.islink(scratch): shutil.rmtree(scratch, ignore_errors=True)
+
+def _apps_naming(pack_id):
+    """The apps in state whose application.json names this pack (mold_v0-279: check prints each one's sidebar)."""
+    d = os.path.join(ROOT, "state", "application"); out = []
+    for a in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        f = os.path.join(d, a, "application.json")
+        try: doc = load(f) if a != "app_id" and os.path.isfile(f) else {}
+        except (OSError, ValueError): continue
+        if isinstance(doc, dict) and pack_id in (doc.get("packs") or []): out.append(a)
+    return out
+
 def model_surface(build, env, run=subprocess.run):
     """Render what the agent's model reads in this build copy (the mold's scripts/lib/model-surface.mjs, ~10 s), so
     a profile whose words collide (two labels turning into one tool parameter name, 2026-10-16 example_compliance) fails
@@ -620,8 +669,13 @@ def self_test():
             assert model_surface(d, {}, run=lambda *x, **k: types.SimpleNamespace(returncode=1, stderr=clash)) == 1
             assert model_surface(d, {}, run=lambda *x, **k: types.SimpleNamespace(returncode=0, stderr="")) == 0
         assert '"implementationId" would read "complianceFrameworkId"' in out.getvalue(), out.getvalue()
-    n = 10 + rules_self_test()
-    print(f"packs: {n} checks passed ({n - 10} of them: per-mold pack rules, mold_v0-024)"); return 0
+        # mold_v0-279: the sidebar tree comes from a mold whose generator has --sidebar; any other mold says so and passes
+        rv0 = rules_for("mold_v0"); cb0 = os.path.join(ROOT, "molds", "mold_v0", "codebase")
+        assert _sidebar_supported(cb0, rv0) == ["node", "scripts/gen-packs.mjs", "--sidebar"], _sidebar_supported(cb0, rv0)
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True); open(os.path.join(d, "scripts", "gen-packs.mjs"), "w").write("// no tree here\n")
+        assert _sidebar_supported(d, rv0) is None and _sidebar_supported(d, None) is None
+    n = 11 + rules_self_test()
+    print(f"packs: {n} checks passed ({n - 11} of them: per-mold pack rules, mold_v0-024)"); return 0
 
 def rules_self_test():
     """Per-mold rules (mold.json packs): mold_v1 keeps the constants above; mold_v0's rules confine a pack to its own id;
@@ -846,7 +900,15 @@ def main(a):
     if a[0] == "show":
         print(json.dumps(load(os.path.join(PACKS, a[1], "pack.json")), indent=2)); [print("  +", f) for f in pack_files(a[1])]; return 0
     if a[0] == "check":
-        errs = check_pack(a[1], rules=_own_rules(a[1])); [print(e) for e in errs]; print("ok" if not errs else f"{len(errs)} problem(s)"); return 1 if errs else 0
+        errs = check_pack(a[1], rules=_own_rules(a[1])); [print(e) for e in errs]; print("ok" if not errs else f"{len(errs)} problem(s)")
+        if errs: return 1
+        bad = 0
+        for app_id in _apps_naming(a[1]):   # mold_v0-279: the resolved sidebar of each app on a mold that prints one
+            mold = app_docs(app_id).get("mold_id") or ""
+            if not _sidebar_supported(os.path.join(ROOT, "molds", mold, "codebase"), rules_for(mold)): continue
+            print(f"\n{app_id}'s sidebar (packs.py sidebar {app_id}):"); bad += sidebar(app_id)
+        return 1 if bad else 0
+    if a[0] == "sidebar": return sidebar(a[1])
     if a[0] == "apply": return apply(a[1])
     if a[0] == "lane-copy": return lane_copies(a[1])
     if a[0] == "verify": return verify(a[1])

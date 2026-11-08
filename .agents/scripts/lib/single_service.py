@@ -1062,6 +1062,19 @@ def build_source(app_id, app, root=None, say=print, run=subprocess.run):
     if not os.path.isdir(build): raise NotBuilt(f"{app_id}: build/{app_id}/ was not made (no step wrote it), so nothing was created or deployed.")
     return build
 
+def say_sidebar(app_id, app, say=print, root=None, run=subprocess.run):
+    """mold_v0-279: the app's resolved /app and /admin sidebars (packs.py sidebar: headings, entries, in-page tabs, built
+    in a scratch copy, never the deploy copy), printed by the deploy check so the plan the operator agreed can be compared
+    before a deploy; the mold's sidebar refusals (a heading named like one of its entries) stop the deploy as the build
+    would. Skipped for an app with no packs and no profile settings (the mold's own sidebar) and under another factory
+    root (the self-tests). -> True when the sidebar is refused."""
+    if root is not None or not isinstance(app, dict) or not (app.get("packs") or app.get("profile")): return False
+    r = run([sys.executable, os.path.join(SCRIPTS, "packs.py"), "sidebar", app_id], capture_output=True, text=True, cwd=ROOT)
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    say(f"the console's sidebars (compare them with the plan agreed with the operator; again any time: python3 .claude/scripts/packs.py sidebar {app_id}):")
+    for line in out.splitlines() or ["(nothing printed)"]: say("  " + line)
+    return r.returncode != 0
+
 def check(app_id, app, infra, adir, say=print, root=None):
     """Offline and read-only. Exit 0 = ready for --deploy-remote."""
     S = settings(app_id, app, infra, root); man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root)
@@ -1076,6 +1089,7 @@ def check(app_id, app, infra, adir, say=print, root=None):
     pre = preflight(cb, F, S)
     for p in pre: say("  not ready: " + p)
     say_run_needs(app_id, app, "compose_remote", say=say, root=root)
+    sidebar_bad = say_sidebar(app_id, app, say=say, root=root)
     say("a deploy will, in order:")
     for i, st in enumerate(plan(S, F, source_for(app_id, app, root)), 1): say(f"  {i:2d}. {st['title']}")
     say(f"values only you hold, asked for at a hidden prompt during the deploy if the server lacks them: {', '.join(S['secrets_user']) or 'none'}")
@@ -1105,6 +1119,7 @@ def check(app_id, app, infra, adir, say=print, root=None):
     if not os.path.isfile(VR.key_path(S)):
         todo.append(f"make the SSH key named {S['key_ref']} and add its public half at the server provider: python3 .claude/scripts/provision.py {app_id} --remote-key")
     if errs: todo.append("fix the state problem(s) above, then run: python3 .claude/scripts/factory.py validate")
+    if sidebar_bad: todo.append(f"the console's sidebar was refused (above): fix the pack's tabs or the profile's console.sidebar, then run: python3 .claude/scripts/packs.py sidebar {app_id}")
     gone = missing_build_inputs(cb, F)
     if gone: todo.append(f"the mold's codebase lacks {', '.join(gone)}, which its image build copies. " + _codebase_fix(app["mold_id"], "commit the file")
                          + " (nothing for this app's state to change)")
@@ -2172,6 +2187,7 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     si = SIGN_IN(app_id, app, infra, P, cb, names, {r: bool(meta[r].get("id")) for r in names})
     si_needed = sign_in_said(app_id, si, say)
     say_run_needs(app_id, app, "vercel", say=say, root=root)
+    sidebar_bad = say_sidebar(app_id, app, say=say, root=root)
     say("a deploy will:")
     for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
@@ -2206,6 +2222,7 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     if ck and ck["block"]:
         say(f"Not ready: {clerk_block(app_id, P, ck)}. Member API keys are off for {app_id} (profile member_keys: false), so nothing else lets an AI client connect."); return 1
     if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
+    if sidebar_bad: say(f"Not ready: the console's sidebar was refused (above): fix the pack's tabs or the profile's console.sidebar, then run: python3 .claude/scripts/packs.py sidebar {app_id}"); return 1
     why = rls_tools_missing(cb, F.get("rls"))
     if why: say(f"  - {why}"); return 1
     pg = os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json"))

@@ -1887,7 +1887,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   tab beside it (its page would only redirect), and a `rail` on any other tab, a card twice, `notices` without
   `include: notices`, a chart that is not one of the pack's number charts, and `charts_title` on a tab that is not a
   home tab with charts. **The sidebar** shows no heading for a group of one entry named like the group (mold_v0-175:
-  `web/src/components/layout/app-sidebar.tsx`; a pack's Overview tab in an Overview group is one entry).
+  `web/src/components/layout/app-sidebar.tsx`); since mold_v0-279 the build refuses such a heading outright (leave the
+  Overview tab without a `group`).
   `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
   draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, no charts
   grid; then every step done).
@@ -2486,6 +2487,21 @@ or is listed twice, a shell page a tab already opens, one the build lacks or hid
 orders its own tabs). Without tabs or a declared sidebar the shell's own sidebar joins a pack's group to the shell group
 of the same heading and lists each page once (`mergeNav`, `web/src/config/nav-config.ts`); a declared API keys entry
 takes the footer's place. `npm run test:console-sidebar`.
+
+**The sidebar plan checked at build (mold_v0-279).** `gen-packs` resolves both sidebars as the console builds them
+(`web/src/config/nav-config.ts`, bundled with the generated files of the same run, before anything is written: the shell's
+entries, a host pack's, the tabs or the declared sidebar, the Records and Workspace groups, Settings joined below
+Overview) and **refuses** a heading that is also the name of one of its entries, case aside, in `/app` and `/admin`
+("Overview" over Overview; a declared group named Settings that the Settings entry joins; a staff page under a heading
+of its own title). Leave such an entry without a group (a tab with no `group` has no heading) or name the group for
+what it holds. The shell's own Activity entry sits under Insights beside Usage for the same reason. It **warns** (the
+build goes on) about a group of more than 7 entries, and about a child area's list tab beside its parent's: an area
+whose records each belong to a record of another area (a required reference field or link to it) while both have
+sidebar entries of their own; put them in one `sections` tab with the parent (mold_v0-175). `node scripts/gen-packs.mjs
+--sidebar` prints the resolved trees (heading, entries with their addresses, a sections tab's in-page tabs) and writes
+nothing; the factory prints the same with `packs.py sidebar <app>`, `packs.py check <pack>` (each app naming the
+pack) and the deploy check (`provision.py <app>`), so the tree the operator agreed can be compared before a deploy.
+`npm run test:console-sidebar` (section 10).
 
 **The active sidebar entry (mold_v0-213).** Each console lights exactly one entry for the page drawn
 (`web/src/lib/active-nav.ts` `activeNavUrl`, used by `components/layout/app-sidebar.tsx` for the customer and the staff

@@ -61,6 +61,9 @@ spec and says what each still lacks (read-only).
 2. `mint.py new …`. If it leaves `questions.json`, the `intake` subagent asks only those.
 3. If the product needs its own specialists, fields or wording, that is a pack (`subagent` skill), named in the
    brief. Build it before `run`. Anything the base cannot do is a pull request upstream, never a fork.
+   Before writing an app's `tabs`, write its sidebar tree (headings, entries, each sections tab's in-page tabs) back
+   to the operator and wait for a yes; before calling the UI done, compare it with the tree
+   `python3 .claude/scripts/packs.py sidebar <app_id>` prints (mold_v0: also in `packs.py check` and the deploy check).
 4. `mint.py <app_id> run`, and again after each thing the operator does, until it says finished.
 
 ## When a station says "needs you"
