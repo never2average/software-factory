@@ -10,14 +10,23 @@ import { cn } from '@/lib/utils';
  * is a labelled region a keyboard can reach (tabindex 0), so its hidden columns can be scrolled to with the arrow keys
  * (WCAG 2.1.1; axe `scrollable-region-focusable`, mold_v0-114). `label` names it ("Findings"); without one, "Table".
  */
+/**
+ * A list with nothing in it (operator, 2026-11-08): when the body's only row is one cell spanning the table (the empty,
+ * loading or "nothing matches" message every list draws), the table fills the area below its headings and the message
+ * sits centred in it, in every table of the console, with no change at the call sites.
+ */
+const EMPTY = 'has-[tbody>tr:only-child>td[colspan]:only-child]';
+const EMPTY_FILL = `${EMPTY}:h-full`;
+const EMPTY_ROW = '[&_tbody>tr:only-child:has(>td[colspan]:only-child)]:h-full [&_tbody>tr:only-child>td[colspan]:only-child]:text-center [&_tbody>tr:only-child>td[colspan]:only-child]:align-middle [&_tbody>tr:only-child>td[colspan]:only-child]:whitespace-normal [&_tbody>tr:only-child:has(>td[colspan]:only-child)]:hover:bg-transparent';
+
 function Table({ className, label, ...props }: React.ComponentProps<'table'> & { label?: string }) {
   const { ref, scrollRegion } = useScrollsSideways<HTMLDivElement>();
   return (
     <div ref={ref} data-slot='table-container' {...scrollRegion(label ?? 'Table')}
-      className='focus-visible:ring-ring/50 relative w-full overflow-x-auto rounded-sm outline-none focus-visible:ring-[3px]'>
+      className={cn('focus-visible:ring-ring/50 relative w-full overflow-x-auto rounded-sm outline-none focus-visible:ring-[3px]', EMPTY_FILL)}>
       <table
         data-slot='table'
-        className={cn('w-full caption-bottom text-sm', className)}
+        className={cn('w-full caption-bottom text-sm', EMPTY_FILL, EMPTY_ROW, className)}
         {...props}
       />
     </div>
