@@ -105,7 +105,6 @@ through the same check `factory.py validate` and the build use.
   | `side_panel_forms` | false | always (the profile alone) | panel |
   | `teams` | false | always (the profile alone); an area's `visibility` takes effect only with it on | teams |
   | `record_run_inputs` | false | a kind's `input_from_record` | inputs |
-  | `private_catalogs` | false | an upstream catalog's `access` | private |
   | `wide_lists` | false | a list past 8 columns (refused while off) | wide |
   | `record_rules` | false | a reference's `where`, an area's `on_save` (refused while off) | rules |
   | `credential_sets` | false | a credential's `entries`, a `tenant` binding (refused while off) | credsets |
@@ -152,8 +151,7 @@ through the same check `factory.py validate` and the build use.
   only; the pack schema refuses a default outside the modes, a shared area and a repository's area. Off, every record
   is open to its workspace, as before.
 - mold_v0-260 (molds/mold_v0/MOLD.md "Generic gaps"): a job kind's `input_from_record` (its start tool's `record`),
-  an upstream catalog's `access` (`deploy_key` over `ssh://git@...`, or `github_app`; the key or installation is set in
-  Admin › Key vault, never in the spec), a sections tab of up to 8 tabs, lists of up to 12 columns (past 8:
+  a sections tab of up to 8 tabs, lists of up to 12 columns (past 8:
   `features.wide_lists`), a reference's `where` and an area's `on_save` (`features.record_rules`), a credential's
   `entries` and `bound_to: "tenant"` on an area declared `tenant: true` (`features.credential_sets`), a home tab's
   fifth `sparklines` entry and its `recent_runs` and `attention` rail cards (`features.overview_cards`). The spec check

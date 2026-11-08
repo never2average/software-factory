@@ -3,11 +3,7 @@
   "id": "fixture_gaps",
   "name": "Fixture gaps",
   "version": "0.1.0",
-  "description": "A declarative test fixture (mold_v0-260; scripts/generic-gaps-test.ts): a run that takes its input from the record it runs on, two private shared catalogs, a sections tab of 8 tabs, a 12-column list, references limited by a condition on their target and a check run on save, a credential of several labelled values bound to a tenant, a home tab with a fifth number and the Recent runs and Needs attention cards. Never shipped.",
-  "upstream": {
-    "repo": "ssh://git@git.example.com/acme/runbooks.git",
-    "commit": "0123456789abcdef0123456789abcdef01234567"
-  },
+  "description": "A declarative test fixture (mold_v0-260; scripts/generic-gaps-test.ts): a run that takes its input from the record it runs on, two shared lists staff keep (mold_v0-283: once private catalogs), a sections tab of 8 tabs, a 12-column list, references limited by a condition on their target and a check run on save, a credential of several labelled values bound to a tenant, a home tab with a fifth number and the Recent runs and Needs attention cards. Never shipped.",
   "record_areas": [
     {
       "name": "customers",
@@ -431,7 +427,6 @@
       "label": "Runbooks",
       "role": "source",
       "scope": "platform",
-      "repository": "runbooks",
       "icon": "book",
       "fields": [
         {
@@ -453,7 +448,6 @@
       "label": "Standards",
       "role": "source",
       "scope": "platform",
-      "repository": "standards",
       "icon": "shield",
       "fields": [
         {
@@ -471,54 +465,6 @@
       ]
     }
   ],
-  "repositories": {
-    "runbooks": {
-      "kind": "upstream_catalog",
-      "label": "Runbooks",
-      "upstream": "pack.json#upstream",
-      "transport": "git",
-      "access": "deploy_key",
-      "index": "manual",
-      "files": {
-        "runbooks": "runbooks.json"
-      },
-      "map": {
-        "runbooks": {
-          "from": "runbooks",
-          "key": "{id}",
-          "title": "{title}",
-          "fields": {
-            "service": "service",
-            "summary": "summary"
-          }
-        }
-      }
-    },
-    "standards": {
-      "kind": "upstream_catalog",
-      "label": "Standards",
-      "upstream": {
-        "repo": "https://github.com/example-org/standards",
-        "commit": "89abcdef0123456789abcdef0123456789abcdef"
-      },
-      "access": "github_app",
-      "index": "manual",
-      "files": {
-        "standards": "standards.json"
-      },
-      "map": {
-        "standards": {
-          "from": "standards",
-          "key": "{id}",
-          "title": "{title}",
-          "fields": {
-            "family": "family",
-            "summary": "summary"
-          }
-        }
-      }
-    }
-  },
   "checks": [
     {
       "name": "customer_supported",

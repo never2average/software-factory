@@ -111,7 +111,7 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
                 in_build: await providerInBuild(p.slug, ks.length) });
   }
   // The GitHub App's settings are one sealed entry of their own section, not a key (the key vault page leaves it out).
-  const shown = list.filter((p) => p.slug !== "github_app" && p.slug !== "catalog_access" && (opts.all || p.in_build));
+  const shown = list.filter((p) => p.slug !== "github_app" && (opts.all || p.in_build));
 
   const rn = await runNeeds();
   const bySlug = new Map(list.map((p) => [p.slug, p]));

@@ -84,7 +84,7 @@ only to workspaces). **Provenance** says how rows get there. Five sources:
 |---|---|---|---|
 | `staff` | platform staff, by hand | a shared area (a workspace area only through a write tool the pack made `admin_only`) | the staff record pages' New, Edit, Override and Import, `/api/admin/data`, the admin MCP (mold_v0-212, mold_v0-221) |
 | `people` | the workspace's own people and their AI clients, by hand | a workspace area whose writes the pack does not withhold | the create form of its list tab, Settings tab or Records page (with its files uploaded), the data API (`/api/data`), the generated create, update and move tools |
-| `repository` | the area's `repository` | any area naming one | `workspace_files` (rows indexed from the workspace's files, read only), `http_api` (read live, read only), `upstream_catalog` (a pinned upstream catalog that staff index), `shell_tables` (`src/data-repositories.ts`) |
+| `repository` | the area's `repository` | any area naming one | `workspace_files` (rows indexed from the workspace's files, read only), `http_api` (read live, read only), `shell_tables` (`src/data-repositories.ts`; no `upstream_catalog` since mold_v0-283: a shared list is staff-kept platform records) |
 | `intake` | the company email's intake | the area the pack's `email.intake.area` names | one record per message, with its body and attachments as files (mold_v0-192, mold_v0-220) |
 | `run` | the pack's own code | a workspace area of the shell's tables, in a pack with code (`entry`) | `ctx.records`: a run's `onWorkspaceCommit` hook (mold_v0-064), the pack's own tools and routes |
 

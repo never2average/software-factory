@@ -689,8 +689,9 @@ def run():
             ok("row-level security check failed" in msg and "switched back by itself" in msg and [c[0] for c in R6.calls][-1] == "back",
                f"compose: {what} is a failed health check: the server goes back to the release before ({msg[:200]})")
         # --- 7c. the upstream catalogs' index after a deploy (mold_v0-128): said and recorded, never a failed deploy ------
+        # mold_v0-283: mold_v0 has no upstream catalogs any more, so it declares no index; the hook stays generic (a mold that does).
         real_cat = SS.catalogs_spec(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
-        ok(real_cat and real_cat["script"] == "catalogs:index", f"mold_v0 declares the catalogs' index, and its package.json has it: {real_cat}")
+        ok(real_cat is None, f"mold_v0 declares no catalogs index (mold_v0-283 removed upstream catalogs): {real_cat}")
         ok(SS.catalogs_spec(cb, man) is None and F.get("catalogs") is None, "a codebase without that script asks for no catalogs index (the fixture)")
         json.dump({"scripts": {"check:rls": "tsx scripts/check-rls.ts", "catalogs:index": "tsx scripts/catalogs-index.ts"}}, open(os.path.join(cbx, "package.json"), "w"))
         cspec = SS.catalogs_spec(cbx, {"catalogs": {"script": "catalogs:index", "said": "CATALOGS INDEX:"}}); FCAT = dict(FR, catalogs=cspec)

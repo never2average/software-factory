@@ -70,7 +70,7 @@ try {
       const areas = await call("GET", "/api/data", memberA);
       const byName = Object.fromEntries(areas.body.areas.map((a: any) => [a.name, a]));
       assert.deepEqual([byName.control_status.repository, byName.control_status.read_only], [{ name: "company_ledger", kind: "workspace_files" }, true]);
-      assert.deepEqual([byName.regulators.repository.kind, byName.regulators.read_only], ["upstream_catalog", false]);
+      assert.deepEqual([byName.regulators.repository, byName.regulators.read_only], [undefined, undefined], "a shared area is the shell's own records (mold_v0-283: no upstream catalog)");
       assert.equal(byName.notes.sealed, true); assert.equal(byName.applications.sealed, true); assert.equal(byName.tasks.sealed, undefined);
       // Create, read, update, move, delete.
       const created = await call("POST", "/api/data/tasks", memberA, { key: "t1", title: "First", data: { summary: "first", severity: "high", score: 5, due: "2026-11-01", tags: ["web"], control: "alpha-rules-2024:7(2)(b)" } });
@@ -253,8 +253,8 @@ try {
       assert.equal((await call("GET", "/api/admin/data/controls/c(3)", viewer)).status, 404, "and nothing of it was written");
       assert.equal((await call("DELETE", "/api/admin/data/controls/c(1)", owner)).status, 204);
       const repos = (await call("GET", "/api/admin/data/_repositories", viewer)).body.repositories;
-      assert.deepEqual(repos.map((r: any) => [r.name, r.kind, r.indexedBy, r.writable]), [["catalogs", "upstream_catalog", "staff", true], ["company_ledger", "workspace_files", "workspace_commit", false], ["company_applications", "workspace_files", "workspace_commit", false], ["vendor_api", "http_api", "none", false]]);
-      assert.equal((await call("POST", "/api/admin/data/_repositories/fixture_catalog/catalogs/sync", viewer, {})).status, 403, "syncing needs library");
+      assert.deepEqual(repos.map((r: any) => [r.name, r.kind, r.indexedBy, r.writable]), [["company_ledger", "workspace_files", "workspace_commit", false], ["company_applications", "workspace_files", "workspace_commit", false], ["vendor_api", "http_api", "none", false]]);
+      assert.equal((await call("POST", "/api/admin/data/_repositories/fixture_catalog/company_ledger/sync", owner, {})).status, 404, "no staff index route (mold_v0-283)");
       console.log("✓ staff: shared areas only; read, library to write, delete to delete (batches too); the repositories listed");
     }
   } finally {

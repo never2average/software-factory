@@ -27,12 +27,8 @@ import { adminInstallations, appConfig, beginInstall, completeInstall, configSum
   InstallRefused, setAppConfig, setAssetRepositories, TOKEN_PERMISSIONS, webhookSignatureValid, workspaceView } from "./github-app.js";
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
-import { packs } from "./packs.js";
 import { browserOrigin } from "./builtin-auth.js";
 import { noteCallback } from "./sign-in-check.js";
-
-/** mold_v0-260: a private catalog of the build is read with the platform's GitHub App. */
-const catalogsNeedApp = () => packs().some((p) => Object.values(p.definition.repositories ?? {}).some((r) => (r as { kind?: string; access?: string })?.kind === "upstream_catalog" && (r as { access?: string }).access === "github_app"));
 
 const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -128,8 +124,7 @@ export function githubAppRouter(): Router {
 type Need = (p: "keys" | "accounts") => express.RequestHandler;
 /** Staff routes on the admin router (already behind requirePlatformAdmin, JSON and the access log). */
 export function githubAppAdminRoutes(admin: Router, need: Need, actor: (req: Request, res: Response) => string) {
-  // mold_v0-260: also when a private catalog is read with the platform's GitHub App (flag private_catalogs).
-  if (!githubAppFields().length && !(featureOn("private_catalogs") && catalogsNeedApp())) return;
+  if (!githubAppFields().length) return;
   admin.get("/github-app", answerWith(async () => ({
     available: true,
     app: await configSummary(),

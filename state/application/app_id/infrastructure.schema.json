@@ -1023,7 +1023,7 @@
     },
     "catalog_index": {
       "type": "object",
-      "description": "What the last deploy's index of the upstream catalogs said (mold_v0-128; molds/mold_v0/mold.json catalogs, lib/single_service.py record_catalogs): at, its exit, its summary line and how it ran. Never a verdict on the deploy: a catalog the deploy could not index is indexed by the server itself and shown to staff.",
+      "description": "What the last deploy's index of the upstream catalogs said (mold_v0-128; lib/single_service.py record_catalogs, for a mold whose mold.json declares `catalogs`): at, its exit, its summary line and how it ran. Never a verdict on the deploy. mold_v0 declares none since mold_v0-283 (no upstream catalogs): an app deployed before keeps the last one it recorded.",
       "properties": {
         "at": { "type": "string" },
         "exit": { "type": ["integer", "null"] },

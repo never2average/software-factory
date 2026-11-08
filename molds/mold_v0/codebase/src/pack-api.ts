@@ -42,7 +42,7 @@
  *                runs, reports and the shell's own pages); with no tabs the sidebar is the shell's
  *   repositories wired (mold_v0-059; src/data-repositories.ts): where an area's rows come from, through one adapter
  *                interface: the shell's tables (the default), the workspace store's files (indexed after a commit), an
- *                upstream catalog at a pinned commit (indexed by platform staff), an external HTTP API (read live).
+ *                external HTTP API (read live). No upstream catalogs (mold_v0-283): shared lists are staff records.
  *                `loaders` (code only) turn a repository's files into rows when the declared mapping is not enough
                 (mold_v0-123: a map's computed values, retires and only_latest say what an app pack's loader did)
  *   the data API wired (mold_v0-059; src/data-api.ts, src/data-routes.ts): list (filter, sort, paging), get, create,
@@ -1683,7 +1683,7 @@ export const RecordAreaSchema = z.object({
   /**
    * Where the area's rows come from (mold_v0-059; src/data-repositories.ts): one of the pack's `repositories`. Absent,
    * the shell's own tables, written through the record store. An area fed by the workspace store's files or an external
-   * API is read only (its rows come from there); one fed by an upstream catalog is indexed by platform staff.
+   * API is read only (its rows come from there).
    */
   repository: name.optional(),
   /**
@@ -1717,7 +1717,7 @@ export const RecordAreaSchema = z.object({
   action_reason: z.string().trim().min(1).max(300).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets").optional(),
   /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
   rows: z.string().max(500).optional(),
-  /** In words, where a shared row's version comes from (an upstream commit, a date). */
+  /** In words, where a shared row's version comes from (an edition, a date). */
   version: z.string().max(200).optional(),
   /**
    * Due dates (wired by mold_v0-035; src/schedules.ts): a check area of workspace scope may name one of its date fields.
@@ -1849,7 +1849,17 @@ export const areaLinks = (a: { fields: { name: string; type?: string; to?: strin
 // ---------- data repositories (mold_v0-059; src/data-repositories.ts) ----------
 
 /** The repository kinds: where an area's rows come from. */
-export const REPOSITORY_KINDS = ["shell_tables", "workspace_files", "upstream_catalog", "http_api"] as const;
+export const REPOSITORY_KINDS = ["shell_tables", "workspace_files", "http_api"] as const;
+/**
+ * mold_v0-283 (operator, 2026-11-08): the upstream_catalog kind (a shared list copied from one GitHub repository at a
+ * pinned commit) is gone for good. A list tied to one shared repository could not be edited by the people who keep it,
+ * and one bad commit there changed every deployment's records. Shared lists are platform records staff keep with New,
+ * Edit and Import. A pack that still declares one is refused with this sentence.
+ */
+export const UPSTREAM_CATALOG_GONE = "the upstream_catalog repository kind was removed (mold_v0-283): a shared list copied from a GitHub repository cannot be edited and changes with every commit there. Make the areas it fed platform records (scope platform, no repository), which staff keep with New, Edit and Import (a one-time import file of the rows it held), and remove this repository";
+/** The repositories of a declaration that are upstream catalogs (refused: UPSTREAM_CATALOG_GONE). */
+export const upstreamCatalogNames = (repos: unknown): string[] => (repos && typeof repos === "object" && !Array.isArray(repos)
+  ? Object.entries(repos as Record<string, unknown>).filter(([, r]) => !!r && typeof r === "object" && (r as { kind?: unknown }).kind === "upstream_catalog").map(([n]) => n) : []);
 /** Kinds whose areas are read only through every door (their rows come from the repository). */
 export const READ_ONLY_KINDS = ["workspace_files", "http_api"] as const;
 const comment = z.string().max(2000).optional();
@@ -1926,8 +1936,7 @@ export type RowMap = z.output<typeof RowMapSchema>;
 export type FieldValue = z.output<typeof FieldValueSchema>;
 /** An upstream project pinned by commit: a full commit id, never a branch or a tag. */
 export const UpstreamSchema = z.object({
-  // mold_v0-260: ssh://git@<host>/<path> only for a private catalog read with a deploy key (UpstreamCatalogSchema access).
-  repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|ssh:\/\/git@[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (ssh://git@ for a deploy key; file:// only in tests)"),
+  repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (file:// only in tests)"),
   commit: z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/, "a full commit id (40 or 64 hex characters): never a branch or a tag"),
   /** Its licence, as an SPDX id or expression ("AGPL-3.0-only", "MIT OR Apache-2.0"): shown in the build's source offer. */
   license: z.string().regex(/^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/, "an SPDX licence id or expression (letters, digits, . + - ( ) and spaces)").optional(),
@@ -1959,42 +1968,6 @@ const WorkspaceFilesSchema = z.object({
   .refine((r) => (r.path === undefined) !== (r.dir === undefined), "a workspace_files repository names a path (one file template) or a dir (a directory template), not both")
   .refine((r) => r.files === undefined || r.dir !== undefined, "files are read inside each dir: declare dir");
 /**
- * An upstream catalog at a pinned commit: `upstream` (pack.json#upstream, or {repo, commit}) is fetched at the pin only
- * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas (by the server
- * itself whenever its pin changes, unless `index` is "manual"; by staff at any time),
- * idempotently (by fingerprint), pruning only rows it wrote (and refusing to empty an area or prune more than
- * `prune.max_fraction` of it). Other keys are the pack's loader's own settings.
- */
-const UpstreamCatalogSchema = z.object({
-  kind: z.literal("upstream_catalog"), $comment: comment, label: repoLabel,
-  upstream: z.union([z.literal("pack.json#upstream"), UpstreamSchema]),
-  transport: z.enum(["git", "github"]).optional(),
-  files: z.record(fileKey, repoPath).optional(),
-  map: z.record(name, RowMapSchema).optional(),
-  prune: z.object({ max_fraction: z.number().min(0).max(1).optional(), allow_empty: z.boolean().optional() }).strict().optional(),
-  /**
-   * Who indexes it (mold_v0-128, src/repository-index.ts): "automatic" (the default) the server itself, whenever the pin
-   * it last indexed is not the declared one (at startup, on the first read of an empty area, after a deploy), and staff
-   * at any time; "manual" staff only (the admin MCP's admin_sync_<repository>, the console's Repositories page).
-   */
-  index: z.enum(["automatic", "manual"]).optional(),
-  /**
-   * mold_v0-260 (flag private_catalogs): how a private upstream is read. "public" (the default) as before;
-   * "deploy_key" over git and SSH (`repo` ssh://git@<host>/<path>) with an SSH deploy key; "github_app" over HTTPS
-   * (`repo` https://github.com/<owner>/<name>, either transport) with a token of the platform's own GitHub App
-   * installation. The key, its host's public key and the installation are set by platform staff in Admin › Key vault
-   * (Private catalogs), never in a pack; the fetch is pinned to the commit as before.
-   */
-  access: z.enum(["public", "deploy_key", "github_app"]).optional(),
-}).catchall(z.unknown()).superRefine((r, ctx) => {
-  const repo = typeof r.upstream === "object" ? r.upstream.repo : null;
-  const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
-  if (r.access === "deploy_key" && r.transport === "github") bad("a deploy key is read over git (transport git)", "transport");
-  if (repo && r.access === "deploy_key" && !repo.startsWith("ssh://git@")) bad("a deploy key reads an ssh://git@<host>/<path> repository", "upstream");
-  if (repo && r.access !== "deploy_key" && repo.startsWith("ssh://")) bad("an ssh:// repository is read with a deploy key (access: deploy_key)", "access");
-  if (repo && r.access === "github_app" && !/^https:\/\/github\.com\//.test(repo)) bad("the GitHub App reads https://github.com/<owner>/<name> repositories", "upstream");
-});
-/**
  * An external HTTP API, read live and read only: `base_url` (its host among `egress`, the only hosts it may reach; a
  * redirect is refused), the workspace's `credential` field (mold_v0-034, bound to the workspace) sent in `auth.header`,
  * `list.path` (the list of items at `list.items`), `get.path` (with {key}) and a `map` per area.
@@ -2014,15 +1987,15 @@ const HttpApiSchema = z.object({
  * A data repository (mold_v0-059; src/data-repositories.ts): a `kind` and its settings. An area names one with
  * `repository`; an area that names none reads the shell's tables.
  */
-export const RepositorySchema = z.discriminatedUnion("kind", [ShellTablesSchema, WorkspaceFilesSchema, UpstreamCatalogSchema, HttpApiSchema]);
+export const RepositorySchema = z.discriminatedUnion("kind", [ShellTablesSchema, WorkspaceFilesSchema, HttpApiSchema]);
 export type Repository = z.output<typeof RepositorySchema>;
 
 /** What a pack's loader reads: one repository's documents, never a workspace id or a database. */
 export interface RepositoryInput {
   repository: string;
-  kind: "workspace_files" | "upstream_catalog";
+  kind: "workspace_files";
   settings: Record<string, unknown>;
-  /** The upstream commit (an upstream catalog), or null. */
+  /** The files' version, when their source has one; null for a workspace's files. */
   version: string | null;
   /** The areas this repository feeds: their names, roles and fields (rows name these). */
   areas: { name: string; role: "source" | "check" | "asset"; fields: string[] }[];
@@ -3032,6 +3005,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   if (typeof repos !== "object" || Array.isArray(repos)) problems.push(at("repositories must be an object of name -> repository"));
   else for (const [rn, r] of Object.entries(repos)) {
     if (!/^[a-z][a-z0-9_]{1,62}$/.test(rn)) problems.push(at(`repository name ${JSON.stringify(rn.slice(0, 64))}: lowercase letters, digits and _`));
+    if (upstreamCatalogNames({ [rn]: r }).length) { problems.push(at(`repositories.${rn}: ${UPSTREAM_CATALOG_GONE}`)); continue; }
     const v = RepositorySchema.safeParse(r);
     if (!v.success) problems.push(at(`repositories.${rn}: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
   }
@@ -3147,7 +3121,6 @@ function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
     const fed = areas.filter((a) => a.repository === rn);
     for (const a of fed) {
       if (r.kind === "workspace_files" && a.scope !== "workspace") out.push(`record area ${a.name}: a workspace_files repository feeds a workspace's own areas (scope workspace)`);
-      if (r.kind === "upstream_catalog" && a.scope !== "platform") out.push(`record area ${a.name}: an upstream catalog feeds shared areas (scope platform)`);
       if (r.kind === "http_api" && r.credential && a.scope !== "workspace") out.push(`record area ${a.name}: an API read with a workspace's credential feeds a workspace's own areas`);
       if (r.kind === "http_api" && ((a as { clocks?: unknown[] }).clocks ?? []).length) out.push(`record area ${a.name} is read live from an API: its rows are not kept, so it cannot have clocks`);
       if ((READ_ONLY_KINDS as readonly string[]).includes(r.kind)) {
@@ -3186,7 +3159,7 @@ function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
     const r = repos[rn];
     // A code entry alone may not carry the repositories its pack.json declares: checked once merged (src/packs.ts).
     if (!r) { if (!partial) out.push(`loader ${rn} names no repository of this pack`); }
-    else if (r.kind !== "workspace_files" && r.kind !== "upstream_catalog") out.push(`loader ${rn}: only a workspace_files or upstream_catalog repository takes a loader`);
+    else if (r.kind !== "workspace_files") out.push(`loader ${rn}: only a workspace_files repository takes a loader`);
     if (typeof fn !== "function") out.push(`loader ${rn} must be a function`);
   }
   return out;

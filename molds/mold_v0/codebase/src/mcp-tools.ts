@@ -500,12 +500,6 @@ export function adminGeneratedTools(): GeneratedAdminTool[] {
               if (!(await adminDataApi.delete(area, a.key))) throw new PackError(`no ${area} record ${String(a.key).slice(0, 200)}`, 404);
               return { deleted: true, area, key: a.key };
             }
-            case "admin_sync": {
-              operation("admin", "sync");
-              const { can } = await import("./admin-roles.js");
-              if (a.force && !can(c.role, "delete")) throw new PackError("force needs the delete permission (an owner)", 403);
-              return adminDataApi.sync(t.pack, t.repository!, { force: a.force === true });
-            }
             default: throw new PackError(`${t.name} is not an admin tool`, 400);
           }
         },

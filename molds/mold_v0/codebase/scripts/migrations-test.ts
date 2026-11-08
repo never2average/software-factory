@@ -1393,6 +1393,41 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} the workspace recipes (three staff tables the tenant role cannot read; ids, a version once, an agent's version naming its proposal, a decided proposal checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // No upstream catalogs (mold_v0-283, no_upstream_catalogs, found by name): the shared rows a catalog's index wrote become
+  // staff rows (source, fingerprint and the catalog's commit cleared; titles and fields kept), a staff override drops the
+  // catalog's version behind it, the index state table and the private catalogs' key vault provider go; a staff row and a
+  // workspace's indexed rows are untouched. Its rollback puts the table and the provider back, leaves exactly what the
+  // migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "no_upstream_catalogs")!.version;
+    const d = await shellAt(kind, v - 1);
+    await d.query(`INSERT INTO platform_records (pack, area, key, title, data, version, source, fingerprint, upstream) VALUES
+      ('p', 'controls', 'c1', 'From the catalog', '{"prose": "kept"}', 'abc123', 'catalogs', 'h1:x', NULL),
+      ('p', 'controls', 'c2', 'Staff override', '{"prose": "staff"}', NULL, NULL, NULL, '{"title": "behind", "source": "catalogs"}'),
+      ('p', 'controls', 'c3', 'Staff row', '{}', 'v1', NULL, NULL, NULL)`);
+    assert.equal((await d.query("SELECT 1 FROM vault_providers WHERE slug = 'catalog_access'")).length, 1);
+    await runMigrations(d, { packDirs: [] });
+    const rows = await d.query<{ key: string; title: string; data: any; version: string | null; source: string | null; fingerprint: string | null; upstream: unknown }>(
+      "SELECT key, title, data, version, source, fingerprint, upstream FROM platform_records WHERE pack = 'p' ORDER BY key");
+    assert.deepEqual(rows.map((x) => [x.key, x.title, x.data.prose ?? null, x.version, x.source, x.fingerprint, x.upstream]), [
+      ["c1", "From the catalog", "kept", null, null, null, null], ["c2", "Staff override", "staff", null, null, null, null], ["c3", "Staff row", null, "v1", null, null, null]],
+      "a catalog's row is a staff row now (its fields kept), an override stands alone, a staff row as it was");
+    assert.equal((await d.query("SELECT 1 FROM pg_class WHERE relname = 'repository_index'")).length, 0, "the index state table is gone");
+    assert.equal((await d.query("SELECT 1 FROM vault_providers WHERE slug = 'catalog_access'")).length, 0, "and the private catalogs' provider");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_no_upstream_catalogs.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    assert.equal((await r.query("SELECT 1 FROM vault_providers WHERE slug = 'catalog_access'")).length, 1, "the provider is back");
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_no_upstream_catalogs")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} no upstream catalogs (a catalog's rows become staff rows, fields kept; an override stands alone; the index table and the private catalogs' provider go); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

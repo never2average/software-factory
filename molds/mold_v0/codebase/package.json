@@ -16,8 +16,6 @@
     "test:journeys-tips": "tsx scripts/journeys-tips-test.ts",
     "check:tenant-sql": "tsx scripts/check-tenant-sql.ts",
     "check:rls": "tsx --env-file-if-exists=.env scripts/check-rls.ts",
-    "catalogs:index": "tsx --env-file-if-exists=.env scripts/catalogs-index.ts",
-    "test:catalog-index": "tsx scripts/catalog-index-test.ts",
     "test:console-hide": "tsx scripts/console-hide-test.ts",
     "test:console-sidebar": "tsx scripts/console-sidebar-test.ts",
     "test:recipes": "tsx scripts/recipes-test.ts",

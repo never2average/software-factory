@@ -1,9 +1,10 @@
 // The admin pages' words that come from the build (mold_v0-170), offline and without a browser:
 //   npm run test:record-pages
 //   1. A record area's empty state (web/src/features/records/empty.ts): titled by the area's label, never its raw key
-//      pattern; for staff, where its rows come from (an upstream catalog: its name and repository, what to press, the
-//      admin MCP's sync tool; an index running or failed is said so), with Data repositories as the way to fill it; for a
-//      customer, no staff page.
+//      pattern; for staff, where its rows come from (a repository: which, and what fills it; Data repositories linked only
+//      in a build that has that page, mold_v0-283), else that staff and the packs add them; for a customer, no staff page.
+//      (mold_v0-283 deleted the upstream catalog's empty state: what to press, the admin MCP's sync tool, an index
+//      running or failed.)
 //   2. The staff guide (web/src/content/staff-guide.ts): with no doc of the shell's or the packs' in the Guides group, the
 //      admin Docs open on "<product> staff guide", written from the build: the product's name, the sidebar's pages in
 //      their order, each with what it is for, linked to its address; no source path, no ticket number. A doc that is a
@@ -76,28 +77,22 @@ const ok = (m: string) => console.log(`✓ ${m}`);
 // 1. Empty states.
 const { recordEmptyText, repoOf, REPOSITORIES_URL } = await web("features/records/empty.ts");
 const area = { label: "Library", scope: "platform" as const };
-const catalog = { name: "lib_catalogs", kind: "upstream_catalog", index: "automatic" as const, upstream: { repo: "example/lib", commit: "abc" },
-  state: { indexing: false, current: false, last_error: null, pin: null }, area_rows: [{ name: "library" }] };
-const e1 = recordEmptyText(area, "admin", catalog);
+const files = { name: "lib_files", kind: "workspace_files", area_rows: [{ name: "library" }] };
+const e1 = recordEmptyText(area, "admin", files);
 assert.equal(e1.title, "No records in Library yet");
-assert.match(e1.text, /an upstream catalog, example\/lib \(data repository lib_catalogs\)/);
-assert.match(e1.text, /press Index now/);
-assert.match(e1.text, /admin_sync_lib_catalogs/);
-assert.deepEqual(e1.cta, { label: "Open Data repositories", href: REPOSITORIES_URL });
+assert.match(e1.text, /lib_files repository: each workspace's files/);
 assert.doesNotMatch(e1.text, /</, "no raw key pattern or markup");
-assert.match(recordEmptyText(area, "admin", { ...catalog, state: { ...catalog.state, indexing: true } }).text, /An index is running now/);
-assert.match(recordEmptyText(area, "admin", { ...catalog, state: { ...catalog.state, last_error: "pin not found" } }).text, /The last index failed: pin not found/);
-assert.match(recordEmptyText(area, "admin", { ...catalog, index: "manual" }).text, /indexed by hand/);
-assert.match(recordEmptyText(area, "admin", { name: "files", kind: "workspace_files" }).text, /files repository: each workspace's files/);
+const { repositoryCount } = await web("config/pack-nav.generated.ts");
+assert.deepEqual(e1.cta, repositoryCount > 0 ? { label: "Open Data repositories", href: REPOSITORIES_URL } : null, "Data repositories linked only where the build has the page");
 const none = recordEmptyText(area, "admin", null);
 assert.equal(none.cta, null);
 assert.match(none.text, /admin MCP server and the data API/);
-const app = recordEmptyText(area, "app", catalog);
+const app = recordEmptyText(area, "app", files);
 assert.equal(app.cta, null, "a customer is never sent to a staff page");
 assert.match(app.text, /shared by every workspace/);
-assert.equal(repoOf("library", [catalog])?.name, "lib_catalogs");
-assert.equal(repoOf("other", [catalog]), null);
-ok("a record area's empty state: its label, where its rows come from and how staff fill it now; customers get no staff link");
+assert.equal(repoOf("library", [files])?.name, "lib_files");
+assert.equal(repoOf("other", [files]), null);
+ok("a record area's empty state: its label, where its rows come from (Data repositories only where the build has it); customers get no staff link");
 
 // 2. The staff guide, in this build (the mold's own: no pack, the neutral profile, the shell's docs, none a guide).
 const g = await web("content/staff-guide.ts");

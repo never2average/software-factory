@@ -39,7 +39,6 @@ const tabsOf = (d: Def) => (d.tabs ?? []) as { kind?: string; include?: string[]
  */
 export const gapAsks = {
   record_inputs: (d: Def) => kindsOf(d).some((k) => !!k.input_from_record),
-  private_catalogs: (d: Def) => Object.values((d.repositories ?? {}) as Record<string, { kind?: string; access?: string }>).some((r) => r?.kind === "upstream_catalog" && !!r.access && r.access !== "public"),
   wide_lists: (d: Def) => areasOf(d).some((a) => (a.list_columns?.length ?? 0) > 8) || tabsOf(d).some((t) => (t.columns?.length ?? 0) > 8),
   record_rules: (d: Def) => areasOf(d).some((a) => (a.on_save?.length ?? 0) > 0 || (a.fields ?? []).some((f) => !!f.where))
     || kindsOf(d).some((k) => ((k as { args?: { where?: unknown }[] }).args ?? []).some((f) => !!f.where)),
@@ -74,7 +73,7 @@ export function featureRequested(id: FeatureId): boolean {
       || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
     // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs).
     case "recipes": return adminRecordsShown().includes("recipes");
-    case "record_inputs": case "private_catalogs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
+    case "record_inputs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];
       return defs().some((d) => ask(d));
     }

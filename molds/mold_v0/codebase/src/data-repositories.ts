@@ -8,12 +8,12 @@
  *                     identity of a JSON-lines or JSON file) or directory template (one row per directory), indexed into
  *                     the workspace's own rows by indexWorkspaceFiles(orgId, pack, files?) (called after a commit:
  *                     the hook is mold_v0-064's)
- *   upstream_catalog  an upstream project at a pinned commit: fetched at the pin only (git, any other commit and any
- *                     redirect refused; or GitHub's raw files and tree at the commit), indexed into shared rows
- *                     (syncUpstreamCatalog) by the server itself whenever its pin changes, and by platform staff
- *                     (src/repository-index.ts, mold_v0-128)
  *   http_api          an external API, read live and read only: its declared base URL (an egress host), the workspace's
  *                     credential field (mold_v0-034) in a header, no redirects, no private addresses
+ *
+ * No upstream catalogs (mold_v0-283, operator 2026-11-08): a shared list copied from one GitHub repository at a pinned
+ * commit could not be edited by the people who keep it. Shared lists are platform records staff keep (New, Edit,
+ * Import); src/pack-api.ts UPSTREAM_CATALOG_GONE refuses a pack that still declares one.
  *
  * Indexing is idempotent and all-or-nothing: every row's fingerprint (a hash of what is written; keyed with the
  * workspace's data key for a sealed area) is stored with it, so a re-index of the same input writes nothing; the whole
@@ -24,16 +24,12 @@
  * Rows come from the pack's loader (definePack `loaders`, code) when it has one, else from the declared `map` or the
  * kind's default mapping. Either way every row is checked as any write is (types, required fields, references).
  */
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { orgMac } from "./orgcrypto.js";
 import { LIST_PATH, PackError, RECORD_KEY, RepositorySchema, VALUE_PATH, type FieldValue, type RecordOperation, type RecordRow, type Repository, type RepositoryInput, type RepositoryRows, type RowMap } from "./pack-api.js";
 import { patternMatches } from "./safe-pattern.js";
@@ -42,10 +38,8 @@ import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTO
 import { pageInMemory, type Parsed } from "./record-query.js";
 import { asPlatform } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
-import type { CatalogAuth } from "./catalog-access.js";
 
 void SYSTEM_ACTOR;
-const run = promisify(execFile);
 
 /** One adapter per kind: how an area's rows are read, and whether a door may write them. */
 export interface RepositoryAdapter {
@@ -54,13 +48,12 @@ export interface RepositoryAdapter {
   reads: "table" | "live";
   /** May a door (ctx.records, the data API) write the area's rows? */
   writable: boolean;
-  /** Who indexes it into the tables: nobody, a workspace's commit, platform staff (an upstream catalog: the server too, src/repository-index.ts). */
-  indexedBy: "none" | "workspace_commit" | "staff";
+  /** Who indexes it into the tables: nobody, or a workspace's commit. */
+  indexedBy: "none" | "workspace_commit";
 }
 export const ADAPTERS: Record<Repository["kind"], RepositoryAdapter> = {
   shell_tables: { kind: "shell_tables", reads: "table", writable: true, indexedBy: "none" },
   workspace_files: { kind: "workspace_files", reads: "table", writable: false, indexedBy: "workspace_commit" },
-  upstream_catalog: { kind: "upstream_catalog", reads: "table", writable: true, indexedBy: "staff" },
   http_api: { kind: "http_api", reads: "live", writable: false, indexedBy: "none" },
 };
 
@@ -82,6 +75,12 @@ export const allRepositories = () => packs().flatMap((p) => repositoriesOf(p.id)
   pack: p.id, name: r.name, label: repositoryLabel(r.name, r.settings.label), pack_name: p.manifest.name ?? p.id,
   areas: r.areas.map((a) => a.name), ...ADAPTERS[r.settings.kind],
 })));
+/** What the admin console's Data repositories page shows (mold_v0-129): each repository and the areas it feeds. */
+export const repositoryStatus = () => ({
+  repositories: allRepositories().map((r) => ({
+    ...r, area_rows: recordAreas().filter((a) => a.pack === r.pack && a.repo?.name === r.name).map((a) => ({ name: a.name, label: a.label, scope: a.scope, rows: null })),
+  })),
+});
 const repositoryOrThrow = (pack: string, name: string) => {
   const r = repositoriesOf(pack).find((x) => x.name === name);
   if (!r) throw new PackError(`pack ${pack} has no repository ${JSON.stringify(String(name).slice(0, 64))}`, 404);
@@ -90,7 +89,7 @@ const repositoryOrThrow = (pack: string, name: string) => {
 
 // ---------- documents: a source of files at a version ----------
 
-/** Files at one version, read only: an upstream at its pin, or a workspace's snapshot. */
+/** Files at one version, read only: a workspace's snapshot. */
 export interface FileSource { version: string | null; describe: string; read(rel: string): Promise<string | null>; list(dir?: string): Promise<string[]>; close(): Promise<void> }
 const SAFE_REL = /^(?!\/)[A-Za-z0-9._/@+()-]{1,500}$/;
 const safeRel = (rel: string) => {
@@ -114,121 +113,8 @@ export function filesSource(files: { path: string; body: Uint8Array | string }[]
   };
 }
 
-/** The test switches: file:// upstreams (a local fixture repository) and private API addresses. Off in production. */
-const allowFileUpstream = () => ENV.APP_DATA_ALLOW_FILE_UPSTREAM === "1";
+/** The test switch: private API addresses. Off in production. */
 const allowPrivate = () => ENV.APP_DATA_ALLOW_PRIVATE === "1";
-
-/**
- * An upstream repository at its pinned commit, by git: a fresh empty repository fetches that one commit (shallow, no
- * tags, no submodules, no hooks, no credential helper, no redirects, https only), the fetched commit must be the pin,
- * and files are read from the commit's own tree (never a working tree: nothing is checked out).
- */
-export async function gitSource(up: { repo: string; commit: string }, auth: CatalogAuth | null = null): Promise<FileSource> {
-  const commit = up.commit;
-  if (!/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new PackError("an upstream is pinned by a full commit id", 400);
-  // mold_v0-260 (flag private_catalogs): a deploy key reads ssh://git@<host>/<path> over SSH with that key alone and the
-  // host's own public key (never trusted on first use); the GitHub App's token goes in a header, never in the address.
-  const isSsh = auth?.kind === "deploy_key";
-  if (isSsh !== up.repo.startsWith("ssh://")) throw new PackError(isSsh ? "a deploy key reads an ssh://git@<host>/<path> repository" : "an ssh:// repository is read with a deploy key", 400);
-  if (isSsh && !/^ssh:\/\/git@[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+$/.test(up.repo)) throw new PackError("a deploy key reads an ssh://git@<host>/<path> repository", 400);
-  const isFile = up.repo.startsWith("file:///");
-  // Tests only (the same switch as file://): plain http to this machine, to prove a redirect is refused.
-  const isLocalHttp = /^http:\/\/127\.0\.0\.1:\d{1,5}\/[A-Za-z0-9._~/-]+$/.test(up.repo);
-  if ((isFile || isLocalHttp) && !allowFileUpstream()) throw new PackError("a file:// or http:// upstream is for tests only", 400);
-  if (!isSsh && !isFile && !isLocalHttp && !/^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+$/.test(up.repo)) throw new PackError("an upstream is an https:// repository", 400);
-  const dir = await mkdtemp(path.join(tmpdir(), "upstream-"));
-  const proto = isSsh ? "ssh" : isFile ? "file" : isLocalHttp ? "http" : "https";
-  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LANG: "C", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_ALLOW_PROTOCOL: proto, GIT_ASKPASS: "/bin/false", SSH_ASKPASS: "/bin/false" };
-  const keyFile = path.join(dir, ".deploy-key"), knownFile = path.join(dir, ".known-hosts");
-  if (auth?.kind === "deploy_key") {
-    await writeFile(keyFile, auth.private_key, { mode: 0o600 });
-    await writeFile(knownFile, `${auth.known_hosts}\n`, { mode: 0o600 });
-    env.GIT_SSH_COMMAND = `ssh -F /dev/null -i ${keyFile} -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${knownFile} -o GlobalKnownHostsFile=/dev/null`;
-  } else if (auth?.kind === "github_app") {
-    // A header from the environment (git's own config, never on the command line or in the address).
-    Object.assign(env, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${auth.token}`).toString("base64")}` });
-  }
-  const cfg = ["-c", "protocol.allow=never", "-c", `protocol.${proto}.allow=always`, "-c", "http.followRedirects=false", "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true", "-c", "fetch.recurseSubmodules=false"];
-  const git = async (args: string[], opts: { timeout?: number; maxBuffer?: number } = {}) =>
-    (await run("git", [...cfg, "-C", dir, ...args], { env, timeout: opts.timeout ?? 60_000, maxBuffer: opts.maxBuffer ?? MAX_FILE_BYTES, encoding: "utf8" })).stdout;
-  const close = () => rm(dir, { recursive: true, force: true });
-  try {
-    await git(["init", "-q", "--bare"]);
-    try { await git(["fetch", "-q", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--", up.repo, commit], { timeout: 180_000 }); }
-    catch (e) {
-      const msg = String((e as { stderr?: string }).stderr ?? (e as Error).message).replace(/\s+/g, " ");
-      throw new PackError(`the upstream could not be fetched at ${commit}${/redirect/i.test(msg) ? " (it redirected: refused)" : ""}`, 502);
-    }
-    const got = (await git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"])).trim();
-    if (got !== commit) throw new PackError(`the upstream gave ${got.slice(0, 12)}, not the pinned commit ${commit}: refused`, 502);
-  } catch (e) { await close(); throw e; }
-  // The commit is here: the key and the header are not needed to read it, so they go now.
-  if (auth?.kind === "deploy_key") { await rm(keyFile, { force: true }); await rm(knownFile, { force: true }); delete env.GIT_SSH_COMMAND; }
-  if (auth?.kind === "github_app") { delete env.GIT_CONFIG_COUNT; delete env.GIT_CONFIG_KEY_0; delete env.GIT_CONFIG_VALUE_0; }
-  return {
-    version: commit, describe: `${up.repo} at ${commit} (git)`,
-    read: async (rel) => {
-      const spec = `${commit}:${safeRel(rel)}`;
-      const type = await git(["cat-file", "-t", spec]).then((t) => t.trim(), () => null);
-      if (type !== "blob") return null;
-      const size = Number((await git(["cat-file", "-s", spec])).trim());
-      if (!(size <= MAX_FILE_BYTES)) throw new PackError(`${rel} is over ${MAX_FILE_BYTES / 1024 / 1024} MB`, 413);
-      return git(["cat-file", "blob", spec]);
-    },
-    list: async (sub) => {
-      const out = await git(["ls-tree", "-r", "-z", "--name-only", commit, ...(sub === undefined ? [] : ["--", `${safeRel(sub).replace(/\/$/, "")}/`])], { maxBuffer: 64 * 1024 * 1024 });
-      const names = out.split("\u0000").filter(Boolean).sort();
-      if (names.length > MAX_FILES) throw new PackError(`the upstream has more than ${MAX_FILES} files there`, 413);
-      return names;
-    },
-    close,
-  };
-}
-
-/**
- * An upstream on GitHub at its pinned commit, over HTTPS without git (a server with no git): the commit must exist as
- * itself (the API's answer names it), files come from raw.githubusercontent.com/<owner>/<name>/<commit>/<path>
- * (content-addressed by the commit) and directories from the commit's tree. Every request refuses a redirect.
- */
-export async function githubSource(up: { repo: string; commit: string }, fetcher: typeof fetch = fetch, token: string | null = null): Promise<FileSource> {
-  const m = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(\.git)?$/.exec(up.repo);
-  if (!m) throw new PackError("the github transport reads https://github.com/<owner>/<name> repositories", 400);
-  if (!/^[0-9a-f]{40}$/.test(up.commit)) throw new PackError("an upstream is pinned by a full commit id", 400);
-  const [owner, name, commit] = [m[1]!, m[2]!, up.commit];
-  const get = async (url: string) => {
-    let r: Response;
-    // mold_v0-260: a private catalog's token (the GitHub App's, for that one repository) in a header.
-    try { r = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(30_000), headers: { accept: "application/vnd.github+json, */*", ...(token ? { authorization: `token ${token}` } : {}) } }); }
-    catch { throw new PackError("GitHub could not be reached, or it redirected (refused)", 502); }
-    if (r.status >= 300 && r.status < 400) throw new PackError("GitHub redirected: refused", 502);
-    return r;
-  };
-  const meta = await get(`https://api.github.com/repos/${owner}/${name}/commits/${commit}`);
-  const sha = meta.ok ? ((await meta.json().catch(() => null)) as { sha?: unknown } | null)?.sha : null;
-  if (sha !== commit) throw new PackError(`GitHub has no commit ${commit} in ${owner}/${name}${meta.ok ? ` (it answered ${String(sha).slice(0, 12)})` : ` (${meta.status})`}: refused`, 502);
-  let tree: string[] | null = null;
-  return {
-    version: commit, describe: `https://raw.githubusercontent.com/${owner}/${name}/${commit}/ (GitHub, at the pinned commit)`,
-    read: async (rel) => {
-      const r = await get(`https://raw.githubusercontent.com/${owner}/${name}/${commit}/${safeRel(rel)}`);
-      if (r.status === 404) return null;
-      if (!r.ok) throw new PackError(`GitHub answered ${r.status} for ${rel}`, 502);
-      const body = await r.text();
-      if (Buffer.byteLength(body) > MAX_FILE_BYTES) throw new PackError(`${rel} is over ${MAX_FILE_BYTES / 1024 / 1024} MB`, 413);
-      return body;
-    },
-    list: async (sub) => {
-      if (!tree) {
-        const r = await get(`https://api.github.com/repos/${owner}/${name}/git/trees/${commit}?recursive=1`);
-        const j = (r.ok ? await r.json().catch(() => null) : null) as { truncated?: boolean; tree?: { path?: unknown; type?: unknown }[] } | null;
-        if (!j || !Array.isArray(j.tree) || j.truncated) throw new PackError("GitHub's tree at the commit could not be read whole", 502);
-        tree = j.tree.filter((x) => x.type === "blob" && typeof x.path === "string").map((x) => x.path as string).sort();
-      }
-      return sub === undefined ? tree : tree.filter((p) => p.startsWith(`${safeRel(sub).replace(/\/$/, "")}/`));
-    },
-    close: async () => {},
-  };
-}
 
 // ---------- documents to rows ----------
 
@@ -401,7 +287,7 @@ export interface Desired { key: string; title: string | null; data: Record<strin
 export async function repositoryRows(pack: string, name: string, src: FileSource): Promise<Map<string, Desired[]>> {
   const r = repositoryOrThrow(pack, name);
   const s = r.settings;
-  if (s.kind !== "workspace_files" && s.kind !== "upstream_catalog") throw new PackError(`repository ${name} (${s.kind}) is not indexed`, 400);
+  if (s.kind !== "workspace_files") throw new PackError(`repository ${name} (${s.kind}) is not indexed`, 400);
   const loader = packs().find((p) => p.id === pack)?.definition.loaders?.[name];
   const out = new Map<string, Desired[]>(r.areas.map((a) => [a.name, []]));
   // A refusal never quotes a value of a document that feeds a sealed area (it may reach a run's error, unsealed).
@@ -412,7 +298,7 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
     if (typeof d.key !== "string" || !RECORD_KEY.test(d.key)) throw new PackError(`${where}: ${shown(d.key)} cannot be a record key (1-200 letters, digits, . _ : ( ) -)`, 422);
     if (!d.data || typeof d.data !== "object" || Array.isArray(d.data)) throw new PackError(`${where}: a row's data is an object`, 422);
     const title = d.title === undefined || d.title === null ? null : String(d.title).slice(0, 500);
-    out.get(area)!.push({ key: d.key, title, data: Object.fromEntries(Object.entries(d.data as Record<string, unknown>).filter(([, v]) => v !== undefined)), version: s.kind === "upstream_catalog" ? src.version : null });
+    out.get(area)!.push({ key: d.key, title, data: Object.fromEntries(Object.entries(d.data as Record<string, unknown>).filter(([, v]) => v !== undefined)), version: null });
   };
   if (loader) {
     const input: RepositoryInput = { repository: name, kind: s.kind, settings: JSON.parse(JSON.stringify(s)), version: src.version,
@@ -429,21 +315,6 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
   }
   const maps = (s as { map?: Record<string, RowMap> }).map ?? {};
   const kept = (m: RowMap | undefined, ctx: Parameters<typeof valueAt>[1]) => whereOk(m?.where, ctx);
-  if (s.kind === "upstream_catalog") {
-    for (const a of r.areas) {
-      const m = maps[a.name];
-      if (!m) throw new PackError(`repository ${name} feeds ${a.name}: declare map.${a.name} (or a loader) to say which rows it holds`, 422);
-      const rel = m.from ? (s.files ?? {})[m.from] : undefined;
-      if (!rel) throw new PackError(`repository ${name}: map.${a.name}.from names one of its files`, 422);
-      const docs = await documentsAt(src, rel);
-      for (const { path: p, vars, doc } of docs) for (const item of itemsAt(doc, m.each)) {
-        const ctx = { item, root: doc, vars: { ...vars, file: p } };
-        if (!kept(m, ctx)) continue;
-        push(a.name, { key: fillTemplate(m.key, ctx), title: m.title ? fillTemplate(m.title, ctx) : null, data: Object.fromEntries(a.fields.map((f) => [f.name, fieldValue(f.name, m.fields, ctx)])) }, `${p}`);
-      }
-    }
-    return out;
-  }
   // workspace_files
   const files = await src.list();
   if (s.path !== undefined) {
@@ -516,24 +387,6 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
   return out;
 }
 
-/** The JSON documents under a declared file: one file, a directory (every .json under it) or a glob. */
-async function documentsAt(src: FileSource, rel: string): Promise<{ path: string; vars: Record<string, string>; doc: Doc }[]> {
-  const isPattern = /[*{]/.test(rel);
-  const one = !isPattern ? await src.read(rel) : null;
-  let paths: string[];
-  if (one !== null) paths = [rel];
-  else if (isPattern) { const m = templateMatcher(rel); paths = (await src.list()).filter((p) => m(p)); }
-  else paths = (await src.list(rel)).filter((p) => p.endsWith(".json"));
-  const out = [];
-  for (const p of paths) {
-    const body = p === rel && one !== null ? one : await src.read(p);
-    if (body === null) continue;
-    const vars = isPattern ? templateMatcher(rel)(p) ?? {} : {};
-    for (const doc of parseDoc(p, body, p.endsWith(".jsonl") ? "jsonl" : "json")) out.push({ path: p, vars, doc });
-  }
-  return out;
-}
-
 // ---------- the index: fingerprints, plan, guarded prune, one transaction ----------
 
 /** JSON with sorted keys, null and missing alike: the same row always gives the same text. */
@@ -554,14 +407,11 @@ export interface IndexReport { pack: string; repository: string; kind: string; v
 /**
  * Bring the areas a repository feeds to exactly `rows` (for one workspace, or the shared rows when orgId is null), as
  * one transaction. Unchanged rows (same fingerprint, same source) are not written; rows this repository wrote that are
- * no longer produced are pruned, unless that would empty an area that has rows (refused unless `allow_empty`) or
- * remove more than `max_fraction` of its rows (refused unless `force`). Rows written by hand (no source) are kept; a
- * shared one (staff's, mold_v0-221) even when forced, with the repository's version of its key kept behind it.
+ * no longer produced are pruned. Rows written by hand (no source) are kept unless `force`; a shared one (staff's,
+ * mold_v0-221) even when forced, with the repository's version of its key kept behind it.
  */
 export async function applyIndex(orgId: number | null, pack: string, repo: { name: string; settings: Repository; areas: RecordArea[] }, rows: Map<string, Desired[]>,
   opts: { force?: boolean; describe?: string; version?: string | null } = {}): Promise<IndexReport> {
-  const prune = (repo.settings as { prune?: { max_fraction?: number; allow_empty?: boolean } }).prune ?? {};
-  const maxFraction = prune.max_fraction ?? 0.5;
   const puts: RecordOperation[] = [], deletes: RecordOperation[] = [], behind: BehindOp[] = [];
   const fingerprints = new Map<string, string>();
   const counts: AreaCounts[] = [];
@@ -600,12 +450,7 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
     c.kept_by_hand += [...marks.values()].filter((m) => m.source === null && !keys.has(m.key)).length;
     // An override whose key the repository no longer has: the staff row stays, with nothing behind it (mold_v0-221).
     for (const m of marks.values()) if (m.source === null && m.behind_source === repo.name && !keys.has(m.key)) behind.push({ op: "clear", area: area.name, key: m.key });
-    // The guards are an upstream's (a fetch that came back short): a workspace's committed files are the truth.
-    const guarded = repo.settings.kind === "upstream_catalog" && !opts.force;
-    if (guarded && !desired.length && ours.length && !prune.allow_empty)
-      throw new PackError(`area ${area.name}: the index of ${repo.name} produced no rows over ${ours.length} it wrote before; refused rather than emptying it`, 409);
-    if (guarded && gone.length && gone.length > maxFraction * ours.length)
-      throw new PackError(`area ${area.name}: the index of ${repo.name} would remove ${gone.length} of its ${ours.length} rows (more than ${Math.round(maxFraction * 100)}%); refused (staff may force it)`, 409);
+    // A workspace's committed files are the truth: no prune guard (mold_v0-283: the upstream catalogs it was for are gone).
     for (const m of gone) deletes.push({ op: "delete", area: area.name, key: m.key });
     c.deleted = gone.length;
     counts.push(c);
@@ -616,30 +461,6 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
   return { pack, repository: repo.name, kind: repo.settings.kind, version: opts.version ?? null, source: opts.describe ?? "", written: ops.length + behind.length > 0, areas: counts };
 }
 const refersTo = (a: RecordArea, b: RecordArea) => a.fields.some((f) => f.type === "reference" && f.to === b.name);
-
-/**
- * Index one upstream catalog into its shared areas (platform staff): fetched at its pin only, then applyIndex. `force`
- * passes the prune's guard (staff with the delete permission).
- */
-export async function syncUpstreamCatalog(pack: string, name: string, opts: { force?: boolean; fetcher?: typeof fetch } = {}): Promise<IndexReport> {
-  const repo = repositoryOrThrow(pack, name);
-  const s = repo.settings;
-  if (s.kind !== "upstream_catalog") throw new PackError(`repository ${name} is ${s.kind}, not an upstream catalog`, 400);
-  if (typeof s.upstream !== "object") throw new PackError(`repository ${name}: its upstream pin is not resolved (pack.json upstream)`, 400);
-  if (!repo.areas.length) throw new PackError(`repository ${name} feeds no area`, 400);
-  const transport = s.transport ?? (s.upstream.repo.startsWith("https://github.com/") ? "github" : "git");
-  // mold_v0-260 (flag private_catalogs): a private catalog's access, from the key vault (src/catalog-access.ts).
-  const access = (s as { access?: string }).access;
-  const auth = access === "deploy_key" || access === "github_app" ? await (await import("./catalog-access.js")).catalogAuth(pack, name) : null;
-  try {
-    const src = transport === "github" ? await githubSource(s.upstream, opts.fetcher, auth?.kind === "github_app" ? auth.token : null) : await gitSource(s.upstream, auth);
-    try {
-      if (src.version !== s.upstream.commit) throw new PackError("the source is not at the pinned commit: refused", 502);
-      const rows = await repositoryRows(pack, name, src);
-      return await asPlatform(() => applyIndex(null, pack, repo, rows, { force: opts.force, describe: src.describe, version: src.version }));
-    } finally { await src.close(); }
-  } finally { if (auth?.kind === "github_app") await auth.revoke(); }
-}
 
 /**
  * Index a workspace's files into its own rows (every workspace_files repository of the pack), as one transaction per

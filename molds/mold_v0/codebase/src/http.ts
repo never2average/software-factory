@@ -83,7 +83,6 @@ import { autoscalerStatus, kickAutoscaler, startAutoscaler, stopAutoscaler } fro
 /** On Vercel, orchestrator traffic drives the autoscaler (no ticking loop there); elsewhere the loop does. */
 const serverlessTick = (force = false) => { if (process.env.VERCEL) telemetry.keepAlive(kickAutoscaler({ force }).catch((e) => console.error("autoscaler kick:", (e as Error).message))); };
 import { startArchiver, stopArchiver } from "./archive.js";
-import { startCatalogIndexing } from "./repository-index.js";
 import { storageInEnv } from "./storage.js";
 import { brokerOrchestratorCredentials, brokerSessionCredentials, gatewayHandler } from "./gateway.js";
 import { usageReport } from "./usage.js";
@@ -143,9 +142,6 @@ export function createApp() {
   void importEnvKeysOnce();
   adminTokens.warnRetiredAdminToken();
   app.use((_req, _res, next) => void importEnvKeysOnce().then(() => next()));
-  // The upstream catalogs not indexed at their pin (mold_v0-128, src/repository-index.ts): once per instance, in the
-  // background from its first request (kept alive past the answer on Vercel); never delays or fails a request.
-  app.use((_req, _res, next) => { startCatalogIndexing(telemetry.keepAlive); next(); });
   // The API's latency for Health › Status's graphs (mold_v0-210, src/health-samples.ts): each request's duration in this
   // process, nothing else (no address, no caller); not the health check or the cron entry. Only where Health samples.
   if (healthSamplingOn()) app.use((req, res, next) => {
@@ -892,7 +888,6 @@ export function createApp() {
   // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
   // declares a credential field that asks for one.
   githubAppAdminRoutes(ob, need, adminActor);
-  // mold_v0-260 (flag private_catalogs): a private catalog's deploy key or GitHub App installation, beside the key vault.
   // mold_v0-260 (flag run_analytics): every workspace's runs broken down (?workspace=<slug or id> narrows to one).
   ob.get("/run-analytics", async (req, res, next) => {
     if (!featureOn("run_analytics")) return next();
@@ -910,26 +905,6 @@ export function createApp() {
       res.json(await runAnalytics({ orgId: null, workspaceId }, req.query as Record<string, unknown>));
     } catch (e) { const st = (e as { status?: number }).status ?? 500; res.status(st).json({ error: st < 500 ? (e as Error).message : "could not read" }); }
   });
-  {
-    const ca = () => import("./catalog-access.js");
-    // Answered only while the flag is on (off: on to the 404, as if never mounted).
-    ob.use("/catalog-access", (_req, res, next) => (featureOn("private_catalogs") ? next() : void res.status(404).json({ error: "Not found" })));
-    const caWrap = (fn: (req: Request, res: Response) => Promise<unknown>) => async (req: Request, res: Response) => {
-      try { res.json(await fn(req, res)); }
-      catch (e) { const st = (e as { status?: number }).status ?? 500; res.status(st).json({ error: st < 500 || st === 502 || st === 503 ? (e as Error).message : "could not save" }); }
-    };
-    ob.get("/catalog-access", caWrap(async () => ({ catalogs: await (await ca()).catalogAccessSummary() })));
-    ob.put("/catalog-access/:pack/:name", need("keys"), caWrap(async (req, res) => {
-      const out = await (await ca()).setCatalogAccess(String(req.params.pack), String(req.params.name), (req.body ?? {}) as Record<string, unknown>);
-      onboarding.log(adminActor(req, res), "catalog_access.set", null, { pack: out.pack, repository: out.name, access: out.access });
-      return out;
-    }));
-    ob.delete("/catalog-access/:pack/:name", need("keys"), caWrap(async (req, res) => {
-      const removed = await (await ca()).deleteCatalogAccess(String(req.params.pack), String(req.params.name));
-      onboarding.log(adminActor(req, res), "catalog_access.remove", null, { pack: String(req.params.pack), repository: String(req.params.name) });
-      return { removed };
-    }));
-  }
   onPremAdminRoutes(ob, need, adminActor);
   agentAdminRoutes(ob, need, adminActor);
   // mold_v0-271: the workspace recipes (flag workspace_recipes with agent_harness): staff's, at /api/admin/onboarding/recipes.
@@ -1044,8 +1019,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else console.error(`  autoscaler    off (${autoscale ? "needs an https PUBLIC_URL and APP_WORKER_TOKEN" : "APP_AUTOSCALE=off"})`);
     // Off-machine archive of traces and research to the bucket (src/archive.ts): backfills, then keeps up every 5 minutes.
     const archiving = startArchiver();
-    // The upstream catalogs (mold_v0-128): indexed at their pin in the background, without waiting for a request.
-    startCatalogIndexing();
     console.error(`  archive       ${!archiving ? "off" : storageInEnv() ? "on (traces + research to the bucket in R2_*)" : "on while Key vault › Object storage is set (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");

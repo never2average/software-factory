@@ -1228,7 +1228,10 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         if (!v || typeof v !== "object" || Array.isArray(v) || !Object.keys(v).length) fail(rel(PROFILE_FILE), `features: an object of flags, {"<flag>": true|false} (flags: ${known.join(", ")})`);
         else {
           const bad = Object.entries(v).filter(([f, x]) => !known.includes(f) || typeof x !== "boolean");
-          for (const [f, x] of bad) fail(rel(PROFILE_FILE), known.includes(f) ? `features.${f}: true or false (got ${JSON.stringify(x)})` : `features.${f}: not a flag (flags: ${known.join(", ")})`);
+          // mold_v0-283: the private catalogs' flag went with the upstream catalogs; said in plain words.
+          for (const [f, x] of bad) fail(rel(PROFILE_FILE), known.includes(f) ? `features.${f}: true or false (got ${JSON.stringify(x)})`
+            : f === "private_catalogs" ? "features.private_catalogs: removed with upstream catalogs (mold_v0-283): shared lists are staff-kept platform records (New, Edit, Import); take the flag out"
+            : `features.${f}: not a flag (flags: ${known.join(", ")})`);
           if (!bad.length) profile[k] = v;
         }
         continue;
@@ -1510,6 +1513,13 @@ function contractRoles(a) {
 }
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
+/**
+ * The build's workspace_files repositories (mold_v0-283: files an agent writes into a workspace, turned into rows), as
+ * <pack>/<name>: the admin console's Data repositories page (/admin/repositories) and its sidebar entry exist only with
+ * one. Shared lists are staff-kept platform records, never a repository's.
+ */
+const workspaceFilesRepositories = packs.flatMap((p) => Object.entries(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {})
+  .filter(([, r]) => r?.kind === "workspace_files").map(([n]) => `${p.id}/${n}`));
 // A tab's primary action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
 // kind whose start tool is withheld, a record area whose create tool is. The console would only hide the button.
 for (const t of packViews.tabs ?? []) {
@@ -1562,7 +1572,6 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
       || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object"))),
     // mold_v0-260 (src/features.ts gapAsks says the same for the server, lib/features.py for the factory).
     record_inputs: () => kinds.some((k) => !!k.input_from_record),
-    private_catalogs: () => jsons.some((j) => Object.values(j.repositories ?? {}).some((r) => r?.kind === "upstream_catalog" && !!r.access && r.access !== "public")),
     wide_lists: () => areas.some((a) => (a.list_columns?.length ?? 0) > 8) || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns?.length ?? 0) > 8)),
     record_rules: () => areas.some((a) => (a.on_save?.length ?? 0) > 0 || (a.fields ?? []).some((x) => !!x.where)) || kinds.some((k) => (k.args ?? []).some((x) => !!x.where)),
     credential_sets: () => creds.some((c) => !!c.entries || c.bound_to === "tenant"),
@@ -2348,7 +2357,9 @@ for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
  */
 // mold_v0-261: Admin › Agent profiles (one page since mold_v0-267: a profile opens in its modal), agent_harness's too.
 const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
-const OFF_PAGES = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
+const OFF_PAGES = [...Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list),
+  // mold_v0-283: Data repositories, a page of the build only with a workspace_files repository.
+  ...(workspaceFilesRepositories.length ? [] : ["/admin/repositories"])];
 {
   // A shell segment whose every page is such a page, with its flag off, is not the shell's in this build: a pack's tab or
   // page may take its address (mold_v0-260: a pack's tab `runs`, while record_pages is off). On, it stays refused.
@@ -2648,7 +2659,7 @@ const recordAdminItems = (() => {
     recipes: FEATURE_ON.workspace_recipes && FEATURE_ON.agent_harness ? { title: "Recipes", url: "/admin/recipes", icon: "sparkles" }
       : !FEATURE_SETTING.workspace_recipes ? "features.workspace_recipes is false" : "the workspace agent is off (features.agent_harness = true turns it on; recipes are its profiles' workspaces)",
     "agent-profiles": FEATURE_ON.agent_harness ? { title: "Agent profiles", url: "/admin/agent-profiles", icon: "userPen" } : "the workspace agent is off (features.agent_harness)",
-    repositories: packs.some((p) => Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length) ? { title: "Data repositories", url: "/admin/repositories", icon: "book" } : "no pack declares a data repository",
+    repositories: workspaceFilesRepositories.length ? { title: "Data repositories", url: "/admin/repositories", icon: "book" } : "no pack declares a workspace_files repository",
   };
   const items = [];
   d.entries.forEach((e, i) => {
@@ -2726,8 +2737,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
   `export const packOnboardingSteps = ${onboardingSteps.length};\n\n` +
-  "/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */\n" +
-  `export const repositoryCount = ${packs.reduce((n, p) => n + Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length, 0)};\n\n` +
+  "/** How many workspace_files repositories the packs declare (mold_v0-129, mold_v0-283): the admin console's Data repositories page shows with one. */\n" +
+  `export const repositoryCount = ${workspaceFilesRepositories.length};\n\n` +
   "/** Whether a kind of this build may need a workspace's private network (mold_v0-036): Settings › Credentials and the guide\n" +
   " * then show the on-premises runner. */\n" +
   `export const onPremRunners = ${privateNetworkKindCount > 0};\n\n` +

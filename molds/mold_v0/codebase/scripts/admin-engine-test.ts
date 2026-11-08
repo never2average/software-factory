@@ -167,7 +167,7 @@ try {
     const conf = readFileSync(path.join(ROOT, "web/src/features/admin/configuration.tsx"), "utf8");
     assert.doesNotMatch(conf, /truncate text-xs' title=\{x\.help\}/, "Agent configuration's help wraps (the value column stays on the page)");
     const repos = readFileSync(path.join(ROOT, "web/src/features/admin/repositories.tsx"), "utf8");
-    assert.doesNotMatch(repos, /APP_CATALOG_AUTOINDEX/, "no environment name on the Data repositories page");
+    assert.doesNotMatch(repos, /APP_[A-Z_]+/, "no environment name on the Data repositories page");
     console.log("✓ console: Compute's tabs and rows follow the engine; configuration wraps; repositories in words");
   }
   console.log("admin-engine: ok");

@@ -6,7 +6,7 @@
  *
  *   workspace   a person of one workspace (or the shell for them): every area as that workspace sees it, writes to its
  *               own workspace areas only. The workspace is always the caller's, never an argument.
- *   admin       platform staff: shared (platform) areas only, and the upstream catalogs' index.
+ *   admin       platform staff: shared (platform) areas only, and the build's repositories.
  *
  * REST is src/data-routes.ts (/api/data, /api/admin/data). DATA_API_OPERATIONS is the list a later door wraps (the MCP
  * tools of mold_v0-060): each entry names its function, its door, the record action it needs and whether it writes.
@@ -103,13 +103,8 @@ export const adminDataApi = {
     if (Array.isArray(ops)) for (const o of ops) platformArea(String((o as { area?: unknown })?.area));
     return { results: await adminRecords.batch(ops) };
   },
-  /** Every repository of the build: its kind, the areas it feeds, who indexes it; an upstream catalog's pin and index state (mold_v0-128). */
-  repositories: async () => (await import("./repository-index.js")).repositoryStatus(),
-  /**
-   * Index an upstream catalog at its pin into its shared areas (idempotent; `force` passes the prune guard): staff's index
-   * (the admin MCP's admin_sync_<repository>, the console's Index now), recorded, one instance at a time (mold_v0-128).
-   */
-  sync: async (pack: string, name: string, opts: { force?: boolean } = {}) => ({ index: await (await import("./repository-index.js")).indexNow(pack, name, opts) }),
+  /** Every repository of the build: its kind, the areas it feeds and who indexes it (mold_v0-129). */
+  repositories: async () => (await import("./data-repositories.js")).repositoryStatus(),
 };
 
 /** Index a workspace's files into its rows (after a commit: mold_v0-064's hook calls this). */
@@ -138,5 +133,4 @@ export const DATA_API_OPERATIONS = [
   { name: "delete", door: "admin", action: "delete", writes: true, description: "Delete a shared record (staff, delete)." },
   { name: "batch", door: "admin", action: "create", writes: true, description: "Several shared writes as one transaction." },
   { name: "repositories", door: "admin", action: "read", writes: false, description: "The build's data repositories." },
-  { name: "sync", door: "admin", action: "create", writes: true, description: "Index an upstream catalog at its pin." },
 ] as const;

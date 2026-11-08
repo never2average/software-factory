@@ -26,9 +26,7 @@
  *                       X-Pack-Request: 1 (CSRF, as the packs' routes).
  *   /api/admin/data     platform staff, inside the admin router (requirePlatformAdmin, the CSRF header on cookie writes,
  *                       the access log): shared areas only; reads need "read", writes "library", deletes "delete";
- *                       GET /_repositories (with each upstream catalog's pin and index state, mold_v0-129),
- *                       POST /_repositories/:pack/:name/sync ("library"; {force: true} "delete"; src/repository-index.ts
- *                       indexNow, the admin MCP's admin_sync_<repository> too; 409 while another instance indexes it).
+ *                       GET /_repositories (each repository and the areas it feeds, mold_v0-129).
  *   An operation whose generated MCP tool a pack excludes or marks admin_only answers 404 here too (mold_v0-067,
  *   src/mcp-withheld.ts): on /api/data for the workspace's tools, on /api/admin/data for an excluded staff tool.
  */
@@ -37,7 +35,7 @@ import { can, currentAdminRole, need, assertGuarded } from "./admin-roles.js";
 import { customerSession, type Session } from "./app.js";
 import { adminDataApi, dataApi, type DataCaller } from "./data-api.js";
 import type { GeneratedOp } from "./mcp-catalog.js";
-import { areaOpWithheld, batchWithheld, syncWithheld } from "./mcp-withheld.js";
+import { areaOpWithheld, batchWithheld } from "./mcp-withheld.js";
 import { PackError, type RecordQuery } from "./pack-api.js";
 import { recordAreas } from "./record-areas.js";
 import { discardRecordFile, recordUploadMax, uploadRecordFile } from "./record-files.js";
@@ -129,7 +127,7 @@ export function dataAppRouter(): Router {
   return r;
 }
 
-/** /api/admin/data, inside the admin router: shared areas and the upstream catalogs' index. */
+/** /api/admin/data, inside the admin router: shared areas and the build's repositories. */
 export function dataAdminRouter(): Router {
   const r = express.Router();
   if (!recordAreas().length) return r;
@@ -138,11 +136,6 @@ export function dataAdminRouter(): Router {
   const mayDelete = () => { if (!can(currentAdminRole(), "delete")) throw new PackError("Deleting needs the delete permission (an owner)", 403); };
   r.get("/", need("read"), answer(async () => adminDataApi.areas()));
   r.get("/_repositories", need("read"), answer(async () => adminDataApi.repositories()));
-  r.post("/_repositories/:pack/:name/sync", need("library"), (req, res, next) => (syncWithheld(String(req.params.pack), String(req.params.name)) ? void res.status(404).json({ error: "Not found" }) : next()), answer(async (req) => {
-    const force = body(req).force === true;
-    if (force) mayDelete();
-    return adminDataApi.sync(String(req.params.pack), String(req.params.name), { force });
-  }));
   r.post("/_batch", need("library"), batchOpen("admin"), answer(async (req) => {
     const ops = body(req).operations;
     if (Array.isArray(ops) && ops.some((o) => (o as { op?: unknown })?.op === "delete")) mayDelete();

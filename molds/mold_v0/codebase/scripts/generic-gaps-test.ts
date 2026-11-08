@@ -6,9 +6,7 @@
 //   1. A run reads its input from the record it runs on: the start tool's record (a value that disagrees refused, another
 //      workspace's record not found, a viewer refused) and the record page's start_run (the record's values, not the
 //      browser's); the run carries the record.
-//   2. A shared catalog from a private repository: staff set a deploy key or the GitHub App's installation (owners of the
-//      platform only, never read back); a fetch over SSH with that key alone and the host's own key, a fetch over HTTPS
-//      with a token for that one repository (revoked after); each pinned to its commit; refused while off or unset.
+//   (2, a shared catalog from a private repository, was deleted with the upstream catalogs, mold_v0-283.)
 //   3. A sections tab of up to 8 tabs (9 refused). 4. Lists of up to 12 columns (13 refused; past 8 asks for wide_lists).
 //   5. A reference limited by a condition on its target (every write and the picker) and checks run on save (refused
 //      with their message, through the data API and the MCP tools).
@@ -19,73 +17,14 @@
 //   10. get_usage over MCP: the caller's workspace, the whole of it for owners, their own runs for members.
 //   (9, the dashboards' filters in the address, is the console's: the lane world's shots load a view from its address.)
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
-import { pemBlock, pemLine } from "./lib/fake-secrets.js";
+import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ok = (m: string) => console.log(`✓ ${m}`);
 const FIXTURE = JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_gaps", "pack.json"), "utf8"));
-const ALL = { record_pages: true, record_run_inputs: true, private_catalogs: true, wide_lists: true, record_rules: true, credential_sets: true, overview_cards: true, run_analytics: true, filters_in_address: true, usage_tool: true } as const;
-
-// ---------- a private repository, served over a stand-in ssh ----------
-const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...a], { cwd, encoding: "utf8" }).trim();
-const SRV = path.join(TMP, "git-server"), WORK = path.join(TMP, "git-work");
-mkdirSync(path.join(SRV, "acme"), { recursive: true }); mkdirSync(WORK, { recursive: true });
-git(WORK, "init", "-q");
-writeFileSync(path.join(WORK, "runbooks.json"), JSON.stringify([{ id: "rb-db", title: "Database failover", service: "db", summary: "Promote the replica." }, { id: "rb-cache", title: "Cache flush", service: "cache", summary: "Flush and warm." }]));
-git(WORK, "add", "."); git(WORK, "commit", "-q", "-m", "runbooks");
-const PIN = git(WORK, "rev-parse", "HEAD");
-git(SRV, "clone", "-q", "--bare", WORK, path.join(SRV, "acme", "runbooks.git"));
-// The stand-in ssh: records how it was called (the key file's text, the options), then serves the repository locally.
-const BIN = path.join(TMP, "bin"); mkdirSync(BIN);
-const SSH_LOG = path.join(TMP, "ssh.log");
-writeFileSync(path.join(BIN, "ssh"), `#!/bin/bash
-key=""; args="$*"; prev=""
-for a in "$@"; do [ "$prev" = "-i" ] && key="$a"; prev="$a"; done
-{ echo "ARGS $args"; echo "MODE $(stat -c %a "$key" 2>/dev/null)"; echo "KEY $(head -1 "$key" 2>/dev/null)"; } >> ${SSH_LOG}
-cmd="\${@: -1}"; cmd="\${cmd//\\'\\//\\'${SRV}/}"
-exec sh -c "$cmd"
-`);
-chmodSync(path.join(BIN, "ssh"), 0o755);
-FIXTURE.upstream.commit = PIN;
-const DEPLOY_KEY = pemBlock("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACBexampleexampleexampleexampleexampleexampleAAAA=", "OPENSSH");
-const KNOWN = "git.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleHostKeyExampleHostKeyExampleHost";
-
-// ---------- GitHub's stand-in: the installation token, its revoke ----------
-const TOKEN = "ghs_catalogtokenexample0123456789";
-const gh: { asked: unknown[]; revoked: number } = { asked: [], revoked: 0 };
-const ghServer = http.createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => (body += c));
-  req.on("end", () => {
-    if (req.method === "POST" && /^\/app\/installations\/4242\/access_tokens$/.test(req.url ?? "")) {
-      gh.asked.push(JSON.parse(body || "{}"));
-      res.writeHead(201, { "content-type": "application/json" });
-      return void res.end(JSON.stringify({ token: TOKEN, expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: { contents: "read", metadata: "read" }, repositories: [{ id: 7, full_name: "example-org/standards" }] }));
-    }
-    if (req.method === "DELETE" && req.url === "/installation/token") { gh.revoked++; res.writeHead(204); return void res.end(); }
-    res.writeHead(404); res.end("{}");
-  });
-});
-ghServer.listen(0, "127.0.0.1");
-await new Promise((r) => ghServer.once("listening", r));
-const GH = `http://127.0.0.1:${(ghServer.address() as AddressInfo).port}`;
-const STD_PIN = FIXTURE.repositories.standards.upstream.commit as string;
-const ghSeen: string[] = [];
-const fakeGithub: typeof fetch = async (url, init) => {
-  const u = String(url), auth = new Headers(init?.headers).get("authorization");
-  ghSeen.push(`${u.replace(/^https:\/\/[^/]+/, "")} ${auth ?? "-"}`);
-  if (auth !== `token ${TOKEN}`) return new Response("Not Found", { status: 404 });
-  if (u.endsWith(`/repos/example-org/standards/commits/${STD_PIN}`)) return Response.json({ sha: STD_PIN });
-  if (u.endsWith(`/example-org/standards/${STD_PIN}/standards.json`)) return new Response(JSON.stringify([{ id: "std-1", title: "Access reviews", family: "access", summary: "Quarterly." }]));
-  return new Response("Not Found", { status: 404 });
-};
+const ALL = { record_pages: true, record_run_inputs: true, wide_lists: true, record_rules: true, credential_sets: true, overview_cards: true, run_analytics: true, filters_in_address: true, usage_tool: true } as const;
 
 try {
   const F = await import("../src/features.js");
@@ -97,7 +36,7 @@ try {
   const { asPlatform } = await import("../src/tenant-scope.js");
   const { TabSchema, RecordAreaSchema } = await import("../src/pack-api.js");
   const db = await getDb();
-  setPacksForTest([{ manifest: { id: "fixture_gaps", name: "Fixture gaps", version: "0.1.0", entry: null, migrations: null, words: {}, upstream: FIXTURE.upstream,
+  setPacksForTest([{ manifest: { id: "fixture_gaps", name: "Fixture gaps", version: "0.1.0", entry: null, migrations: null, words: {},
     dir: path.join(ROOT, "scripts", "fixtures", "packs", "fixture_gaps") }, declared: compileDeclarations(FIXTURE) } as never]);
   const A = (await createOrg(`Gaps A ${STAMP}`)).org, B = (await createOrg(`Gaps B ${STAMP}`)).org;
   const web = await startHttp();
@@ -125,7 +64,7 @@ try {
   {
     for (const id of Object.keys(ALL)) assert.equal(F.featureOn(id as never), false, `${id} is off by default`);
     for (const p of ["/api/home/recent-runs", "/api/home/attention", "/api/analytics/runs?from=2026-11-01&to=2026-11-06"]) assert.equal((await get(owner.token, p)).status, 404, `off: ${p}`);
-    assert.equal((await staff("GET", staffOwner, "/catalog-access")).status, 404, "off: no catalog access route");
+    assert.equal((await staff("GET", staffOwner, "/catalog-access")).status, 404, "no catalog access route (mold_v0-283)");
     assert.equal((await staff("GET", staffOwner, "/run-analytics")).status, 404, "off: no staff run analytics");
     const c = await mcp(A, member.userId, "member");
     const tools = (await c.client.listTools()).tools;
@@ -175,46 +114,6 @@ try {
     const [p] = await db.query<{ scope: Record<string, unknown>; record_key: string }>("SELECT scope, record_key FROM runs WHERE id = $1", [s.body.run.id]);
     assert.deepEqual([p!.scope.severity, p!.scope.focus, p!.scope.incident, p!.record_key], ["critical", "cache", "inc-1", "inc-1"], "the page's run: the record's values, its own typed ones");
     ok("a run's input from its record: the start tool's record (disagreeing value refused, another workspace's record not found, a viewer not offered), the page's action (the record's values), the run carries the record");
-  }
-
-  // ---------- 2. private catalogs ----------
-  {
-    const { syncUpstreamCatalog } = await import("../src/data-repositories.js");
-    const { setGithubEndpointsForTest, setAppConfig } = await import("../src/github-app.js");
-    const list = await staff("GET", staffOperator, "/catalog-access");
-    assert.deepEqual(list.body.catalogs.map((x: any) => [x.name, x.access, x.set]), [["runbooks", "deploy_key", false], ["standards", "github_app", false]], "staff read each private catalog and how it is read");
-    await assert.rejects(syncUpstreamCatalog("fixture_gaps", "runbooks"), /deploy key is not set/, "not set: refused, saying where to set it");
-    assert.equal((await staff("PUT", staffOperator, "/catalog-access/fixture_gaps/runbooks", { private_key: DEPLOY_KEY, known_hosts: KNOWN })).status, 403, "an operator may not set a key (owners: keys)");
-    assert.equal((await staff("PUT", staffOwner, "/catalog-access/fixture_gaps/runbooks", { private_key: "nope", known_hosts: KNOWN })).status, 400, "not a key");
-    assert.equal((await staff("PUT", staffOwner, "/catalog-access/fixture_gaps/runbooks", { private_key: DEPLOY_KEY, known_hosts: KNOWN.replace("git.example.com", "evil.example.com") })).status, 400, "a host key for another host");
-    const set = await staff("PUT", staffOwner, "/catalog-access/fixture_gaps/runbooks", { private_key: DEPLOY_KEY, known_hosts: KNOWN });
-    assert.equal(set.status, 200, JSON.stringify(set.body));
-    const after = JSON.stringify((await staff("GET", staffOperator, "/catalog-access")).body);
-    assert.ok(after.includes("deploy key ") && !after.includes("BEGIN OPENSSH") && !after.includes("b3BlbnNz"), "read back: a fingerprint, never the key");
-    assert.equal((await get(owner.token, "/api/admin/onboarding/catalog-access")).status === 200, false, "a workspace's person never reads it");
-    process.env.PATH = `${BIN}:${process.env.PATH}`;
-    const rep = await syncUpstreamCatalog("fixture_gaps", "runbooks");
-    assert.deepEqual([rep.version, rep.areas.map((x: any) => [x.area, x.created])], [PIN, [["runbooks", 2]]], "over SSH at the pin: indexed");
-    const log = readFileSync(SSH_LOG, "utf8");
-    assert.match(log, /IdentitiesOnly=yes/); assert.match(log, /StrictHostKeyChecking=yes/); assert.match(log, /BatchMode=yes/);
-    assert.match(log, /MODE 600/, "the key file is the fetch's own, 0600"); assert.ok(log.includes(`KEY ${pemLine("BEGIN", "OPENSSH")}`), "with the key staff set");
-    F.setFeaturesForTest({ ...ALL, private_catalogs: false });
-    await assert.rejects(syncUpstreamCatalog("fixture_gaps", "runbooks"), /features\.private_catalogs/, "off: a private catalog is not fetched");
-    F.setFeaturesForTest(ALL);
-    // The GitHub App: the platform's own installation, a token for that one repository, revoked after.
-    setGithubEndpointsForTest({ api: GH, web: GH });
-    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-    await setAppConfig({ app_id: "123", slug: "example-app", client_id: "Iv1.0123456789abcdef", client_secret: "s".repeat(20), webhook_secret: "w".repeat(20), private_key: privateKey });
-    assert.equal((await staff("PUT", staffOwner, "/catalog-access/fixture_gaps/standards", { installation_id: "nope" })).status, 400);
-    assert.equal((await staff("PUT", staffOwner, "/catalog-access/fixture_gaps/standards", { installation_id: "4242" })).status, 200);
-    const rep2 = await syncUpstreamCatalog("fixture_gaps", "standards", { fetcher: fakeGithub });
-    assert.deepEqual([rep2.version, rep2.areas.map((x: any) => [x.area, x.created])], [STD_PIN, [["standards", 1]]], "over HTTPS with the installation's token, at the pin");
-    assert.deepEqual(gh.asked, [{ repositories: ["standards"], permissions: { contents: "read" } }], "a token for that one repository, read contents only");
-    assert.ok(ghSeen.every((x) => x.endsWith(`token ${TOKEN}`)), "every request carries it in a header");
-    assert.equal(gh.revoked, 1, "revoked when the fetch is done");
-    assert.equal((await staff("DELETE", staffOwner, "/catalog-access/fixture_gaps/standards")).body.removed, true);
-    await assert.rejects(syncUpstreamCatalog("fixture_gaps", "standards", { fetcher: fakeGithub }), /installation is not set/, "removed: refused again");
-    ok("private catalogs: staff (owners) set a deploy key or the GitHub App's installation, read back only a fingerprint; SSH with that key alone and the host's key, HTTPS with a one-repository token revoked after; pinned; refused while off or unset");
   }
 
   // ---------- 3, 4. sections and columns ----------
@@ -340,7 +239,6 @@ try {
   }
 
   await web.close();
-  ghServer.close();
   console.log("generic gaps: all checks passed");
 } finally {
   cleanup();

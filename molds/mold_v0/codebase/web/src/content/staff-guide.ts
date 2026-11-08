@@ -5,7 +5,7 @@
 // areas and where their rows come from. The engineering documents (../../docs/*.md) stay in the navigation below it.
 // Pure TS with relative imports: features/docs/admin-docs.tsx renders it, scripts/record-pages-test.ts reads it.
 import { HOST_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
-import { developerConsole, recordAreas, settingsPage, repositoryCount } from '../config/pack-nav.generated';
+import { developerConsole, recordAreas, settingsPage } from '../config/pack-nav.generated';
 import { HOST_TABLES } from '../config/build-facts.generated';
 import { profile } from '../config/profile.generated';
 import { ADMIN_DOCS, type AdminDoc } from './admin-docs';
@@ -43,7 +43,7 @@ const PAGE_USE: Record<string, string> = {
   '/admin/compute': fill('The capacity that runs the {runs}: limits in force, what is running and what failed.'),
   '/admin/finops': 'Revenue, plans and measured spend: model use, compute hours and storage, by account or by provider.',
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',
-  '/admin/repositories': 'Where the shared record areas get their rows: each catalog\'s pin, when it was last indexed, and Index now.',
+  '/admin/repositories': fill('Where the record areas get their rows: each {workspace}\'s files, after its {runs} commit them, and the areas each repository feeds.'),
   '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.',
   '/admin/access-log': fill('The audit trails: every API and MCP request, sign-in and staff action across every {workspace}, and one {workspace}\'s data trail by its slug. Never a record\'s contents. A {workspace}\'s owners read their own on the Access log tab of their Billing page.')
 };
@@ -86,9 +86,7 @@ export function staffGuideMarkdown(nav: readonly GuideNavGroup[]): { title: stri
     ...(shared.length ? [
       '## Shared records',
       fill(`${shared.map((a) => `**${a.label}**`).join(', ').replace(/, ([^,]*)$/, ' and $1')} ${shared.length === 1 ? 'is' : 'are'} shared by every {workspace} and read only to customers. Each page lists its records with search, sort and filters; click a row to read the record beside the list, and **Open record** for its own page.`),
-      repositoryCount
-        ? 'A shared area fed by a catalog fills itself when its pin changes. While one is empty, its page says where its records come from: open [Data repositories](/admin/repositories) and press **Index now** to fill it at once.'
-        : 'Records are added by the product and by staff through the admin MCP server and the data API.'
+      'Staff keep them: **New** adds a record, **Edit** changes one and **Import** brings many at once from a CSV or JSON file (a preview first; the same file again changes nothing). The admin MCP server and the data API do the same.'
     ] : []),
     '## Every day',
     fill(`- [Access requests](/admin/requests): answer new requests.

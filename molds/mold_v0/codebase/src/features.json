@@ -211,18 +211,6 @@
       "off": "The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked."
     },
     {
-      "id": "private_catalogs",
-      "short": "private",
-      "label": "Private catalogs",
-      "default": false,
-      "quiet_off": true,
-      "requested_by": "private_catalogs",
-      "requested_words": "an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access)",
-      "since": "mold_v0-260",
-      "about": "A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack.",
-      "off": "A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out."
-    },
-    {
       "id": "wide_lists",
       "short": "wide",
       "label": "Wide lists",
