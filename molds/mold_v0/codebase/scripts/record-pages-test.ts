@@ -969,7 +969,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.match(pa, /<TooltipTrigger render=\{button\} \/>\s*<TooltipContent[^>]*>\{a\.disabled\}<\/TooltipContent>/, "its reason on hover and focus");
   assert.match(pa, /<ItemWhy reason=\{a\.disabled\} \/>/, "a disabled menu item: its reason under its label");
   assert.match(dp, /\{withActions \? bar : \(/, "declared actions replace part 1's Copy ID and Copy link (which move into More)");
-  assert.match(dp, /if \(\(s\.related \|\| s\.runs\) && base !== 'app'\) return null;/, "staff pages draw no workspace's lists or runs");
+  // mold_v0-271: a staff page draws related lists of shared areas (the staff route answers a workspace area's list as
+  // hidden), never a workspace's runs.
+  assert.match(dp, /if \(s\.runs && base !== 'app'\) return null;/, "staff pages draw no workspace's runs");
   const rp = strip(src("features/records/record-pages.tsx")), runsTsx = strip(src("features/tabs/runs.tsx"));
   assert.match(rp, /const linked = featureOn\('record_pages'\) && !source \? parseLinked\(linkedParam, area\) : null;/, "?linked= only with the flag");
   assert.match(runsTsx, /const deep = featureOn\('record_pages'\) \? \{ openKey: runParam/, "?run= only with the flag");

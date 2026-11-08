@@ -360,7 +360,7 @@ export function RecordView<T>({
 
       <div className='flex min-h-0 flex-1 gap-4'>
         <div className='flex min-h-0 w-full min-w-0 flex-col border'>
-          <div className='min-h-0 flex-1 overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
+          <div className='flex min-h-0 flex-1 flex-col overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
             <Table className={wide ? WIDE_TABLE : undefined}>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
                 <TableRow>
@@ -387,17 +387,7 @@ export function RecordView<T>({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
-                  <TableRow><TableCell colSpan={span} className='text-muted-foreground py-12 text-center'>Loading…</TableCell></TableRow>
-                ) : data.items.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={span} className='text-muted-foreground py-12 text-center whitespace-normal'>
-                      {narrowed ? (
-                        <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='outline' size='xs' onClick={clearAll}>Clear filters</Button>}</span>
-                      ) : empty}
-                    </TableCell>
-                  </TableRow>
-                ) : page.rows.map((it, i) => {
+                {loading || data.items.length === 0 ? null : page.rows.map((it, i) => {
                   const head = it.g && (i === 0 || page.rows[i - 1].g !== it.g);
                   const r = it.row, k = r ? rowKey(r) : '';
                   return (
@@ -434,6 +424,14 @@ export function RecordView<T>({
                 })}
               </TableBody>
             </Table>
+            {/* Loading and the empty state fill the whole table area below the headings (operator, 2026-11-08), centred. */}
+            {(loading || data.items.length === 0) && (
+              <div className='text-muted-foreground flex flex-1 items-center justify-center px-6 py-12 text-center text-sm whitespace-normal' data-list-empty={loading ? undefined : ''}>
+                {loading ? 'Loading…' : narrowed ? (
+                  <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='outline' size='xs' onClick={clearAll}>Clear filters</Button>}</span>
+                ) : <div className='max-w-xl'>{empty}</div>}
+              </div>
+            )}
           </div>
           <TablePager p={page} noun={noun} className='border-t px-2' count={data.ordered.length} of={searching ? data.base : undefined} />
         </div>

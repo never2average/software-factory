@@ -3,7 +3,7 @@
 // its pin, when it was last indexed and at which commit, the rows in each area it feeds, the last error, and "Index now"
 // (staff with the library permission; the same code path as the admin MCP's admin_sync_<repository>: src/repository-index.ts
 // indexNow). An upstream catalog indexes itself whenever its pin changes (mold_v0-128) unless its pack says `index: manual`.
-// RepositoryNotice is the line Health shows while a catalog could not be indexed at its pin.
+// RepositoryNotice: the line saying a catalog could not be indexed at its pin (Data repositories states it; Health no longer shows it, 2026-11-08).
 import Link from 'next/link';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
