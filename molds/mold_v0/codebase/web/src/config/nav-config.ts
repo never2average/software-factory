@@ -6,6 +6,18 @@ import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 import { featureOn } from './features';
 
 /**
+ * mold_v0-284: Agent configuration's in-page tabs, with agent_harness on: Configuration (the settings) and Profiles (the
+ * workspace agent's profiles, /admin/agent-profiles leading there: scripts/gen-packs.mjs). None when the agent is off,
+ * or when the staff Records group lists the profiles (console.admin_records `agent-profiles`): they stay there alone.
+ */
+export const AGENT_CONFIG_URL = '/admin/configuration';
+export const AGENT_PROFILES_URL = '/admin/agent-profiles';
+const profilesInRecords = recordAdminNav.some((g) => g.items.some((i) => i.url === AGENT_PROFILES_URL || i.inPageTabs?.some((t) => t.url === AGENT_PROFILES_URL)));
+export const agentConfigTabs: { id: 'configuration' | 'profiles'; label: string; url: string }[] = featureOn('agent_harness') && !profilesInRecords
+  ? [{ id: 'configuration', label: 'Configuration', url: AGENT_CONFIG_URL }, { id: 'profiles', label: 'Profiles', url: AGENT_PROFILES_URL }]
+  : [];
+
+/**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
  * /admin: platform staff across every account. /app: one account's people (account admins see management controls).
  * A host pack (mold_v0-039) puts its own entries among these (withHost*Nav); the declarative packs' come after.
@@ -34,9 +46,8 @@ export const adminNav: NavGroup[] = withRecordsPlaced([
       items: [
         { title: 'Compute', url: '/admin/compute', icon: 'adjustments', shortcut: ['g', 'c'], items: [] },
         { title: 'FinOps', url: '/admin/finops', icon: 'trendingUp', items: [] },
-        { title: 'Agent configuration', url: '/admin/configuration', icon: 'settings', items: [] },
-        // mold_v0-261: the workspace agent's profiles, with agent_harness on.
-        ...(featureOn('agent_harness') ? [{ title: 'Agent profiles', url: '/admin/agent-profiles', icon: 'userPen' as const, items: [] }] : []),
+        // mold_v0-284: with agent_harness on, the workspace agent's profiles (mold_v0-261) are its Profiles tab (agentConfigTabs).
+        { title: 'Agent configuration', url: AGENT_CONFIG_URL, icon: 'settings', items: [], ...(agentConfigTabs.length ? { inPageTabs: agentConfigTabs } : {}) },
         // The packs' data repositories (mold_v0-129): their pins, index state and Index now, in a build that has one.
         ...(repositoryCount ? [{ title: 'Data repositories', url: '/admin/repositories', icon: 'book' as const, items: [] }] : []),
         // The platform's staff are Accounts' Admins tab (/admin/accounts?section=admins, mold_v0-204), not an entry here.

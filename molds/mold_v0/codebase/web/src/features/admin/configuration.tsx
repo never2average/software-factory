@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Icons } from '@/components/icons';
 import { List } from './account-peek';
-import PageContainer from '@/components/layout/page-container';
+import { PageFrame } from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -40,8 +40,11 @@ interface Setting {
 }
 interface Compute { groups: { id: string; label: string }[]; settings: Setting[] }
 
-/** Agent configuration: one row per setting (models, run sizes, research limits), edited in place. */
-export function AdminConfiguration() {
+/**
+ * Agent configuration: one row per setting (models, run sizes, research limits), edited in place. bare (mold_v0-284): the
+ * body alone, as Agent configuration's Configuration tab draws it below its strip.
+ */
+export function AdminConfiguration({ bare = false }: { bare?: boolean } = {}) {
   const { lock } = useAdminRole();
   const { data, error, isLoading } = useAdmin<Compute>('/compute');
   const save = useAdminAction((v: Record<string, string | null>) => adminApi<Compute>('PUT', '/compute/settings', { values: v }), { success: 'Setting saved' });
@@ -70,7 +73,7 @@ export function AdminConfiguration() {
     { key: 'key', label: 'Variable', type: 'text', value: (x) => x.key, render: (x) => <Mono>{x.key}</Mono> }
   ];
   return (
-    <PageContainer>
+    <PageFrame bare={bare}>
       <ErrorBox error={error} />
       <RecordView id='agent-configuration' rows={rows} loading={isLoading} rowKey={(x) => x.key} cols={cols} noun='settings'
         searchText={(x) => `${x.label} ${x.key} ${x.help} ${groupName(x.group)}`} searchPlaceholder='Search settings'
@@ -95,7 +98,7 @@ export function AdminConfiguration() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </PageContainer>
+    </PageFrame>
   );
 }
 
