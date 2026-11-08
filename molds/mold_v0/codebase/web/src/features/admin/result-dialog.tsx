@@ -18,7 +18,8 @@ const KEY_PLACEHOLDER = '[paste the API key here]';
 export function ResultDialog({ result, title, onClose }: { result: InviteResult | null; title: string; onClose: () => void }) {
   return (
     <Dialog open={Boolean(result)} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
+      {/* Content never wider than the popup (operator, 2026-11-08: the invite popup overflowed): long URLs, keys and emails wrap. */}
+      <DialogContent className='max-h-[90vh] overflow-x-hidden overflow-y-auto sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>The connector URL, the setup for the AI client you choose, and an email for those clients.</DialogDescription>
@@ -35,7 +36,7 @@ function ResultBody({ result }: { result: InviteResult }) {
   const c = result.clients.find((x) => x.id === pick) ?? result.clients[0];
   const withKey = (t: string) => (result.key ? t.replaceAll(KEY_PLACEHOLDER, result.key) : t);
   return (
-    <div className='grid gap-4'>
+    <div className='grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 [overflow-wrap:anywhere]'>
       {legacy && (
         <Notice>
           <b>Shown once.</b> Only a hash is stored. Copy the key or the email now; if it is lost, rotate the key. The key goes in a header (each client's setup below), never in the URL.
@@ -54,7 +55,7 @@ function ResultBody({ result }: { result: InviteResult }) {
           </Notice>
         )
       )}
-      <div className='grid gap-1.5'>
+      <div className='grid min-w-0 gap-1.5'>
         <Label htmlFor='rd-client'>Connector URL</Label>
         <div className='flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center'>
           <UrlField url={result.connector_url} secret={false} className='sm:flex-1' />
@@ -62,13 +63,13 @@ function ResultBody({ result }: { result: InviteResult }) {
         </div>
       </div>
       {result.key && (
-        <div className='grid gap-1.5'>
+        <div className='grid min-w-0 gap-1.5'>
           <Label>API key</Label>
           <CopyField value={result.key} />
         </div>
       )}
       {c && <ClientWay c={c} />}
-      <div className='grid gap-1.5 border-t pt-4'>
+      <div className='grid min-w-0 gap-1.5 border-t pt-4'>
         <Label>Setup email{result.email.to ? ` to ${result.email.to}` : ''}</Label>
         <SetupEmail clients={result.clients} current={c?.id}
           preview={(ids) => post('/setup-email', { clients: ids, ...(legacy ? { key: true } : {}) })}

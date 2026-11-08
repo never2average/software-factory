@@ -14,7 +14,7 @@
 //    done from a real tool call, a manual stage marked by hand (a tool's stage refused), an account's own use cases
 //    (add, import twice, remove), help requests between teammates, the admin's templates (a tool the build lacks refused
 //    in the fixture's words) and their adoption; the webhook (its secret), the tip at the end of the next answer in the
-//    fixture's words (once a day, always after its always_after tool, at most three times), the profile page's switch, and
+//    fixture's words (once a day, always after its always_after tool, at most three times), on /app (dismiss, mute) and
 //    on /admin (queue by hand, remove); the Storage page names its tables by the fixture's labels.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
@@ -118,7 +118,7 @@ try {
   const offHttp = await startHttp();
   const ownerOff = await offHttp.signIn(org, "owner");
   const support0 = await offHttp.adminToken("owner");
-  for (const [m, p, h] of [["GET", "/api/app/journeys", ownerOff], ["GET", "/api/app/adoption", ownerOff], ["GET", "/api/app/nudges/preference", ownerOff],
+  for (const [m, p, h] of [["GET", "/api/app/journeys", ownerOff], ["GET", "/api/app/adoption", ownerOff], ["GET", "/api/app/nudges", ownerOff],
     ["GET", "/api/admin/onboarding/playbooks", support0], ["GET", "/api/admin/onboarding/journeys", support0]] as const)
     assert.equal((await offHttp.req(m, p, { authorization: `Bearer ${h}` })).status, 404, `off: no ${p}`);
   assert.equal((await offHttp.req("POST", "/api/journeys/nudges", { authorization: "Bearer journeys-test-secret" }, { org: org.slug, message: "x" })).status, 404, "off: no webhook");
@@ -209,7 +209,7 @@ try {
   await db.query("DELETE FROM nudges WHERE step = 'via-path'");
   assert.equal((await hook({ distinct_id: "user_unknown", message: "x" }, "Bearer journeys-test-secret")).status, 404, "an unknown person");
   const a1 = await mc.call("remember", { body: "We answer within a day." });
-  assert.match(a1.content[0]!.text, /\n\n---\nA tip for the user from Workspace: Save one fact the team should not repeat\. To try it, they can say: "Remember that we answer within a day\."\. Tips can be turned off at http:\/\/[^ ]+\/app\/profile\.$/,
+  assert.match(a1.content[0]!.text, /\n\n---\nA tip for the user from Workspace: Save one fact the team should not repeat\. To try it, they can say: "Remember that we answer within a day\."\. Tips can be turned off at http:\/\/[^ ]+\/app\.$/,
     "the tip at the end of the next answer, in the fixture's words");
   assert.deepEqual(a1.structuredContent.nudge, { message: tip.message, prompt: tip.prompt });
   const a2 = await mc.call("remember", { body: "Twice." });
@@ -219,14 +219,15 @@ try {
   await mc.call("recall", {});
   const a5 = await mc.call("recall", {});
   assert.ok(!a5.content[0]!.text.includes("---\nA tip"), "shown in chat at most three times");
-  // On /app (mold_v0-277): no list of tips and no dismissing on the Overview any more; the profile page's switch only.
-  for (const [m, p] of [["GET", "/nudges"], ["POST", "/nudges/1/dismiss"], ["POST", "/nudges/mute"]] as const)
-    assert.equal((await call(member, m, p)).status, 404, `no ${m} /api/app${p}`);
-  assert.equal((await call(member, "GET", "/nudges/preference")).body.muted, false);
-  assert.equal((await call(member, "POST", "/nudges/preference", { muted: true })).status, 204);
-  assert.equal((await call(member, "GET", "/nudges/preference")).body.muted, true);
-  assert.equal(await tips.nudgeForChat({ ...org, userId: sub(member) }, { force: true }), null, "muted: no tip in chat, even after an always_after tool");
-  assert.equal((await call(member, "POST", "/nudges/preference", { muted: false })).status, 204);
+  // On /app: listed, dismissed (only by its own person), muted.
+  const waiting = (await call(member, "GET", "/nudges")).body;
+  assert.equal(waiting.muted, false);
+  const t1 = waiting.nudges.find((x: any) => x.step === "save");
+  assert.ok(t1, "the tip waits on /app");
+  assert.equal((await call(member, "POST", `/nudges/${t1.id}/dismiss`)).status, 204);
+  assert.equal((await call(member, "POST", `/nudges/${t1.id}/dismiss`)).body.error, "No such tip");
+  assert.equal((await call(member, "POST", "/nudges/mute", { muted: true })).status, 204);
+  assert.equal((await call(member, "GET", "/nudges")).body.muted, true);
   // On /admin: the recipes with their webhook bodies, a tip queued by hand (support), removed.
   const view = (await adminCall("viewer", "GET", "/journeys")).body;
   assert.equal(view.configured, true, "the webhook's secret is set");
@@ -234,7 +235,7 @@ try {
   assert.equal((await adminCall("viewer", "POST", "/journeys/nudges", { org_slug: org.slug, message: "x" })).status, 403, "queueing a tip needs journeys");
   const sent = (await adminCall("support", "POST", "/journeys/nudges", { org_slug: org.slug, message: "New: search." })).body;
   assert.deepEqual([sent.journey, sent.step], ["manual", "step"]);
-  assert.ok((await db.query<{ message: string }>("SELECT message FROM nudges WHERE org_id = $1 AND user_id = ''", [org.orgId])).some((x) => x.message === "New: search."), "an account-wide tip, for everyone");
+  assert.ok((await call(member2, "GET", "/nudges")).body.nudges.some((x: any) => x.message === "New: search."), "an account-wide tip reaches everyone");
   assert.equal((await adminCall("support", "DELETE", `/journeys/nudges/${sent.id}`)).status, 204);
   assert.equal((await adminCall("support", "DELETE", `/journeys/nudges/${sent.id}`)).body.error, "No such nudge");
   await mc.close();
@@ -245,7 +246,7 @@ try {
   assert.equal(labels.nudges, "Tip queue");
   assert.equal(labels.nudge_prefs, "Nudge prefs");
   await http.close();
-  console.log("✓ on, tips: the webhook and its secret, the tip at the end of the next answer in the fixture's words (once a day, always after recall, at most three times), the profile page's switch (no list on /app) and /admin (recipes, queue by hand, remove); the Storage page's labels");
+  console.log("✓ on, tips: the webhook and its secret, the tip at the end of the next answer in the fixture's words (once a day, always after recall, at most three times), on /app (dismiss, mute) and /admin (recipes, queue by hand, remove); the Storage page's labels");
 } finally {
   rmSync(TMP, { recursive: true, force: true });
   cleanupWorld();

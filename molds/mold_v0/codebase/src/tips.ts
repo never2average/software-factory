@@ -7,9 +7,8 @@
  * steps) is the system of record for which sequences exist and when each step fires. The shell adds the one channel it
  * cannot reach, the person's AI client: a workflow's webhook step (or an admin, by hand) queues a tip here; it is shown
  * at the end of the next tool answer (at most one a day per person, at most MAX_CHAT_SHOWS times; the tools pack.json
- * tips.always_after names always show it) until it expires, and its showing is sent back as an event so the workflow can
- * branch on it. The console's Overview shows no tips (mold_v0-277: its Tips block and its list and dismiss routes are
- * gone); the person turns tips on or off on their profile page (/api/app/nudges/preference).
+ * tips.always_after names always show it), on /app Setup until it expires or is dismissed, and its showing, dismissal
+ * and the person's mute are sent back as events so the workflow can branch on them.
  *
  * The nudges table is only a delivery queue (sql/migrations/0026_journeys_and_tips.sql): one row per account/person and
  * sequence step, replaced when the step fires again, expiring after a week by default; nudge_prefs keeps each person's
@@ -154,7 +153,7 @@ export async function nudgeForChat(org: Org, opts: { force?: boolean } = {}): Pr
 
 /** The line appended to a tool result. Plain text: the model decides how to pass it on. */
 export function chatLine(n: Pick<NudgeRow, "message" | "prompt">) {
-  return `\n\n---\n${tipWord("chat_line", { message: n.message })}` + (n.prompt ? tipWord("chat_try", { prompt: n.prompt }) : "") + tipWord("chat_off", { url: `${consoleUrl()}/app/profile` });
+  return `\n\n---\n${tipWord("chat_line", { message: n.message })}` + (n.prompt ? tipWord("chat_try", { prompt: n.prompt }) : "") + tipWord("chat_off", { url: `${consoleUrl()}/app` });
 }
 
 /** Whether a tool's answer always carries the waiting tip (pack.json tips.always_after). */
@@ -176,10 +175,18 @@ export async function withTip(org: Org, tool: string, result: CallToolResult): P
 
 // ---------- /app ----------
 
-/** Whether this person turned the in-chat tips off (their profile page's switch). */
-export async function tipsMuted(orgId: number, userId: string | null) {
-  const [pref] = await (await getDb()).query<{ muted: boolean }>("SELECT muted FROM nudge_prefs WHERE org_id = $1 AND user_id = $2", [orgId, userId ?? ""]);
-  return Boolean(pref?.muted);
+export async function nudgesForApp(orgId: number, userId: string | null) {
+  const db = await getDb();
+  const rows = await db.query<NudgeRow>(`SELECT * FROM nudges WHERE ${ACTIVE} ORDER BY (user_id <> '') DESC, created_at DESC LIMIT 10`, [orgId, userId ?? ""]);
+  const [pref] = await db.query<{ muted: boolean }>("SELECT muted FROM nudge_prefs WHERE org_id = $1 AND user_id = $2", [orgId, userId ?? ""]);
+  return { muted: Boolean(pref?.muted), nudges: rows.map((n) => ({ id: Number(n.id), journey: n.journey, step: n.step, message: n.message, prompt: n.prompt, link: n.link, created_at: n.created_at })) };
+}
+
+export async function dismiss(orgId: number, slug: string, userId: string | null, id: number) {
+  const [n] = await (await getDb()).query<{ journey: string; step: string }>(
+    `UPDATE nudges SET dismissed_at = now() WHERE id = $3 AND ${ACTIVE} RETURNING journey, step`, [orgId, userId ?? "", id]);
+  if (!n) throw new TipError(tipWord("no_tip"), 404);
+  capture({ distinctId: userId ?? `org:${slug}`, orgSlug: slug }, "nudge_dismissed", { journey: n.journey, step: n.step });
 }
 
 export async function setMuted(orgId: number, slug: string, userId: string | null, muted: boolean) {
@@ -248,12 +255,13 @@ export function tipPublicRoutes(app: Express) {
   app.post("/api/journeys/nudges/:secret", express.json({ limit: "32kb" }), (req, res) => nudgeHook(req, res, String(req.params.secret)));
 }
 
-/** /api/app/nudges/preference (src/app.ts): the profile page's switch, tips in my AI client on or off. Only when on. */
+/** /api/app/nudges (src/app.ts): everything waiting for this person, dismiss one, or turn tips off. Only when on. */
 export function tipRoutes(api: Router, h: PortalHelpers) {
   if (!tipsOn()) return;
   const { S } = h;
-  api.get("/nudges/preference", async (_req, res) => void res.json({ muted: await tipsMuted(S(res).org, S(res).user) }));
-  api.post("/nudges/preference", async (req, res) => { await setMuted(S(res).org, S(res).slug, S(res).user, req.body?.muted !== false); res.status(204).end(); });
+  api.get("/nudges", async (_req, res) => void res.json(await nudgesForApp(S(res).org, S(res).user)));
+  api.post("/nudges/:id/dismiss", async (req, res) => { await dismiss(S(res).org, S(res).slug, S(res).user, Number(req.params.id)); res.status(204).end(); });
+  api.post("/nudges/mute", async (req, res) => { await setMuted(S(res).org, S(res).slug, S(res).user, req.body?.muted !== false); res.status(204).end(); });
 }
 
 /**

@@ -172,8 +172,7 @@ try {
     /admin_mcp\.skills ops_review\[0\]\.from: the shell's skill no longer reads "1\. health_summary with failures: false\."/);
   refused("setup from a declarative pack", { hosty: hostPack(), plainpack: decl({ setup: { viewer_note: "No." } }) }, /packs\/plainpack\/pack\.json: setup is a host pack's/);
   refused("a setup step after a step there is not", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], after: "dashboard" }] } }) }, /setup\.steps\[0\] widget: after: dashboard is not a step before it/);
-  refused("a shell step as the pack's own", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], id: "first_call" }] } }) }, /is one of the shell's steps: give its words in setup\.shell_steps/);
-  refused("a kept place as the pack's own", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], id: "tools" }] } }) }, /is a place the shell keeps \(connected, tools/);
+  refused("a shell step as the pack's own", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], id: "tools" }] } }) }, /is one of the shell's steps: give its words in setup\.shell_steps/);
   refused("a stage step without the session engine", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], done_when: "stage:onboarded" }] } }) }, /done_when stage: the build has no session engine/);
   refused("a launch step without a viewer note", { hosty: hostPack({ setup: { steps: [CONFIG.setup.steps[1]] } }) }, /launch: give setup\.viewer_note/);
   refused("a tool in two workflow groups", { hosty: hostPack({ setup: { workflow: [{ id: "aa", label: "A", tools: ["tt"], prompt: "A." }, { id: "bb", label: "B", tools: ["tt"], prompt: "B." }] } }) }, /setup\.workflow bb: tool tt is in group aa too/);
@@ -265,14 +264,14 @@ try {
     const owner = await http.signIn(org, "owner"), viewer = await http.signIn(org, "viewer");
     const setup = async (token: string) => { const r = await http.req("GET", "/api/app/setup", { authorization: `Bearer ${token}` }); assert.equal(r.status, 200); return r.json() as Promise<Record<string, any>>; };
     const shell = await setup(owner);
-    assert.deepEqual(shell.steps.map((s: any) => s.id), ["joined", "first_call"], "no config: the shell's steps (connecting a client is the Connect card's, mold_v0-277: no row)");
+    assert.deepEqual(shell.steps.map((s: any) => s.id), ["joined", "connected", "tools", "first_call"], "no config: the shell's steps");
     assert.deepEqual([shell.groups, shell.coverage, shell.next, shell.viewer_note], [[], 0, null, null]);
     host.setPackConfigsForTest([cfg]);
     const before = await setup(owner);
     assert.deepEqual(before.steps.map((s: any) => [s.id, s.done, s.optional ?? false]),
-      [["joined", true, false], ["widget", false, true], ["first_call", false, false], ["launch_it", false, false]], "its steps among the shell's (after: tools, where that row stood)");
+      [["joined", true, false], ["connected", false, false], ["tools", false, false], ["widget", false, true], ["first_call", false, false], ["launch_it", false, false]], "its steps among the shell's");
     assert.deepEqual(before.steps.find((s: any) => s.id === "first_call").prompt, "Hosty, start.", "the shell's first step in its words, its prompt from them");
-    assert.deepEqual([before.done, before.total], [1, 3], "the optional step is not counted");
+    assert.deepEqual([before.done, before.total], [1, 5], "the optional step is not counted");
     assert.deepEqual(before.groups.map((g: any) => [g.id, g.used, g.total]), [["start", 0, 1], ["go", 0, 2]]);
     assert.equal(before.next.id, "start");
     // The owner's own connector log (rows by the session's user, the token's subject): a text-only client, the widget
@@ -286,10 +285,10 @@ try {
     await ev("tools/call", "hosty_start", null);
     for (const e of ["Over BUDGET now", "no things yet", "something else"]) await ev("tools/call", "hosty_go", null, false, e);
     const after = await setup(owner);
-    assert.deepEqual(after.steps.map((s: any) => [s.id, s.done]), [["joined", true], ["widget", true], ["first_call", true], ["launch_it", false]], "a resource read under its prefix does the step");
+    assert.deepEqual(after.steps.map((s: any) => [s.id, s.done]), [["joined", true], ["connected", true], ["tools", true], ["widget", true], ["first_call", true], ["launch_it", false]], "a resource read under its prefix does the step");
     const widget = after.steps.find((s: any) => s.id === "widget");
     assert.deepEqual([widget.help, widget.prompt], ["Your client shows text.", "Show the widget."], "a text-only client: the text-only help; the declared prompt");
-    assert.deepEqual([after.done, after.total], [2, 3], "the optional step done but not counted; the launch step still to do");
+    assert.deepEqual([after.done, after.total], [4, 5], "the optional step done but not counted; the launch step still to do");
     assert.deepEqual(after.groups.map((g: any) => [g.id, g.used]), [["start", 1], ["go", 0]], "the account's tools in use, by group (a failed call is not use)");
     assert.equal(after.coverage, 0.5);
     assert.equal(after.next.id, "go");

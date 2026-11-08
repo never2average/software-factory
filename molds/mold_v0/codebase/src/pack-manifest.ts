@@ -96,8 +96,7 @@ const stepId = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letter
  * A host pack's Setup page (mold_v0-140; src/app.ts setup, src/host.ts SetupConfig): its own `steps` among the shell's
  * (each after a step, done when the person read a resource whose address starts with a prefix, `resource:<prefix>`, or
  * the account reached a session-engine stage, `stage:onboarded|simulated|reported`), the shell's steps in its words
- * (`shell_steps`: joined, first_call; connecting a client is the Overview's Connect card, mold_v0-277, never a step: a
- * step may still be put `after` connected or tools, where those stood), the note shown for a step that starts work to someone who may
+ * (`shell_steps`: joined, connected, tools, first_call), the note shown for a step that starts work to someone who may
  * not (`viewer_note`, with `launch` on the step), and the `workflow`: the tool groups that make up using it fully.
  */
 const ShellStepWords = z.object({ label: plain(120).optional(), help: plain(600).optional(), prompt: plain(400).optional() }).strict();
@@ -109,7 +108,7 @@ const SetupSchema = z.object({
     optional: z.boolean().optional(), launch: z.boolean().optional(), after: stepId.optional(),
     done_when: z.string().regex(/^(resource:[a-z][a-z0-9+.-]*:\/\/[^\s]{0,200}|stage:[a-z][a-z0-9_]{1,30})$/, "resource:<address prefix> (ui://...) or stage:<id>"),
   }).strict()).max(12).optional(),
-  shell_steps: z.object(Object.fromEntries(["joined", "first_call"].map((id) => [id, ShellStepWords.optional()]))).strict().optional(),
+  shell_steps: z.object(Object.fromEntries(["joined", "connected", "tools", "first_call"].map((id) => [id, ShellStepWords.optional()]))).strict().optional(),
   viewer_note: plain(300).optional(),
   workflow: z.array(z.object({
     id: stepId, label: plain(80),
