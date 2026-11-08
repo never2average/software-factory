@@ -23,9 +23,7 @@
 // the server refuses the rest whatever the page asks.
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { useQueryState } from 'nuqs';
 import PageContainer from '@/components/layout/page-container';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
 import { SetupPage } from '@/features/portal/setup';
@@ -37,6 +35,7 @@ import { SchedulesBody } from '@/features/schedules/schedules-page';
 import { Icons } from '@/components/icons';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { RecordTableView } from '@/features/records/record-pages';
+import { InPageTabs } from './in-page-tabs';
 import { BoardColumns, TimelineList, type Page } from './board';
 import { ChartCell, ChartTiles, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
@@ -283,29 +282,13 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
 function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
   const subs = (tab.sections ?? []).map((id) => packTabs.find((t) => t.pack === tab.pack && t.id === id))
     .filter((t): t is PackTabSpec => !!t && (role === null || t.roles.includes(role)));
-  const [selected, setSelected] = useQueryState('tab', { defaultValue: subs[0]?.id ?? '' });
-  const current = subs.find((t) => t.id === selected) ?? subs[0];
-  if (!current) return null;
+  // The console's one in-page tab strip (./in-page-tabs.tsx; the staff Records entries of in-page tabs draw it too).
   return (
-    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className={subs.length > 6 ? 'w-full min-w-0 gap-6' : 'gap-6'}>
-      {subs.length > 6 ? (
-        // mold_v0-260: 7 or 8 in-page tabs: the strip scrolls sideways on its own when it is wider than the page (a phone).
-        <div className='-mx-1 w-full min-w-0 max-w-full overflow-x-auto px-1 pb-1' data-wide-strip=''>
-          <TabsList variant='line' className='w-max gap-6 p-0'>
-            {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
-          </TabsList>
-        </div>
-      ) : (
-        <TabsList variant='line' className='gap-6 p-0'>
-          {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
-        </TabsList>
-      )}
-      <TabsContent value={current.id} className={subs.length > 6 ? 'min-w-0' : undefined}>
-        {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
-          : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
-          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}
-      </TabsContent>
-    </Tabs>
+    <InPageTabs tabs={subs}>
+      {(current) => current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
+        : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
+        : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}
+    </InPageTabs>
   );
 }
 

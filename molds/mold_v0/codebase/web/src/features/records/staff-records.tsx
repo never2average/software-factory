@@ -18,7 +18,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import PageContainer from '@/components/layout/page-container';
+import PageContainer, { PageFrame } from '@/components/layout/page-container';
 import { Field, type RowAction } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -155,7 +155,7 @@ function ResourcesNote({ form, noun }: { form: StaffForm; noun: string }) {
 }
 
 /** A shared area's list: its cards, its search row, its table; New, Import and Edit where the role may write. */
-export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
+export function StaffRecordListPage({ area, bare = false }: { area: RecordAreaSpec; bare?: boolean }) {
   const form = useStaffForm(area.name);
   const [round, setRound] = useState(0);
   // mold_v0-217: New and Edit are full cards in the list's place; New kept in the address (?new=1), Import too (?import=1).
@@ -181,7 +181,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
         </ActionCard>
       ) : null;
   return (
-    <PageContainer>
+    <PageFrame bare={bare}>
       <FormHost card={card} panel={!(form?.import && importing)}>
       <RecordTableView key={round} area={area} base='admin' url={`${recordsApi('admin')}/${area.name}`} id={`admin-records-${area.name}`}
         empty={<RecordEmpty area={area} base='admin' />}
@@ -197,7 +197,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
         rowActions={form?.edit || form?.remove ? (r) => rowItems({ area, form, row: r, edit: () => setEditing(r), removed: reload }) : undefined}
         detailNote={(r) => <ProvenanceFields row={r} form={form} />} />
       </FormHost>
-    </PageContainer>
+    </PageFrame>
   );
 }
 

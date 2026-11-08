@@ -19,7 +19,7 @@ import { STAFF_GUIDE_SLUG, staffGuideShown } from '../content/staff-guide';
 import { guidePages } from '../content/customer-guide';
 import catalog from '../content/mcp-tools.generated.json';
 import { findAppPage, findPackPage } from '../features/packs/registry';
-import { findRecordArea } from '../features/records/registry';
+import { findRecordArea, findRecordGroup } from '../features/records/registry';
 import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
 import { journeysOn, tipsOn } from '../features/journeys/config';
@@ -45,6 +45,8 @@ export const RESOLVED: Readonly<Record<string, (p: Params) => boolean>> = {
   '/app/records/[area]/[key]': (p) => !!findRecordArea('app', first(p, 'area')),
   '/admin/records/[area]': (p) => !!findRecordArea('admin', first(p, 'area')),
   '/admin/records/[area]/[key]': (p) => !!findRecordArea('admin', first(p, 'area')),
+  // mold_v0-281: a staff Records entry of in-page tabs (console.admin_records `tabs`).
+  '/admin/records-group/[group]': (p) => !!findRecordGroup(first(p, 'group')),
   '/admin/packs/[pack]/[page]': (p) => !!findPackPage('admin', first(p, 'pack'), first(p, 'page')),
   '/app/docs/[slug]': (p) => CUSTOMER_DOCS.has(first(p, 'slug')),
   '/admin/docs/[slug]': (p) => ADMIN_DOC_SLUGS.has(first(p, 'slug')),

@@ -22,6 +22,11 @@ export interface NavItem {
   access?: PermissionCheck;
   /** The account roles that see it (a pack's declared tab, mold_v0-058); absent: everyone. */
   roles?: string[];
+  /**
+   * mold_v0-281: a staff Records entry that holds several lists as in-page tabs (console.admin_records `tabs`): each
+   * member's id, its label on the strip, its own list address of before (which leads here), and its area when it is one.
+   */
+  inPageTabs?: { id: string; label: string; url: string; area?: string }[];
 }
 
 export interface NavGroup {
