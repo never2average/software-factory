@@ -34,7 +34,11 @@
 //    /admin (a pack's admin page); the shell's own Activity entry sits under Insights, never under a heading "Activity";
 //    warned, a group of more than 7 entries and a child area's tab (a required reference to an area with its own tab)
 //    beside its parent's in the sidebar, not when both are in one sections tab; `gen-packs --sidebar` prints the resolved
-//    /app and /admin trees (headings, entries, in-page tabs) and writes nothing.
+//    /app and /admin trees (headings, entries, in-page tabs, Settings' tabs too) and writes nothing.
+// 11. The Team page and API keys inside Settings (mold_v0-280, a team or keys tab's `inside: "settings"`): out of the
+//    sidebar, each a tab of Settings' Access group under its label (its roles kept), /app/team and /app/keys leading
+//    there, printed as Settings' in-page tabs; refused: inside on another kind, with a group, the page also opened from
+//    the sidebar, two tabs for one page, an id of a Settings tab, a declared sidebar listing it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -546,7 +550,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     const tree = sidebarOf(nested.copy);
     assert.equal(tree.status, 0, tree.err);
     assert.equal(tree.out, [
-      "/app sidebar:", "  Audit", "    Overview  /app/overview", "    Settings  /app/settings", "    Apps  /app/apps", "      in-page tabs: Applications, Vulnerabilities",
+      "/app sidebar:", "  Audit", "    Overview  /app/overview", "    Settings  /app/settings", "      in-page tabs: Credentials, Alerts", "    Apps  /app/apps", "      in-page tabs: Applications, Vulnerabilities",
       "    Controls  /app/controls", "    Audits  /app/audits", "    Reports  /app/reports",
       "  Workspace", "    Due soon  /app/notices", "    Activity  /app/activity", "    Billing  /app/billing",
       "/admin sidebar:", "  Onboarding", "    Overview  /admin", "    Access requests  /admin/requests", "    Accounts  /admin/accounts",
@@ -559,6 +563,45 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     assert.notEqual(refusedTree.status, 0, "--sidebar refuses as the build does");
     assert.match(refusedTree.err, /the heading "OVERVIEW"/);
     console.log("✓ gen-packs --sidebar: the resolved /app and /admin trees (headings, entries, in-page tabs), nothing written; refused as the build is");
+  }
+  // ---------- 11. the Team page and API keys inside Settings (mold_v0-280) ----------
+  {
+    const INSIDE = (_id: string, j: any) => { j.tabs.push({ id: "people", kind: "team", label: "Users and invites", inside: "settings" }, { id: "tokens", kind: "keys", label: "API tokens", inside: "settings", roles: ["member", "owner"] }); };
+    const b = built("inside", ["fixture_vulns"], INSIDE);
+    const p = probe(b);
+    assert.ok(!lines(p.portalNav).some((x) => / \/app\/(team|keys)$/.test(x)), `neither page is a sidebar entry: ${lines(p.portalNav).join(", ")}`);
+    assert.ok(lines(p.portalNav).includes("Audit: Settings /app/settings"), "Settings is in the sidebar, below Overview");
+    assert.deepEqual(p.layout.built, ["access:credentials", "access:people", "access:tokens", "automation:alerts"], `each a tab of Settings' Access group, after the shell's: ${p.layout.built.join(", ")}`);
+    const gen = readFileSync(path.join(b, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    assert.match(gen, /"id": "people",\s*"label": "Users and invites",\s*"group": "access",\s*"kind": "team",\s*"pack": "fixture_vulns"\s*\}/, "the team tab: its label, every role (no roles listed)");
+    assert.match(gen, /"id": "tokens",\s*"label": "API tokens",\s*"group": "access",\s*"kind": "keys",\s*"pack": "fixture_vulns",\s*"roles": \[\s*"member",\s*"owner"\s*\]/, "the keys tab: its label and its narrowed roles");
+    assert.match(gen, /kind: [^;]*'team' \| 'keys' \| 'area';/, "the Settings tab kinds name team and keys");
+    const routes = JSON.parse(readFileSync(path.join(b, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    for (const [from, to] of [["/app/team", "/app/settings?tab=people"], ["/app/keys", "/app/settings?tab=tokens"]])
+      assert.ok(routes.redirects.some((r: any) => r.source === from && r.destination === to), `${from} leads to ${to}`);
+    const tree = spawnSync(process.execPath, ["scripts/gen-packs.mjs", "--sidebar"], { cwd: b, encoding: "utf8" });
+    assert.equal(tree.status, 0, tree.stderr);
+    assert.match(tree.stdout, /    Settings  \/app\/settings\n      in-page tabs: Credentials, Users and invites, API tokens, Alerts\n/, tree.stdout);
+    assert.doesNotMatch(tree.stdout, /\/app\/(team|keys)\n/, "no entry for the pages of before");
+    // Refused, each with its reason.
+    const bad: [string, (id: string, j: any) => void, unknown, RegExp][] = [
+      ["inside on another kind", (_id, j) => { j.tabs.push({ id: "plan", kind: "billing", inside: "settings" }); }, undefined, /inside is for a team or keys tab/],
+      ["inside with a group", (_id, j) => { j.tabs.push({ id: "people", kind: "team", group: "Settings", inside: "settings" }); }, undefined, /it takes no group/],
+      ["the page in the sidebar too", (_id, j) => { j.tabs.push({ id: "people", kind: "team", inside: "settings" }, { id: "team2", kind: "team", group: "Account" }); }, undefined, /tab people: the \/app\/team page is inside Settings, yet tab team2 of pack fixture_vulns opens it from the sidebar/],
+      ["two tabs inside for one page", (_id, j) => { j.tabs.push({ id: "people", kind: "team", inside: "settings" }, { id: "people2", kind: "team", label: "People", inside: "settings" }); }, undefined, /tab people2: tab people of pack fixture_vulns already puts the \/app\/team page inside Settings/],
+      ["an id of a Settings tab", (_id, j) => { j.tabs.push({ id: "alerts", kind: "team", inside: "settings" }); }, undefined, /tab alerts: its Settings tab would have the address of the Settings tab alerts/],
+      ["a declared sidebar listing it", INSIDE, { console: { sidebar: SIDEBAR.map((g) => ({ ...g, items: g.items.filter((x) => x !== "keys") })) } }, /items\[3\] "team": tab people of pack fixture_vulns puts that page inside Settings/],
+    ];
+    let i = 0;
+    for (const [what, edit, profile, re] of bad) {
+      const r = buildCopy(`inside-bad-${i++}`, ["fixture_vulns"], edit, profile);
+      assert.notEqual(r.status, 0, `${what}: refused (${r.out.slice(-500)})`);
+      assert.match(r.out, re, `${what}: ${r.out.slice(-800)}`);
+    }
+    // A declared sidebar without them: Settings holds both.
+    const declared = probe(built("inside-declared", ["fixture_vulns"], INSIDE, { console: { sidebar: SIDEBAR.map((g) => ({ ...g, items: g.items.filter((x) => x !== "team" && x !== "keys") })) } }));
+    assert.ok(!lines(declared.portalNav).some((x) => / \/app\/(team|keys)$/.test(x)) && declared.layout.built.includes("access:people"), lines(declared.portalNav).join(", "));
+    console.log(`✓ team and keys tabs inside Settings (mold_v0-280): out of the sidebar, Settings' Access tabs under their labels (roles kept), /app/team and /app/keys lead there, printed as Settings' in-page tabs; refused: ${bad.map((x) => x[0]).join("; ")}`);
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {

@@ -21,6 +21,9 @@ import { findRecordArea } from '@/features/records/registry';
 import { AlertsTab } from './alerts-tab';
 import { SigningTab } from './signing-tab';
 import { TeamsTab } from '@/features/teams/teams-tab';
+import { TeamPanel } from '@/features/portal/billing';
+import { KeysPanel } from '@/features/keys/keys-page';
+import { useAccountRole } from '@/features/portal/role';
 
 /** The tabs this build's Settings has, in order (every group's). */
 export const settingsTabIds = (tabs: readonly SettingsTabSpec[] = ALL): string[] => tabs.map((t) => t.id);
@@ -28,6 +31,10 @@ export const settingsTabIds = (tabs: readonly SettingsTabSpec[] = ALL): string[]
 function TabBody({ tab }: { tab: SettingsTabSpec }) {
   // Teams (mold_v0-259): a kind of the generated list only while the teams flag is on.
   if ((tab.kind as SettingsTabSpec['kind'] | 'teams') === 'teams') return <TeamsTab />;
+  // The Team page and the person's API keys (mold_v0-280): kinds of the generated list only when a pack's team or keys
+  // tab is declared inside Settings; each the shell's own page's body.
+  if ((tab.kind as string) === 'team') return <TeamPanel />;
+  if ((tab.kind as string) === 'keys') return <KeysPanel />;
   switch (tab.kind) {
     case 'credentials': return <CredentialsTab />;
     case 'email': return <EmailTab />;
@@ -46,7 +53,10 @@ function TabBody({ tab }: { tab: SettingsTabSpec }) {
 export function SettingsPage({ group = null }: { group?: string | null }) {
   const router = useRouter();
   const layout = settingsLayout();
-  const tabs = pageTabs(group);
+  // A team or keys tab a pack narrows to some roles (mold_v0-280) shows once the role is known and is one of them, as its
+  // sidebar entry did (the server refuses the rest anyway).
+  const { role, loaded } = useAccountRole();
+  const tabs = pageTabs(group).filter((t) => { const r = (t as { roles?: string[] }).roles; return !r || (loaded && role !== null && r.includes(role)); });
   const first = tabs[0]?.id ?? '';
   const [selected, setSelected] = useQueryState('tab', { defaultValue: first });
   // Past 5 tabs, /app/settings itself leads to the asked tab's group page (or the first group's): its address stays good.

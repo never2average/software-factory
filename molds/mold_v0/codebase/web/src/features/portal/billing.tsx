@@ -143,6 +143,16 @@ export function BillingPage() {
   );
 }
 
+/**
+ * The team alone (mold_v0-280): Billing's People table (who is in the account, invite, roles, suspension), with its own
+ * loads, for Settings' tab when a pack puts the Team page inside Settings.
+ */
+export function TeamPanel() {
+  const { data: t, reload: reloadTeam } = useOrgLoad(() => appApi<Team>('GET', '/team'));
+  const { data: l, reload: reloadLimits } = useOrgLoad(() => appApi<Limits>('GET', '/limits'));
+  return <People t={t ?? undefined} l={l ?? undefined} reload={() => { reloadTeam(); reloadLimits(); }} />;
+}
+
 // ---------- this month: plan, spend against the cap ----------
 
 function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | undefined }) {
