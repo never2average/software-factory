@@ -74,6 +74,8 @@ export function featureRequested(id: FeatureId): boolean {
       || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
     // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs).
     case "recipes": return adminRecordsShown().includes("recipes");
+    // mold_v0-282: a shared area declares a repository or a database field (src/record-resources.ts).
+    case "resources": return defs().some((d) => areasOf(d).some((a) => a.scope === "platform" && (a.fields ?? []).some((f) => f.type === "repository" || f.type === "database")));
     case "record_inputs": case "private_catalogs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];
       return defs().some((d) => ask(d));

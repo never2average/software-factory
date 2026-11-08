@@ -1547,6 +1547,8 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     always: () => true,
     // mold_v0-271: the staff Records group lists the recipes page (a pack's or the profile's console.admin_records).
     recipes: () => declaredAdminRecords().entries.some((e) => e.id === "recipes"),
+    // mold_v0-282: a shared area declares a repository or a database field (src/features.ts and lib/features.py say the same).
+    resources: () => areas.some((a) => a.scope === "platform" && (a.fields ?? []).some((x) => x.type === "repository" || x.type === "database")),
     credentials: () => creds.length > 0,
     email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
     clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),
@@ -1595,6 +1597,9 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     else for (const x of t.rail ?? []) if (x === "recent_runs" || x === "attention") fail(at, `tabs[${i}].rail: ${x} is a card of features.overview_cards, which is off`);
     if ((t.sparklines ?? []).length > 4) fail(at, `tabs[${i}].sparklines: exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab (5 with features.overview_cards)`);
   }
+  // mold_v0-282: a repository or database field with record_resources off would be a field nothing checks or creates.
+  if (!FEATURE_SETTING.record_resources && FEATURE_REQUESTED.record_resources)
+    fail(rel(PROFILE_FILE), "features.record_resources is off but a pack declares a repository or database field: turn it on (features.record_resources = true) or take the field out");
   if (!FEATURE_SETTING.encrypted_fields && FEATURE_REQUESTED.encrypted_fields)
     fail(rel(PROFILE_FILE), "features.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear (take encrypted: true off the field first)");
   if (!FEATURE_SETTING.customer_key_vault) {
@@ -2704,7 +2709,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n" +
   (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
-  (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") + "}\n\n" +
+  (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") +
+  (FEATURE_ON.record_resources ? "  /** mold_v0-282: a database field's provider (its database is created for each record). */\n  provider?: 'neon';\n" : "") + "}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
     // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
     scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, display: _d, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,

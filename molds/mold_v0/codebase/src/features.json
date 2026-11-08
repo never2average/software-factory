@@ -318,6 +318,18 @@
       "since": "mold_v0-271",
       "about": "Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline.",
       "off": "No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out."
+    },
+    {
+      "id": "record_resources",
+      "short": "resources",
+      "label": "Record resources",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "resources",
+      "requested_words": "a shared (platform) area declares a repository field or a database field (provider neon)",
+      "since": "mold_v0-282",
+      "about": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one Postgres database per record in Neon when the record is created (the key vault's neon key, never given to a session or a run), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and deletes it with the record. A missing Neon key is named on the New form and on Health. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.",
+      "off": "Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out."
     }
   ]
 }

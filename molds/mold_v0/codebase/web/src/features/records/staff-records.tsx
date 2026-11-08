@@ -42,6 +42,7 @@ import { useVisibilityInput, type RecordVisibility } from '@/features/teams/visi
 import { featureOn } from '@/config/features';
 import { layoutOf } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
+import { ownsDatabase, RecordResources } from './record-resources';
 
 /** What the page offers this staff role (src/record-routes.ts `_console/<area>/form`). */
 interface StaffForm {
@@ -50,6 +51,11 @@ interface StaffForm {
   repository: { name: string; kind: string } | null; fields: FormField[];
   /** mold_v0-271: the most bytes a file staff upload into a file field may have (absent: it takes no upload). */
   upload_max?: number;
+  /**
+   * mold_v0-282 (flag record_resources): the records' own repository and database fields; a database field is left out of
+   * `fields` (the platform creates it), and the Neon key's absence is said in words.
+   */
+  resources?: { repositories: { field: string; label: string }[]; databases: { field: string; label: string; provider: string }[]; database_key_missing: string | null };
 }
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -81,7 +87,10 @@ function rowItems({ area, form, row, edit, removed }: { area: RecordAreaSpec; fo
   const fromRepository = row.provenance?.by === 'repository', overrides = !!row.provenance?.overrides;
   const remove = async () => {
     const name = row.title || row.key;
-    if (!window.confirm(overrides ? `Remove the override of ${name}? The repository's version comes back.` : `Remove ${name} from ${area.label}? This cannot be undone.`)) return;
+    // mold_v0-282: a record that owns a database deletes it with the record (at its provider, first).
+    if (!window.confirm(overrides ? `Remove the override of ${name}? The repository's version comes back.`
+      : ownsDatabase(area) ? `Remove ${name} from ${area.label}? Its own database is deleted too, with everything in it. This cannot be undone.`
+      : `Remove ${name} from ${area.label}? This cannot be undone.`)) return;
     try {
       await adminDataApi('DELETE', `/${encodeURIComponent(area.name)}/${encodeURIComponent(row.key)}`);
       toast.success(overrides ? 'Override removed' : 'Removed');
@@ -124,6 +133,27 @@ const editDescription = (area: RecordAreaSpec, row: RecordRow) => (row.provenanc
   ? `A staff copy of this row of ${row.provenance.repository}, saved as a staff row that wins over it until removed; removing it puts the repository's version back.`
   : `${area.label}: its title and fields, saved whole.`);
 
+/**
+ * mold_v0-282: what the New form says of the record's own resources: the database the platform creates for it, or, with
+ * no Neon key, that it cannot be created yet and where the key is added; a repository is checked when it is saved.
+ */
+function ResourcesNote({ form, noun }: { form: StaffForm; noun: string }) {
+  const r = form.resources;
+  if (!r || (!r.databases.length && !r.repositories.length)) return null;
+  return (
+    <div className='flex flex-col gap-2 pb-2 text-sm' data-resources-note=''>
+      {r.database_key_missing ? (
+        <p role='alert' data-database-key-missing='' className='border-destructive/30 bg-destructive/5 text-destructive rounded-lg border px-3 py-2'>
+          {r.database_key_missing} <a href='/admin/keys' className='font-medium underline underline-offset-2'>Open Key vault</a>
+        </p>
+      ) : r.databases.length ? (
+        <p className='text-muted-foreground'>Adding it creates its own {r.databases.map((d) => `${d.label.toLowerCase()} (${d.provider === 'neon' ? 'Neon Postgres' : d.provider})`).join(' and ')}: its status shows on the {noun}’s page.</p>
+      ) : null}
+      {r.repositories.length > 0 && <p className='text-muted-foreground'>{r.repositories.map((x) => x.label).join(' and ')}: an existing GitHub repository, owner/name; the platform’s GitHub App must be able to read it.</p>}
+    </div>
+  );
+}
+
 /** A shared area's list: its cards, its search row, its table; New, Import and Edit where the role may write. */
 export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   const form = useStaffForm(area.name);
@@ -137,6 +167,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   // mold_v0-256: New and Edit open in a panel beside the list with side_panel_forms on (FormHost); Import stays a full card.
   const card = form?.create && creating ? (
         <ActionCard open onOpenChange={setCreating} title={`New ${noun}`} description={`A new ${noun} in ${area.label}, added to the list at once as a staff row.`}>
+          <ResourcesNote form={form} noun={noun} />
           <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }} uploadMax={form.upload_max ?? null} filesBase='/api/admin/records'
             post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
         </ActionCard>
@@ -193,6 +224,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
             provenance={data.record.provenance ? { by: data.record.provenance.by === 'repository' ? 'repository' : 'staff' } : null} where='Shared' credentials={null} onChanged={() => void reload()}
             headerActions={form?.edit || form?.remove ? <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)}
               removed={() => (data.record.provenance?.overrides ? void reload() : router.push(listHref))} /> : null} />
+          <RecordResources area={area} recordKey={data.record.key} />
         </FormHost>
       )}
     </PageContainer>
@@ -246,6 +278,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
             })}
           </CardContent>
         </Card>
+        <RecordResources area={area} recordKey={data.record.key} />
         </FormHost>
       )}
     </PageContainer>

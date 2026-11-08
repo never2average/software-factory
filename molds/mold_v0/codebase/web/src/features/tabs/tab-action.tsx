@@ -327,6 +327,12 @@ export function fieldValues(fields: FormField[], raw: Record<string, unknown>): 
     else if (f.type === 'json') {
       try { values[f.name] = JSON.parse(String(v)); } catch { return { values, problem: `${f.label} is not valid JSON` }; }
     } else if (f.type === 'file') values[f.name] = f.multiple ? keysOf(String(v)).map((path) => ({ path })) : { path: String(v).trim() };
+    else if (f.type === 'repository') {
+      // mold_v0-282: a GitHub repository as owner/name (the server reads it through the platform's GitHub App on save).
+      const r = String(v).trim().replace(/^https:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+      if (!REPOSITORY_NAME.test(r)) return { values, problem: `${f.label} is a GitHub repository as owner/name (for example acme/widgets)` };
+      values[f.name] = r;
+    }
     else if (f.type === 'url') {
       // mold_v0-238: an http or https address (the record store checks it again).
       const u = String(v).trim();
@@ -338,6 +344,9 @@ export function fieldValues(fields: FormField[], raw: Record<string, unknown>): 
   }
   return { values, problem: null };
 }
+
+/** A repository field's value (mold_v0-282; the server's src/pack-api.ts REPOSITORY_NAME decides): owner/name on GitHub. */
+export const REPOSITORY_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9._-]{1,100}$/;
 
 /** Whether `v` reads as a url field's value (mold_v0-238; the server's src/pack-api.ts isFieldUrl decides). */
 export function isWebAddress(v: string): boolean {
@@ -391,7 +400,8 @@ export function FieldsForm({ fields, values, set, idPrefix }: {
               type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : f.type === 'url' ? 'url' : 'text'} min={f.min ?? undefined} max={f.max ?? undefined}
               maxLength={f.type === 'url' ? 2048 : f.max_length ?? undefined} inputMode={f.type === 'url' ? 'url' : undefined}
               placeholder={f.type === 'reference' || f.type === 'link' ? (f.multiple ? 'record keys, comma-separated' : 'a record key')
-                : f.type === 'person' ? 'a person’s sign-in id' : f.type === 'file' ? 'a path in the workspace’s files' : f.type === 'url' ? 'https://' : undefined} />
+                : f.type === 'person' ? 'a person’s sign-in id' : f.type === 'file' ? 'a path in the workspace’s files' : f.type === 'url' ? 'https://'
+                : f.type === 'repository' ? 'owner/name on GitHub' : undefined} />
           )}
           {help}
         </div>

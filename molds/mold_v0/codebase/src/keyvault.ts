@@ -231,8 +231,9 @@ async function storeCredential(provider: string, secret: string, opts: { label?:
   if (!p) throw new Error(`Unknown provider ${provider}; add it first (keyvault provider ...)`);
   // A direct-mode key is handed to agent sessions as is; refuse to store one unless that is explicitly allowed.
   // Orchestrator-only keys (boat, vertex; search providers with no env_vars) never reach a session, so they are always fine;
-  // so is Freestyle's (mold_v0-274: the autoscaler's own, src/gateway.ts ORCHESTRATOR_ONLY_PROVIDERS, never injected).
-  if (p.mode === "direct" && provider !== "boat" && provider !== "freestyle" && p.env_vars.length && ENV.APP_DIRECT_KEYS !== "allow")
+  // so is Freestyle's (mold_v0-274: the autoscaler's own, src/gateway.ts ORCHESTRATOR_ONLY_PROVIDERS, never injected),
+  // and Neon's (mold_v0-282: the server's own, creating and deleting the shared records' databases; never injected).
+  if (p.mode === "direct" && provider !== "boat" && provider !== "freestyle" && provider !== "neon" && p.env_vars.length && ENV.APP_DIRECT_KEYS !== "allow")
     throw new Error(`${provider} is a direct-mode provider: its real key would be handed to agent sessions. ` +
                     "Set APP_DIRECT_KEYS=allow only once those sessions run without customer-written tasks (docs/security.md)");
   let s = secret.trim();
@@ -361,5 +362,7 @@ export async function rekey() {
   generation++;
   // Organizations' data keys (src/orgcrypto.ts) are wrapped by the master key too.
   await (await import("./orgcrypto.js")).rewrapOrgKeys();
+  // So are the shared records' database connection strings (mold_v0-282, src/record-resources.ts).
+  await (await import("./record-resources.js")).rekeyResourceSecrets(currentId);
   return rows.length;
 }

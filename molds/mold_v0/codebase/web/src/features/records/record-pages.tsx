@@ -28,7 +28,7 @@ import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import { Sparklines } from '@/features/tabs/sparklines';
-import { FormHost, isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
+import { FormHost, isWebAddress, REPOSITORY_NAME, useAreaAction } from '@/features/tabs/tab-action';
 import { useRecordCredentials } from '@/features/credentials/record-credentials';
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
@@ -219,6 +219,10 @@ export function FieldValue({ area, base, f, v, recordKey, titles }: { area: Reco
   // A url field (mold_v0-238): its address as a link, opened in a new tab (only an http or https address).
   if (f.type === 'url' && typeof v === 'string' && isWebAddress(v)) return (
     <a className='break-all underline-offset-4 hover:underline' href={v} target='_blank' rel='noopener noreferrer nofollow'>{v}</a>
+  );
+  // mold_v0-282 (flag record_resources): a linked GitHub repository, owner/name, as a link to it.
+  if (f.type === 'repository' && typeof v === 'string' && REPOSITORY_NAME.test(v)) return (
+    <a className='break-all font-mono text-xs underline-offset-4 hover:underline' href={`https://github.com/${v}`} target='_blank' rel='noopener noreferrer nofollow' data-repository-link=''>{v}</a>
   );
   if (!f.encrypted && f.type !== 'file' && isDocument(v)) return <JsonValue v={v} recordKey={recordKey} empty={dash} />;
   return <>{fieldText(f, v, recordKey) || dash}</>;
