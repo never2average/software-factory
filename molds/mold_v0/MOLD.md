@@ -1993,8 +1993,30 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   card in the list's place (`ActionCard`, `CardForm`; the record details card's style): a way back, the title, a short
   summary of what will happen, the fields, then the submit and Cancel. It is kept in the address (`?start=1` for a run,
   `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
-  again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
-  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too.
+  again and focus back on the button. A link action navigates. A record's own page is the details card.
+
+  **The record panel (mold_v0-278, replacing mold_v0-217's full card for an open row).** A row of any `RecordView`
+  table (every list of both consoles: record areas, tab tables, staff records, runs, accounts, access requests,
+  sessions, profiles, credentials, ...) never leaves the page: the list narrows and the record opens in an inline panel
+  at its right (`web/src/components/layout/detail-panel.tsx`, the layout pure in `web/src/lib/split-panel.ts`). No
+  backdrop and no focus trap; the table stays scrollable and clickable, another row switches the panel and the open row
+  is highlighted. A splitter between them resizes it (drag, or focus it and use ← → Home End; 40% for details and half
+  for an editor at first, at least 360 px each side, remembered per panel type in the browser; less room than both and
+  the panel takes it all). The header: the title on the left; on the right only a labelled **Expand** / **Collapse**
+  (the panel the list's whole width) and the **⋯** menu holding every other action of the record as labelled items,
+  **Open in its own page** among them when it has one (`pageHref`; a list's own items through `panelActions`, a menu
+  reading its own data through `panelMenu`). Close is a round ✕ at the card's top-right corner ("Close panel",
+  tooltip "Close (Esc)"); Esc closes it from the panel or the list and focus returns to the row; ↑ ↓ (j k) walk the
+  rows. Below `lg` the panel is a full-width layer under the top bar with **Back to list**. It is in the address:
+  `?id=<key>` opens it (a reload or a shared link reopens it; a page with its own parameter, `?session=`, `?job=`,
+  `?run=`, `?profile=`, keeps it), `&panel=full` expands it, `&panelTab=<tab>` picks a laid-out record's tab
+  (`LaidOutRecord` `tabParam`), and closing drops only those, keeping every list filter. With the flag record_pages on
+  and a layout declared, an area's panel body is the record's laid-out page (header, facts, notices, tabs, sections,
+  related lists, actions: `RecordDetailBody`); otherwise its details. One panel at a time: opening one closes any other,
+  and a create or edit form's side panel (mold_v0-256) closes it as it opens (inside the panel, a form opens in its
+  place). An editor with unsaved changes (`usePanelGuard`, or anything typed into a form in the panel) asks "Discard
+  unsaved changes?" before the panel closes or switches row. Proof: `npm run test:record-panel` (the layout, the
+  sources, and every behaviour drawn in a real browser at 1440 and 390 px).
   A json field never shows raw JSON (mold_v0-240, `web/src/features/records/json-text.ts`, `json-value.tsx`): on a
   record's page, an open row's card and a staff record's page a list of objects is one line per item (its name, then
   its meaningful fields: "Production · Hosting: AWS, ap-south-1") and an object one "Label: value" line per field;
@@ -3723,6 +3745,57 @@ Proof: `npm run test:teams` (scripts/teams-262-test.ts), `npm run test:record-pa
 `npm run test:run-page` (scripts/run-page-wake-test.ts), `npm run test:agent-harness` (scripts/agent-credentials-test.ts),
 `npm run test:migrations` (0053, 0054 and their rollbacks), and the factory's `branding.py`, `repo.py` and `packs.py`
 self-tests.
+
+## Staff Records group, shared files, staff record pages and workspace recipes (mold_v0-271)
+
+- **The staff Records group is configurable.** A pack's `pack.json` or the app's `profile.json` (the profile's wins; two
+  packs may not both say it) declares `console.admin_records`:
+
+  ```json
+  "console": { "admin_records": { "show": [{ "id": "recipes", "label": "Self-improvement recipes" }, "journeys", "papers", "molds"] } }
+  ```
+
+  `show` is the whole group, in its order: a shared (platform-scope) record area by its name, or one of the shell's staff
+  pages by its id (`src/console-pages.ts` `ADMIN_RECORDS_PAGES`: `journeys`, `recipes`, `agent-profiles`,
+  `repositories`), each optionally relabelled (`{"id", "label"}`). `scripts/gen-packs.mjs` resolves it into
+  `recordAdminNav`; refused, with the reason: an unknown name, a workspace area, an area whose staff list is withheld, a
+  page the build lacks (Journeys without `journeys` or `tips`, Recipes without the workspace agent, Agent profiles
+  without it, Data repositories without one), an entry twice, a name that is both. **A shared area left out** is only out
+  of the staff sidebar: its staff list and record pages, the customer's tabs and Records entry, `/api/admin/records`,
+  `/api/records` and its MCP tools are as before, and opened by a link it lights no other entry. **A shell page listed**
+  leaves the group it is otherwise in (`web/src/config/nav-config.ts` `withRecordsPlaced`; a group left empty goes), at
+  the same address, and is lit there. Undeclared, the group is every shared area as before and nothing generated changes.
+  `npm run test:console-sidebar` (section 9).
+- **Files in a shared area** (with `document_preview`). A `file` field of a platform-scope area takes files staff upload
+  from the staff record page's New form (`POST /api/admin/records/<area>/<key>/files/<field>`, the `library` right, as
+  the staff data API; `DELETE` discards one kept but never written, never one the record holds; the staff form's
+  `upload_max`). Kept unsealed under `records/shared/<area>/<key hash>/` (every workspace that reads the area may read
+  them; a workspace's files stay sealed with its key), checked by their sha256 on every read, served by the record's file
+  cards to staff and to a workspace's people alike. A workspace never writes a shared area's files. The staff Edit form
+  keeps a field that holds stored files as it is.
+- **Staff record pages laid out** (with `record_pages`). A shared area with a `detail` layout is laid out on its staff
+  page (`/admin/records/<area>/<key>`) as on a workspace's, staff's Edit and Remove in its header. Its computed facts and
+  related lists read the shared areas only, from `GET /api/admin/records/_page/<area>/<key>[?tab=]`
+  (`src/record-page-routes.ts` `staffPageData`); a fact or list over a workspace area is hidden and its section not drawn
+  (staff read no workspace's records there); runs and history sections stay a workspace's. `npm run test:shared-records`.
+- **Workspace recipes** (flag `workspace_recipes`, default on, asked for when the staff Records group lists `recipes`,
+  needs `agent_harness`; `src/recipes.ts`, `src/recipe-routes.ts`, `web/src/features/agent/recipes-page.tsx`,
+  `sql/migrations/0060_workspace_recipes.sql` with its rollback): reusable bundles of files and runtime binaries an agent
+  works with. Staff keep them at `/admin/recipes` (the standard list under the proposals waiting; a row opens the recipe in the panel beside the list, mold_v0-278, and its own page with
+  its header, Files, Versions and Proposals tabs; New recipe, New version and Edit in one modal each). Their files are
+  agent profile uploads (mold_v0-267: `agent_profile_uploads`, uploaded through `/api/admin/onboarding/agent-profiles/uploads`),
+  a version never changes and the next is saved naming the version edited (409 when a newer one was saved). An agent
+  profile names recipes beside its own uploads, `recipes: [{id, version}]` (version null: its latest at a start), checked
+  on save (there, active, that version, within `AGENT_UPLOAD_MAX_MB` with the profile's files) and picked in the profile
+  modal's Workspace upload. `startSession` expands them into the session's frozen `policy.uploads` (the profile's own
+  file wins a path both name) and records `policy.recipes` ({id, name, version}); the wake, the worker route and the
+  runner are 267's, unchanged. **Self-improvement**: the agent writes `.recipe-proposal/<recipe id>/` in its working
+  directory (`note.md`, `remove.txt`, `files/<path>`, an executable file staying so); its wake sends it as it ends
+  (`POST /api/worker/runs/:id/agent/recipes/:recipe/proposal`, only a recipe its session used), and it is kept as an
+  approval request (`workspace_recipe_proposals`: the version it was made against, what it changes and removes, why, the
+  workspace, session and wake). Staff with the right to change profiles accept it (the recipe's next version, its source
+  the agent, the proposal named) or decline it with a reason; a proposal made against an older version is refused on
+  accept. `npm run test:recipes`.
 
 ## Early access and sign-in editor (mold_v0-266)
 

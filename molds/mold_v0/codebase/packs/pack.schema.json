@@ -6680,7 +6680,7 @@
       }
     },
     "tabs": {
-      "maxItems": 40,
+      "maxItems": 80,
       "type": "array",
       "items": {
         "type": "object",
@@ -6707,7 +6707,8 @@
               "keys",
               "page",
               "files",
-              "sections"
+              "sections",
+              "agent"
             ]
           },
           "label": {
@@ -15624,9 +15625,56 @@
               "notices",
               "files",
               "connected-apps",
-              "keys"
+              "keys",
+              "agent"
             ]
           }
+        },
+        "admin_records": {
+          "type": "object",
+          "properties": {
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "show": {
+              "minItems": 1,
+              "maxItems": 30,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 40,
+                        "pattern": "^[^{}<>]*$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "show"
+          ],
+          "additionalProperties": false
         },
         "show": {
           "maxItems": 1,

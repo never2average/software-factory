@@ -17173,6 +17173,52 @@
                 ]
               }
             },
+            "admin_records": {
+              "type": "object",
+              "properties": {
+                "$comment": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "show": {
+                  "minItems": 1,
+                  "maxItems": 30,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40,
+                            "pattern": "^[^{}<>]*$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "show"
+              ],
+              "additionalProperties": false
+            },
             "show": {
               "maxItems": 1,
               "type": "array",
@@ -18176,6 +18222,13 @@
           "title": "Usage over MCP (mold_v0-260)",
           "description": "The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs). Asked for when always (the profile alone). Default false. Off: No get_usage tool is listed (the customer MCP's surface is as before).",
           "markdownDescription": "**Usage over MCP** (mold_v0-260; board name `usage`). The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs).\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: No get_usage tool is listed (the customer MCP's surface is as before).\n\nBrief line: `features.usage_tool = true` in `## Profile`."
+        },
+        "workspace_recipes": {
+          "type": "boolean",
+          "default": true,
+          "title": "Workspace recipes (mold_v0-271)",
+          "description": "Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline. Asked for when the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json). Default true. Off: No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out. Needs agent_harness on.",
+          "markdownDescription": "**Workspace recipes** (mold_v0-271; board name `recipes`). Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline.\n\n- **Asked for** when the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json).\n- **Default** `true`.\n- **Off**: No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out.\n- **Needs** Needs agent_harness on.\n\nBrief line: `features.workspace_recipes = false` in `## Profile`."
         }
       }
     }

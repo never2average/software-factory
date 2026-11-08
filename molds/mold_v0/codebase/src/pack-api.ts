@@ -2222,12 +2222,13 @@ export type Chart = z.output<typeof ChartSchema>;
  * the area, an overview never to one that may read none of its metrics).
  */
 // team and keys (mold_v0-133): the shell's Team page (part of Billing) and the person's own API keys, so a declared sidebar reaches every shell page.
+// agent: the workspace agent's page (/app/agent, its sessions), a sidebar entry where the build puts it; only with agent_harness on.
 // sections (mold_v0-175): one page of several of the pack's area tabs, as in-page tabs.
 /** The kinds of tab a sections tab shows as its in-page tabs (mold_v0-175). */
 export const SECTION_KINDS = ["area", "runs", "reports", "schedules"] as const;
 /** The kinds of tab drawn as a list with four sparkline cards below its toolbar (mold_v0-181: `sparklines`). */
 export const SPARK_KINDS = ["area", "runs", "reports", "schedules"] as const;
-export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections"] as const;
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections", "agent"] as const;
 // TAB_ICONS: declared above RecordAreaSchema (a record area takes one too, mold_v0-242).
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */

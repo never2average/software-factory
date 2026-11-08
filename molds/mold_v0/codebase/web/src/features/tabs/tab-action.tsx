@@ -487,7 +487,8 @@ export interface UploadItem {
   ref?: StoredFileRef; key?: string; error?: string;
 }
 
-const fileUrl = (area: string, key: string, field: string) => `/api/data/${encodeURIComponent(area)}/${encodeURIComponent(key)}/files/${encodeURIComponent(field)}`;
+/** Where a file field's uploads go: a workspace's data API, or (mold_v0-271) the staff records API for a shared area. */
+const fileUrl = (area: string, key: string, field: string, base = '/api/data') => `${base}/${encodeURIComponent(area)}/${encodeURIComponent(key)}/files/${encodeURIComponent(field)}`;
 
 /** A file's size in words: 512 B, 12 KB, 3.4 MB. */
 export const sizeWords = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
@@ -515,9 +516,9 @@ function uploadOne(url: string, file: File, progress: (sent: number) => void): P
   });
 }
 /** Remove a file kept for a record but never written (a cancelled form, a removed file): best effort. */
-function discardOne(area: string, field: string, item: UploadItem) {
+function discardOne(area: string, field: string, item: UploadItem, base?: string) {
   if (!item.ref || !item.key) return;
-  void fetch(fileUrl(area, item.key, field), { method: 'DELETE', credentials: 'same-origin', keepalive: true,
+  void fetch(fileUrl(area, item.key, field, base), { method: 'DELETE', credentials: 'same-origin', keepalive: true,
     headers: { accept: 'application/json', 'content-type': 'application/json', 'x-pack-request': '1' }, body: JSON.stringify(item.ref) }).catch(() => null);
 }
 
@@ -589,9 +590,11 @@ export function FileUploads({ field, items, setItems, max, disabled, id }: {
  * earlier key is uploaded again), then the record is written with their references. A refused write keeps them for the
  * next try; Cancel, or a file removed, discards the ones kept but never written.
  */
-export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial }: {
+export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial, filesBase }: {
   area: { name: string; label: string; fields: FormField[]; key_from_title?: boolean }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
   uploadMax?: number | null;
+  /** mold_v0-271: where its files upload (a staff record page: /api/admin/records); default the workspace's data API. */
+  filesBase?: string;
   /** mold_v0-256: fields filled in (an Add <related record> action: the reference to the record it was taken on). */
   initial?: Record<string, unknown>;
 }) {
@@ -610,14 +613,14 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
   const written = useRef(false);
   useEffect(() => () => {
     if (written.current) return;
-    for (const [field, items] of Object.entries(latest.current)) for (const it of items) discardOne(area.name, field, it);
-  }, [area.name]);
+    for (const [field, items] of Object.entries(latest.current)) for (const it of items) discardOne(area.name, field, it, filesBase);
+  }, [area.name, filesBase]);
   const patch = (field: string, id: string, p: Partial<UploadItem>) =>
     setUploads((u) => ({ ...u, [field]: (u[field] ?? []).map((x) => (x.id === id ? { ...x, ...p } : x)) }));
   const setItems = (field: string) => (f: (items: UploadItem[]) => UploadItem[]) => {
     const before = latest.current[field] ?? [], after = f(before);
     // A file removed after it was kept: discarded at once.
-    for (const it of before) if (!after.includes(it)) discardOne(area.name, field, it);
+    for (const it of before) if (!after.includes(it)) discardOne(area.name, field, it, filesBase);
     latest.current = { ...latest.current, [field]: after };
     setUploads(latest.current);
   };
@@ -636,10 +639,10 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
         const refs: StoredFileRef[] = [];
         for (const it of uploads[f.name] ?? []) {
           if (it.state === 'done' && it.ref && it.key === k) { refs.push(it.ref); continue; }
-          if (it.ref) discardOne(area.name, f.name, it);
+          if (it.ref) discardOne(area.name, f.name, it, filesBase);
           patch(f.name, it.id, { state: 'uploading', sent: 0, ref: undefined, key: undefined, error: undefined });
           try {
-            const ref = await uploadOne(fileUrl(area.name, k, f.name), it.file, (sent) => patch(f.name, it.id, { sent }));
+            const ref = await uploadOne(fileUrl(area.name, k, f.name, filesBase), it.file, (sent) => patch(f.name, it.id, { sent }));
             patch(f.name, it.id, { state: 'done', sent: it.file.size, ref, key: k });
             refs.push(ref);
           } catch (e) {

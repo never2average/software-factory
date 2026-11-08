@@ -399,7 +399,7 @@ export const PackJsonSchema = z.object({
   onboarding: z.array(OnboardingStepSchema).max(30).optional(),
   metrics: z.array(MetricSchema).max(100).optional(),
   charts: z.array(ChartSchema).max(100).optional(),
-  tabs: z.array(TabSchema).max(40).optional(),
+  tabs: z.array(TabSchema).max(80).optional(), // in-page tabs of sections tabs count too (a catalog app has 40+)
   repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),
   run_results: RunResultsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
@@ -504,6 +504,15 @@ export const PackJsonSchema = z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
       .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+    /**
+     * The staff sidebar's Records group (mold_v0-271; src/console-pages.ts adminRecordsProblems): exactly these entries,
+     * in this order: shared record areas by name and the shell's staff pages by id (journeys, recipes, agent-profiles,
+     * repositories), each optionally relabelled ({"id", "label"}). A shared area left out stays reachable by link, API and MCP.
+     */
+    admin_records: z.object({
+      $comment: z.string().max(2000).optional(),
+      show: z.array(z.union([z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({ id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/) }).strict()])).min(1).max(30),
+    }).strict().optional(),
     /** The shell's console sections shown from the start, not only once they hold something (mold_v0-171; src/console-pages.ts SHOWABLE_SECTIONS). */
     show: z.array(z.enum(SHOWABLE_SECTIONS)).max(SHOWABLE_SECTIONS.length).refine((h) => new Set(h).size === h.length, "each section once").optional(),
     /**

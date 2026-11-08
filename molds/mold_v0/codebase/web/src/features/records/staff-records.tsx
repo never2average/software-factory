@@ -19,7 +19,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { Field } from '@/components/layout/record-view';
+import { Field, type RowAction } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,12 +39,17 @@ import { FieldValue, RecordEmpty, RecordTableView, type RecordRow } from './reco
 import { ImportRecordsForm } from './staff-import';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useVisibilityInput, type RecordVisibility } from '@/features/teams/visibility';
+import { featureOn } from '@/config/features';
+import { layoutOf } from './detail-layout';
+import { LaidOutRecord } from './detail-page';
 
 /** What the page offers this staff role (src/record-routes.ts `_console/<area>/form`). */
 interface StaffForm {
   area: string; label: string; create: boolean; edit: boolean; import: boolean; remove: boolean;
   /** The repository that fills the area (mold_v0-221: its rows read only, overridden by staff rows). */
   repository: { name: string; kind: string } | null; fields: FormField[];
+  /** mold_v0-271: the most bytes a file staff upload into a file field may have (absent: it takes no upload). */
+  upload_max?: number;
 }
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -71,7 +76,8 @@ export function nounOf(area: { name: string; label: string }): string {
 }
 
 /** A staff row's write controls: Edit (Override on a repository's row) and Remove (Remove override) where the role may. */
-function RowActions({ area, form, row, edit, removed }: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }) {
+/** A staff row's Edit (or Override) and Remove: its record panel's ⋯ items (mold_v0-278). */
+function rowItems({ area, form, row, edit, removed }: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }): RowAction[] {
   const fromRepository = row.provenance?.by === 'repository', overrides = !!row.provenance?.overrides;
   const remove = async () => {
     const name = row.title || row.key;
@@ -82,10 +88,18 @@ function RowActions({ area, form, row, edit, removed }: { area: RecordAreaSpec; 
       removed();
     } catch (e) { fail(e); }
   };
-  return (<>
-    {form?.edit && <Button variant='outline' size='sm' onClick={edit} data-row-edit={fromRepository ? 'override' : 'edit'}><Icons.edit /> {fromRepository ? 'Override' : 'Edit'}</Button>}
-    {form?.remove && !fromRepository && <Button variant='outline' size='sm' onClick={() => void remove()} data-row-remove=''><Icons.trash /> {overrides ? 'Remove override' : 'Remove'}</Button>}
-  </>);
+  return [
+    ...(form?.edit ? [{ label: fromRepository ? 'Override' : 'Edit', icon: <Icons.edit />, onSelect: edit }] : []),
+    ...(form?.remove && !fromRepository ? [{ label: overrides ? 'Remove override' : 'Remove', icon: <Icons.trash />, destructive: true, separator: true, onSelect: () => void remove() }] : []),
+  ];
+}
+
+/** The same on a staff record's own page: its header's buttons. */
+function RowActions(props: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }) {
+  return (<>{rowItems(props).map((a) => (
+    <Button key={a.label} variant='outline' size='sm' onClick={a.onSelect} data-row-edit={a.icon && !a.destructive ? (a.label === 'Override' ? 'override' : 'edit') : undefined}
+      data-row-remove={a.destructive ? '' : undefined}>{a.icon} {a.label}</Button>
+  ))}</>);
 }
 
 /** Where a shared row comes from (mold_v0-221): staff or its repository; an override marked, with what it stands over. */
@@ -123,7 +137,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   // mold_v0-256: New and Edit open in a panel beside the list with side_panel_forms on (FormHost); Import stays a full card.
   const card = form?.create && creating ? (
         <ActionCard open onOpenChange={setCreating} title={`New ${noun}`} description={`A new ${noun} in ${area.label}, added to the list at once as a staff row.`}>
-          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
+          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }} uploadMax={form.upload_max ?? null} filesBase='/api/admin/records'
             post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
         </ActionCard>
       ) : form?.import && importing ? (
@@ -149,7 +163,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
           )}
           {form.create && <ToolbarAction label={`New ${noun}`} icon={<Icons.add />} onClick={() => setCreating(true)} />}
         </>) : undefined}
-        rowAction={form?.edit || form?.remove ? (r) => <RowActions area={area} form={form} row={r} edit={() => setEditing(r)} removed={reload} /> : undefined}
+        rowActions={form?.edit || form?.remove ? (r) => rowItems({ area, form, row: r, edit: () => setEditing(r), removed: reload }) : undefined}
         detailNote={(r) => <ProvenanceFields row={r} form={form} />} />
       </FormHost>
     </PageContainer>
@@ -164,6 +178,25 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
   const [editing, setEditing] = useState(false);
   const listHref = `/admin/records/${area.name}`;
   const router = useRouter();
+  // mold_v0-271 (flag record_pages): a shared area with a layout is laid out here as on a workspace's page, with its
+  // related lists and computed facts of shared areas and staff's own Edit and Remove in its header.
+  const layout = featureOn('record_pages') ? layoutOf(area) : null;
+  if (layout) return (
+    <PageContainer>
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
+        <FormHost panel card={form?.edit && editing ? (
+          <ActionCard open onOpenChange={setEditing} title={editTitle(data.record)} description={editDescription(area, data.record)}>
+            <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
+          </ActionCard>
+        ) : null}>
+          <LaidOutRecord area={area} base='admin' layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
+            provenance={data.record.provenance ? { by: data.record.provenance.by === 'repository' ? 'repository' : 'staff' } : null} where='Shared' credentials={null} onChanged={() => void reload()}
+            headerActions={form?.edit || form?.remove ? <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)}
+              removed={() => (data.record.provenance?.overrides ? void reload() : router.push(listHref))} /> : null} />
+        </FormHost>
+      )}
+    </PageContainer>
+  );
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
@@ -246,6 +279,8 @@ export function EditRecordForm({ area, fields, row, onDone, put, shareable = nul
   shareable?: RecordVisibility | null }) {
   const vis = useVisibilityInput(shareable ? findRecordArea('app', area) : null, shareable);
   const [title, setTitle] = useState(row.title ?? '');
+  // mold_v0-271: a file field holding stored files is kept as it is (the form edits what it can show; a file is not text).
+  fields = fields.filter((f) => !(f.type === 'file' && (Array.isArray(row.data[f.name]) ? (row.data[f.name] as unknown[]) : [row.data[f.name]]).some((x) => !!x && typeof x === 'object' && 'object' in (x as object))));
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((f) => [f.name, formValue(f, row.data[f.name])])));
   const [busy, setBusy] = useState(false);
   const submit = async () => {

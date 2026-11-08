@@ -45,7 +45,7 @@ import { tabAreas } from "./metric-spec.js";
 import { PackError, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
-import { anyArea, mountFileRoutes } from "./record-files.js";
+import { anyArea, discardSharedFile, mountFileRoutes, recordUploadMax, uploadMax, uploadSharedFile } from "./record-files.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
@@ -152,6 +152,8 @@ export function recordAdminRouter(): Router {
       remove: stored && can(role, "delete") && !areaOpWithheld(a.name, "admin_delete"),
       repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
       fields: a.fields.map(formField),
+      // mold_v0-271: the most bytes a file staff upload into its file fields may have (null: it takes none).
+      ...(uploadMax(a, true) !== null && (create || edit) ? { upload_max: uploadMax(a, true) } : {}),
     };
   }));
   // The import (mold_v0-221): its preview unless dry_run is false. Its body has its own size limit (src/http.ts).
@@ -171,6 +173,24 @@ export function recordAdminRouter(): Router {
   // A shared record's documents (mold_v0-220): staff see a regulator's document as its customers do.
   mountFileRoutes(r, { base: "/api/admin/records", org: () => null, actor: () => ({ role: null, userId: null }),
     who: (res) => ({ scope: "staff", person: String(res.locals.adminActor ?? "staff") }), area: platformArea }, () => open("admin_get"), need("read"));
+  // mold_v0-271 (flag record_pages): a shared record's laid-out page for staff: its computed facts and related lists of shared areas.
+  r.get("/_page/:area/:key", need("read"), open("admin_get"), answer(async (req) =>
+    (await import("./record-page-routes.js")).staffPageData(String(req.params.area), String(req.params.key), typeof req.query.tab === "string" ? req.query.tab : null)));
+  // mold_v0-271: a file staff upload for a shared record's file field (the staff New form), and one discarded unwritten.
+  r.post("/:area/:key/files/:field", need("library"), open("admin_create", "admin_update"),
+    (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the file's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: recordUploadMax() }),
+    (err: Error & { type?: string }, _req: Request, res: Response, next: NextFunction) => (err ? void res.status(err.type === "entity.too.large" ? 413 : 400).json({ error: err.type === "entity.too.large" ? `a file uploaded here is at most ${Math.floor(recordUploadMax() / 1048576)} MB` : "The request body could not be read" }) : next()),
+    answer(async (req, res) => {
+      const a = platformArea(String(req.params.area));
+      const name = (() => { try { return decodeURIComponent(String(req.get("x-file-name") ?? "")); } catch { return ""; } })();
+      const ref = await uploadSharedFile(a.name, String(req.params.key), String(req.params.field), { name: name || "file", content_type: String(req.get("x-file-type") ?? ""), data: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) });
+      res.status(201);
+      return ref;
+    }));
+  r.delete("/:area/:key/files/:field", need("library"), open("admin_create", "admin_update"), answer(async (req) => {
+    await discardSharedFile(platformArea(String(req.params.area)).name, String(req.params.key), String(req.params.field), req.body);
+  }));
   r.get("/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     const record = await getPlatform(a, String(req.params.key));

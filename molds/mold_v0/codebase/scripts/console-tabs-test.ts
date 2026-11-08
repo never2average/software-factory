@@ -689,8 +689,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(tp, /const card = actionCard \?\? imp\.card;/, "an area tab: the import's card in the list's place too");
     assert.match(tp, /\{imp\.button\}\s*<ExportCsvButton /, "a board or a timeline: Import just left of Export CSV");
     assert.match(tp, /pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}/, "no title or description above a list tab");
-    assert.match(rv, /if \(current && detail\) return \([\s\S]*data-record-card='' role='region' aria-label='Record'/, "an open record: the full details card in the list's place");
-    assert.doesNotMatch(rv, /<aside|lg:w-\[40%\]/, "no peek beside a narrowed list");
+    // mold_v0-278 (the operator's call, replacing mold_v0-217's full card): an open record is the panel beside the narrowed list.
+    assert.match(rv, /\{current && detail && \(\s*<RecordPanel /, "an open record: the record panel beside the list");
+    assert.doesNotMatch(rv, /if \(current && detail\) return/, "never the list replaced by the record");
     assert.match(rp, /export function RecordDetailPage[\s\S]*data-record-card=''/, "a record's page: the same details card");
     assert.doesNotMatch(rp + read("features/records/clocks.tsx"), /OverdueToggle|data-overdue-filter/, "no count toggle above the table");
     assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");

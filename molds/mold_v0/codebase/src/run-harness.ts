@@ -116,6 +116,7 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
       checkpointPut: async (id, lease, seq, body) => (await import("./harness-sessions.js")).wakeCheckpoint(id, lease, seq, body, sha256Hex(body)),
       checkpointGet: async (id, lease) => (await (await import("./harness-sessions.js")).wakeCheckpointBody(id, lease))?.body ?? null,
       uploadPart: async (id, lease, upload, n) => (await import("./harness-sessions.js")).wakeUploadPart(id, lease, upload, n),
+      recipeProposal: async (id, lease, recipe, bundle, executable) => (await import("./harness-sessions.js")).wakeRecipeProposal(id, lease, recipe, bundle, executable),
     },
   };
 }
@@ -136,9 +137,9 @@ export class TooLargeError extends Error {
 /** The engine over HTTP, as a runner elsewhere (a sandbox) reaches it: /api/worker/runs with the fleet token. */
 export function httpRunnerClient(base: string, workerToken: string, workerId: string): RunnerClient {
   const url = (p: string) => `${base.replace(/\/$/, "")}/api/worker/runs${p}`;
-  const call = async <T>(method: string, p: string, lease: string | null, body?: unknown, raw?: Buffer): Promise<T> => {
+  const call = async <T>(method: string, p: string, lease: string | null, body?: unknown, raw?: Buffer, extra: Record<string, string> = {}): Promise<T> => {
     const res = await fetch(url(p), {
-      method, headers: { authorization: `Bearer ${workerToken}`, ...(lease ? { "x-run-lease": lease } : {}),
+      method, headers: { authorization: `Bearer ${workerToken}`, ...(lease ? { "x-run-lease": lease } : {}), ...extra,
         ...(raw ? { "content-type": "application/octet-stream" } : body !== undefined ? { "content-type": "application/json" } : {}) },
       body: raw ? new Uint8Array(raw) : body === undefined ? undefined : JSON.stringify(body),
     });
@@ -256,6 +257,8 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
         if (!res.ok) throw Object.assign(new Error(`GET agent upload: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
         return Buffer.from(await res.arrayBuffer());
       },
+      // mold_v0-271: the agent's proposed version of a recipe its session used.
+      recipeProposal: (id, lease, recipe, bundle, executable) => call("POST", runPath(id, `/agent/recipes/${encodeURIComponent(recipe)}/proposal`), lease, undefined, bundle, { "x-recipe-executable": encodeURIComponent(JSON.stringify(executable)) }),
     },
   };
 }

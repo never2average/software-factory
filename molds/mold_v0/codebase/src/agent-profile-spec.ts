@@ -83,6 +83,17 @@ export const ProfileUploadSchema = z.object({
 }).strict();
 export type ProfileUpload = z.output<typeof ProfileUploadSchema>;
 
+/**
+ * 4. A workspace recipe the profile's sessions receive beside its own uploads (mold_v0-271, flag workspace_recipes;
+ * src/recipes.ts): its id and version (null: its latest when a session starts). A session freezes the version.
+ */
+export const RECIPE_ID = /^[a-z][a-z0-9-]{1,39}$/;
+export const ProfileRecipeSchema = z.object({
+  id: z.string().regex(RECIPE_ID, "a recipe's id (lowercase letters, digits and -)"),
+  version: z.number().int().min(1).nullable(),
+}).strict();
+export type ProfileRecipe = z.output<typeof ProfileRecipeSchema>;
+
 // ---------------------------------------------------------------- 5. governance
 
 const hostEntry = z.string().max(300);
@@ -123,6 +134,8 @@ export const ProfileConfigSchema = z.object({
   keys: z.array(ProfileKeySchema).max(PROFILE_LIMITS.keys, `at most ${PROFILE_LIMITS.keys} keys`).optional(),
   /** 4. What is uploaded into its sessions' workspace. */
   uploads: z.array(ProfileUploadSchema).max(PROFILE_LIMITS.uploads, `at most ${PROFILE_LIMITS.uploads} files`).optional(),
+  /** 4. mold_v0-271: workspace recipes its sessions receive with the uploads (the profile's own file wins a path both name). */
+  recipes: z.array(ProfileRecipeSchema).max(10, "at most 10 recipes").optional(),
   /** 5. Its governance policy. */
   governance: GovernanceSchema.nullable().optional(),
 }).strict();
@@ -184,6 +197,8 @@ export function configProblems(c: ProfileConfig): string[] {
   const paths = (c.uploads ?? []).map((f) => f.path.toLowerCase());
   if (new Set(paths).size !== paths.length) out.push("uploads: two files have one path");
   for (const p of paths) if (paths.some((q) => q !== p && q.startsWith(`${p}/`))) { out.push(`uploads: ${p} is a file and a folder`); break; }
+  const recipes = (c.recipes ?? []).map((r) => r.id);
+  if (new Set(recipes).size !== recipes.length) out.push("recipes: a recipe is listed twice");
   out.push(...normalizeGovernance(c.governance).problems);
   return out;
 }

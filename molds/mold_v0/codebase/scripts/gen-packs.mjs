@@ -109,7 +109,7 @@ const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, ".
 const { connectPageProblems } = await import(pathToFileURL(path.join(HERE, "..", "src", "connect-page-config.ts")).href);
 const { clientSkillProblems, mergeClientSkill } = await import(pathToFileURL(path.join(HERE, "..", "src", "client-skill-config.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
-const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, shownSections, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+const { ADMIN_RECORDS_PAGES, adminRecordsEntries, CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, shownSections, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
 // the words engine, so a pack's admin_mcp words are checked against them here.
 const { ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-tools.ts")).href);
@@ -1537,6 +1537,8 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
   }
   const asks = {
     always: () => true,
+    // mold_v0-271: the staff Records group lists the recipes page (a pack's or the profile's console.admin_records).
+    recipes: () => declaredAdminRecords().entries.some((e) => e.id === "recipes"),
     credentials: () => creds.length > 0,
     email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
     clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),
@@ -1624,6 +1626,23 @@ const privateNetworkKindCount = !FEATURE_ON.onprem_runners ? 0
  */
 for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
 const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
+/**
+ * The staff sidebar's Records group as declared (mold_v0-271, src/console-pages.ts ADMIN_RECORDS_PAGES): the profile's
+ * console.admin_records, else the one pack's that says it; null when none does (the group lists every shared area, as
+ * before). Resolved against the build where the sidebar is written (recordAdminNav).
+ */
+function declaredAdminRecords() {
+  if (profileConsole?.admin_records) return { at: `${rel(PROFILE_FILE)} console.admin_records`, entries: adminRecordsEntries(profileConsole.admin_records) };
+  const by = packs.filter((p) => p.json?.console?.admin_records !== undefined);
+  if (!by.length) return { at: null, entries: [] };
+  return { at: `packs/${by[0].id}/pack.json console.admin_records`, entries: adminRecordsEntries(by[0].json.console.admin_records), packs: by.map((p) => p.id) };
+}
+{
+  const d = declaredAdminRecords();
+  if ((d.packs?.length ?? 0) > 1) fail("packs", `console.admin_records: packs ${d.packs.join(" and ")} both declare the staff Records group: declare it once (one pack, or the app's profile.json)`);
+  // The server reads which staff pages the group lists (src/features.ts: workspace_recipes is asked for by it).
+  if (d.at) profile.admin_records = { show: d.entries.map((e) => e.id) };
+}
 /** The shell's console sections shown from the start (mold_v0-171, src/console-pages.ts SHOWABLE_SECTIONS): `console.show`, joined. */
 const SHOWN_SECTIONS = shownSections([...packs.map((p) => p.json?.console), profileConsole]);
 /**
@@ -2332,7 +2351,7 @@ const appPageUrl = (id) => `/app/${id}`;
 /** A home tab (mold_v0-134): an overview that includes the Setup page's checklist, the build's home page. */
 const isHomeTab = (t) => t.kind === "overview" && (t.include ?? []).includes("setup");
 /** The shell's page a tab of each kind opens (the sidebar's entry for it). */
-const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
+const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys", agent: "/app/agent",
   "connected-apps": "/app/connected-apps" };
 /** The sections tab that shows a tab as one of its in-page tabs (mold_v0-175), or null. */
 const sectionParent = (t) => packViews.tabs.find((x) => x.kind === "sections" && x.pack === t.pack && (x.sections ?? []).includes(t.id)) ?? null;
@@ -2551,7 +2570,7 @@ const nav = (area) => {
 };
 const allPages = packs.flatMap((p) => p.pages);
 /** A tab's icon when it declares none, by kind (the sidebar's entry for it). */
-const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
+const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code" };
 /**
  * Each record area's icon (mold_v0-242; src/record-icons.ts): its own `icon`; else the icon of the customer tab that
  * shows it (the sidebar entry of the first shown tab over it alone, else of one that merges it: the tab itself, or the
@@ -2588,6 +2607,46 @@ const areaIcons = (() => {
   if (twice.length) console.log(`gen-packs: warning: ${twice.length} icon(s) declared by more than one record area (their Records entries look alike):\n  ${twice.map((d) =>
     `${d.icon}: ${d.areas.map((n) => `${recordAreas.find((a) => a.name === n).pack}/${n}`).join(", ")}`).join("\n  ")}`);
 }
+/**
+ * The staff sidebar's Records group (mold_v0-271): every shared area the staff console lists (its admin list not
+ * withheld), in pack order; or, when the profile or a pack declares console.admin_records, exactly its entries in its
+ * order: shared areas by name and the shell's staff pages by id (each at its own address, which then leaves its own
+ * group: web/src/config/nav-config.ts). An area left out keeps its page, its API and its MCP tools.
+ */
+const recordAdminItems = (() => {
+  const staffAreas = recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list"));
+  const d = declaredAdminRecords();
+  if (!d.at) return staffAreas.map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, icon: areaIcons[a.name], items: [] }));
+  const journeyNoun = (() => { const t = consoleTexts["journeys.many"] ?? SHELL_TEXTS["journeys.many"].text; return t.charAt(0).toUpperCase() + t.slice(1); })();
+  // The shell's staff pages the group may hold, each where the build has it (else: why there is none).
+  const PAGES = {
+    journeys: journeyFacts || tipFacts ? { title: journeyFacts ? journeyNoun : "Tips", url: "/admin/journeys", icon: "route" } : "no pack turns journeys or tips on (pack.json journeys, tips)",
+    recipes: FEATURE_ON.workspace_recipes && FEATURE_ON.agent_harness ? { title: "Recipes", url: "/admin/recipes", icon: "sparkles" }
+      : !FEATURE_SETTING.workspace_recipes ? "features.workspace_recipes is false" : "the workspace agent is off (features.agent_harness = true turns it on; recipes are its profiles' workspaces)",
+    "agent-profiles": FEATURE_ON.agent_harness ? { title: "Agent profiles", url: "/admin/agent-profiles", icon: "userPen" } : "the workspace agent is off (features.agent_harness)",
+    repositories: packs.some((p) => Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length) ? { title: "Data repositories", url: "/admin/repositories", icon: "book" } : "no pack declares a data repository",
+  };
+  const items = [];
+  d.entries.forEach((e, i) => {
+    const w = `${d.at}.show[${i}] ${e.id}`;
+    const area = recordAreas.find((a) => a.name === e.id);
+    const page = Object.hasOwn(PAGES, e.id) ? PAGES[e.id] : undefined;
+    if (area && page !== undefined) { fail(w, `is both a record area and a staff page: rename the area`); return; }
+    if (area) {
+      if (area.scope !== "platform") { fail(w, `holds each workspace's own records: the staff Records group lists shared (platform-scope) areas only`); return; }
+      if (listWithheld(area.name, "admin_list")) { fail(w, `its staff list is withheld (pack.json mcp withheld admin_list): there is no page to list`); return; }
+      items.push({ title: e.label ?? area.label, url: `/admin/records/${area.name}`, icon: areaIcons[area.name], items: [] });
+    } else if (page !== undefined) {
+      if (typeof page === "string") { fail(w, `${page}, so there is no such page to list`); return; }
+      items.push({ ...page, title: e.label ?? page.title, items: [] });
+    } else fail(w, `no shared record area is named ${e.id} (${staffAreas.map((a) => a.name).join(", ") || "none"}) and it is not a staff page (${ADMIN_RECORDS_PAGES.join(", ")})`);
+  });
+  // One icon per entry, as in every Records group (mold_v0-242): two alike is a warning, not a refusal.
+  const twice = [...new Set(items.map((x) => x.icon).filter((x, i, xs) => xs.indexOf(x) !== i))];
+  if (twice.length) console.log(`gen-packs: warning: the staff Records group shows ${twice.join(", ")} on more than one entry (${d.at})`);
+  refuse();
+  return items;
+})();
 /** A pack page's address: flat in the customer console (mold_v0-132), /admin/packs/<pack>/<id> in the admin console. */
 function packPageUrl(pg) { return pg.area === "app" ? appPageUrl(pg.id) : `/admin/packs/${pg.pack}/${pg.id}`; }
 files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADER +
@@ -2634,8 +2693,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
   `export const exportWithheldAreas: string[] = ${json(recordAreas.filter((a) => listWithheld(a.name, "export")).map((a) => a.name))};\n\n` +
+  // mold_v0-271: or exactly the entries console.admin_records lists (recordAdminItems).
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
-  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
+  `export const recordAdminNav: NavGroup[] = ${json(recordAdminItems.length ? [{ label: "Records", items: recordAdminItems }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
   " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates, Files (mold_v0-056)\n" +
   " * when a pack has a workspace store. */\n" +
@@ -2816,7 +2876,9 @@ function shownTabs() {
 function shownTabsAlone() {
   return packViews.tabs.filter((t) => !(t.kind === "area" && (t.areas ?? [{ area: t.area }]).some((a) => listWithheld(a.area))) && !(t.kind === "runs" && runsWithheld(t.pack))
     // nor one that opens a shell page the build hides (mold_v0-130)
-    && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
+    && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind]))
+    // nor the workspace agent's entry while the agent is off (features.agent_harness): it simply leaves the sidebar
+    && !(t.kind === "agent" && !FEATURE_ON.agent_harness));
 }
 
 /**
@@ -2881,7 +2943,7 @@ function viewsModule() {
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
     `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
-    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections';\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
     (FEATURE_ON.record_pages ? "  /** Columns computed from related records (mold_v0-256): each one's place among the columns, heading, area and what it shows. */\n  related_columns?: { id: string; at: number; area: string; show: string; label: string }[];\n" : "") +

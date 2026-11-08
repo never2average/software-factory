@@ -212,8 +212,9 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   pageKey: string;
   data: RelatedData | RunsData | HistoryData | undefined; changed: () => void;
 }) {
-  // Staff pages read no workspace's lists or runs: those sections are a workspace's.
-  if ((s.related || s.runs) && base !== 'app') return null;
+  // Staff pages read no workspace's runs; their related lists are of shared areas only (mold_v0-271: the staff page's
+  // own route answers a workspace area's list as hidden, and the section is not drawn).
+  if (s.runs && base !== 'app') return null;
   // mold_v0-262: a section shown only while its condition holds on the record.
   if (!sectionShown(s, record.data, record.clocks)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
@@ -520,21 +521,26 @@ async function getPage(url: string): Promise<PageData> {
   return body;
 }
 
-export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false }: {
+export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false, tabParam = 'tab', headerActions }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode;
   /** Read the record again (mold_v0-254: after an action changed it). */
   onChanged?: () => void;
   /** mold_v0-259 (flag teams): this person may change who sees it (the header's Share). */
   canShare?: boolean;
+  /** The address parameter of its tab (mold_v0-278: `panelTab` in a list's record panel, so the list's own `tab` stays). */
+  tabParam?: string;
+  /** mold_v0-271: a staff page's own Edit and Remove, in the header beside Copy ID and Copy link. */
+  headerActions?: ReactNode;
 }) {
-  const [asked, setAsked] = useQueryState('tab');
+  const [asked, setAsked] = useQueryState(tabParam);
   const tab = openTab(layout, asked);
   const first = tab === layout.tabs[0];
   const ti = layout.tabs.indexOf(tab);
-  // mold_v0-254: the page's actions and the open tab's related lists and runs, a workspace's (staff pages read none).
-  const reads = base === 'app' && readsPage(layout);
-  const pageUrl = reads ? `/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}?tab=${tabId(tab.label)}` : null;
+  // mold_v0-254: the page's actions and the open tab's related lists and runs, a workspace's; mold_v0-271: a staff page's
+  // computed facts and related lists of shared areas, from the staff records route.
+  const reads = base === 'app' ? readsPage(layout) : readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related));
+  const pageUrl = reads ? `${base === 'app' ? '/api/records' : '/api/admin/records'}/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}?tab=${tabId(tab.label)}` : null;
   const page = useOrgLoad(() => (pageUrl ? getPage(pageUrl) : Promise.resolve(null)), [pageUrl]);
   // The header's actions stay as they were while another tab's sections load (they do not depend on the tab).
   const [actions, setActions] = useState<PageData['actions'] | null>(null);
@@ -555,16 +561,17 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   return (
     <FormHost card={withActions && card ? <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div> : null} panel={panel}>
       <LaidOutBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} provenance={provenance} where={where}
-        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} />
+        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} headerActions={headerActions} />
     </FormHost>
   );
 }
 
 /** The laid-out page itself: the header, the notices, the tabs and their sections. */
-function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare }: {
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare, headerActions }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
   page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
+  headerActions?: ReactNode;
 }) {
   // mold_v0-259 (flag teams): who sees it, in the header, with Share for the people who may change it.
   const visibility = base === 'app' && (visibilityOf(area) || inheritedVisibility(area)) ? record.visibility ?? null : null;
@@ -578,7 +585,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const subtitle = field(h.subtitle);
   // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
-    .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden && (base === 'app') : !!x.f));
+    .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden : !!x.f));
   const notices = shownNotices(layout, record.data, record.clocks);
   const added = h.creator !== false && provenance?.by ? ADDED_BY[provenance.by] ?? provenance.by : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
@@ -609,6 +616,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             {withActions ? bar : (
               <div className='flex shrink-0 flex-wrap gap-2'>
                 {share}
+                {headerActions}
                 <Button type='button' variant='outline' size='sm' data-copy-id='' onClick={() => void copyWithToast(record.key, 'Record ID copied')}>
                   <Icons.copy aria-hidden data-icon='inline-start' />Copy ID
                 </Button>

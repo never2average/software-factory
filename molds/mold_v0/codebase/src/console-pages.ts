@@ -39,12 +39,14 @@ export const CONSOLE_PAGES = {
   // Each person's own API keys (mold_v0-007; the sidebar's footer link): hidden (mold_v0-171), the link and the page go;
   // the keys made before keep working (the API is never changed). profile.json member_keys false turns the keys off.
   keys: "/app/keys",
+  // The workspace agent (mold_v0-243; a page only while agent_harness is on): a pack's `agent` tab puts it in the sidebar.
+  agent: "/app/agent",
 } as const;
 export type ConsolePage = keyof typeof CONSOLE_PAGES;
 
 /** A declared tab's kind -> the shell page it opens (mold_v0-058: a `usage` tab opens the Activity page). */
 export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
-  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys",
+  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys", agent: "agent",
 };
 
 /**
@@ -91,12 +93,55 @@ export function shownSections(blocks: unknown[]): ShowableSection[] {
   return SHOWABLE_SECTIONS.filter((k) => shown.has(k));
 }
 
+/**
+ * The staff sidebar's Records group (mold_v0-271), in a pack's pack.json or the app's profile.json (the profile's wins;
+ * two packs may not both say it):
+ *
+ *   "console": { "admin_records": { "show": ["recipes", "journeys", "design_systems", { "id": "molds", "label": "Molds" }] } }
+ *
+ * `show` is the whole group, in its order: a shared (platform-scope) record area by its name, or one of the shell's staff
+ * pages by its id (ADMIN_RECORDS_PAGES), each optionally with its own sidebar label ({"id", "label"}). A shared area left
+ * out is not in the sidebar but its page, its API and its MCP tools are as before (a link still opens it); a shell page
+ * listed leaves its own group for this one, at the same address. scripts/gen-packs.mjs resolves the names.
+ */
+export const ADMIN_RECORDS_PAGES = ["journeys", "recipes", "agent-profiles", "repositories"] as const;
+export type AdminRecordsPage = (typeof ADMIN_RECORDS_PAGES)[number];
+export interface AdminRecordsEntry { id: string; label?: string }
+/** The entries of an admin_records block whose shape is good: each as {id, label?}. */
+export const adminRecordsEntries = (v: unknown): AdminRecordsEntry[] =>
+  (((v as { show?: unknown[] } | undefined)?.show ?? []) as unknown[]).map((x) => (typeof x === "string" ? { id: x } : { id: String((x as AdminRecordsEntry).id), ...((x as AdminRecordsEntry).label ? { label: (x as AdminRecordsEntry).label } : {}) }));
+const ADMIN_RECORDS_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+/** The shape of an `admin_records` block (what it names is resolved against the build by gen-packs). */
+export function adminRecordsProblems(v: unknown, where: string): string[] {
+  const at = `${where} console.admin_records`;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return [`${at}: an object {"show": ["<shared area or staff page>", ...]}`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (k !== "show" && k !== "$comment") out.push(`${at}: unknown field ${k} (known: show)`);
+  const show = (v as { show?: unknown }).show;
+  if (!Array.isArray(show) || show.length < 1 || show.length > 30) return [...out, `${at}.show: a list of 1 to 30 entries, each a shared record area's name or a staff page (${ADMIN_RECORDS_PAGES.join(", ")})`];
+  const seen = new Set<string>();
+  show.forEach((x, i) => {
+    const w = `${at}.show[${i}]`;
+    let id: unknown = x;
+    if (x && typeof x === "object" && !Array.isArray(x)) {
+      for (const k of Object.keys(x)) if (k !== "id" && k !== "label") out.push(`${w}: unknown field ${k} (known: id, label)`);
+      id = (x as { id?: unknown }).id;
+      const label = (x as { label?: unknown }).label;
+      if (label !== undefined && (typeof label !== "string" || !label.trim() || label.length > 40 || label !== label.trim() || /[{}<>]/.test(label))) out.push(`${w}.label: the entry's label in the sidebar, 1 to 40 characters, no braces or angle brackets`);
+    }
+    if (typeof id !== "string" || !ADMIN_RECORDS_ID.test(id)) { out.push(`${w}: a shared record area's name or a staff page (${ADMIN_RECORDS_PAGES.join(", ")}), or {"id", "label"}`); return; }
+    if (seen.has(id)) out.push(`${w}: ${id} is listed twice: each entry once`);
+    seen.add(id);
+  });
+  return out;
+}
+
 /** The problems of one `console` block (where: "pack.json" or "profile.json"); [] when it is good. */
 export function consoleProblems(v: unknown, where: string): string[] {
   if (v === undefined) return [];
   if (!v || typeof v !== "object" || Array.isArray(v)) return [`${where} console: an object, e.g. {"hide": ["activity"]}`];
   const out: string[] = [];
-  const known = where === "profile.json" ? ["hide", "show", "sidebar"] : ["hide", "show", ...PACK_CONSOLE_KEYS];
+  const known = where === "profile.json" ? ["hide", "show", "sidebar", "admin_records"] : ["hide", "show", "admin_records", ...PACK_CONSOLE_KEYS];
   for (const k of Object.keys(v)) {
     if (k === "sidebar" && where !== "profile.json") out.push(`${where} console: sidebar is the app's (profile.json); a pack orders its own tabs (tabs, group)`);
     else if ((PACK_CONSOLE_KEYS as readonly string[]).includes(k) && where === "profile.json") out.push(`${where} console: ${k} is a pack's (its pack.json console.${k}), never the app's profile`);
@@ -104,6 +149,8 @@ export function consoleProblems(v: unknown, where: string): string[] {
   }
   const sidebar = (v as { sidebar?: unknown }).sidebar;
   if (sidebar !== undefined && where === "profile.json") out.push(...sidebarProblems(sidebar, where));
+  const records = (v as { admin_records?: unknown }).admin_records;
+  if (records !== undefined) out.push(...adminRecordsProblems(records, where));
   const hide = (v as { hide?: unknown }).hide;
   if (hide !== undefined) {
     if (!Array.isArray(hide)) out.push(`${where} console.hide: a list of page ids (${Object.keys(CONSOLE_PAGES).join(", ")})`);

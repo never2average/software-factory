@@ -6,6 +6,7 @@ import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ActionsMenu, Field, type RowAction } from '@/components/layout/record-view';
+import { PanelMenu } from '@/components/layout/detail-panel';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -161,9 +162,12 @@ export function accountActions(o: Org, ctl: AccountCtl, d: OrgDetail | undefined
 }
 
 /** The peek header: just the ⋯ menu, with the dashboards once the detail has loaded. */
-export function AccountPeekActions({ org, ctl }: { org: Org; ctl: AccountCtl }) {
+export function AccountPeekActions({ org, ctl, extra = [] }: { org: Org; ctl: AccountCtl; extra?: RowAction[] }) {
   const { data: d } = useAdmin<OrgDetail>(orgPath(org.slug));
-  return <ActionsMenu items={accountActions(org, ctl, d)} />;
+  // mold_v0-278: the record panel's ⋯ menu: the account's actions, then the panel's own (Open in its own page).
+  const own = accountActions(org, ctl, d);
+  const rest = extra.filter((x) => !own.some((a) => a.label === x.label));
+  return <PanelMenu name={org.name} items={[...own, ...rest.map((a, i) => (i === 0 ? { ...a, separator: true } : a))]} />;
 }
 
 // ---------- dialogs ----------

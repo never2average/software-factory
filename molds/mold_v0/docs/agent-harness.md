@@ -128,6 +128,14 @@ flag off: no route, page, table row, upload or action of it answers.
      sha256 and writes them into its scratch's working directory, executables `0700` to the run's own user; a checkpoint
      never carries them (it stays small) and the next wake writes them again. The run's isolation is unchanged.
   5. **Governance policy**, ported from the reference product: below.
+- **Workspace recipes (mold_v0-271, flag `workspace_recipes`; `src/recipes.ts`).** Built as planned below: a recipe's
+  files are `agent_profile_uploads` rows (uploaded through the same routes), a profile names `recipes: [{id, version}]`
+  (version null: the latest at a start), `checkConfig` checks each (there, active, that version) and the total with the
+  profile's own files, and `startSession` expands them into `policy.uploads` (the profile's file wins a path) with
+  `policy.recipes` ({id, name, version}) beside them; the session card lists them. Self-improvement: the agent writes
+  `.recipe-proposal/<recipe>/` (`note.md`, `remove.txt`, `files/<path>`) and its wake sends it as it ends
+  (`sendRecipeProposals`, `POST /api/worker/runs/:id/agent/recipes/:recipe/proposal`, a recipe its session used only):
+  an approval request staff accept as the recipe's next version or decline (Admin › Recipes; molds/mold_v0/MOLD.md).
 - **Where workspace recipes plug in (mold_v0-271).** The storage is one layer for every file: a file's bytes are an
   `agent_profile_uploads` row and its parts under `agent-profiles/uploads/<id>/`, and everything after a profile's save
   reads only the session's frozen `policy.uploads` list ({id, path, bytes, sha256, executable}): `wakeStart` hands it to

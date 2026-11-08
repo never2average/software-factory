@@ -113,6 +113,12 @@ through the same check `factory.py validate` and the build use.
   | `run_analytics` | false | always (the profile alone) | analytics |
   | `filters_in_address` | false | always (the profile alone) | filters |
   | `usage_tool` | false | always (the profile alone) | usage |
+  | `workspace_recipes` | true | the staff Records group (`console.admin_records`) lists `recipes`; needs `agent_harness` | recipes |
+
+  The staff sidebar's Records group (mold_v0-271) is a pack's `console.admin_records` or the profile's
+  (`profile.console.admin_records`): `{"show": [...]}`, exactly those entries in that order (shared areas by name, the
+  shell's staff pages `journeys`, `recipes`, `agent-profiles`, `repositories` by id, each `{"id", "label"}` to relabel);
+  an area left out stays reachable by link, API and MCP (molds/mold_v0/MOLD.md "Staff Records group").
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the

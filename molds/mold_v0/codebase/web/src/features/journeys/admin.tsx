@@ -5,7 +5,7 @@
 // Views split the two kinds; every action sits in a row's ⋯ menu, the bulk bar or the peek. Journeys are not ordered.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
-import { ActionsMenu, Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
+import { Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -186,10 +186,7 @@ export function AdminJourneys() {
         empty={journeysOn() && tipsOn() ? jw('No {guides} or tips yet.') : journeysOn() ? jw('No {guides} yet.') : 'No tips yet.'}
         detailTitle={(r) => r.kind === 'journey' ? r.p.name : r.t.message}
         // Journeys keep Edit inline (and only there); a tip's actions all sit in ⋯.
-        detailActions={(r) => r.kind === 'journey' ? (<>
-          <Gate need='library'><Button size='sm' variant='outline' onClick={() => setDraft(toDraft(r.p))}><Icons.edit /> Edit</Button></Gate>
-          <ActionsMenu items={actions(r).filter((a) => a.label !== 'Edit')} />
-        </>) : <ActionsMenu items={actions(r)} />}
+        // mold_v0-278: the panel's ⋯ menu holds the row's actions (Edit among them).
         detail={(r) => r.kind === 'journey' ? <JourneyBody p={r.p} nj={nj} /> : <TipBody t={r.t} steps={nj?.steps ?? []} />}
       />
       {draft && <Editor draft={draft} tools={pb?.tools ?? []} onClose={() => setDraft(null)} />}

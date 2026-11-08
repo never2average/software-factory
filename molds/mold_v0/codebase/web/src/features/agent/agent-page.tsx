@@ -16,7 +16,9 @@ import Link from 'next/link';
 import { featureOn } from '@/config/features';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
+import { PanelMenu } from '@/components/layout/detail-panel';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { StatStrip } from '@/components/layout/section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,7 +55,9 @@ interface Detail extends Session {
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
   hooks: { event: string; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
-    files?: string[]; hidden_tools?: string[]; credentials?: string[]; executables?: string[]; governance?: string | null };
+    files?: string[]; hidden_tools?: string[]; credentials?: string[]; executables?: string[]; governance?: string | null;
+    /** mold_v0-271: the workspace recipes it started with, at their frozen versions. */
+    recipes?: { id: string; name: string; version: number }[] };
   reach: Reach | null;
 }
 interface Reach {
@@ -161,7 +165,7 @@ function AgentList({ area }: { area: Area }) {
         toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='Start a session' icon={<Icons.add />} onClick={() => setStarting(true)} /></div> : undefined}
         empty={<p className='text-muted-foreground text-sm'>{area === 'app' ? (data?.can_start ? 'No sessions yet: Start a session gives the agent its first message.' : 'No sessions yet. A member of this workspace can start one.') : 'No workspace has started a session yet.'}</p>}
         detailTitle={(s) => s.title}
-        detailActions={(s) => <Controls area={area} s={s} call={call} onChange={load} />}
+        panelMenu={(s, items) => <Controls area={area} s={s} call={call} onChange={load} extra={items} />}
         detail={(s) => <SessionCard key={s.id} area={area} id={s.id} call={call} onChange={load} />}
       />
       {area === 'app' && data && <StartDialog open={starting} offer={data.offer} profiles={data.profiles ?? []} preset={preset} call={call} onOpenChange={(o) => {
@@ -272,7 +276,8 @@ function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStar
 }
 
 /** Pause, Resume, Stop: on the card's top line. Stop asks once more in place (no dialog). */
-function Controls({ area, s, call, onChange }: { area: Area; s: Session; call: Call; onChange: () => unknown }) {
+/** mold_v0-278: the session panel's ⋯ menu: Pause, Resume, Stop (asked first), then the panel's own items. */
+function Controls({ area, s, call, onChange, extra = [] }: { area: Area; s: Session; call: Call; onChange: () => unknown; extra?: RowAction[] }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const act = (what: 'pause' | 'resume' | 'stop') => async () => {
@@ -280,20 +285,26 @@ function Controls({ area, s, call, onChange }: { area: Area; s: Session; call: C
     try { await call('POST', `/${s.id}/${what}`); toast.success(what === 'pause' ? 'Pausing' : what === 'resume' ? 'Resuming' : 'Stopping'); setConfirm(false); await onChange(); window.dispatchEvent(new Event('agent-session-changed')); }
     catch (e) { fail(e); } finally { setBusy(false); }
   };
-  if (confirm) return (
-    <div className='flex flex-wrap items-center gap-2' role='group' aria-label='Stop this session'>
-      <span className='text-sm'>Stop for good? It finishes its step and becomes read only.</span>
-      <Button size='sm' variant='destructive' disabled={busy} onClick={act('stop')}>Stop session</Button>
-      <Button size='sm' variant='ghost' onClick={() => setConfirm(false)}>Keep it</Button>
-    </div>
-  );
-  return (
-    <div className='flex flex-wrap items-center gap-1'>
-      {s.can.pause && <Button size='sm' variant='outline' disabled={busy} onClick={act('pause')}><Icons.pause />Pause</Button>}
-      {area === 'app' && s.can.resume && <Button size='sm' variant='outline' disabled={busy} onClick={act('resume')}><Icons.play />Resume</Button>}
-      {s.can.stop && <Button size='sm' variant='outline' disabled={busy} onClick={() => setConfirm(true)}><Icons.stop />Stop</Button>}
-    </div>
-  );
+  const items: RowAction[] = [
+    ...(s.can.pause ? [{ label: 'Pause', icon: <Icons.pause />, disabled: busy, onSelect: () => void act('pause')() }] : []),
+    ...(area === 'app' && s.can.resume ? [{ label: 'Resume', icon: <Icons.play />, disabled: busy, onSelect: () => void act('resume')() }] : []),
+    ...(s.can.stop ? [{ label: 'Stop', icon: <Icons.stop />, destructive: true, disabled: busy, onSelect: () => setConfirm(true) }] : []),
+  ];
+  return (<>
+    <PanelMenu name={s.title} items={[...items, ...extra.map((a, i) => (i === 0 && items.length ? { ...a, separator: true } : a))]} />
+    <AlertDialog open={confirm} onOpenChange={setConfirm}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Stop this session for good?</AlertDialogTitle>
+          <AlertDialogDescription>It finishes its step and becomes read only.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep it</AlertDialogCancel>
+          <AlertDialogAction variant='destructive' disabled={busy} onClick={() => void act('stop')()}>Stop session</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>);
 }
 
 /** One session, full card: its state and spend, what it asks for, the transcript, the composer, its details. */
@@ -494,6 +505,7 @@ function Details({ d }: { d: Detail }) {
         {d.record && <><dt className='text-muted-foreground'>Started from</dt><dd data-agent-record=''>{d.workspace ? <span className='font-mono text-xs'>{d.record.key}</span> : <a className='underline-offset-4 hover:underline' href={`/app/records/${encodeURIComponent(d.record.area)}/${encodeURIComponent(d.record.key)}`}>{d.record.key}</a>} <span className='text-muted-foreground text-xs'>({d.record.area})</span></dd></>}
         {(d.policy.credentials?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Keys it receives</dt><dd data-agent-credentials=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.credentials!.map((c) => <span key={c} className='font-mono text-xs'>{c.split('/')[1] ?? c}</span>)}</span><span className='text-muted-foreground block text-xs'>Given to each wake from the key vault, hidden from what it writes.</span></dd></>}
         {(d.policy.files?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Files it was given</dt><dd data-agent-files=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.files!.map((f) => <span key={f} className='font-mono text-xs'>{f}</span>)}</span></dd></>}
+        {(d.policy.recipes?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Recipes</dt><dd data-agent-recipes=''>{d.policy.recipes!.map((r) => `${r.name} (version ${r.version})`).join(', ')}<span className='text-muted-foreground block text-xs'>Their files are among those it was given; the versions are fixed when it started.</span></dd></>}
         {d.policy.governance && <><dt className='text-muted-foreground'>Governance policy</dt><dd data-agent-governance=''>{d.policy.governance}<span className='text-muted-foreground block text-xs'>Its profile&apos;s, fixed when it started: a call it refuses ends the session.</span></dd></>}
         {(d.policy.hidden_tools?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Hidden from it</dt><dd data-agent-tools-hidden=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.hidden_tools!.map((t) => <span key={t} className='font-mono text-xs'>{t}</span>)}</span></dd></>}
       </dl>

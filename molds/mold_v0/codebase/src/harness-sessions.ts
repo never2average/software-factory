@@ -93,6 +93,8 @@ export interface SessionDetail extends SessionView {
     files: string[]; hidden_tools: string[];
     /** mold_v0-267: the uploaded files made executable, and its governance policy in words (null: the platform settings). */
     executables: string[]; governance: string | null;
+    /** mold_v0-271: the workspace recipes it started with, each at its frozen version. */
+    recipes: { id: string; name: string; version: number }[];
     /** mold_v0-262: the workspace credentials each wake receives (their names, never a value). */
     credentials: string[] };
   /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
@@ -288,11 +290,15 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   const flavour = flavourOf(eff.harness) ?? flavourOf(policy.flavour)!;
   const workspaceKeys = eff.keys.flatMap((k) => (k.kind === "workspace" ? [k.name] : []));
   const vaultKeys = eff.keys.flatMap((k) => (k.kind === "platform" ? [{ provider: k.provider, label: k.label, env: k.env }] : []));
+  // mold_v0-271: the profile's workspace recipes expanded into its uploads at the version in force now (its own files
+  // win a path both name), frozen with the session as the uploads are; which versions it used kept beside them.
+  const { uploads, recipes } = eff.recipes.length ? await (await import("./recipes.js")).expandRecipes(eff.uploads, eff.recipes) : { uploads: eff.uploads, recipes: [] };
   Object.assign(policy, {
     flavour: flavour.id, model: eff.model, provider: eff.provider, hooks: resolveHooks(flavour, {}),
     profile: { id: prof.id, name: prof.name, version: prof.version },
     ...(eff.key ? { inference_key: eff.key } : {}),
-    ...(eff.uploads.length ? { uploads: eff.uploads.map((u) => ({ ...u })) } : {}),
+    ...(uploads.length ? { uploads: uploads.map((u) => ({ ...u })) } : {}),
+    ...(recipes.length ? { recipes } : {}),
     // mold_v0-262: its profile's workspace credentials, for a session a workspace owner starts (anyone else's: none).
     ...(workspaceKeys.length && actor.kind === "person" && actor.role === "owner" ? { credentials: workspaceKeys } : {}),
     ...(vaultKeys.length ? { vault_keys: vaultKeys } : {}),
@@ -454,7 +460,7 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
         web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
         auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: [...(p?.files ?? []).map((f) => f.path), ...(p?.uploads ?? []).map((u) => u.path)], hidden_tools: p?.workspace?.hidden ?? [],
         credentials: [...(p?.credentials ?? []), ...(p?.vault_keys ?? []).map((k) => `${k.provider}/${k.label}`)],
-        executables: (p?.uploads ?? []).filter((u) => u.executable).map((u) => u.path), governance: p?.governance ? governanceWords(p.governance) : null },
+        executables: (p?.uploads ?? []).filter((u) => u.executable).map((u) => u.path), recipes: p?.recipes ?? [], governance: p?.governance ? governanceWords(p.governance) : null },
       reach: reachView(p),
     };
   });
@@ -744,6 +750,27 @@ export async function wakeUploadPart(runId: string, leaseToken: string, uploadId
   if (!(s.policy.uploads ?? []).some((u) => u.id === uploadId)) throw new PackError("this session was given no such file", 404);
   const { readUploadPart } = await import("./agent-profiles.js");
   return readUploadPart(uploadId, part);
+}
+
+/**
+ * mold_v0-271 (flag workspace_recipes): the agent's proposed next version of a recipe its session started with, as its
+ * wake sends it when it ends (src/agent-harness.ts: the bundle of `.recipe-proposal/<recipe>/`: note.md, remove.txt and
+ * files/<path>; `executable` the paths under files/ that were executable there). Kept as an approval request staff decide
+ * (src/recipes.ts proposeRecipeVersion), against the version the session froze.
+ */
+export async function wakeRecipeProposal(runId: string, leaseToken: string, recipeId: string, bundle: Buffer, executable: readonly string[]): Promise<{ proposal: string }> {
+  const { recipesOn, proposeRecipeVersion } = await import("./recipes.js");
+  if (!recipesOn()) throw new PackError("Workspace recipes are not on in this app", 404);
+  const w = await read((q) => wakeOf(q, runId, leaseToken));
+  const used = (w.session.policy.recipes ?? []).find((r) => r.id === recipeId);
+  if (!used) throw new PackError("this session did not start with that recipe: it may propose a version only of a recipe it used", 404);
+  const { readBundle } = await import("./workspace-bundle.js");
+  const { files } = readBundle(bundle);
+  const text = (p: string) => files.find((f) => f.path === p)?.body.toString("utf8") ?? "";
+  const removed = text("remove.txt").split("\n").map((x) => x.trim()).filter((x) => x && !x.startsWith("#"));
+  const changed = files.filter((f) => f.path.startsWith("files/")).map((f) => ({ path: f.path.slice(6), data: f.body, executable: executable.includes(f.path.slice(6)) }));
+  const p = await proposeRecipeVersion({ org_id: w.org_id, session_id: w.session.id, run_id: w.id, recipe: { id: used.id, version: used.version } }, { note: text("note.md"), removed, files: changed });
+  return { proposal: p.id };
 }
 
 export interface BeatInput {

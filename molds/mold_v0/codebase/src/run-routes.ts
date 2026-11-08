@@ -32,6 +32,8 @@
  *   POST /:id/agent/end       {reason, detail} how the wake ended, before it completes
  *   PUT  /:id/agent/checkpoint?seq=&sha256=  a bundle of its state (sealed and kept by the API); GET: the last one (204: none)
  *   GET  /:id/agent/uploads/:upload/:part   a part of a file its profile uploads into its workspace (mold_v0-267)
+ *   POST /:id/agent/recipes/:recipe/proposal  the agent's proposed version of a recipe its session used (mold_v0-271):
+ *                             a bundle of note.md, remove.txt, files/<path>; x-recipe-executable: the executable paths
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
@@ -127,6 +129,13 @@ export function runWorkerRouter(): Router {
       if (!cp) return void res.status(204).end();
       res.set({ "content-type": "application/octet-stream", "x-checkpoint-seq": String(cp.seq), "x-checkpoint-sha256": cp.sha256 });
       res.end(cp.body);
+    }));
+    // mold_v0-271: the agent's proposed next version of a recipe its session used (a bundle; its executables in a header).
+    r.post("/:id/agent/recipes/:recipe/proposal", express.raw({ type: "application/octet-stream", limit: inlineMaxBytes() }), answer(async (req) => {
+      if (!Buffer.isBuffer(req.body)) throw new PackError("send the proposal as application/octet-stream", 400);
+      let exec: unknown = [];
+      try { exec = JSON.parse(decodeURIComponent(String(req.get("x-recipe-executable") ?? "[]"))); } catch { exec = []; }
+      return (await h()).wakeRecipeProposal(String(req.params.id), leaseOf(req), String(req.params.recipe), req.body, Array.isArray(exec) ? exec.map(String) : []);
     }));
     // mold_v0-267: a part of a file the session's profile uploads into its workspace (only one its frozen policy names).
     r.get("/:id/agent/uploads/:upload/:part", answer(async (req, res) => {

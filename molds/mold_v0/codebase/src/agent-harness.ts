@@ -65,6 +65,8 @@ export interface AgentRunnerClient {
   checkpointGet(runId: string, lease: string): Promise<Buffer | null>;
   /** mold_v0-267: one part of a file its profile uploads into the session's workspace. */
   uploadPart(runId: string, lease: string, uploadId: string, part: number): Promise<Buffer>;
+  /** mold_v0-271: the agent's proposed next version of a recipe its session used (a bundle of its proposal's folder). */
+  recipeProposal?(runId: string, lease: string, recipe: string, bundle: Buffer, executable: string[]): Promise<{ proposal: string }>;
 }
 
 // ---------------------------------------------------------------- stream-json (pure; the tests drive these)
@@ -574,6 +576,8 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     if (lost) return null;
     // A last beat (its spend), the last checkpoint, then how it ended.
     await beat().catch(() => {});
+    // mold_v0-271: what the agent proposes of the recipes its session used (.recipe-proposal/<recipe>/), sent once, then removed.
+    await sendRecipeProposals(agent, run.id, lease, work, policy);
     if (s.sessionId) await checkpoint();
     const out: { reason: EndReason; detail?: string } = ended ?? (code === 0
       ? { reason: policy.mode === "task" ? "done" : s.sessionId ? "parked" : "stopped", detail: "the harness exited" }
@@ -593,6 +597,38 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     if (scratch) releaseSessionScratch(scratch, run.id);
     if (user && iso?.mode !== "given") await user.release().catch(() => false);
   }
+}
+
+/**
+ * mold_v0-271 (self-improvement): each `.recipe-proposal/<recipe id>/` the agent wrote in its working directory, for a
+ * recipe its session started with: note.md (why), remove.txt (paths to drop, one a line) and files/<path> (each file
+ * changed or added; an executable one stays so), sent to the API as an approval request staff decide, then removed so
+ * it is sent once. A proposal that is refused is logged (the next wake may send a corrected one); it never fails the wake.
+ */
+export async function sendRecipeProposals(agent: Pick<AgentRunnerClient, "recipeProposal">, runId: string, lease: string, work: string, policy: Pick<AgentPolicy, "recipes">): Promise<string[]> {
+  const root = path.join(work, ".recipe-proposal");
+  if (!agent.recipeProposal || !policy.recipes?.length || !existsSync(root) || isLink(root)) return [];
+  const sent: string[] = [];
+  for (const r of policy.recipes) {
+    const dir = path.join(root, r.id);
+    if (!existsSync(dir) || isLink(dir)) continue;
+    try {
+      const executable: string[] = [];
+      const walk = (d: string, rel: string) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          const p = path.join(d, e.name), q = rel ? `${rel}/${e.name}` : e.name;
+          if (e.isDirectory()) walk(p, q);
+          else if (e.isFile() && (lstatSync(p).mode & 0o100)) executable.push(q);
+        }
+      };
+      if (existsSync(path.join(dir, "files"))) walk(path.join(dir, "files"), "");
+      const { bundle } = packBundle(dir);
+      const got = await agent.recipeProposal(runId, lease, r.id, bundle, executable);
+      sent.push(got.proposal);
+    } catch (e) { console.error(`agent ${runId}: the proposed version of recipe ${r.id} was not taken: ${(e as Error).message}`); }
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return sent;
 }
 
 const TRANSIENT_RETRY = "Your previous response was cut off by a temporary error from the model provider. Nothing you said after the cut reached the person. Continue from where you left off, without repeating tool calls whose results you already have.";
