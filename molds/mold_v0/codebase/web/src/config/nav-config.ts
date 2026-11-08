@@ -134,7 +134,10 @@ export function withSettings(groups: NavGroup[], tabs: readonly SettingsTabSpec[
   const rest = groups.map((g) => ({ ...g, items: g.items.filter((i) => !isSettingsUrl(i.url)) })).filter((g) => g.items.length > 0);
   const item = settingsNavItem(tabs);
   if (!item) return rest;
-  const entry = { ...item, ...(own?.roles ? { roles: own.roles } : {}) };
+  // mold_v0-280: when every tab is one a pack narrows to some roles (a team or keys tab inside Settings), the entry is
+  // those roles' too.
+  const narrowed = tabs.every((t) => (t as { roles?: string[] }).roles) ? [...new Set(tabs.flatMap((t) => (t as { roles?: string[] }).roles!))] : null;
+  const entry = { ...item, ...(own?.roles ? { roles: own.roles } : narrowed ? { roles: narrowed } : {}) };
   const overviews = new Set(['/app', ...packTabs.filter((t) => t.kind === 'overview').map((t) => t.url)]);
   const gi = rest.findIndex((g) => g.items.some((i) => overviews.has(i.url)));
   if (gi < 0) return rest.length ? [{ ...rest[0]!, items: [entry, ...rest[0]!.items] }, ...rest.slice(1)] : [{ label: '', items: [entry] }];

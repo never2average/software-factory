@@ -7065,6 +7065,12 @@
             "minLength": 1,
             "maxLength": 300
           },
+          "inside": {
+            "type": "string",
+            "enum": [
+              "settings"
+            ]
+          },
           "$comment": {
             "type": "string",
             "maxLength": 2000

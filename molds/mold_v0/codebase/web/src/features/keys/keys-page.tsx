@@ -38,10 +38,19 @@ async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
 const KIND: Record<Key['kind'], string> = { member: 'Personal key', person: 'Older personal key', account: 'Workspace key' };
 
 export function KeysPage() {
+  return (
+    <PageContainer pageTitle='API keys' pageDescription='Keys for AI clients that send a key instead of signing in. A key acts as you, with your role, and works only in a header.'>
+      <KeysPanel />
+    </PageContainer>
+  );
+}
+
+/** The page's body (mold_v0-280): also Settings' tab when a pack puts the person's API keys inside Settings. */
+export function KeysPanel() {
   const { data, error, reload } = useOrgLoad(() => call<Keys>('GET'));
   const [created, setCreated] = useState<Created | null>(null);
   return (
-    <PageContainer pageTitle='API keys' pageDescription='Keys for AI clients that send a key instead of signing in. A key acts as you, with your role, and works only in a header.'>
+    <>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
         <div className='flex flex-col gap-10'>
           <NewKey days={data.expiry_days} onCreated={(c) => { setCreated(c); void reload(); }} />
@@ -56,7 +65,7 @@ export function KeysPage() {
           )}
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }
 

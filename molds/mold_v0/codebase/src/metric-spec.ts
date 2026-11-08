@@ -410,8 +410,9 @@ export function checkViews(b: BuildViews): string[] {
   // Tabs from several packs make one sidebar: an id is a page path per pack, a label must not repeat in a group.
   const seen = new Map<string, string>();
   for (const t of b.tabs) {
-    const k = `${t.group ?? ""}\u0000${tabLabel(t, b)}`;
-    if (seen.has(k)) at(t.pack, `tab ${t.id}: the sidebar already has "${tabLabel(t, b)}"${t.group ? ` in ${t.group}` : ""} (tab ${seen.get(k)})`);
+    // mold_v0-280: a tab inside Settings is one of Settings' tabs, not a sidebar entry: its label is unique there.
+    const k = `${t.inside ? `\u0001${t.inside}` : t.group ?? ""}\u0000${tabLabel(t, b)}`;
+    if (seen.has(k)) at(t.pack, `tab ${t.id}: ${t.inside ? `Settings already has a tab` : "the sidebar already has"} "${tabLabel(t, b)}"${!t.inside && t.group ? ` in ${t.group}` : ""} (tab ${seen.get(k)})`);
     else seen.set(k, `${t.pack}/${t.id}`);
   }
   // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.

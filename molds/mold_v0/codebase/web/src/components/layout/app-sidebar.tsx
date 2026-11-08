@@ -27,7 +27,7 @@ import { OrgSwitcher } from '../org-switcher';
 import { useNav } from './nav-context';
 import { BrandMark } from '@/components/brand';
 import { profile } from '@/config/profile.generated';
-import { hiddenConsoleUrls } from '@/config/pack-nav.generated';
+import { hiddenConsoleUrls, settingsTabs } from '@/config/pack-nav.generated';
 import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
 import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,8 @@ import { cn } from '@/lib/utils';
  * Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link; a build that hides
  * the page (console.hide: ["keys"], mold_v0-171) loses the link and the page, the keys themselves unchanged.
  */
+/** mold_v0-280: the person's API keys are a tab of Settings (a pack's keys tab declared inside: settings). */
+const keysInSettings = settingsTabs.some((t) => (t.kind as string) === 'keys');
 const memberKeysOn = (profile as Readonly<Record<string, unknown>>).member_keys !== false && !hiddenConsoleUrls.includes('/app/keys');
 
 /** Platform admins (platform staff) get a switch between the customer portal and /admin; nobody else sees it. */
@@ -70,8 +72,9 @@ export default function AppSidebar() {
   const { area, groups } = useNav();
   const canSwitch = usePlatformAdmin(area);
   const filteredGroups = useFilteredNavGroups(groups);
-  // A declared sidebar that lists API keys (mold_v0-133, a keys tab) has it in its group: not again in the footer.
-  const keysInNav = groups.some((g) => g.items.some((i) => i.url === '/app/keys'));
+  // A declared sidebar that lists API keys (mold_v0-133, a keys tab) has it in its group: not again in the footer; nor
+  // when a keys tab puts the page inside Settings (mold_v0-280: Settings' tab is its one place).
+  const keysInNav = keysInSettings || groups.some((g) => g.items.some((i) => i.url === '/app/keys'));
   const base = area === 'admin' ? '/admin' : '/app';
   // Exactly one entry is active (mold_v0-213, src/lib/active-nav.ts): the page's own, or the one it belongs to (a
   // record's page its list's, an in-page tab or a filter its page's, a sub-page its module's); the area's home only on itself.

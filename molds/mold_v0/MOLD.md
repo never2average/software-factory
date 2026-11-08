@@ -2498,10 +2498,24 @@ what it holds. The shell's own Activity entry sits under Insights beside Usage f
 build goes on) about a group of more than 7 entries, and about a child area's list tab beside its parent's: an area
 whose records each belong to a record of another area (a required reference field or link to it) while both have
 sidebar entries of their own; put them in one `sections` tab with the parent (mold_v0-175). `node scripts/gen-packs.mjs
---sidebar` prints the resolved trees (heading, entries with their addresses, a sections tab's in-page tabs) and writes
+--sidebar` prints the resolved trees (heading, entries with their addresses, a sections tab's in-page tabs and, since
+mold_v0-280, Settings' tabs when it has a strip) and writes
 nothing; the factory prints the same with `packs.py sidebar <app>`, `packs.py check <pack>` (each app naming the
 pack) and the deploy check (`provision.py <app>`), so the tree the operator agreed can be compared before a deploy.
 `npm run test:console-sidebar` (section 10).
+
+**The Team page and API keys inside Settings (mold_v0-280).** A pack's `team` or `keys` tab may declare
+`"inside": "settings"` (refused on any other kind, and with a `group`: it is not a sidebar entry). The tab leaves the
+/app sidebar and becomes a tab of the Settings page's Access group, after the shell's own, under the tab's `label`:
+`team` draws Billing's People table (who is in the account, invite, roles, suspension; `TeamPanel`,
+`web/src/features/portal/billing.tsx`), `keys` the API keys page's body (`KeysPanel`, `web/src/features/keys`). Roles
+are unchanged: a tab that names `roles` keeps them on its Settings tab (the strip leaves it out for anyone else, and the
+Settings entry is narrowed to them when every Settings tab is), and the server refuses as before. Settings is in the
+sidebar whenever it has a tab, laid out by its count as any Settings tab (mold_v0-219). `/app/team` and `/app/keys` lead
+to `/app/settings?tab=<id>` (`pack-routes.generated.json`), and the footer's automatic API keys link is left out.
+Refused at build: the same page also opened by a sidebar tab, two tabs inside for one page, an id one of Settings' tabs
+already has, and a declared sidebar (`console.sidebar`) that lists the tab or its page. A build without such a tab is
+unchanged. `npm run test:console-sidebar` (section 11).
 
 **The active sidebar entry (mold_v0-213).** Each console lights exactly one entry for the page drawn
 (`web/src/lib/active-nav.ts` `activeNavUrl`, used by `components/layout/app-sidebar.tsx` for the customer and the staff
