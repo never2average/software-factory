@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
+import { TipsPreference } from '@/features/journeys/tips-preference';
 import { IdentityAvatar } from '@/components/identity-avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -75,6 +76,7 @@ export function BuiltinProfileViewPage() {
             <dt className='text-muted-foreground'>Everywhere</dt>
             <dd><Button variant='outline' size='sm' onClick={everywhere}>Sign out everywhere</Button></dd>
           </div>
+          <TipsPreference />
         </dl>
       </div>
     </PageContainer>

@@ -1950,7 +1950,9 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
  * it did.
  */
 // The shell's Setup steps and the session engine's stages a host pack's setup.steps may name (src/app.ts, src/admin.ts).
+// connected and tools are no rows any more (mold_v0-277: the Connect card): only places a step may be put after.
 const SHELL_SETUP_STEPS = ["joined", "connected", "tools", "first_call"];
+const SHELL_SETUP_PLACES = ["connected", "tools"];
 const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
 /** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
@@ -2196,7 +2198,8 @@ function setupConfigOf(p) {
   const ids = new Set(SHELL_SETUP_STEPS);
   for (const [i, s] of (st.steps ?? []).entries()) {
     const w = `${at} setup.steps[${i}] ${s.id}`;
-    if (ids.has(s.id)) fail(w, SHELL_SETUP_STEPS.includes(s.id) ? "is one of the shell's steps: give its words in setup.shell_steps" : "is there twice");
+    if (ids.has(s.id)) fail(w, SHELL_SETUP_PLACES.includes(s.id) ? "is a place the shell keeps (connected, tools: where connecting a client stood): give the step another id"
+      : SHELL_SETUP_STEPS.includes(s.id) ? "is one of the shell's steps: give its words in setup.shell_steps" : "is there twice");
     if (s.after !== undefined && !ids.has(s.after)) fail(w, `after: ${s.after} is not a step before it (${[...ids].join(", ")})`);
     ids.add(s.id);
     if (s.done_when.startsWith("stage:")) {

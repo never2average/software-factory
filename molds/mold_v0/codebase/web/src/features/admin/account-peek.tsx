@@ -31,6 +31,7 @@ import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
 import { text } from '@/lib/texts';
 import { tipsOn } from '@/features/journeys/config';
+import type { ConnectClient } from '@/features/connect/connect-parts';
 import { IdentityName } from '@/components/identity-avatar';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
@@ -51,7 +52,7 @@ export interface OrgDetail {
   /** The packs' runs per job kind and the latest, in a build without the session engine; null with no job kind. */
   runs?: AccountRuns | null;
   integrations: { clerk?: boolean; stripe?: boolean; stripe_test_mode?: boolean; default_budget_usd?: number };
-  connect: { connector_url: string; secret: boolean; email: { subject: string; body: string } };
+  connect: { connector_url: string; secret: boolean; clients: ConnectClient[] };
   members: { id: string; user_id: string; email: string | null; name?: string | null; role?: string | null; status: string; created_at: string | null }[];
   invitations: { id: string; email: string; role?: string | null; state: string; created_at: string | null; expires_at: string | null }[];
   clerk_error: string | null;
@@ -117,7 +118,8 @@ function actionsOf(o: Org, ctl: AccountCtl) {
     key: () => ctl.open('key', o),
     tip: () => ctl.open('tip', o),
     linkClerk: () => void ctl.run(() => post(`${p}/clerk`), 'Moved to Clerk: invite people by email now'),
-    welcome: fromDetail((x) => copyText(`Subject: ${x.connect.email.subject}\n\n${x.connect.email.body}`, 'Welcome email copied')),
+    // The setup email for the clients the staff member picks (mold_v0-277): the invite result's dialog, without a key.
+    welcome: fromDetail((x) => ctl.show({ org: { slug: x.org.slug, name: x.org.name }, key: null, invitation: null, connector_url: x.connect.connector_url, clients: x.connect.clients, email: { to: null } }, `Setup email for ${x.org.name}`)),
     connector: fromDetail((x) => copyText(x.connect.connector_url, 'Connector URL copied')),
     portal: () => void ctl.run(() => post<{ url: string }>(`${p}/billing/portal`)).then((r) => r && copyText(r.url, 'Billing portal link copied')),
     prepaid: (allowed: boolean) => void ctl.run(() => post(`${p}/prepaid`, { allowed }), allowed ? `${o.name} can now subscribe to a prepaid plan` : `${o.name} can no longer subscribe`),
@@ -140,7 +142,7 @@ export function accountActions(o: Org, ctl: AccountCtl, d: OrgDetail | undefined
     [...people, ...(tipsOn() ? [lock({ label: 'Send a tip…', icon: <Icons.chat />, onSelect: x.tip }, 'journeys')] : [])],
     [
       { label: 'Copy connector URL', icon: <Icons.plug />, onSelect: x.connector },
-      { label: 'Copy welcome email', icon: <Icons.post />, onSelect: x.welcome }
+      { label: 'Setup email…', icon: <Icons.mail />, onSelect: x.welcome }
     ],
     [
       o.prepaid_allowed
@@ -376,7 +378,7 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
     const p = orgPath(o.slug);
     return { label: 'Resend', onSelect: () => void ctl.run(() => Promise.all(expired.map((i) => post(`${p}/invitations/${encodeURIComponent(i.id)}/resend`))), 'Invitation resent'), need: 'invite' };
   }
-  if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Copy welcome email', onSelect: x.welcome };
+  if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Setup email…', onSelect: x.welcome };
   // The session engine's messages (mold_v0-121: its pack's pack.json account_stages attention): a tip for a stuck account, its usage for a failed onboarding.
   const ew = engineWords()?.attention;
   if (tipsOn() && ew && [ew.first_call, ew.onboarded, ew.simulated].some((m) => a.startsWith(fill(m)))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };

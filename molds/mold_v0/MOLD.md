@@ -1949,10 +1949,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack) shows no card and mounts no route. `npm run test:declarative-packs` refuses those; `npm run test:metrics`
   checks each card's value and weeks by hand (declared, an area's and a runs tab's defaults, the commonest value), two
   workspaces, a role, and the route; `npm run test:record-pages` the words and that every list shows them.
+  **Connect on the Overview** (mold_v0-277): one card of the home grid, across both columns below the headline row,
+  in its own cells: the connection URL (copy; show and hide when it holds a key) with the AI client dropdown beside it
+  (the client catalogue, `src/connect-catalog.ts`), that client's own way in (one-click install, command, config
+  snippet or its settings steps) and Test my connection; and Send setup by email: the dropdown's client, or up to five
+  ticked, previewed (`POST /api/app/setup/email/preview`) then sent to the person's own address (`POST
+  /api/app/setup/email`, kind `setup`, the same choice at most once in ten minutes). The subject and body are built by
+  the server (`src/setup-email.ts`) for the chosen clients only, never a list of every client; an empty choice, an
+  unknown client or more than five are refused. The staff console's invite result draws the same parts (its email
+  through `POST /api/admin/onboarding/setup-email`, a legacy key's place a placeholder). Connecting a client and
+  switching its tools on are no setup steps any more, and the Overview shows no tips. `npm run test:setup-email`.
   **A home tab's headline row** (mold_v0-203): pack.json `sparklines` on the home tab (an `overview` that includes
   `setup`) names 1 to 4 of the pack's metrics, drawn as the same cards (`TabSparklines`, `StatStrip` with `quad`: four
   across from a wide screen, two by two below it, in the console's light or dark theme) in a row at the very top of the
-  Overview, above the checklist or journey and the right column (the connection card, the Due soon card). The same
+  Overview, above Connect, the checklist or journey and the right column (the Due soon card). The same
   rules as a list tab's cards (a declared metric, never grouped, weeks to draw, never twice) and the same route
   (`GET /api/sparklines/<pack>/<home tab>`, mounted for it too; the home tab is every role's, each card refused alone to
   a role that may not read its metric). The registry carries the list as the tab's `headline`; a number the row shows is
@@ -2604,7 +2614,9 @@ declares one, so a build without writes what it did:
   (`resource:ui://<ns>/`, a widget) or the account reached a session-engine stage (`stage:onboarded|simulated|reported`,
   only in a build with the engine); `optional` (not counted), `help_text_only` (its help when every client the person
   connected shows results as text), `prompt`, `launch` (someone who may not launch reads `viewer_note` instead);
-  `shell_steps` (the shell's four steps in the product's words); `workflow` (`[{id, label, tools, prompt}]`: Setup's
+  `shell_steps` (the shell's two steps, joined and first_call, in the product's words; connecting a client is the
+  Overview's Connect card, never a step, mold_v0-277: a step may still be put `after` connected or tools, where those
+  rows stood); `workflow` (`[{id, label, tools, prompt}]`: Setup's
   coverage and next group, the shell's Usage workflow, and `setupWorkflow()` in `src/pack-host.ts` for the pack's own
   pages). `mcp.error_hints` (`[{match, text}]`, any pack) gives each recent error on Setup the first fix whose pattern
   (a regular expression, any case) its text matches.
@@ -2697,9 +2709,9 @@ pack keeps only their config. Every text is a word: the journeys' nouns are the 
   path) or an admin (`journeys` permission, on `/admin/journeys` and from `/admin/accounts`) queues a tip for an account
   or one person; it is appended to the next tool answer of the build (the memory tools here, a host pack's own through
   `src/pack-host.ts` `withTip`) at most once per `APP_NUDGE_INTERVAL_HOURS` (or `tips.interval_hours`, default 20) and
-  three times in all, always after the tools `always_after` names, and listed on /app Setup with dismiss and a mute;
-  `recipes` are the sequences to build in the workflow tool, shown with ready-to-paste webhook bodies. Routes:
-  `/api/app/nudges`, `/api/admin/onboarding/journeys`.
+  three times in all, always after the tools `always_after` names; the person turns them off on their profile page
+  (Tips in my AI client; the Overview shows no tips, mold_v0-277); `recipes` are the sequences to build in the workflow
+  tool, shown with ready-to-paste webhook bodies. Routes: `/api/app/nudges/preference`, `/api/admin/onboarding/journeys`.
 - `labels` names their tables on the Storage page (listed only where each is on). The pages' sidebar entries are the
   pack's `console.nav` (`/app/journeys`, `/admin/journeys` count as its own pages where it turns them on), else an
   Engagement group; `console.components` no longer names `tips` or `journeys` (refused: they are config now), and
