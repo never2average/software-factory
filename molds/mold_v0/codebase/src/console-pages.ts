@@ -103,14 +103,31 @@ export function shownSections(blocks: unknown[]): ShowableSection[] {
  * pages by its id (ADMIN_RECORDS_PAGES), each optionally with its own sidebar label ({"id", "label"}). A shared area left
  * out is not in the sidebar but its page, its API and its MCP tools are as before (a link still opens it); a shell page
  * listed leaves its own group for this one, at the same address. scripts/gen-packs.mjs resolves the names.
+ *
+ * mold_v0-281: an entry may hold 2 to 6 of those lists as in-page tabs, one sidebar entry for them all:
+ *
+ *   { "id": "library", "label": "Library", "tabs": ["design_systems", { "id": "recipes", "label": "Recipes" }] }
+ *
+ * Its page is /admin/records-group/<id>?tab=<member>; each member's own address of before leads there (a record's own
+ * page, /admin/records/<area>/<key>, stays where it is). A member is named once in the whole group (never twice, never
+ * in two entries); the entry's id names no shared area and no staff page.
  */
 export const ADMIN_RECORDS_PAGES = ["journeys", "recipes", "agent-profiles", "repositories"] as const;
 export type AdminRecordsPage = (typeof ADMIN_RECORDS_PAGES)[number];
-export interface AdminRecordsEntry { id: string; label?: string }
-/** The entries of an admin_records block whose shape is good: each as {id, label?}. */
+export interface AdminRecordsMember { id: string; label?: string }
+export interface AdminRecordsEntry { id: string; label?: string; tabs?: AdminRecordsMember[] }
+const memberOf = (x: unknown): AdminRecordsMember => (typeof x === "string" ? { id: x }
+  : { id: String((x as AdminRecordsMember).id), ...((x as AdminRecordsMember).label ? { label: (x as AdminRecordsMember).label } : {}) });
+/** The entries of an admin_records block whose shape is good: each as {id, label?, tabs?}. */
 export const adminRecordsEntries = (v: unknown): AdminRecordsEntry[] =>
-  (((v as { show?: unknown[] } | undefined)?.show ?? []) as unknown[]).map((x) => (typeof x === "string" ? { id: x } : { id: String((x as AdminRecordsEntry).id), ...((x as AdminRecordsEntry).label ? { label: (x as AdminRecordsEntry).label } : {}) }));
+  (((v as { show?: unknown[] } | undefined)?.show ?? []) as unknown[]).map((x) => {
+    const tabs = x && typeof x === "object" ? (x as { tabs?: unknown }).tabs : undefined;
+    return { ...memberOf(x), ...(Array.isArray(tabs) ? { tabs: tabs.map(memberOf) } : {}) };
+  });
+/** Every list the group names, by id: a plain entry's, and each in-page tab of an entry that holds several (mold_v0-281). */
+export const adminRecordsMembers = (entries: readonly AdminRecordsEntry[]): string[] => entries.flatMap((e) => (e.tabs ? e.tabs.map((t) => t.id) : [e.id]));
 const ADMIN_RECORDS_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+export const ADMIN_RECORDS_TABS = { min: 2, max: 6 } as const;
 /** The shape of an `admin_records` block (what it names is resolved against the build by gen-packs). */
 export function adminRecordsProblems(v: unknown, where: string): string[] {
   const at = `${where} console.admin_records`;
@@ -119,19 +136,48 @@ export function adminRecordsProblems(v: unknown, where: string): string[] {
   for (const k of Object.keys(v)) if (k !== "show" && k !== "$comment") out.push(`${at}: unknown field ${k} (known: show)`);
   const show = (v as { show?: unknown }).show;
   if (!Array.isArray(show) || show.length < 1 || show.length > 30) return [...out, `${at}.show: a list of 1 to 30 entries, each a shared record area's name or a staff page (${ADMIN_RECORDS_PAGES.join(", ")})`];
-  const seen = new Set<string>();
-  show.forEach((x, i) => {
-    const w = `${at}.show[${i}]`;
+  const seen = new Map<string, string>();
+  const badLabel = (label: unknown) => label !== undefined && (typeof label !== "string" || !label.trim() || label.length > 40 || label !== label.trim() || /[{}<>]/.test(label));
+  /** One list (a plain entry or an in-page tab): its id and label; false when its id is unusable. */
+  const one = (x: unknown, w: string, fields: string[]): unknown => {
     let id: unknown = x;
     if (x && typeof x === "object" && !Array.isArray(x)) {
-      for (const k of Object.keys(x)) if (k !== "id" && k !== "label") out.push(`${w}: unknown field ${k} (known: id, label)`);
+      for (const k of Object.keys(x)) if (!fields.includes(k)) out.push(`${w}: unknown field ${k} (known: ${fields.join(", ")})`);
       id = (x as { id?: unknown }).id;
-      const label = (x as { label?: unknown }).label;
-      if (label !== undefined && (typeof label !== "string" || !label.trim() || label.length > 40 || label !== label.trim() || /[{}<>]/.test(label))) out.push(`${w}.label: the entry's label in the sidebar, 1 to 40 characters, no braces or angle brackets`);
+      if (badLabel((x as { label?: unknown }).label)) out.push(`${w}.label: the entry's label in the sidebar, 1 to 40 characters, no braces or angle brackets`);
     }
-    if (typeof id !== "string" || !ADMIN_RECORDS_ID.test(id)) { out.push(`${w}: a shared record area's name or a staff page (${ADMIN_RECORDS_PAGES.join(", ")}), or {"id", "label"}`); return; }
-    if (seen.has(id)) out.push(`${w}: ${id} is listed twice: each entry once`);
-    seen.add(id);
+    if (typeof id !== "string" || !ADMIN_RECORDS_ID.test(id)) { out.push(`${w}: a shared record area's name or a staff page (${ADMIN_RECORDS_PAGES.join(", ")}), or {"id", "label"}`); return false; }
+    return id;
+  };
+  const claim = (id: string, w: string, as: string) => {
+    const before = seen.get(id);
+    if (before) out.push(`${w}: ${id} is listed twice (${before} and ${as}): each list once, in one entry`);
+    else seen.set(id, as);
+  };
+  show.forEach((x, i) => {
+    const w = `${at}.show[${i}]`;
+    const tabs = x && typeof x === "object" && !Array.isArray(x) ? (x as { tabs?: unknown }).tabs : undefined;
+    if (tabs === undefined) {
+      const id = one(x, w, ["id", "label"]);
+      if (typeof id === "string") claim(id, w, `show[${i}]`);
+      return;
+    }
+    // mold_v0-281: an entry of in-page tabs: its own id and label, and 2 to 6 lists.
+    const id = one(x, w, ["id", "label", "tabs"]);
+    if (typeof id === "string") {
+      if (typeof (x as { label?: unknown }).label !== "string") out.push(`${w}.label: an entry of in-page tabs has its own label in the sidebar`);
+      if ((ADMIN_RECORDS_PAGES as readonly string[]).includes(id)) out.push(`${w}: ${id} is a staff page: an entry of in-page tabs has an id of its own`);
+      claim(id, w, `show[${i}]`);
+    }
+    if (!Array.isArray(tabs) || tabs.length < ADMIN_RECORDS_TABS.min || tabs.length > ADMIN_RECORDS_TABS.max) {
+      out.push(`${w}.tabs: ${ADMIN_RECORDS_TABS.min} to ${ADMIN_RECORDS_TABS.max} lists shown as in-page tabs, each a shared record area's name or a staff page, or {"id", "label"} (one list is a plain entry)`);
+      return;
+    }
+    tabs.forEach((t, j) => {
+      const tw = `${w}.tabs[${j}]`;
+      const tid = one(t, tw, ["id", "label"]);
+      if (typeof tid === "string") claim(tid, tw, `show[${i}].tabs[${j}]`);
+    });
   });
   return out;
 }
