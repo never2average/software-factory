@@ -8,7 +8,7 @@
   "runner": "runner",
   "pages": [
     { "id": "notes", "area": "app", "title": "Notes", "description": "This workspace's notes.", "data": "/notes",
-      "columns": [{ "key": "body", "label": "Note" }, { "key": "created_at", "label": "Added" }], "nav_group": "Notes" },
+      "columns": [{ "key": "body", "label": "Note" }, { "key": "created_at", "label": "Added" }], "nav_group": "Writing" },
     { "id": "all-notes", "area": "admin", "title": "Notes by workspace", "data": "/notes",
       "columns": [{ "key": "org_id", "label": "Workspace" }, { "key": "notes", "label": "Notes" }] }
   ],

@@ -29,6 +29,12 @@
 //    (no wrong entry) when opened by link; the profile's wins over a pack's; the Recipes page with the workspace agent
 //    on asks for workspace_recipes; refused: an unknown name, a workspace area, a page the build lacks (Recipes without
 //    the workspace agent), an entry twice, two packs declaring it.
+// 10. The sidebar plan checked at build (mold_v0-279, scripts/gen-packs.mjs): refused, a heading that is also the name of
+//    one of its entries (case aside), in /app (a pack's group; a declared sidebar's group where Settings is joined) and
+//    /admin (a pack's admin page); the shell's own Activity entry sits under Insights, never under a heading "Activity";
+//    warned, a group of more than 7 entries and a child area's tab (a required reference to an area with its own tab)
+//    beside its parent's in the sidebar, not when both are in one sections tab; `gen-packs --sidebar` prints the resolved
+//    /app and /admin trees (headings, entries, in-page tabs) and writes nothing.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -499,6 +505,60 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     assert.notEqual(two.status, 0);
     assert.match(two.out, /both declare the staff Records group/, two.out.slice(-800));
     console.log("✓ the staff Records group from config: exactly its entries in its order (areas relabelled, Journeys and Recipes placed there and lit there, gone from their own group); a shared area left out keeps its page, spec and customer entry and lights nothing; the profile's over a pack's; refusals (unknown, a workspace area, a page the build lacks, twice, two packs)");
+  }
+  // ---------- 10. the sidebar plan checked at build (mold_v0-279) ----------
+  {
+    const sidebarOf = (copy: string) => { const r = spawnSync(process.execPath, ["scripts/gen-packs.mjs", "--sidebar"], { cwd: copy, encoding: "utf8" }); return { status: r.status, out: r.stdout, err: r.stderr }; };
+    // a. Refused: a heading that is also an entry's name.
+    const tab = buildCopy("heading-tab", ["fixture_vulns"], (_id, j) => { j.tabs[0].group = "OVERVIEW"; });
+    assert.notEqual(tab.status, 0, "a pack's group named like its tab: refused");
+    assert.match(tab.out, /console sidebar \/app: the heading "OVERVIEW" is also the name of its entry Overview \(\/app\/overview, from packs\/fixture_vulns\/pack\.json tab overview \(group "OVERVIEW"\)\)/, tab.out.slice(-800));
+    const joined = buildCopy("heading-joined", ["fixture_vulns"], () => {}, { console: { sidebar: [{ label: "Settings", items: ["overview"] }, ...SIDEBAR.slice(1)] } });
+    assert.notEqual(joined.status, 0, "a declared group that Settings joins, named Settings: refused");
+    assert.match(joined.out, /the heading "Settings" is also the name of its entry Settings \(\/app\/settings, from profile\.json console\.sidebar\)/, joined.out.slice(-800));
+    const admin = buildCopy("heading-admin", ["fixture_notes"], (_id, j) => { j.pages[0].area = "admin"; j.pages[0].nav_group = "Notes"; });
+    assert.notEqual(admin.status, 0, "a staff page under a heading of its own name: refused");
+    assert.match(admin.out, /console sidebar \/admin: the heading "Notes" is also the name of its entry Notes \(\/admin\/packs\/fixture_notes\/notes, from packs\/fixture_notes\/pack\.json page notes/, admin.out.slice(-800));
+    assert.ok(!existsSync(path.join(admin.copy, "web", "src", "config", "pack-nav.generated.ts")) || !readFileSync(path.join(admin.copy, "web", "src", "config", "pack-nav.generated.ts"), "utf8").includes("/admin/packs/fixture_notes/notes"),
+      "refused before anything is written");
+    // The shell's own sidebar with a pack (no tabs): Activity under Insights, beside Usage.
+    const shell = probe(built("activity-insights", ["fixture_tracker"]));
+    assert.ok(lines(shell.portalNav).includes("Insights: Activity /app/activity"), `Activity under Insights: ${lines(shell.portalNav).join(", ")}`);
+    assert.ok(!shell.portalNav.some((g: any) => g.label === "Activity"), "no heading Activity over Activity");
+    console.log("✓ refused: a heading that is also one of its entries' names (a pack's tab group, a declared group Settings joins, a staff page's group); the shell's Activity sits under Insights");
+
+    // b. Warned: a group past 7 entries; a child area's tab beside its parent's.
+    const all = SIDEBAR.flatMap((g) => g.items);
+    const long = buildCopy("long-group", ["fixture_vulns"], () => {}, { console: { sidebar: [{ label: "Everything", items: all }] } });
+    assert.equal(long.status, 0, long.out.slice(-800));
+    assert.match(long.out, /gen-packs: warning: 1 sidebar group\(s\) with more than 7 entries[^\n]*\n  \/app "Everything": 13 entries \(Overview, Settings, Audits, /, long.out.slice(-1200));
+    const plain = buildCopy("plain", ["fixture_vulns"]);
+    assert.equal(plain.status, 0);
+    assert.doesNotMatch(plain.out, /more than 7 entries/, "7 entries (Overview, Settings and five more): no warning");
+    assert.match(plain.out, /gen-packs: warning: 1 child area tab\(s\) beside their parent's in the sidebar[^\n]*\n  fixture_vulns\/vulnerabilities \(Vulnerabilities\): each audit_findings record belongs to one of audit_apps \(its required field app\), yet it is a sidebar entry of its own beside fixture_vulns\/applications \(Applications\): put applications and vulnerabilities in one sections tab/, plain.out.slice(-1500));
+    const nested = buildCopy("nested", ["fixture_vulns"], (_id, j) => { j.tabs.splice(1, 0, { id: "apps", kind: "sections", label: "Apps", group: "Audit", sections: ["applications", "vulnerabilities"] }); });
+    assert.equal(nested.status, 0, nested.out.slice(-800));
+    assert.doesNotMatch(nested.out, /child area tab/, "the child inside a sections tab with its parent: no warning");
+    console.log("✓ warned: a group past 7 entries; a child area's tab beside its parent's (none inside one sections tab)");
+
+    // c. The resolved trees, plain text; nothing written.
+    const before = readFileSync(path.join(nested.copy, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const tree = sidebarOf(nested.copy);
+    assert.equal(tree.status, 0, tree.err);
+    assert.equal(tree.out, [
+      "/app sidebar:", "  Audit", "    Overview  /app/overview", "    Settings  /app/settings", "    Apps  /app/apps", "      in-page tabs: Applications, Vulnerabilities",
+      "    Controls  /app/controls", "    Audits  /app/audits", "    Reports  /app/reports",
+      "  Workspace", "    Due soon  /app/notices", "    Activity  /app/activity", "    Billing  /app/billing",
+      "/admin sidebar:", "  Onboarding", "    Overview  /admin", "    Access requests  /admin/requests", "    Accounts  /admin/accounts",
+      "  Insights", "    Analytics  /admin/analytics", "    Health  /admin/health",
+      "  Operations", "    Compute  /admin/compute", "    FinOps  /admin/finops", "    Agent configuration  /admin/configuration", "    Key vault  /admin/keys",
+      "  Records", "    Controls  /admin/records/audit_controls", "",
+    ].join("\n"), tree.out);
+    assert.equal(readFileSync(path.join(nested.copy, "web", "src", "config", "pack-nav.generated.ts"), "utf8"), before, "--sidebar writes nothing");
+    const refusedTree = sidebarOf(tab.copy);
+    assert.notEqual(refusedTree.status, 0, "--sidebar refuses as the build does");
+    assert.match(refusedTree.err, /the heading "OVERVIEW"/);
+    console.log("✓ gen-packs --sidebar: the resolved /app and /admin trees (headings, entries, in-page tabs), nothing written; refused as the build is");
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {
