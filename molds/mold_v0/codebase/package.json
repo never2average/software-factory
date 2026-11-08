@@ -22,6 +22,7 @@
     "test:console-sidebar": "tsx scripts/console-sidebar-test.ts",
     "test:recipes": "tsx scripts/recipes-test.ts",
     "test:shared-records": "tsx scripts/shared-records-test.ts",
+    "test:record-resources": "tsx scripts/record-resources-test.ts",
     "test:developer-console": "tsx scripts/developer-console-test.ts",
     "test:host-config": "tsx scripts/host-config-test.ts",
     "test:engine-packs": "tsx scripts/engine-packs-test.ts",
