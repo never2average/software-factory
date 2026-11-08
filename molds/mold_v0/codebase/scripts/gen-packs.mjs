@@ -79,11 +79,19 @@
 // the engine's migrations under before the split (the product's own host pack, whose files they were): written as the
 // engine's `formerly` in src/pack-migrations.generated.ts, where src/migrate.ts reads those rows as the engine's.
 //
+// The sidebars (mold_v0-279): both resolved as the console builds them, before anything is written; refused, a heading
+// that is also the name of one of its entries (case aside); warned, a group of more than 7 entries and a child area's
+// list tab beside its parent's (a required reference to an area with a sidebar entry of its own) instead of inside one
+// sections tab with it. --sidebar prints the resolved trees.
+//
 // Record areas are declared in code (definePack({ recordAreas })), so once every check above passes, each pack's entry
 // is loaded once (through tsx, as the server loads it) to read them; with no packs nothing is loaded.
 //
 //   node scripts/gen-packs.mjs            write the files (npm run gen:packs)
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
+//   node scripts/gen-packs.mjs --sidebar  print the resolved /app and /admin sidebars (headings, entries, in-page tabs) as
+//                                         plain text after every check, and write nothing (mold_v0-279; the factory's
+//                                         packs.py check and provision.py print it for the operator's agreed plan)
 //   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
 //                                                facts file (tests)
 //   --share-image <file>                         another brand share image than brand/share-image.png (tests)
@@ -2103,6 +2111,18 @@ const SETTINGS_TABS = (() => {
     { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },
   ].filter((t) => t.on).map(({ on: _o, ...t }) => t);
   const taken = new Set(shell.map((t) => t.id));
+  // mold_v0-280: a pack's team or keys tab declared `inside: "settings"`: the shell's page as a tab of Access, after the
+  // shell's own, under the tab's label, for the roles its tab is (listed only when narrower than every role).
+  const inside = [];
+  for (const t of insideTabs()) {
+    if (taken.has(t.id)) { fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: its Settings tab would have the address of the Settings tab ${t.id} (/app/settings?tab=${t.id}): give it another id`); continue; }
+    const twice = inside.find((x) => x.kind === t.kind);
+    if (twice) { fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: tab ${twice.id} of pack ${twice.pack} already puts the /app/${t.kind} page inside Settings: one tab holds a page`); continue; }
+    const opener = shownTabs().find((x) => x.kind === t.kind && x.inside !== "settings");
+    if (opener) { fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: the /app/${t.kind} page is inside Settings, yet tab ${opener.id} of pack ${opener.pack} opens it from the sidebar: drop that tab, or this one's inside`); continue; }
+    taken.add(t.id);
+    inside.push({ id: t.id, label: t.label, group: "access", kind: t.kind, pack: t.pack, ...(t.roles && t.roles.length < 4 ? { roles: t.roles } : {}) });
+  }
   const areas = [];
   for (const a of recordAreas.filter((x) => x.settings)) {
     if (a.scope !== "workspace") { fail(`packs/${a.pack}`, `record area ${a.name}: settings is for a workspace's own area (scope workspace), not a shared one`); continue; }
@@ -2110,7 +2130,7 @@ const SETTINGS_TABS = (() => {
     taken.add(a.name);
     areas.push({ id: a.name, label: a.settings.label ?? a.label, group: a.settings.group, kind: "area", area: a.name, pack: a.pack });
   }
-  return SETTINGS_GROUPS.flatMap((g) => [...shell.filter((t) => t.group === g), ...areas.filter((t) => t.group === g)]);
+  return SETTINGS_GROUPS.flatMap((g) => [...shell.filter((t) => t.group === g), ...inside.filter((t) => t.group === g), ...areas.filter((t) => t.group === g)]);
 })();
 for (const t of packs.flatMap((p) => (p.json?.tabs ?? []).map((x) => ({ ...x, pack: p.id }))))
   if (t.kind === "area" && SETTINGS_TABS.some((x) => x.kind === "area" && x.area === t.area)) fail(`packs/${t.pack}`, `tab ${t.id}: record area ${t.area} is a Settings tab (its settings); it cannot also be a sidebar tab`);
@@ -2353,6 +2373,8 @@ const isHomeTab = (t) => t.kind === "overview" && (t.include ?? []).includes("se
 /** The shell's page a tab of each kind opens (the sidebar's entry for it). */
 const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys", agent: "/app/agent",
   "connected-apps": "/app/connected-apps" };
+/** mold_v0-280: the shown tabs that sit inside Settings (a team or keys tab declared `inside: "settings"`), not in the sidebar. */
+function insideTabs() { return shownTabs().filter((t) => t.inside === "settings"); }
 /** The sections tab that shows a tab as one of its in-page tabs (mold_v0-175), or null. */
 const sectionParent = (t) => packViews.tabs.find((x) => x.kind === "sections" && x.pack === t.pack && (x.sections ?? []).includes(t.id)) ?? null;
 /**
@@ -2404,7 +2426,8 @@ const profileSidebar = (() => {
   const declared = profileConsole?.sidebar;
   if (!declared) return null;
   const at = `${rel(PROFILE_FILE)} console.sidebar`;
-  const tabs = shownTabs(), listed = new Set(), out = [];
+  // mold_v0-280: a tab inside Settings is not a sidebar entry (Settings joins the declared sidebar on its own).
+  const tabs = shownTabs().filter((t) => t.inside !== "settings"), listed = new Set(), out = [];
   const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
   const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !FEATURE_ON.company_email && "the build declares no credential field and no company email", schedules: !jobKindCount && "the build has no job kind to schedule",
     notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
@@ -2417,6 +2440,8 @@ const profileSidebar = (() => {
       const found = tabs.filter((t) => t.id === id && (pk === null || t.pack === pk));
       if (found.length > 1) { fail(w, `packs ${found.map((t) => t.pack).join(" and ")} both have a tab ${id}: name it as <pack>/${id}`); continue; }
       let item;
+      const inside = insideTabs().find((t) => (t.id === id && (pk === null || t.pack === pk)) || (pk === null && t.kind === id));
+      if (!found.length && inside) { fail(w, `tab ${inside.id} of pack ${inside.pack} puts that page inside Settings (inside: settings): it is a Settings tab, not a sidebar entry`); continue; }
       if (found.length === 1) item = { tab: found[0] };
       else if (pk === null && SIDEBAR_SHELL_PAGES.includes(id)) {
         const opener = tabs.find((t) => t.kind === id);
@@ -2494,6 +2519,8 @@ const profileSidebar = (() => {
   if (homeTab) redirects.push({ source: appPageUrl(homeTab.id), destination: "/app", permanent: false });
   // An in-page tab of a sections tab (mold_v0-175): its own address of before leads to that tab of the page.
   for (const t of shownTabs()) if (sectionParent(t)) redirects.push({ source: SHELL_PAGES[t.kind] ?? appPageUrl(t.id), destination: tabUrl(t), permanent: false });
+  // A team or keys tab inside Settings (mold_v0-280): the shell's page of before leads to its Settings tab.
+  for (const t of insideTabs()) redirects.push({ source: SHELL_PAGES[t.kind], destination: `/app/settings?tab=${t.id}`, permanent: false });
   if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
   redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
   refuse();
@@ -2717,7 +2744,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "\n/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */\n" +
   "export interface SettingsTabSpec {\n  id: string;\n  label: string;\n  group: 'access' | 'connections' | 'automation' | 'data_trust';\n" +
   // 'agent' (mold_v0-252) only while agent_harness is on: a quiet_off flag leaves the file as it was while off.
-  `  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | ${FEATURE_ON.agent_harness ? "'agent' | " : ""}${FEATURE_ON.teams ? "'teams' | " : ""}'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n` +
+  `  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | ${FEATURE_ON.agent_harness ? "'agent' | " : ""}${FEATURE_ON.teams ? "'teams' | " : ""}${SETTINGS_TABS.filter((t) => t.kind === "team" || t.kind === "keys").map((t) => `'${t.kind}' | `).join("")}'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n` +
+  // mold_v0-280: who sees a team or keys tab inside Settings, when its pack's tab narrows it (only then, so every other build's file is as it was).
+  (SETTINGS_TABS.some((t) => t.roles) ? "  /** The account roles that see the tab (every role when absent). */\n  roles?: string[];\n" : "") + "}\n" +
   "/** Settings' tabs, in group order (Access, Connections, Automation, Data & trust), each group's shell tabs first. */\n" +
   `export const settingsTabs: SettingsTabSpec[] = ${json(SETTINGS_TABS)};\n` +
   "\n/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */\n" +
@@ -2729,8 +2758,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   // tools or runs. With zero packs the sidebar is the shell's own; a build may hide it (mold_v0-130). The staff's
   // every-workspace Activity page is gone (mold_v0-211). A host pack's mcp block (mold_v0-137: its server instructions
   // and slash commands) adds no tool or run, so it alone does not count.
+  // Under the shell's Insights heading, beside Usage (mold_v0-279: a heading "Activity" over its one entry Activity is refused).
   (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).some((k) => !(p.host && k === "mcp"))) ? "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
-    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n`
+    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Insights", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\n") +
   viewsModule());
 // The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
@@ -2890,7 +2920,7 @@ function viewsModule() {
   const shown = shownTabs();
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
-    url: t.kind === "files" ? `/app/files?store=${t.pack}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
+    url: t.kind === "files" ? `/app/files?store=${t.pack}` : t.inside === "settings" ? `/app/settings?tab=${t.id}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}),
       // mold_v0-256 (flag record_pages): a column computed from related records: its id, heading, area and what it shows.
@@ -2928,8 +2958,9 @@ function viewsModule() {
   }) });
   // A page is in the sidebar once (mold_v0-133): packs written apart may each open the same shell page (Activity,
   // Billing); the first tab that opens it keeps its entry, a later one is left out of the sidebar.
-  // An in-page tab of a sections tab (mold_v0-175) is that page's, not the sidebar's.
-  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i && !sectionParent(x))) {
+  // An in-page tab of a sections tab (mold_v0-175) is that page's, not the sidebar's; a tab inside Settings
+  // (mold_v0-280) is Settings' (its entry, web/src/config/nav-config.ts withSettings).
+  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i && !sectionParent(x) && !x.url.startsWith("/app/settings?tab="))) {
     const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
     // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
     let g = groups.find((x) => x.label === label);
@@ -2969,6 +3000,121 @@ function viewsModule() {
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;
+}
+
+/**
+ * The resolved sidebars (mold_v0-279): /app and /admin exactly as the console builds them (web/src/config/nav-config.ts:
+ * the shell's entries, a host pack's, the packs' tabs or pages, the Records and Workspace groups, Settings joined below
+ * Overview), from the files above before anything is written: the console's own navigation code bundled with esbuild,
+ * each generated file it imports read from this run instead of the disk. null: a build copy without the console's code.
+ * Each /app entry carries its in-page tabs (a sections tab's, mold_v0-175).
+ */
+async function resolvedSidebars() {
+  const navFile = path.join(ROOT, "web", "src", "config", "nav-config.ts");
+  if (!existsSync(navFile)) return null;
+  let esbuild;
+  try { esbuild = createRequire(path.join(ROOT, "package.json"))("esbuild"); }
+  catch { return { error: "resolving the sidebars needs esbuild (a dependency of tsx): run npm ci" }; }
+  const WEB = path.join(ROOT, "web");
+  const generated = { name: "generated-in-memory", setup(b) {
+    b.onLoad({ filter: /\.generated\.ts$/ }, (a) => {
+      const key = path.join(OUT, path.relative(ROOT, a.path));
+      return files.has(key) && !Buffer.isBuffer(files.get(key)) ? { contents: files.get(key), loader: "ts", resolveDir: path.dirname(a.path) } : undefined;
+    });
+  } };
+  // mold_v0-280: Settings' own tabs too (its page, or past 5 tabs each group's page), printed as its in-page tabs (a strip: 2 or more).
+  const entry = "import { portalNav, adminNav } from '@/config/nav-config';\nimport { packTabs } from '@/config/pack-nav.generated';\nimport { pageTabs, settingsGroups, SETTINGS_URL } from '@/config/settings';\n" +
+    "export default { app: portalNav, admin: adminNav, tabs: packTabs.map((t) => ({ pack: t.pack, id: t.id, kind: t.kind, label: t.label, url: t.url, sections: t.sections ?? null })),\n" +
+    "  settings: [[SETTINGS_URL, pageTabs(null)], ...settingsGroups().map((g) => [g.url, g.tabs])].map(([u, ts]) => [u, ts.length > 1 ? ts.map((t) => t.label) : []]) };\n";
+  const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-sidebar-"));
+  try {
+    const r = await esbuild.build({ stdin: { contents: entry, resolveDir: WEB, sourcefile: "sidebar-probe.ts", loader: "ts" }, bundle: true, write: false, platform: "node", format: "esm",
+      absWorkingDir: WEB, tsconfig: path.join(WEB, "tsconfig.json"), logLevel: "silent", plugins: [generated], packages: "external" });
+    const file = path.join(dir, "sidebar.mjs");
+    writeFileSync(file, r.outputFiles[0].text);
+    const m = (await import(pathToFileURL(file).href)).default;
+    const inPage = (url) => {
+      const own = (m.settings ?? []).find(([u]) => u === url);
+      if (own) return own[1];
+      const t = m.tabs.find((x) => x.kind === "sections" && x.url === url);
+      return t ? (t.sections ?? []).map((id) => m.tabs.find((x) => x.pack === t.pack && x.id === id)?.label).filter(Boolean) : [];
+    };
+    const shape = (groups) => groups.map((g) => ({ label: g.label ?? "", items: g.items.map((i) => ({ title: i.title, url: i.url,
+      ...(i.items?.length ? { items: i.items.map((x) => ({ title: x.title, url: x.url, tabs: inPage(x.url) })) } : {}), tabs: inPage(i.url) })) }));
+    return { app: shape(m.app), admin: shape(m.admin) };
+  } catch (e) {
+    const first = e?.errors?.[0];
+    return { error: `the console's sidebar code does not resolve: ${first ? `${first.location?.file ?? ""}: ${first.text}` : String(e?.message ?? e).slice(0, 300)}` };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+/** The sidebar tree in plain text (headings, entries, their sub-entries and in-page tabs), for `--sidebar` and the factory. */
+function sidebarTree(name, groups) {
+  const out = [`${name} sidebar:`];
+  for (const g of groups) {
+    out.push(`  ${g.label ? g.label : "(no heading)"}`);
+    for (const i of g.items) {
+      out.push(`    ${i.title}  ${i.url}`);
+      for (const x of i.items ?? []) {
+        out.push(`      › ${x.title}  ${x.url}`);
+        if (x.tabs?.length) out.push(`        in-page tabs: ${x.tabs.join(", ")}`);
+      }
+      if (i.tabs.length) out.push(`      in-page tabs: ${i.tabs.join(", ")}`);
+    }
+  }
+  return out.join("\n");
+}
+const SIDEBAR_MODE = argv.includes("--sidebar");
+const sidebars = await resolvedSidebars();
+if (SIDEBAR_MODE && !sidebars) fail("console sidebar", "this copy has no console (web/src/config/nav-config.ts): no sidebar to print");
+if (sidebars?.error) { if (SIDEBAR_MODE) fail("console sidebar", sidebars.error); else console.log(`gen-packs: warning: the sidebars were not checked: ${sidebars.error}`); }
+/** Where an entry of a resolved sidebar comes from, for a refusal or a warning: the pack tab, page or declared sidebar that puts it there. */
+function entrySource(area, url) {
+  if (area === "app" && profileSidebar) return `${rel(PROFILE_FILE)} console.sidebar`;
+  const tab = area === "app" ? shownTabs().find((t) => !sectionParent(t) && (t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t))) === url) : null;
+  if (tab) return `packs/${tab.pack}/pack.json tab ${tab.id}${tab.group ? ` (group ${JSON.stringify(tab.group)})` : ""}`;
+  const page = allPages.find((pg) => pg.area === area && packPageUrl(pg) === url);
+  if (page) return `packs/${page.pack}/pack.json page ${page.id} (nav_group ${JSON.stringify(page.nav_group)})`;
+  return `the console's own /${area} sidebar (web/src/config/nav-config.ts)`;
+}
+if (sidebars && !sidebars.error) {
+  // Refused: a heading that is also the name of one of its entries ("Overview" over Overview): the heading says nothing
+  // the entry does not, and the console then hides it (web/src/components/layout/app-sidebar.tsx) or shows it twice.
+  for (const [area, groups] of [["app", sidebars.app], ["admin", sidebars.admin]])
+    for (const g of groups) {
+      const same = g.label.trim() ? g.items.find((i) => i.title.trim().toLowerCase() === g.label.trim().toLowerCase()) : null;
+      if (same) fail(`console sidebar /${area}`, `the heading ${JSON.stringify(g.label)} is also the name of its entry ${same.title} (${same.url}, from ${entrySource(area, same.url)}): rename the heading, or the entry, or put the entry in another group`);
+    }
+  // Warned: a group of more than 7 entries (hard to scan: split it, or move related pages into a sections tab).
+  const MAX_ENTRIES = 7;
+  const long = [["app", sidebars.app], ["admin", sidebars.admin]].flatMap(([area, groups]) => groups.filter((g) => g.items.length > MAX_ENTRIES)
+    .map((g) => `/${area} ${g.label ? JSON.stringify(g.label) : "(no heading)"}: ${g.items.length} entries (${g.items.map((i) => i.title).join(", ")})`));
+  if (long.length) console.log(`gen-packs: warning: ${long.length} sidebar group(s) with more than ${MAX_ENTRIES} entries (split the group, or put related pages in a sections tab):\n  ${long.join("\n  ")}`);
+  // Warned: a child area's list tab beside its parent's in the sidebar. An area whose records each belong to a record of
+  // another area (a required reference to it) is that area's part: its tab belongs inside a sections tab with the
+  // parent's tab (mold_v0-175), not as a sidebar entry of its own next to it.
+  const entryUrls = new Set(sidebars.app.flatMap((g) => g.items.map((i) => i.url)));
+  const shown = shownTabs();
+  const children = [];
+  for (const t of shown.filter((x) => x.kind === "area" && !sectionParent(x) && entryUrls.has(tabUrl(x)))) {
+    const a = recordAreas.find((x) => x.name === t.area);
+    if (!a) continue;
+    const parents = linksOf(a).filter((l) => l.area !== a.name && a.fields.find((f) => f.name === l.field)?.required === true);
+    for (const l of parents) {
+      const parentTab = shown.find((x) => x.kind === "area" && x.area === l.area && (sectionParent(x) ? entryUrls.has(tabUrl(sectionParent(x))) : entryUrls.has(tabUrl(x))));
+      if (!parentTab) continue;
+      const where = sectionParent(parentTab) ?? parentTab;
+      children.push(`${t.pack}/${t.id} (${t.label}): each ${a.name} record belongs to one of ${l.area} (its required field ${l.field}), yet it is a sidebar entry of its own beside ${where.pack}/${where.id} (${where.label}): ` +
+        (sectionParent(parentTab) ? `add ${t.id} to sections tab ${where.id}'s sections` : `put ${parentTab.id} and ${t.id} in one sections tab`));
+      break;
+    }
+  }
+  if (children.length) console.log(`gen-packs: warning: ${children.length} child area tab(s) beside their parent's in the sidebar (each belongs inside a sections tab with the parent):\n  ${children.join("\n  ")}`);
+}
+refuse();
+// --sidebar (mold_v0-279): the resolved sidebars only, as plain text, for the operator's agreed plan; nothing is written.
+if (SIDEBAR_MODE) {
+  console.log(`${sidebarTree("/app", sidebars.app)}\n${sidebarTree("/admin", sidebars.admin)}`);
+  process.exit(0);
 }
 
 // The landing page's logos (above): written beside the text files, byte for byte; any other file there is stale.

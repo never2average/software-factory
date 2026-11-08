@@ -376,6 +376,21 @@ def sign_in_rehearsal(ok):
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
+def sidebar_check(ok):
+    """mold_v0-279: the deploy check prints the app's resolved sidebars (packs.py sidebar) and a refused one stops it."""
+    import types
+    seen, said = [], []
+    tree = "/app sidebar:\n  (no heading)\n    Overview  /app\n/admin sidebar:\n  Onboarding\n    Overview  /admin"
+    fake = lambda rc, out: (lambda cmd, **k: (seen.append(cmd), types.SimpleNamespace(returncode=rc, stdout=out, stderr=""))[1])
+    bad = SS.say_sidebar("zz_shop", {"packs": ["shop"]}, say=said.append, run=fake(0, tree))
+    ok(not bad and seen[-1][-2:] == ["sidebar", "zz_shop"] and seen[-1][1].endswith("packs.py"), "the deploy check runs packs.py sidebar <app> for an app with packs")
+    ok(any("packs.py sidebar zz_shop" in x for x in said) and "  /app sidebar:" in said and "      Overview  /app" in said, "...and prints its tree, indented, with the command to print it again")
+    ok(SS.say_sidebar("zz_shop", {"packs": ["shop"]}, say=said.append, run=fake(1, 'gen-packs: refused (1 problem):\n  console sidebar /app: the heading "Overview" is ...')) is True,
+       "a refused sidebar stops the check")
+    n_before = len(seen)
+    ok(SS.say_sidebar("zz_shop", {}, say=said.append, run=fake(0, tree)) is False and SS.say_sidebar("zz_shop", {"packs": ["shop"]}, say=said.append, root="/tmp/x", run=fake(0, tree)) is False
+       and len(seen) == n_before, "no packs and no profile settings (the mold's own sidebar), or another factory root: nothing run")
+
 def run():
     n, fails = [0], []
     def ok(cond, what):
@@ -1670,6 +1685,7 @@ def run():
         shutil.rmtree(t, ignore_errors=True)
     rehearsal(ok)
     sign_in_rehearsal(ok)
+    sidebar_check(ok)
     if fails:
         print("single_service self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"single_service: {n[0]} checks passed (offline: stand-in server, DNS, health and Vercel; the two-project deploy rehearsed through provision.py; nothing contacted)")

@@ -2228,6 +2228,10 @@ export type Chart = z.output<typeof ChartSchema>;
 export const SECTION_KINDS = ["area", "runs", "reports", "schedules"] as const;
 /** The kinds of tab drawn as a list with four sparkline cards below its toolbar (mold_v0-181: `sparklines`). */
 export const SPARK_KINDS = ["area", "runs", "reports", "schedules"] as const;
+/** Where a tab may sit instead of the sidebar (mold_v0-280): inside the Settings page, as one of its tabs. */
+export const TAB_INSIDE = ["settings"] as const;
+/** The tab kinds that may sit inside Settings (mold_v0-280): the shell's Team page and the person's API keys. */
+export const INSIDE_KINDS = ["team", "keys"] as const;
 export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections", "agent"] as const;
 // TAB_ICONS: declared above RecordAreaSchema (a record area takes one too, mold_v0-242).
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
@@ -2423,9 +2427,16 @@ export const TabSchema = z.object({
   action: z.union([TabActionSchema, z.literal(false)]).optional(),
   /** Why a list tab has no primary action (`action: false`, mold_v0-213): required with it, documented and shown nowhere. */
   reason: z.string().trim().min(1).max(300).optional(),
+  /**
+   * mold_v0-280: a team or keys tab shown inside the Settings page (its Access group, under the tab's label) rather than
+   * as a sidebar entry of its own: it takes no group, and its page of before (/app/team, /app/keys) leads to that tab.
+   */
+  inside: z.enum(TAB_INSIDE).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (t.inside !== undefined && !(INSIDE_KINDS as readonly string[]).includes(t.kind)) bad(`inside is for a ${INSIDE_KINDS.join(" or ")} tab: the shell's page that Settings can hold`, "inside");
+  if (t.inside !== undefined && t.group !== undefined) bad(`a tab inside ${t.inside} is not a sidebar entry: it takes no group`, "group");
   if (t.kind === "area" && !t.area && !t.areas) bad("an area tab names its record area (area), or the areas it merges (areas)", "area");
   if (t.area && t.areas) bad("an area tab shows one area (area) or merges several (areas), not both", "areas");
   if (t.kind !== "area") for (const k of ["area", "areas", "columns", "views", "board_by", "timeline_by"] as const) if (t[k] !== undefined) bad(`${k} is for an area tab`, k);
