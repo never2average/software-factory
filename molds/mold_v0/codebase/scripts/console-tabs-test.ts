@@ -221,8 +221,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
       plugins: [{ name: "auth", setup(b) { b.onResolve({ filter: /^@\/lib\/auth$/ }, () => ({ path: path.join(web, "render-auth.ts") })); } }] });
   } finally { for (const f of ["render-home.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(web, f), { force: true }); }
   const step = (id: string, label: string, done: boolean, help: string, prompt: string | null = null) => ({ id, label, done, at: done ? "2026-10-20T00:00:00.000Z" : null, help, prompt });
-  // The shell's steps as /api/app/setup sends them (mold_v0-277: connecting a client is the Connect card's, no row).
   const steps = [step("joined", "Join your team's account", true, "You accepted the invitation and signed in."),
+    step("connected", "Add the connector to your AI client", complete, "Copy the URL into your client."),
+    step("tools", "Switch the tools on", complete, "Turn the tools on in your client."),
     step("first_call", "Ask Fixture something", complete, "Your first question checks everything works end to end.", "What can Fixture do?")];
   const notices = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), kind: "due", area: "audit_findings", area_label: "Vulnerabilities", key: `f${i + 1}`, title: `Finding ${i + 1}`,
     due_on: `2026-10-2${i}`, created_at: "2026-10-20T00:00:00.000Z", emailed: i === 0, dismissed: false }));
@@ -231,10 +232,8 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
     groups: [["low", "Low", 0], ["medium", "Medium", 1], ["high", "High", 1], ["critical", "Critical", 2]].map(([key, label, value]) => ({ key, label, value })) }];
   const api: Record<string, unknown> = {
     "/api/app/me": { account_role: "owner", role_label: "Owner", permissions: ["read", "edit", "launch", "manage", "billing"], needs: {}, roles: [] },
-    "/api/app/setup": { steps, done: steps.filter((x) => x.done).length, total: steps.length, clients: [], calls: 0, groups: [], errors: [], live: null, email: "owner@example.org",
-      connect: { connector_url: "https://console.example.org/mcp", secret: false, clients: [
-        { id: "claude", client: "Claude", group: "chat", method: "ui", steps: "Settings, then Connectors.", verified: true, share: null },
-        { id: "cursor", client: "Cursor", group: "agent", method: "link", steps: "Click Add to Cursor.", install_url: "cursor://example", file: "~/.cursor/mcp.json", snippet: "{}", verified: true, share: null }] } },
+    "/api/app/setup": { steps, done: steps.filter((x) => x.done).length, total: steps.length, clients: [], calls: 0, groups: [], errors: [], live: null,
+      connect: { connector_url: "https://console.example.org/mcp", secret: false, clients: [{ id: "claude", client: "Claude", group: "chat", method: "ui", steps: "Settings, then Connectors.", verified: true, share: null }] } },
     "/api/onboarding": { steps: [{ pack: "fixture_vulns", id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", prompt: "Add our first application.", done: complete, at: null }], done: complete ? 1 : 0, total: 1 },
     "/api/notices": { notices },
     "/api/metrics": { metrics: answers },
@@ -490,27 +489,19 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(open, /<h1/, "no page title: the Setup page has none");
       const setup = open.slice(order[1]!, order[2]!);
       assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
-      assert.match(setup, /1 of 3 steps done\./, "its progress across the setup steps and the packs' steps");
-      const order146 = ["Join your team", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
+      assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
+      const order146 = ["Join your team", "Add the connector to your AI client", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
       assert.ok(order146.every((x, i) => x >= 0 && (i === 0 || x > order146[i - 1]!)), `the shell's steps, then the pack's: ${order146}`);
-      for (const t of ["You accepted the invitation and signed in.", "Describe one application you want audited."])
+      for (const t of ["You accepted the invitation and signed in.", "Copy the URL into your client.", "Turn the tools on in your client.", "Describe one application you want audited."])
         assert.ok(setup.includes(t), `every step says what it is, done or not: ${t}`);
       assert.equal([...setup.matchAll(/Copy prompt/g)].length, 2, "a Copy prompt box for each open step with a prompt: the shell's question and the pack's step");
       assert.match(setup, /What can Fixture do\?[\s\S]*Add our first application\./, "the shell step's prompt, then the pack step's own (pack.json prompt)");
       assert.doesNotMatch(setup, /aria-expanded="/, "no step is folded");
-      assert.doesNotMatch(setup, /data-connect|Copy URL|Your AI client/, "the connection is not inside a step");
-      // mold_v0-277: no row for adding the connector or switching its tools on, no tips or suggestions, no follow-up mail.
-      assert.doesNotMatch(open, /Add the connector to your AI client|Switch the tools on|Tips for you|Suggestions to get more out of|Show tips in my AI client|Optional follow-up/,
-        "the client-setup and settings rows, the tips block and the optional follow-up mail header are gone");
+      assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
       assert.doesNotMatch(open, /tick themselves|How much of the workflow your team uses/, "no caption under the steps (mold_v0-216)");
       const rail = open.slice(order[0]!, order[1]!);
-      assert.match(rail, /data-connect-url[\s\S]*Copy URL[\s\S]*aria-label="Your AI client"[\s\S]*Settings, then Connectors\.[\s\S]*Test my connection[\s\S]*Send setup by email[\s\S]*To owner@example\.org[\s\S]*Preview email/,
-        "Connect: the URL (copy) with the client dropdown beside it, that client's own steps, Test my connection, then the setup email to the person's own address");
-      const boxes = [...rail.matchAll(/<[a-z]+\b[^>]*role="checkbox"[^>]*>/g)].map((m) => m[0]).filter((t) => /data-client="/.test(t));
-      assert.equal(boxes.length, 2, "the email's clients: a checkbox each");
-      assert.deepEqual(boxes.filter((t) => /aria-checked="true"/.test(t)).map((t) => /data-client="([^"]+)"/.exec(t)![1]), ["claude"], "one ticked: the dropdown's client");
-      assert.doesNotMatch(rail, /data-email-preview=/, "no email until it is previewed");
+      assert.match(rail, /Pick your client.*Copy URL.*Test my connection/s, "the connection card: pick, copy, test");
       const numbers = open.slice(order[2]!, order[3]!);
       assert.deepEqual(["Open", "Overdue", "Mean time to fix", "Fixed"].map((l) => numbers.includes(`>${l}</dt>`)), [true, true, true, true], "the number chart's tiles");
       assert.match(numbers, />4<\/dd>[\s\S]*>1<\/dd>[\s\S]*>3\.5 days<\/dd>[\s\S]*>25%<\/dd>/, "with their values");
@@ -521,10 +512,10 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(open, /data-home-section="notices"/, "the notices are a card, not also a section");
       assert.doesNotMatch(open, /Found and fixed per week|Open by regulator/, "none of the charts");
       // Every step done: the same page (the original's never folds), every step a check, no prompt left to copy.
-      assert.match(done, /3 of 3 steps done\./, "all done");
+      assert.match(done, /5 of 5 steps done\./, "all done");
       assert.match(done, /Connect your AI client[\s\S]*Test my connection/, "the connection card stays");
       assert.equal([...done.matchAll(/Copy prompt/g)].length, 0, "no prompt for a done step");
-      assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 3, "every step checked");
+      assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 5, "every step checked");
       console.log("✓ rendered home tab: the Setup page's layout: one checklist (shell steps then the pack's, one count, every step described, a Copy prompt on each open one with a prompt), the connection card, the number card with a link to Dashboard, five of seven notices with Show all, no charts grid (mold_v0-207); all done, the same page with every step checked");
       // mold_v0-231: a list tab (an area's table, runs, reports), drawn by the same TabPage: no title or description
       // (no h1 or h2) above its four cards; the cards, then its search row.
@@ -547,27 +538,25 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.js");
     const sh = (id: string, done = false) => ({ id, label: `shell ${id}`, done, at: null, help: `${id} help` });
     const pk = (id: string, covers: string | null = null) => ({ pack: "p", id, label: `pack ${id}`, help: null, done: false, at: null, covers });
-    // The shell's two steps (mold_v0-277: connecting a client is the Connect card's, never a row).
-    const shell = [sh("joined", true), sh("first_call")];
+    const shell = [sh("joined", true), sh("connected"), sh("tools"), sh("first_call")];
     const keys = (x: { key: string }[]) => x.map((k) => k.key).join(" ");
-    assert.equal(keys(mergeSetupSteps(shell, [])), "shell:joined shell:first_call", "no pack steps: the shell's list");
-    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("b")])), "shell:joined shell:first_call p/a p/b", "the shell's steps first, then the pack's");
-    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("ask", "first_call"), pk("b")])), "shell:joined p/a p/ask p/b",
-      "a pack step standing for a shell step takes its place; the shell's steps after it follow it");
-    assert.equal(keys(mergeSetupSteps(shell, [pk("made", "joined"), pk("a"), pk("ask", "first_call")])), "p/made p/a p/ask",
+    assert.equal(keys(mergeSetupSteps(shell, [])), "shell:joined shell:connected shell:tools shell:first_call", "no pack steps: the shell's list");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("b")])), "shell:joined shell:connected shell:tools shell:first_call p/a p/b", "the shell's steps first, then the pack's");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("link", "connected"), pk("b")])), "shell:joined p/a p/link shell:tools shell:first_call p/b",
+      "a pack step standing for the connect step takes its place; the shell's steps after it follow it");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("made", "joined"), pk("a"), pk("ask", "first_call")])), "p/made shell:connected shell:tools p/a p/ask",
       "each covered shell step is dropped once, in the pack's place");
-    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("link", "connected")])), "shell:joined shell:first_call p/a p/link",
-      "a pack step done when connected stays the pack's own step: there is no shell row for it to stand for");
+    assert.equal(mergeSetupSteps(shell, [pk("link", "connected")]).find((x: { key: string }) => x.key === "p/link")?.shell, "connected", "the pack's connect step carries the connection panel");
     console.log("✓ one checklist (mold_v0-146): the shell's steps then the packs', a pack step standing for a shell step in its place with the shell's later steps after it");
     // 5c. the count (mold_v0-171): an optional step is shown and never counted, as the server's own done and total.
     const { stepProgress } = await import("../web/src/features/portal/setup-steps.js");
-    const withOptional = mergeSetupSteps([sh("joined", true), { ...sh("dashboard"), optional: true }, sh("first_call"), sh("onboarded", true), sh("simulated", true), sh("reported")], []);
-    assert.equal(withOptional.length, 6, "the optional step is in the list");
+    const withOptional = mergeSetupSteps([sh("joined", true), sh("connected"), sh("tools"), { ...sh("dashboard"), optional: true }, sh("first_call"), sh("onboarded", true), sh("simulated", true), sh("reported")], []);
+    assert.equal(withOptional.length, 8, "the optional step is in the list");
     assert.equal(withOptional.find((x: { key: string }) => x.key === "shell:dashboard")?.optional, true, "and carries optional");
-    assert.deepEqual(stepProgress(withOptional), { done: 3, total: 5 }, "3 of 5, not 3 of 6");
+    assert.deepEqual(stepProgress(withOptional), { done: 3, total: 7 }, "3 of 7, not 3 of 8");
     assert.deepEqual(stepProgress([{ ...sh("dashboard", true), optional: true }, sh("a", true)]), { done: 1, total: 1 }, "a done optional step is not counted either");
-    assert.deepEqual(stepProgress(mergeSetupSteps(shell, [pk("a")])), { done: 1, total: 3 }, "with no optional step every step counts");
-    console.log("✓ the checklist counts the steps that count (mold_v0-171): an optional step is shown, never in done or total (3 of 5 for six steps with one optional)");
+    assert.deepEqual(stepProgress(mergeSetupSteps(shell, [pk("a")])), { done: 1, total: 5 }, "with no optional step every step counts");
+    console.log("✓ the checklist counts the steps that count (mold_v0-171): an optional step is shown, never in done or total (3 of 7 for eight steps with one optional)");
     // 5d. a home tab's headline row (mold_v0-203): none above (no sparklines declared: the page as it was); declared, a
     // row of the list tabs' cards above both columns, and the numbers it shows left out of the number card on the right.
     assert.equal(spec.headline, undefined, "a home tab that declares no sparklines has no headline row");
@@ -611,15 +600,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const kids = (h: string) => [...h.matchAll(/<(?:div|section) class="([^"]*)"[^>]*>/g)].map((m) => m[1]!);
       const cells = kids(html).filter((c) => /\bborder-r border-b\b/.test(c));
       assert.ok(cells.some((c) => /lg:col-span-2/.test(c) && /\[&(?:amp;)?_dl\]:border-y-0/.test(c)), "the headline row: a cell across both columns, the strip's own top and bottom lines the grid's");
-      const connect = /<section class="([^"]*)"[^>]*data-connect=/.exec(html);
-      assert.ok(connect && /\bborder-r border-b\b/.test(connect[1]!) && /lg:col-span-2/.test(connect[1]!) && /lg:grid-cols-2/.test(connect[1]!),
-        "Connect (mold_v0-277): a cell across both columns, its own two cells side by side on a wide screen");
-      assert.ok(cells.some((c) => /lg:col-start-1/.test(c) && /\bp-4\b/.test(c)), "the steps: the left column below it");
+      assert.ok(cells.some((c) => /lg:col-start-2 lg:row-start-2/.test(c)), "the connection card: a cell of the right column");
+      assert.ok(cells.some((c) => /lg:row-span-2/.test(c) && /\bp-4\b/.test(c)), "the steps: a cell beside it, as tall as the right column");
       assert.ok(cells.some((c) => /divide-y/.test(c)) && /data-home-rail/.test(html), "the rail: a cell, its cards divided by a line");
       const home = html.slice(grid!.index);
       assert.deepEqual(kids(home).filter((c) => /shadow-xl|rounded-xl|sticky/.test(c)), [], "no floating card, shadow or pinned column");
       console.log("✓ rendered headline row (mold_v0-203): four cards with sparklines above the connection card, the checklist and the rail; the numbers it shows left out of the number card; no charts grid");
-      console.log("✓ one flat grid (mold_v0-214): headline across both columns, then Connect across both (mold_v0-277), the steps and the rail as cells with shared lines; no gaps, shadows, floating cards or pinned column");
+      console.log("✓ one flat grid (mold_v0-214): headline across both columns, Connect, the steps and the rail as cells with shared lines; no gaps, shadows, floating cards or pinned column");
     }
     // 5e. the journey selector and the Due soon card (mold_v0-207): a home tab whose rail has the journeys slot, in a
     // build whose findings area declares a clock. The heading is a button opening a listbox; the slot is Due soon,
