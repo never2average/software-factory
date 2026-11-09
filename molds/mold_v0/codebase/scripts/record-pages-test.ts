@@ -986,3 +986,28 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.match(runsTsx, /const deep = featureOn\('record_pages'\) \? \{ openKey: runParam/, "?run= only with the flag");
   ok("drawn with the shared Button (filled primary, outlined secondary, More and a row's menu), the console's confirm (ConfirmButton's), the edit and run forms as full cards, a disabled action focusable with its reason on hover and focus (a menu item: under its label); Show all's filter and a run's link only with the flag; staff pages draw no workspace's lists or runs");
 }
+
+// 16. Key vault: the GitHub App is one row of the providers table, its setup and installations in the row's panel (mold_v0-288).
+{
+  const code = (rel: string) => src(rel).replace(/^\s*\/\/.*$/gm, "");
+  const kv = code("features/admin/keyvault.tsx"), gh = code("features/admin/github-app.tsx"), rv = code("components/layout/record-view.tsx");
+  assert.doesNotMatch(kv, /AdminGithubApp/, "no GitHub App section under the table");
+  assert.doesNotMatch(gh, /<Section |<Notice|AdminGithubApp/, "no section headings and no banner: one flat card");
+  assert.match(kv, /<RecordView id='key-vault' rows=\{rows\}/, "the table lists the row");
+  assert.match(kv, /const rows: Provider\[\] = github \? \[\.\.\.providers, \{ slug: GITHUB_APP/, "the row exists only where the staff route answers");
+  assert.match(gh, /e\.status === 404\) return null/, "not mounted (no pack asks for a GitHub App): no row");
+  assert.match(kv, /<AddKey providers=\{providers\}/, "and it is not a provider to add a key to");
+  assert.match(kv, /<ImportKeys providers=\{providers\}/, "or to import one into");
+  assert.match(kv, /connected \? <span>Connected<\/span> : .*Not set up/, "its status in the Keys column");
+  assert.match(kv, /'installation' : 'installations'/, "and the installations count");
+  assert.match(kv, /key: 'on'[\s\S]{0,120}p\.slug === GITHUB_APP \? null/, "no On switch on the row");
+  assert.match(kv, /canOpen=\{\(p\) => p\.slug === GITHUB_APP\}/, "only that row opens a panel");
+  assert.match(kv, /actions=\{\(p\) => p\.slug === GITHUB_APP \? \[\]/, "no key actions on it");
+  assert.match(rv, /rowKey\(r\) === open && opens\(r\)/, "a row that cannot open is not opened from the address either");
+  assert.match(gh, /<ol /, "numbered steps");
+  for (const id of ["gh-app-id", "gh-slug", "gh-client", "gh-csecret", "gh-wsecret", "gh-key"]) assert.ok(gh.includes(`<FormRow id='${id}'`), `the form's ${id}`);
+  for (const k of ["client_secret", "webhook_secret", "private_key"]) { assert.ok(gh.includes(`a.set.${k} &&`), `${k}: only whether it is set`); assert.doesNotMatch(gh, new RegExp(`a\\.${k}\\b`), `${k} is never read back`); }
+  assert.match(gh, /adminApi\('PUT', '\/github-app'/, "saved through the same route");
+  assert.match(gh, /adminApi\('DELETE', `\/github-app\/installations\/\$\{org\}`\)/, "revoked through the same route");
+  ok("Key vault: the GitHub App is one row (status, installations, no switch), only where its route is mounted, and only it opens a panel: numbered steps, the form (secrets write-only), the installations with Revoke");
+}
