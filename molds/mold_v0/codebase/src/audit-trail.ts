@@ -7,11 +7,14 @@
  *              staff. Each entry: who (a person, a key, staff as a pseudonym, an agent run, the system), what (list,
  *              read, reveal, export, create, update, move, delete), on what (the area or store, the record's key or the
  *              file's path, how many rows), when and through which door. A read is one entry per list or detail, never
- *              one per row, and never with the record's contents: no field value is ever written here.
+ *              one per row. The entry's own columns never hold a record's contents; since mold_v0-286 its `request`
+ *              keeps the request that caused it, masked (src/audit-request.ts says exactly what is kept and masked:
+ *              secrets, sealed and encrypted fields and file contents never), shown only in the Access log's side panel.
  *              Per workspace, under row-level security: the workspace's owners read it on Billing's Access log
  *              tab (mold_v0-209), as CSV, and through the MCP tool read_audit_trail; platform staff through the admin MCP.
  *   platform   the platform usage trail: every API and MCP request and sign-in (the key's id and prefix, never the key;
- *              the actor, the scopes it acted with, the result code and the latency), and every staff action on an
+ *              the actor, the scopes it acted with, the result code and the latency; its `request`: the headers and JSON
+ *              body, masked, mold_v0-286), and every staff action on an
  *              account (the admin console's API and the admin MCP's tools). The operator reads it fleet-wide (admin
  *              console, admin MCP read_platform_trail); a workspace's owners read their own workspace's slice.
  *
@@ -35,6 +38,8 @@ import { PROFILE } from "./profile.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { tracked } from "./scheduler-jobs.js";
 import { featureSetting } from "./feature-flags.js";
+import { areasNamed, captureRequest, type AreaMasking, type AuditRequest } from "./audit-request.js";
+import { dataSentence, platformSentence, resolveWho, resultWord, type Who } from "./audit-words.js";
 
 // ---------------------------------------------------------------- settings
 
@@ -82,6 +87,10 @@ interface Ctx {
   listAs?: "export";
   quiet?: boolean;
   collect?: DataRow[] | null;
+  /** mold_v0-286: the request's id, the areas its entries touched, and whether a data entry already keeps its request. */
+  reqId?: string;
+  areas?: Set<string>;
+  kept?: boolean;
 }
 const als = new AsyncLocalStorage<Ctx>();
 const current = () => als.getStore();
@@ -157,7 +166,8 @@ export function auditRequests(): RequestHandler {
     const channel = channelOf(path);
     if (!channel) return next();
     const run = channel === "run" ? /^\/api\/(worker|runner)\/runs\/([^/]+)/.exec(path)?.[2] : undefined;
-    const ctx: Ctx = { channel, req, res, ...(run ? { actor: { kind: "agent_run", id: decodeURIComponent(run) } } : {}),
+    loadAreas();
+    const ctx: Ctx = { channel, req, res, reqId: newReqId(), areas: new Set(), ...(run ? { actor: { kind: "agent_run", id: decodeURIComponent(run) } } : {}),
       kind: SIGN_IN.test(path) ? "sign_in" : channel === "admin_console" ? "staff" : "request" };
     const t0 = performance.now();
     // Once per request: when it was answered, or when the client went away first (its status as it stood).
@@ -169,7 +179,9 @@ export function auditRequests(): RequestHandler {
       // request entries; everything else is.
       if (platformTrailOn() && channel !== "run" && channel !== "admin_mcp") {
         const rpc = channel === "mcp" ? mcpSummary(req.body) : null;
-        platformEntry({
+        // The request's details (mold_v0-286), masked and capped; a staff request in a workspace's slice shows none to
+        // its owners (readTrailEntry), so they are kept for staff alone.
+        platformEntry({ request: requestOf(ctx),
           kind: ctx.kind ?? "request", channel: channelNow(ctx), method: req.method, path: (rpc ? `${path} ${rpc}` : path).slice(0, 300),
           status: res.statusCode, latency_ms: Math.round(performance.now() - t0), ip: String(req.ip ?? "").slice(0, 64),
           actor: actorOf(ctx), org_id: orgOf(ctx), org_slug: channel === "admin_console" ? /\/orgs\/([^/]+)/.exec(path)?.[1] ?? null : null,
@@ -182,6 +194,48 @@ export function auditRequests(): RequestHandler {
     als.run(ctx, () => next());
   };
 }
+// ---------------------------------------------------------------- the request an entry keeps (mold_v0-286)
+
+let areaMod: typeof import("./record-areas.js") | null = null;
+/** The record areas, for masking: loaded once a request is seen (record-areas imports this module: no cycle at load). */
+function loadAreas() { if (!areaMod) void import("./record-areas.js").then((m) => { areaMod = m; }).catch(() => {}); }
+const newReqId = () => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+/** How each area the request touched masks a body: a sealed area's every value, an area's encrypted and file fields.
+ *  Before the areas are loaded (a process's first request) every body value is masked instead (requestOf). */
+function maskingOf(names: Iterable<string>): AreaMasking[] {
+  if (!areaMod) return [];
+  const out: AreaMasking[] = [];
+  for (const n of new Set(names)) {
+    const a = areaMod.findArea(n);
+    if (a) out.push({ sealed: a.role === "asset" || a.sealed === true, fields: a.fields.filter((f) => f.encrypted === true || f.type === "file").map((f) => f.name) });
+  }
+  return out;
+}
+/** The request of the work in scope, as kept: masked by the areas it named (path, body) and touched, capped. */
+function requestOf(c: Ctx | undefined, area?: string | null): AuditRequest | null {
+  const req = c?.req;
+  if (!req) return null;
+  try {
+    const path = req.path;
+    const fromPath = path.split("/").filter((p) => /^[a-z0-9_]+$/i.test(p));
+    const names = [...fromPath, ...areasNamed(req.body), ...(c!.areas ?? []), ...(area ? [area] : [])];
+    const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
+    return { ...captureRequest({ method: req.method, path, headers, body: req.body, contentType: req.get?.("content-type") ?? null,
+      contentLength: Number(req.get?.("content-length") ?? 0) || null }, maskingOf(names), channelOf(path) === "mcp", !areaMod), ...(c!.reqId ? { request_id: c!.reqId } : {}) };
+  } catch (e) {
+    return { method: req.method, path: req.path.slice(0, 300), headers: {}, body: null, note: `not kept: ${(e as Error).message.slice(0, 120)}` };
+  }
+}
+/** A data entry's request: the first entry of a request keeps it whole; the rest of that request name it by its id. */
+function dataRequestOf(c: Ctx | undefined, area: string | null): AuditRequest | Record<string, unknown> | null {
+  if (!c?.req) return null;
+  if (area) c.areas?.add(area);
+  if (c.kept && c.reqId) return { request_id: c.reqId, same_as_earlier: true };
+  const r = requestOf(c, area);
+  if (r) c.kept = true;
+  return r;
+}
+
 /** An MCP request's methods (a tool call by its tool's name), never its arguments. */
 function mcpSummary(body: unknown): string | null {
   const msgs = (Array.isArray(body) ? body : body ? [body] : []) as { method?: unknown; params?: { name?: unknown } }[];
@@ -222,6 +276,7 @@ export function auditListPurpose(req: Request, _res: Response, next: NextFunctio
 interface DataRow {
   org_id: number; actor: AuditActor; action: DataAction; target: DataTarget; pack: string | null; area: string | null;
   record_key: string | null; rows: number | null; channel: Channel;
+  request?: AuditRequest | Record<string, unknown> | null;
 }
 export interface DataEntry { action: DataAction; target?: DataTarget; pack?: string | null; area?: string | null; key?: string | null; rows?: number | null }
 
@@ -236,7 +291,7 @@ export function auditData(orgId: number | null | undefined, e: DataEntry): void 
   if (c?.quiet) return;
   const action = e.action === "list" && c?.listAs === "export" ? "export" : e.action;
   const row: DataRow = { org_id: orgId, actor: actorOf(c), action, target: e.target ?? "record", pack: e.pack ?? null, area: e.area ?? null,
-    record_key: e.key ?? null, rows: e.rows ?? null, channel: channelNow(c) };
+    record_key: e.key ?? null, rows: e.rows ?? null, channel: channelNow(c), request: dataRequestOf(c, e.area ?? null) };
   if (c?.collect) c.collect.push(row);
   else enqueueData(row);
 }
@@ -270,6 +325,7 @@ export async function auditAtomic<T>(fn: () => Promise<T>): Promise<T> {
 interface PlatformRow {
   kind: "request" | "sign_in" | "staff"; channel: Channel; method: string; path: string; status: number | null; latency_ms: number | null; ip: string | null;
   actor: AuditActor; org_id: number | null; org_slug: string | null;
+  request?: AuditRequest | null;
 }
 function platformEntry(r: PlatformRow) { if (platformTrailOn()) { platformQueue.push(r); kick(); } }
 /**
@@ -279,7 +335,7 @@ function platformEntry(r: PlatformRow) { if (platformTrailOn()) { platformQueue.
 export function auditStaff(actor: string, role: string, tool: string, status: number, ip: string | undefined, orgSlug: string | null) {
   if (!platformTrailOn()) return;
   platformEntry({ kind: "staff", channel: "admin_mcp", method: "MCP", path: `/admin/mcp/${tool}`.slice(0, 300), status, latency_ms: null, ip: (ip ?? "").slice(0, 64) || null,
-    actor: { kind: "staff", id: actor.slice(0, 120), scopes: ["staff", `platform:${role}`] }, org_id: null, org_slug: orgSlug });
+    actor: { kind: "staff", id: actor.slice(0, 120), scopes: ["staff", `platform:${role}`] }, org_id: null, org_slug: orgSlug, request: requestOf(current()) });
 }
 
 /**
@@ -313,7 +369,7 @@ export function auditCheckAnswer(orgId: number, check: string, allowed: boolean,
   if (!platformTrailOn()) return;
   const c = current();
   platformEntry({ kind: "request", channel: channelNow(c) === "system" ? "api" : channelNow(c), method: "CHECK", path: `/checks/${check} ${allowed ? "allowed" : "denied"}`.slice(0, 300),
-    status: 200, latency_ms: latencyMs, ip: c?.req ? String(c.req.ip ?? "").slice(0, 64) : null, actor: actorOf(c), org_id: orgId, org_slug: null });
+    status: 200, latency_ms: latencyMs, ip: c?.req ? String(c.req.ip ?? "").slice(0, 64) : null, actor: actorOf(c), org_id: orgId, org_slug: null, request: requestOf(c) });
 }
 
 // ---------------------------------------------------------------- batched writes
@@ -377,10 +433,10 @@ async function writeBatch(data: DataRow[], plat: PlatformRow[]) {
         for (const r of part) {
           const b = params.length;
           params.push(orgId, seq++, r.actor.kind, r.actor.id?.slice(0, 200) ?? null, r.actor.key_id ?? null, r.action, r.target, r.pack, r.area?.slice(0, 200) ?? null,
-            r.record_key?.slice(0, 500) ?? null, r.rows, r.channel);
-          values.push(`(${Array.from({ length: 12 }, (_, j) => `$${b + j + 1}`).join(", ")})`);
+            r.record_key?.slice(0, 500) ?? null, r.rows, r.channel, r.request ? JSON.stringify(r.request) : null);
+          values.push(`(${Array.from({ length: 13 }, (_, j) => `$${b + j + 1}${j === 12 ? "::jsonb" : ""}`).join(", ")})`);
         }
-        await tx.query(`INSERT INTO audit_data_events (org_id, seq, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel) VALUES ${values.join(", ")}`, params);
+        await tx.query(`INSERT INTO audit_data_events (org_id, seq, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel, request) VALUES ${values.join(", ")}`, params);
       }
     }
     // The platform trail's workspace: the entry's own, else the account a staff action named (by its slug).
@@ -395,12 +451,12 @@ async function writeBatch(data: DataRow[], plat: PlatformRow[]) {
         for (const r of part) {
           const b = params.length;
           params.push(scope, seq++, r.org_id, r.kind, r.channel, r.method.slice(0, 16), r.path, r.actor.key_id ?? null, r.actor.kind, r.actor.id?.slice(0, 200) ?? null,
-            r.actor.scopes ?? [], r.status, r.latency_ms, r.ip);
-          values.push(`(${Array.from({ length: 14 }, (_, j) => `$${b + j + 1}`).join(", ")})`);
+            r.actor.scopes ?? [], r.status, r.latency_ms, r.ip, r.request ? JSON.stringify(r.request) : null);
+          values.push(`(${Array.from({ length: 15 }, (_, j) => `$${b + j + 1}${j === 14 ? "::jsonb" : ""}`).join(", ")})`);
         }
         await tx.query(
-          `INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, key_id, actor_kind, actor_id, scopes, status, latency_ms, ip) VALUES ${values.join(", ")}`,
-          params.map((p, j) => (j % 14 === 10 ? `{${(p as string[]).map((s) => `"${s.replace(/["\\]/g, "")}"`).join(",")}}` : p)));
+          `INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, key_id, actor_kind, actor_id, scopes, status, latency_ms, ip, request) VALUES ${values.join(", ")}`,
+          params.map((p, j) => (j % 15 === 10 ? `{${(p as string[]).map((s) => `"${s.replace(/["\\]/g, "")}"`).join(",")}}` : p)));
       }
     }
   });
@@ -467,7 +523,52 @@ export function platformAction(kind: string, method: string, path: string): stri
   return "change";
 }
 
-export interface DataTrailRow { seq: number; at: string; actor_kind: ActorKind; actor_id: string | null; key_id: number | null; action: DataAction; actor: string; target: DataTarget; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: Channel }
+export interface DataTrailRow { seq: number; at: string; actor_kind: ActorKind; actor_id: string | null; key_id: number | null; action: DataAction; actor: string; target: DataTarget; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: Channel;
+  /** mold_v0-286, in plain words: who (name, email: what the reader may see), what (one sentence), the result, the record's title. */
+  org_id?: number; who?: Who; what?: string; result?: string; title?: string | null; area_label?: string | null; workspace_name?: string | null; has_request?: boolean }
+
+// ---------------------------------------------------------------- plain words (mold_v0-286)
+
+/** An area's label (the registry's), else its name in words. */
+async function areaLabelOf(): Promise<(name: string) => string> {
+  const m = areaMod ?? (await import("./record-areas.js").then((x) => (areaMod = x)).catch(() => null));
+  return (name: string) => m?.findArea(name)?.label ?? name.replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+/**
+ * The records' titles, where cheap: a workspace's own (its owners' view; a sealed record's title is sealed, so its key)
+ * and the shared areas' (anyone's). Staff's fleet view of a workspace's records shows their keys, never their titles.
+ */
+async function titlesOf(rows: { target: string; area: string | null; record_key: string | null }[], orgId: number | null): Promise<Map<string, string>> {
+  const want = rows.filter((r) => r.target === "record" && r.area && r.record_key);
+  const out = new Map<string, string>();
+  if (!want.length) return out;
+  const areas = [...new Set(want.map((r) => r.area!))], keys = [...new Set(want.map((r) => r.record_key!))].slice(0, 1000);
+  const shared = await asPlatform(async () => (await getDb()).query<{ area: string; key: string; title: string | null }>(
+    "SELECT area, key, title FROM platform_records WHERE area = ANY ($1::text[]) AND key = ANY ($2::text[])", [areas, keys])).catch(() => []);
+  for (const r of shared) if (r.title) out.set(`${r.area}\u0000${r.key}`, r.title);
+  if (orgId !== null) {
+    const own = await withTenant(orgId, async () => (await getDb()).query<{ area: string; key: string; title: string | null; sealed: boolean }>(
+      "SELECT area, key, title, sealed FROM workspace_records WHERE org_id = $1 AND area = ANY ($2::text[]) AND key = ANY ($3::text[])", [orgId, areas, keys])).catch(() => []);
+    for (const r of own) if (r.title && !r.sealed && !String(r.title).startsWith("enc:")) out.set(`${r.area}\u0000${r.key}`, r.title);
+  }
+  return out;
+}
+/** Each data entry with who, what, the result and the record's title, for the reader (`orgId`: an owner's view; null: staff's). */
+async function plainData<T extends DataTrailRow & { workspace?: string | null }>(rows: T[], orgId: number | null): Promise<T[]> {
+  if (!rows.length) return rows;
+  const [who, titles, label] = await Promise.all([resolveWho(rows, { orgId }), titlesOf(rows, orgId), areaLabelOf()]);
+  return rows.map((r, i) => {
+    const title = r.area && r.record_key ? titles.get(`${r.area}\u0000${r.record_key}`) ?? null : null;
+    const area_label = r.area ? (r.target === "record" ? label(r.area) : null) : null;
+    return { ...r, who: who[i]!, title, area_label, what: dataSentence({ ...r, title, area_label }), result: resultWord(null) };
+  });
+}
+/** Each platform entry with who, what and the result in words. */
+async function plainPlatform(rows: PlatformTrailRow[], orgId: number | null): Promise<PlatformTrailRow[]> {
+  if (!rows.length) return rows;
+  const [who, label] = await Promise.all([resolveWho(rows, { orgId }), areaLabelOf()]);
+  return rows.map((r, i) => ({ ...r, who: who[i]!, what: platformSentence(r, label), result: resultWord(r.status) }));
+}
 /**
  * One workspace's data trail, newest first (under row-level security: only its own rows can come back), or every
  * workspace's for platform staff (null, mold_v0-270: the merged staff Access log; each entry names its workspace).
@@ -485,10 +586,10 @@ export async function readDataTrail(orgId: number | null, q: TrailQuery = {}): P
   if (textOf(q.area)) add("area = ?", textOf(q.area));
   params.push(limit + 1);
   const rows = await withTenant(orgId, async () => (await getDb()).query<DataTrailRow & { at: Date }>(
-    `SELECT seq, at, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel FROM audit_data_events
+    `SELECT seq, at, org_id, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel, (request IS NOT NULL) AS has_request FROM audit_data_events
       WHERE org_id = $1${where.map((w) => ` AND ${w}`).join("")} ORDER BY seq DESC LIMIT $${params.length}`, params));
   const more = rows.length > limit;
-  const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) }));
+  const entries = await plainData(rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) })), orgId);
   return { entries, next: more ? entries[entries.length - 1]!.seq : null };
 }
 
@@ -503,16 +604,19 @@ async function readDataTrailFleet(q: TrailQuery): Promise<{ entries: (DataTrailR
   params.push(limit + 1);
   const rows = await asPlatform(async () => (await getDb()).query<DataTrailRow & { at: Date; workspace: string | null }>(
     `/* tenant: the operator's fleet-wide data trail (platform staff only) */
-     SELECT e.seq, e.at, o.slug AS workspace, e.actor_kind, e.actor_id, e.key_id, e.action, e.target, e.pack, e.area, e.record_key, e.rows, e.channel
+     SELECT e.seq, e.at, e.org_id, o.slug AS workspace, o.name AS workspace_name, e.actor_kind, e.actor_id, e.key_id, e.action, e.target, e.pack, e.area, e.record_key, e.rows, e.channel,
+            (e.request IS NOT NULL) AS has_request
        FROM audit_data_events e LEFT JOIN organizations o ON o.id = e.org_id
       WHERE ${where.length ? where.join(" AND ") : "true"} ORDER BY e.seq DESC LIMIT $${params.length}`, params));
   const more = rows.length > limit;
-  const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) }));
+  const entries = await plainData(rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) })), null);
   return { entries, next: more ? entries[entries.length - 1]!.seq : null };
 }
 
 export interface PlatformTrailRow { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; action: string; actor: string; channel: Channel; method: string; path: string; key_id: number | null; key_prefix: string | null;
-  actor_kind: ActorKind; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null }
+  actor_kind: ActorKind; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null;
+  /** mold_v0-286: the entry's sequence (scope_id: its workspace, 0 for none), its workspace's name, and the plain words. */
+  scope_id?: number; workspace_name?: string | null; has_request?: boolean; who?: Who; what?: string; result?: string }
 /**
  * The platform trail, newest first: one workspace's slice (`orgId`, under row-level security; staff named by the
  * pseudonym its activity log uses), or every workspace's for the operator (null: also the entries of no workspace).
@@ -530,8 +634,8 @@ export async function readPlatformTrail(orgId: number | null, q: TrailQuery = {}
   if (textOf(q.kind)) add("e.kind = ?", textOf(q.kind));
   if (textOf(q.actor)) add("e.actor_id = ?", textOf(q.actor));
   params.push(limit + 1);
-  const sql = `SELECT e.scope_id, e.seq, e.at, e.org_id, o.slug AS workspace, e.kind, e.channel, e.method, e.path, e.key_id, k.key_prefix, e.actor_kind, e.actor_id, e.scopes,
-                      e.status, e.latency_ms${orgId === null ? ", e.ip" : ""}
+  const sql = `SELECT e.scope_id, e.seq, e.at, e.org_id, o.slug AS workspace, o.name AS workspace_name, e.kind, e.channel, e.method, e.path, e.key_id, k.key_prefix, e.actor_kind, e.actor_id, e.scopes,
+                      e.status, e.latency_ms, (e.request IS NOT NULL) AS has_request${orgId === null ? ", e.ip" : ""}
                  FROM audit_platform_events e LEFT JOIN organizations o ON o.id = e.org_id LEFT JOIN api_keys k ON k.id = e.key_id AND k.org_id = e.org_id
                 WHERE ${where.length ? where.join(" AND ") : "true"} ORDER BY e.at DESC, e.scope_id DESC, e.seq DESC LIMIT $${params.length}`;
   const rows = orgId === null
@@ -548,10 +652,67 @@ export async function readPlatformTrail(orgId: number | null, q: TrailQuery = {}
       channel: r.channel, method: r.method, path: r.path,
       key_id: r.key_id, key_prefix: r.key_prefix ?? null, actor_kind: r.actor_kind, actor_id: actorId,
       scopes: Array.isArray(r.scopes) ? r.scopes : typeof r.scopes === "string" ? r.scopes.replace(/^\{|\}$/g, "").split(",").filter(Boolean).map((s: string) => s.replace(/^"|"$/g, "")) : [],
-      status: r.status, latency_ms: r.latency_ms, ...(orgId === null ? { ip: r.ip ?? null } : {}) });
+      status: r.status, latency_ms: r.latency_ms, ...(orgId === null ? { ip: r.ip ?? null } : {}),
+      scope_id: Number(r.scope_id), workspace_name: r.workspace_name ?? null, has_request: r.has_request === true });
   }
   const last = page[page.length - 1];
-  return { entries, next: more && last ? `${new Date(last.at).toISOString()}|${last.scope_id}|${last.seq}` : null };
+  return { entries: await plainPlatform(entries, orgId), next: more && last ? `${new Date(last.at).toISOString()}|${last.scope_id}|${last.seq}` : null };
+}
+
+// ---------------------------------------------------------------- one entry, with its request (mold_v0-286)
+
+export type TrailEntry = (DataTrailRow & { trail: "data"; workspace?: string | null }) | (PlatformTrailRow & { trail: "platform" });
+/**
+ * One entry as the Access log's side panel and its "Export entry" show it: every field of the list's row, and the
+ * request that made it (masked as stored, src/audit-request.ts). `orgId`: a workspace's owners (their own entries only,
+ * under row-level security; a staff member's request withheld from them), null: platform staff (any). `scope`: the data
+ * trail's workspace id, or the platform trail's scope (the workspace id, 0 for none); staff only.
+ */
+export async function readTrailEntry(which: "data" | "platform", orgId: number | null, scope: number, seq: number): Promise<(TrailEntry & { request: unknown }) | null> {
+  if (!Number.isSafeInteger(seq) || seq < 1 || !Number.isSafeInteger(scope) || scope < 0) return null;
+  const run = <R>(sql: string, params: unknown[]) => orgId === null
+    ? asPlatform(async () => (await getDb()).query<any>(`/* tenant: one access log entry, staff's fleet view (platform staff only) */ ${sql}`, params) as Promise<R[]>)
+    : withTenant(orgId, async () => (await getDb()).query<any>(sql, params) as Promise<R[]>);
+  const own = orgId ?? scope;
+  let entry: TrailEntry | null = null, request: unknown = null;
+  if (which === "data") {
+    const [r] = await run<any>(`SELECT e.seq, e.at, e.org_id, o.slug AS workspace, o.name AS workspace_name, e.actor_kind, e.actor_id, e.key_id, e.action, e.target, e.pack, e.area, e.record_key, e.rows, e.channel, e.request
+      FROM audit_data_events e LEFT JOIN organizations o ON o.id = e.org_id WHERE e.org_id = $1 AND e.seq = $2`, [own, seq]);
+    if (!r) return null;
+    const row = { ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`), has_request: r.request != null };
+    delete row.request;
+    if (orgId !== null) delete row.workspace;
+    entry = { trail: "data", ...(await plainData([row as DataTrailRow], orgId))[0]! };
+    request = r.request;
+  } else {
+    const [r] = await run<any>(`SELECT e.scope_id, e.seq, e.at, e.org_id, o.slug AS workspace, o.name AS workspace_name, e.kind, e.channel, e.method, e.path, e.key_id, k.key_prefix, e.actor_kind, e.actor_id, e.scopes,
+        e.status, e.latency_ms, e.ip, e.request
+      FROM audit_platform_events e LEFT JOIN organizations o ON o.id = e.org_id LEFT JOIN api_keys k ON k.id = e.key_id AND k.org_id = e.org_id
+      WHERE e.scope_id = $1 AND e.seq = $2${orgId === null ? "" : " AND e.org_id = $1"}`, [own, seq]);
+    if (!r) return null;
+    const staffInWorkspace = orgId !== null && r.actor_kind === "staff" && r.actor_id && !String(r.actor_id).startsWith("staff:");
+    const actorId: string | null = staffInWorkspace ? await pseudonym(r.actor_id, orgId!) : r.actor_id;
+    const row: PlatformTrailRow = { seq: Number(r.seq), at: new Date(r.at).toISOString(), org_id: r.org_id, workspace: r.workspace ?? null, kind: r.kind,
+      action: platformAction(r.kind, r.method, r.path), actor: actorLabel(r.actor_kind, actorId, r.key_prefix ? `${r.key_prefix}…` : r.key_id == null ? null : `#${r.key_id}`),
+      channel: r.channel, method: r.method, path: r.path, key_id: r.key_id, key_prefix: r.key_prefix ?? null, actor_kind: r.actor_kind, actor_id: actorId,
+      scopes: Array.isArray(r.scopes) ? r.scopes : typeof r.scopes === "string" ? r.scopes.replace(/^\{|\}$/g, "").split(",").filter(Boolean).map((x: string) => x.replace(/^"|"$/g, "")) : [],
+      status: r.status, latency_ms: r.latency_ms, ...(orgId === null ? { ip: r.ip ?? null } : {}), scope_id: Number(r.scope_id), workspace_name: r.workspace_name ?? null, has_request: r.request != null };
+    entry = { trail: "platform", ...(await plainPlatform([row], orgId))[0]! };
+    request = r.request;
+  }
+  // A staff member's request in a workspace's view: kept for platform staff only (their identity stays a pseudonym there).
+  if (orgId !== null && entry.actor_kind === "staff") request = request ? { withheld: "A platform staff request: its details are kept for the platform's staff." } : null;
+  // A data entry that shares its request with an earlier entry of the same request: that entry's (or the request's own).
+  const ref = request as { request_id?: unknown; same_as_earlier?: unknown } | null;
+  if (ref && ref.same_as_earlier === true && typeof ref.request_id === "string") {
+    const ws = entry.org_id ?? own;
+    const [first] = await run<{ request: unknown }>(
+      `SELECT request FROM audit_data_events WHERE org_id = $1 AND request->>'request_id' = $2 AND request->'headers' IS NOT NULL ORDER BY seq LIMIT 1`, [ws, ref.request_id]);
+    const [plat] = first ? [] : await run<{ request: unknown }>(
+      `SELECT request FROM audit_platform_events WHERE org_id = $1 AND request->>'request_id' = $2 LIMIT 1`, [ws, ref.request_id]);
+    request = first?.request ?? plat?.request ?? { note: "Kept with another entry of the same request, no longer here." };
+  }
+  return { ...entry, request } as TrailEntry & { request: unknown };
 }
 
 // ---------------------------------------------------------------- the four cards (mold_v0-205)
@@ -630,13 +791,19 @@ export const CSV_MAX_ROWS = 50_000;
 // Action and Actor first after the time (mold_v0-209), then the raw fields they are made from.
 const DATA_COLS: (keyof DataTrailRow)[] = ["seq", "at", "action", "actor", "actor_kind", "actor_id", "key_id", "target", "pack", "area", "record_key", "rows", "channel"];
 const PLATFORM_COLS: (keyof PlatformTrailRow)[] = ["seq", "at", "workspace", "action", "actor", "channel", "method", "path", "key_prefix", "actor_kind", "actor_id", "scopes", "status", "latency_ms"];
+/** mold_v0-286: the plain words, after every column the file had before (who in words, their name and email, what, result). */
+const PLAIN_COLS = ["who", "name", "email", "what", "result"];
+const plainCell = (e: Record<string, unknown>, c: string) => {
+  const who = e.who as Who | undefined;
+  return c === "who" ? who?.label : c === "name" ? who?.name : c === "email" ? who?.email : e[c];
+};
 /** A trail as CSV, newest first, paged through the readers above (at most CSV_MAX_ROWS rows). */
 export async function trailCsv(which: "data" | "platform", orgId: number | null, q: TrailQuery = {}): Promise<{ csv: string; rows: number; more: boolean }> {
-  const cols: string[] = which === "data" ? [...(orgId === null ? ["workspace"] : []), ...DATA_COLS] : [...PLATFORM_COLS, ...(orgId === null ? ["ip"] : [])];
+  const cols: string[] = which === "data" ? [...(orgId === null ? ["workspace"] : []), ...DATA_COLS, ...PLAIN_COLS] : [...PLATFORM_COLS, ...(orgId === null ? ["ip"] : []), ...PLAIN_COLS];
   let csv = csvLine(cols), rows = 0, before: unknown = q.before;
   for (;;) {
     const page = which === "data" ? await readDataTrail(orgId!, { ...q, before, limit: MAX_PAGE }) : await readPlatformTrail(orgId, { ...q, before, limit: MAX_PAGE });
-    for (const e of page.entries as unknown as Record<string, unknown>[]) { csv += csvLine(cols.map((c) => e[c])); rows++; }
+    for (const e of page.entries as unknown as Record<string, unknown>[]) { csv += csvLine(cols.map((c) => plainCell(e, c))); rows++; }
     if (!page.next || rows >= CSV_MAX_ROWS) return { csv, rows, more: !!page.next };
     before = page.next;
   }
@@ -657,9 +824,9 @@ export async function bothCsv(orgId: number | null, q: TrailQuery = {}): Promise
   const [d, p] = await Promise.all([read("data"), read("platform")]);
   const all = [...d.out, ...p.out].sort((a, b) => String(b.at).localeCompare(String(a.at)));
   const cols = ["kind", "at", ...(orgId === null ? ["workspace"] : []), "action", "actor", "actor_kind", "actor_id", "channel", "method", "path", "key_prefix", "status", "latency_ms",
-    "target", "pack", "area", "record_key", "rows", "scopes", ...(orgId === null ? ["ip"] : [])];
+    "target", "pack", "area", "record_key", "rows", "scopes", ...(orgId === null ? ["ip"] : []), ...PLAIN_COLS];
   let csv = csvLine(cols), rows = 0;
-  for (const e of all.slice(0, CSV_MAX_ROWS)) { csv += csvLine(cols.map((c) => (c === "kind" ? (e.kind_of === "data" ? "Data access" : "Platform call") : e[c]))); rows++; }
+  for (const e of all.slice(0, CSV_MAX_ROWS)) { csv += csvLine(cols.map((c) => (c === "kind" ? (e.kind_of === "data" ? "Data access" : "Platform call") : plainCell(e, c)))); rows++; }
   return { csv, rows, more: d.more || p.more || all.length > CSV_MAX_ROWS };
 }
 
@@ -692,6 +859,14 @@ export function auditAppRouter(customerSession: RequestHandler): Router {
     r.get("/platform.csv", wrap(async (req, res) => csvOut(res, "request-log", await trailCsv("platform", org(res), req.query as TrailQuery))));
     r.get("/platform/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("platform", org(res)))));
   }
+  // One entry with its request (mold_v0-286): the side panel and its Export entry. The workspace's own entries only.
+  r.get("/entry/:trail/:seq", wrap(async (req, res) => {
+    const which = String(req.params.trail);
+    if (!((which === "data" && dataTrailOn()) || (which === "platform" && platformTrailOn()))) return void res.status(404).json({ error: "Not found" });
+    const e = await readTrailEntry(which as "data" | "platform", org(res), org(res), Number(req.params.seq));
+    if (!e) return void res.status(404).json({ error: "No such entry" });
+    res.json({ entry: e });
+  }));
   if (dataTrailOn() && platformTrailOn()) {   // the merged Access log (mold_v0-270): one table of both trails
     r.get("/all.csv", wrap(async (req, res) => csvOut(res, "access-log", await bothCsv(org(res), req.query as TrailQuery))));
     r.get("/all/sparklines", wrap(async (_req, res) => void res.json(await bothSparklines(org(res)))));
@@ -725,6 +900,14 @@ export function auditAdminRouter(): Router {
       res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="access-log-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
     }));
   }
+  // One entry with its request (mold_v0-286): the data trail's by workspace id, the platform trail's by scope (0: none).
+  r.get("/entry/:trail/:scope/:seq", wrap(async (req, res) => {
+    const which = String(req.params.trail);
+    if (!((which === "data" && dataTrailOn()) || (which === "platform" && platformTrailOn()))) return void res.status(404).json({ error: "Not found" });
+    const e = await readTrailEntry(which as "data" | "platform", null, Number(req.params.scope), Number(req.params.seq));
+    if (!e) return void res.status(404).json({ error: "No such entry" });
+    res.json({ entry: e });
+  }));
   if (dataTrailOn()) r.get("/data/:org", wrap(async (req, res) => {
     const id = await orgIdOf(String(req.params.org));
     if (id === null) return void res.status(404).json({ error: "No such workspace" });
@@ -802,8 +985,8 @@ export function auditAdminTools(): Record<string, { title: string; description: 
 /** What DATA-MAP.md says of the trails that are on (src/data-map.ts); nothing when both are off. */
 export function auditDataMapRows(s: Pick<AuditSettings, "data" | "platform" | "retention_days" | "platform_retention_days"> & { sign?: boolean }): { item: string; detail: string }[] {
   const rows: { item: string; detail: string }[] = [];
-  if (s.data) rows.push({ item: "Data trail", detail: `in the database, per workspace under row-level security: who listed, read, revealed, exported or changed which record, file or run's results, when and through which door; never a field's value. Read by the workspace's owners (console, CSV, MCP); kept ${s.retention_days} days` });
-  if (s.platform) rows.push({ item: "Platform trail", detail: `in the database: every API and MCP request and sign-in (the key's id and prefix, never the key; the actor, scopes, result and latency) and staff actions on an account. Read fleet-wide by the platform's staff and per workspace by its owners; kept ${s.platform_retention_days} days` });
+  if (s.data) rows.push({ item: "Data trail", detail: `in the database, per workspace under row-level security: who listed, read, revealed, exported or changed which record, file or run's results, when and through which door, and the request that did it (its headers and JSON body, at most 16 KB, masked: keys, tokens, passwords, cookies, sign-in codes, credential values, file contents and every sealed or encrypted field are never kept). Read by the workspace's owners (console, CSV, MCP; the request in the console's side panel only); kept ${s.retention_days} days, the request with it` });
+  if (s.platform) rows.push({ item: "Platform trail", detail: `in the database: every API and MCP request and sign-in (the key's id and prefix, never the key; the actor, scopes, result and latency; the request's headers and JSON body, an MCP call's tool and arguments, at most 16 KB, masked as the data trail's) and staff actions on an account. Read fleet-wide by the platform's staff and per workspace by its owners (a staff request's details by staff only); kept ${s.platform_retention_days} days, the request with it` });
   // Chain and sign (mold_v0-195, src/ledger.ts): checkpoints hold hashes and signatures only, never an entry's values.
   if (s.sign) rows.push({ item: "Signed checkpoints", detail: "in the database, per workspace under row-level security: hashes of the audit entries and of chained records, and Ed25519 signatures over them (no values); the signing key stays in the app's environment, never in the database. Kept as long as the workspace" });
   return rows;

@@ -17,6 +17,11 @@
 //    pseudonym there); a sign-in (built-in).
 // 6. Retention: entries past the profile's days are pruned; the tables refuse UPDATE and DELETE otherwise.
 // 7. Performance: writes are batched (a 250-operation batch is at most two INSERTs of the trail), not one per row.
+// 8. Plain words (mold_v0-286): who (a person's name and email from the Clerk stand-in and from the built-in directory,
+//    a key's name and owner, an agent run's person, staff, the system; owners see their own workspace's people only),
+//    what as a sentence, the result in words; the request each entry keeps (masked headers and body: every header and
+//    body case, sealed areas, the 16 KB cap), owners vs staff (a staff request withheld from owners), one entry's
+//    export (GET .../entry/...), and the CSV's added columns. The masking and the sentences are also checked alone first.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -36,6 +41,7 @@ else await outer();
 process.exit(0);
 
 async function outer() {
+  await words();
   const TMP = mkdtempSync(path.join(tmpdir(), "audit-trail-"));
   try {
     const copyOf = (name: string, profile: Record<string, unknown> | null, pack = true) => {
@@ -79,6 +85,89 @@ async function outer() {
   console.log(`AUDIT TRAIL TEST PASS (${n} checks here, the rest above)`);
 }
 
+/** mold_v0-286, alone: the masking of each header and body case, the cap, the sentences and the results. */
+async function words() {
+  const R = await import("../src/audit-request.js");
+  const W = await import("../src/audit-words.js");
+  const M = R.MASK;
+  // Headers: the scheme word and a key's public prefix kept, the rest masked; the caller's address headers not kept.
+  const h = R.captureRequest({ method: "POST", path: "/api/data/x", body: undefined, headers: {
+    authorization: "Bearer oct_abcdef0123456789abcdef", "proxy-authorization": "Basic dXNlcjpwYXNzd29yZA==", cookie: "__session=eyJabc.def.ghi; a=b", "set-cookie": "s=1",
+    "x-api-key": "sk_live0123456789abcdefghij", "x-custom-token": "hello", "x-csrf-token": "abc", "x-session-id": "123", "mcp-session-id": "zzz", "x-signature": "deadbeef",
+    accept: "application/json", "user-agent": "audit-test/1", "x-forwarded-for": "198.51.100.7", "x-real-ip": "198.51.100.7", "x-vercel-ip-city": "Somewhere", "x-trace": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl" } });
+  assert.equal(h.headers.authorization, `Bearer oct_abcdef${M}`, "Authorization: the scheme word and the key's public prefix");
+  assert.equal(R.maskHeader("authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"), `Bearer ${M}`, "a bearer token without a prefix: masked whole");
+  assert.equal(h.headers["proxy-authorization"], `Basic ${M}`);
+  assert.equal(h.headers.cookie, M); assert.equal(h.headers["set-cookie"], M);
+  assert.equal(h.headers["x-api-key"], `sk_live01${M}`, "X-Api-Key: its prefix kept");
+  for (const k of ["x-custom-token", "x-csrf-token", "x-session-id", "mcp-session-id", "x-signature"]) assert.equal(h.headers[k], M, `${k}: masked by its name`);
+  assert.equal(h.headers["x-trace"], M, "a JWT is masked whatever the header's name");
+  assert.equal(h.headers.accept, "application/json"); assert.equal(h.headers["user-agent"], "audit-test/1");
+  for (const k of ["x-forwarded-for", "x-real-ip", "x-vercel-ip-city"]) assert.ok(!(k in h.headers), `${k}: not kept (the address is the entry's ip, for staff)`);
+  // Body: by name, by value, file contents, encrypted and file fields by the area, a sealed area whole, credential routes whole.
+  const b = R.maskBody({ email: "a@example.com", password: "p", client_secret: "c", apiKey: "k", refresh_token: "t", code: "12345678", otp: "1", pin: "2",
+    nested: { private_key: "x", list: [{ access_token: "y", ok: "fine" }] }, note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", pem: "-----BEGIN PRIVATE KEY-----\nabc",
+    bearer: "Bearer abcdefghijkl", gh: "ghp_abcdef0123456789abcdef", file: "anything", content: "hello", pic: `data:image/png;base64,${"A".repeat(40)}`, blob2: "Q".repeat(300),
+    title: "A finding", data: { severity: "high", ssn: "123", attachment: { name: "a.pdf" } } }, { areas: [{ sealed: false, fields: ["ssn"] }] }) as any;
+  for (const k of ["password", "client_secret", "apiKey", "refresh_token", "code", "otp", "pin", "note", "pem", "bearer", "gh", "file", "content", "pic", "blob2"]) assert.equal(b[k], M, `body ${k}: masked`);
+  assert.equal(b.nested.private_key, M); assert.equal(b.nested.list[0].access_token, M); assert.equal(b.nested.list[0].ok, "fine");
+  assert.equal(b.email, "a@example.com", "a plain field is kept"); assert.equal(b.title, "A finding"); assert.equal(b.data.severity, "high");
+  assert.equal(b.data.ssn, M, "an encrypted field of the area: masked by its name"); assert.equal(b.data.attachment, M, "a file field: masked");
+  const sealed = R.maskBody({ op: "create", area: "assets", key: "k1", title: "Prod", data: { url: "https://secret.example", name: "n" }, url2: "x" }, { areas: [{ sealed: true, fields: [] }] }) as any;
+  assert.deepEqual(sealed, { op: "create", area: "assets", key: M, title: M, data: { url: M, name: M }, url2: M }, "a sealed area's request: every value masked but what says what was done");
+  const cred = R.captureRequest({ method: "PUT", path: "/api/credentials/github", headers: {}, body: { value: "plain-looking", label: "GitHub" }, contentType: "application/json" });
+  assert.deepEqual(cred.body, { value: M, label: M }, "a credential route's values: all masked");
+  const bin = R.captureRequest({ method: "POST", path: "/api/workspace-files/x", headers: {}, body: Buffer.from("raw bytes"), contentType: "application/octet-stream", contentLength: 9 });
+  assert.deepEqual(bin.body, { not_kept: "application/octet-stream, 9 bytes" }, "a non-JSON body: its type and size only");
+  const mcp = R.captureRequest({ method: "POST", path: "/mcp", headers: {}, contentType: "application/json",
+    body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "put_record", arguments: { area: "x", token: "t", text: "hi" } } } }, [], true);
+  assert.deepEqual(mcp.tools, [{ name: "put_record", arguments: { area: "x", token: M, text: "hi" } }], "an MCP call: its tool and its arguments, masked");
+  // The cap: 16 KB at most, cut with a note; the headers kept.
+  const big = R.captureRequest({ method: "POST", path: "/api/data/_batch", headers: { accept: "*/*" }, contentType: "application/json",
+    body: { operations: Array.from({ length: 400 }, (_, i) => ({ op: "create", area: "x", title: `row ${i} ${"z".repeat(60)}` })) } });
+  assert.ok(big.truncated === true && /^Cut at 16 KB/.test(big.note!) && typeof big.body === "string", "a long body is cut, with a note");
+  assert.ok(Buffer.byteLength(JSON.stringify(big)) <= R.REQUEST_CAP, `at most 16 KB (${Buffer.byteLength(JSON.stringify(big))} bytes)`);
+  assert.equal(big.headers.accept, "*/*", "the headers are kept");
+  ok("the request an entry keeps: each header case (scheme and key prefix kept; cookies, keys, tokens, sessions, signatures, JWTs masked; addresses dropped), each body case (by name, by value, file contents, encrypted and file fields, a sealed area, a credential route, a non-JSON body, MCP arguments), capped at 16 KB with a note");
+
+  // What: one sentence per entry; never a raw method and path.
+  const d = (x: Partial<Parameters<typeof W.dataSentence>[0]>) => W.dataSentence({ action: "read", target: "record", area: "audit_findings", record_key: "f-1", rows: null, area_label: "Vulnerabilities", ...x });
+  assert.equal(d({ action: "list", record_key: null, rows: 12 }), "Listed Vulnerabilities (12 rows)");
+  assert.equal(d({ title: "Login bug" }), "Viewed Login bug in Vulnerabilities");
+  assert.equal(d({}), "Viewed f-1 in Vulnerabilities", "no title: the key");
+  assert.equal(d({ action: "reveal", title: null }), "Viewed f-1 in Vulnerabilities (sealed)");
+  assert.equal(d({ action: "export", record_key: null, rows: 3 }), "Exported Vulnerabilities (3 rows)");
+  assert.equal(d({ action: "create", title: "X" }), "Added X to Vulnerabilities");
+  assert.equal(d({ action: "update", record_key: null, rows: 5 }), "Changed 5 rows in Vulnerabilities");
+  assert.equal(d({ action: "delete", title: "X" }), "Deleted X from Vulnerabilities");
+  assert.equal(d({ target: "file", area: "docs", area_label: null, record_key: "reports/q3.pdf" }), "Opened q3.pdf in docs");
+  assert.equal(d({ target: "run_result", area: "scan", area_label: null, record_key: "run_abc" }), "Viewed the results of a scan run", "a run's results: never its id");
+  const pl = (kind: string, method: string, p: string, status: number | null = 200) => W.platformSentence({ kind, method, path: p, status }, (a) => (a === "audit_findings" ? "Vulnerabilities" : a));
+  assert.equal(pl("sign_in", "POST", "/api/auth/email/verify"), "Signed in");
+  assert.equal(pl("sign_in", "POST", "/api/auth/email/verify", 401), "Tried to sign in (the code was refused)");
+  assert.equal(pl("sign_in", "POST", "/oauth/token"), "Signed in through a connected app");
+  assert.equal(pl("request", "POST", "/mcp tools/call:fixture_vulns_list_audit_findings"), "Used the fixture vulns list audit findings tool");
+  assert.equal(pl("request", "POST", "/mcp tools/list"), "Listed the available tools");
+  assert.equal(pl("request", "POST", "/mcp initialize"), "Checked the connection");
+  assert.equal(pl("request", "POST", "/mcp/oct_abc ping"), "Checked the connection");
+  assert.equal(pl("staff", "MCP", "/admin/mcp/get_account"), "Used the get account staff tool");
+  assert.equal(pl("request", "CHECK", "/checks/may_export denied"), "Checked may export: denied");
+  assert.equal(pl("staff", "IMPORT", "/api/admin/records/audit_findings/f-9 update"), "Imported f-9 into Vulnerabilities (update)");
+  assert.equal(pl("request", "GET", "/api/app/billing"), "Opened billing");
+  assert.equal(pl("request", "GET", "/api/records/audit_findings"), "Opened Vulnerabilities");
+  assert.equal(pl("request", "POST", "/api/data/audit_findings", 201), "Called Vulnerabilities");
+  assert.equal(pl("request", "POST", "/api/keys"), "Called API keys");
+  assert.equal(pl("request", "DELETE", "/api/schedules/12"), "Deleted something in schedules");
+  assert.equal(pl("request", "PATCH", "/api/app/team/members/user_2abcdefgh/role"), "Changed the team");
+  assert.equal(pl("staff", "GET", "/api/admin/onboarding/orgs/acme"), "Opened the account acme");
+  const fallback = pl("request", "GET", "/api/widgets/12345/user_2abcdefghij/parts");
+  assert.equal(fallback, "Opened widgets › parts", "an unknown path: its words, without ids");
+  assert.doesNotMatch(fallback, /GET|\/api|12345|user_/);
+  assert.deepEqual([null, 200, 201, 302, 400, 401, 403, 404, 410, 429, 500, 503].map((x) => W.resultWord(x)),
+    ["OK", "OK", "OK", "OK", "Refused", "Refused", "Refused", "Not found", "Not found", "Refused", "Failed", "Failed"]);
+  ok("what as one sentence (each data action, files, run results; sign-ins, tools, the connection, checks, imports, staff tools, the common pages, a fallback without ids) and the result in words");
+}
+
 async function inner() {
   const { cleanup, startHttp, STAMP } = await import("./lib/test-world.js");
   try {
@@ -102,7 +191,8 @@ async function inner() {
       const slug = (await r.json()).org.slug as string;
       const [o] = await db.query<{ id: number; name: string }>("SELECT id, name FROM organizations WHERE slug = $1", [slug]);
       const org = { orgId: o!.id, name: o!.name, slug };
-      return { org, slug, owner: { authorization: `Bearer ${await http.signIn(org as any, "owner")}`, "x-pack-request": "1" },
+      const own = await http.signInAs(org as any, "owner");
+      return { org, slug, ownerId: own.userId, owner: { authorization: `Bearer ${own.token}`, "x-pack-request": "1" },
         member: { authorization: `Bearer ${await http.signIn(org as any, "member")}`, "x-pack-request": "1" }, key: await createApiKey(org.orgId) };
     };
     const A = await mkOrg("a"), B = await mkOrg("b");
@@ -195,7 +285,7 @@ async function inner() {
       const csv = await app.req("GET", "/api/audit/data.csv", A.owner);
       assert.equal(csv.status, 200);
       // Action and Actor (mold_v0-209): what was done, and who in words, after the time; then the raw fields.
-      assert.match(csv.text, /^(\ufeff)?seq,at,action,actor,actor_kind,actor_id,key_id,target,pack,area,record_key,rows,channel\r\n/);
+      assert.match(csv.text, /^(\ufeff)?seq,at,action,actor,actor_kind,actor_id,key_id,target,pack,area,record_key,rows,channel,who,name,email,what,result\r\n/, "the columns as before, then who, name, email, what and result (mold_v0-286)");
       const listed = (await app.req("GET", "/api/audit/data?limit=500", A.owner)).body.entries as any[];
       assert.ok(listed.length && listed.every((e: any) => typeof e.actor === "string" && (e.actor_kind === "system" ? e.actor === "System" : e.actor.startsWith({ user: "User", key: "Key", staff: "Staff", agent_run: "Agent run" }[e.actor_kind as string]!))),
         "each entry's Actor: its kind and display in words");
@@ -243,9 +333,12 @@ async function inner() {
       assert.equal(cb.body.cards[0].value, bRows.length, "B's cards count B's entries only");
       await c.close();
       await audit.flushAudit();
-      // No value: neither the titles nor the fields written above appear anywhere in either trail.
-      const dump = JSON.stringify([await db.query("SELECT * FROM audit_data_events"), await db.query("SELECT * FROM audit_platform_events")]);
-      assert.ok(!dump.includes(SECRET), "no field value or title is in either trail");
+      // No value in the entries' own columns: neither the titles nor the fields written above. The request each entry
+      // keeps (mold_v0-286) has a plain area's values as sent, never a sealed area's (audit_apps, an asset area).
+      const dump = JSON.stringify([await db.query("SELECT * FROM audit_data_events"), await db.query("SELECT * FROM audit_platform_events")].map((rows) => rows.map((r: any) => ({ ...r, request: undefined }))));
+      assert.ok(!dump.includes(SECRET), "no field value or title is in either trail's own columns");
+      const sealedReqs = await db.query<any>("SELECT request FROM audit_platform_events WHERE path = '/api/data/audit_apps' AND request IS NOT NULL UNION ALL SELECT request FROM audit_data_events WHERE area = 'audit_apps' AND request->'headers' IS NOT NULL");
+      assert.ok(sealedReqs.length && !JSON.stringify(sealedReqs).includes(SECRET), "a sealed area's request keeps none of its values");
       await app.close();
       ok("tenant isolation: each owner's route and MCP tool read their own workspace's entries only; the tenant role sees none of another's and cannot write one; no field value or title in either trail");
     }
@@ -324,7 +417,7 @@ async function inner() {
       assert.ok(posted && posted.action === "change" && posted.actor.startsWith("User · "), "a console write: Action change, Actor the person");
       const pcsv = await app.req("GET", "/api/audit/platform.csv", A.owner);
       assert.equal(pcsv.status, 200);
-      assert.match(pcsv.text, /^(\ufeff)?seq,at,workspace,action,actor,channel,method,path,key_prefix,actor_kind,actor_id,scopes,status,latency_ms\r\n/, "the CSV: Action and Actor columns");
+      assert.match(pcsv.text, /^(\ufeff)?seq,at,workspace,action,actor,channel,method,path,key_prefix,actor_kind,actor_id,scopes,status,latency_ms,who,name,email,what,result\r\n/, "the CSV: Action and Actor columns, then the plain words");
       assert.equal((await app.req("GET", "/api/audit/data", A.owner)).status, 404, "the data trail's route is not there");
       // The cards (mold_v0-205): the owner's slice counts its own requests; staff read the fleet's.
       const sc = await app.req("GET", "/api/audit/platform/sparklines", A.owner);
@@ -338,8 +431,76 @@ async function inner() {
       assert.ok("read_platform_trail" in admin && !("read_audit_trail" in admin), "the admin MCP lists the platform trail's tool only");
       const viaTool = await runAdminTool({ actor: "ops@platform.example", role: "viewer", userId: null }, "read_platform_trail", { org: A.slug, kind: "staff" }) as any;
       assert.ok(!viaTool.isError && viaTool.structuredContent.entries.length >= 2, "read_platform_trail reads staff actions on an account");
+      await plainWords(app, A, B, slice.body.entries, fleet.body.entries);
       await app.close();
       ok("platform trail alone: API and MCP requests (tool by name, key id and prefix, actor, scopes, status, latency); staff actions through the admin API and the admin MCP, in the operator's fleet-wide view and the workspace's slice (as a pseudonym); data trail untouched");
+    }
+
+    // ---------- mold_v0-286: plain words, requests, one entry ----------
+    async function plainWords(app: Awaited<ReturnType<typeof appWith>>, o: typeof A, other: typeof A, slice: any[], fleet: any[]) {
+      const { people } = await import("../src/people.js");
+      const { primaryEmail } = await import("../src/clerk.js");
+      const ownerEmail = primaryEmail(await people().users.get(o.ownerId)).email!;
+      const otherEmail = primaryEmail(await people().users.get(other.ownerId)).email!;
+      const posted = slice.find((e) => e.path === "/api/data/audit_findings" && e.method === "POST");
+      assert.equal(posted.who.email, ownerEmail, "a person's email, from the sign-in directory (the Clerk stand-in)");
+      assert.ok(posted.who.label.includes(ownerEmail) && !posted.who.label.includes(o.ownerId), `Who: the person, never their id (${posted.who.label})`);
+      assert.equal(posted.what, "Called Vulnerabilities"); assert.equal(posted.result, "OK");
+      const tool = slice.find((e) => e.path.includes("tools/call:fixture_vulns_list_audit_findings"));
+      assert.equal(tool.what, "Used the fixture vulns list audit findings tool");
+      assert.equal(tool.who.label, "Key “default” (the workspace's key)", "the workspace's key: its name");
+      assert.ok(slice.filter((e) => e.actor_kind === "staff").every((e) => e.who.label === "Platform staff" && e.who.email === null), "owners see staff as Platform staff, never their email");
+      const staffFleet = fleet.find((e) => e.channel === "admin_mcp" && e.actor_id === "ops@platform.example");
+      assert.equal(staffFleet.who.label, "Staff · ops@platform.example", "staff see staff by email");
+      assert.equal(staffFleet.what, "Used the get account staff tool");
+      assert.ok(fleet.some((e) => e.who?.email === otherEmail), "staff see every workspace's people by email");
+      assert.ok(fleet.every((e) => typeof e.what === "string" && !/^(GET|POST|PUT|PATCH|DELETE) \//.test(e.what) && ["OK", "Refused", "Failed", "Not found"].includes(e.result)), "every entry: a sentence and a result in words");
+      // Each actor kind, through the directory, as an owner and as staff.
+      const { resolveWho, clearWhoCache } = await import("../src/audit-words.js");
+      clearWhoCache();
+      const [k] = await db.query<{ id: number }>("INSERT INTO api_keys (org_id, label, key_prefix, key_hash, user_id) VALUES ($1, 'Deploy bot', 'oct_dpl123', $2, $3) RETURNING id", [o.org.orgId, `h-${STAMP}-${Math.random()}`, o.ownerId]);
+      const runId = `run_audit_${STAMP}`.slice(0, 60);
+      await db.query(`INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, requested_by)
+        VALUES ($1, $2, 'fixture_vulns', 'scan', '{}'::jsonb, 1, 600, 60, 1, $3)`, [runId, o.org.orgId, o.ownerId]);
+      const kinds = [{ actor_kind: "user", actor_id: o.ownerId, key_id: null }, { actor_kind: "key", actor_id: `key:${k!.id}`, key_id: k!.id }, { actor_kind: "agent_run", actor_id: runId, key_id: null },
+        { actor_kind: "staff", actor_id: "ops@platform.example", key_id: null }, { actor_kind: "staff", actor_id: "token:ci", key_id: null }, { actor_kind: "system", actor_id: null, key_id: null },
+        { actor_kind: "user", actor_id: other.ownerId, key_id: null }];
+      const asStaff = (await resolveWho(kinds, { orgId: null })).map((w) => w.label);
+      assert.deepEqual(asStaff, [asStaff[0], `Key “Deploy bot” · ${ownerEmail}`, `Agent run for ${ownerEmail}`, "Staff · ops@platform.example", "Staff (the ci token)", "System", asStaff[6]]);
+      assert.ok(asStaff[0]!.endsWith(ownerEmail) && asStaff[6]!.endsWith(otherEmail), "staff: each person by email");
+      const asOwner = await resolveWho(kinds, { orgId: o.org.orgId });
+      assert.deepEqual(asOwner.slice(1).map((w) => w.label), [`Key “Deploy bot” · ${ownerEmail}`, `Agent run for ${ownerEmail}`, "Platform staff", "Platform staff", "System", "Someone outside this workspace"]);
+      assert.equal(asOwner[0]!.email, ownerEmail, "an owner sees their own workspace's people");
+      assert.equal(asOwner[6]!.email, null, "never the email of someone outside the workspace");
+      ok("who in words (Clerk stand-in): a person's name and email, a key's name and its owner's email, Agent run for <email>, Staff · <email> (Platform staff to owners), System; owners see their own workspace's people only, staff everyone; what and result in words");
+
+      // The request each entry keeps, its masking as stored, and one entry's export: owners their own, staff any.
+      const apps = await db.query<any>("SELECT scope_id, seq, request FROM audit_platform_events WHERE org_id = $1 AND path = '/api/data/audit_apps' ORDER BY seq DESC LIMIT 1", [o.org.orgId]);
+      const r0 = apps[0]!.request;
+      assert.match(r0.headers.authorization, /^Bearer ••••$/, "the session token: its scheme word only");
+      assert.ok(!JSON.stringify(r0).includes(SECRET) && r0.body.title === "••••" && r0.body.data.url === "••••", "a sealed area's request: its values masked");
+      const own = await app.req("GET", `/api/audit/entry/platform/${apps[0]!.seq}`, o.owner);
+      assert.equal(own.status, 200);
+      assert.ok(own.body.entry.request.headers && own.body.entry.what === "Called Applications" && own.body.entry.who.email === ownerEmail && !("ip" in own.body.entry), "an owner's entry: the words, the request, no address");
+      assert.deepEqual(own.body.entry.request, r0, "the entry's export holds the request exactly as stored (masked)");
+      assert.equal((await app.req("GET", `/api/audit/entry/platform/${apps[0]!.seq}`, o.member)).status, 403, "members read no entry");
+      const theirs = await app.req("GET", `/api/audit/entry/platform/${apps[0]!.seq}`, other.owner);
+      assert.ok(theirs.status === 404 || theirs.body.entry.org_id === other.org.orgId, "another workspace's owner never reads this entry (the same number is their own entry, or none)");
+      const staffRead = await app.req("GET", `/api/admin/audit/entry/platform/${apps[0]!.scope_id}/${apps[0]!.seq}`, adminH);
+      assert.equal(staffRead.status, 200);
+      assert.ok("ip" in staffRead.body.entry && staffRead.body.entry.request.headers, "staff: any entry, with its address and request");
+      const staffRow = await db.query<any>("SELECT seq FROM audit_platform_events WHERE org_id = $1 AND kind = 'staff' AND request IS NOT NULL ORDER BY seq DESC LIMIT 1", [o.org.orgId]);
+      const withheld = await app.req("GET", `/api/audit/entry/platform/${staffRow[0]!.seq}`, o.owner);
+      assert.ok(withheld.body.entry.request?.withheld && withheld.body.entry.who.label === "Platform staff", "a staff request in the workspace's view: withheld from its owners");
+      const sAdmin = await app.req("GET", `/api/admin/audit/entry/platform/${o.org.orgId}/${staffRow[0]!.seq}`, adminH);
+      assert.ok(sAdmin.body.entry.request?.headers && !sAdmin.body.entry.request.withheld, "and kept for staff");
+      assert.ok(slice.every((e) => typeof e.has_request === "boolean" && !("request" in e)), "the list says whether an entry has a request, never carries it");
+      const mcpReq = await db.query<any>("SELECT request FROM audit_platform_events WHERE org_id = $1 AND path LIKE '/mcp tools/call:fixture_vulns_list_audit_findings%' LIMIT 1", [o.org.orgId]);
+      assert.equal(mcpReq[0]!.request.tools[0].name, "fixture_vulns_list_audit_findings", "an MCP call: its tool and arguments");
+      assert.match(mcpReq[0]!.request.headers.authorization, /^Bearer oct_[A-Za-z0-9]{6}••••$/, "the key: its public prefix only");
+      const csv = await app.req("GET", "/api/audit/platform.csv", o.owner);
+      assert.ok(csv.text.includes(ownerEmail) && csv.text.includes("Called Vulnerabilities"), "the CSV: the email and the sentence");
+      ok("each entry keeps its request, masked as stored (a session token as 'Bearer ••••', a key by its prefix, a sealed area's values masked, an MCP call's tool); one entry's export: owners their own (a staff request withheld, no address), staff any; never in the list");
     }
 
     // ---------- both on: performance, append-only, retention ----------
@@ -360,6 +521,15 @@ async function inner() {
       (db as any).transaction = tx0;
       assert.equal(await count("audit_data_events") - before, 250, "one entry per operation of the committed batch; none of the refused one");
       assert.ok(inserts >= 1 && inserts <= 2, `batched writes: ${inserts} INSERT(s) for 250 entries`);
+      // mold_v0-286: the batch's first entry keeps its request (cut at 16 KB), the other 249 name it; each entry's export finds it.
+      const batch = await db.query<any>("SELECT seq, request FROM audit_data_events WHERE org_id = $1 AND record_key LIKE 'bulk-%' ORDER BY seq", [A.org.orgId]);
+      assert.equal(batch.filter((r: any) => r.request?.headers).length, 1, "one entry keeps the request whole");
+      assert.ok(batch[0].request.truncated === true && Buffer.byteLength(JSON.stringify(batch[0].request)) <= 16 * 1024, "cut at 16 KB, with a note");
+      assert.ok(batch.slice(1).every((r: any) => r.request?.same_as_earlier === true && r.request.request_id === batch[0].request.request_id), "the rest name it");
+      const later = await app.req("GET", `/api/audit/entry/data/${batch[100].seq}`, A.owner);
+      assert.equal(later.status, 200);
+      assert.equal(later.body.entry.request.request_id, batch[0].request.request_id, "a later entry's export holds the request");
+      assert.ok(later.body.entry.request.headers && later.body.entry.what === `Added ${SECRET} to Vulnerabilities`, `the owner's sentence names the record by its title: ${later.body.entry.what}`);
       const t0 = performance.now();
       assert.equal((await app.req("GET", "/api/records/audit_findings?limit=200", A.owner)).status, 200);
       await audit.flushAudit();
@@ -421,6 +591,15 @@ async function signIn() {
     assert.ok(ok200 && ok200.actor_kind === "user" && ok200.actor_id && String(ok200.scopes).includes("email_code"), "a sign-in: the person and how they signed in");
     assert.ok(ok200.slug === slug || ok200.org_id === null, "in the workspace it opened (when it opened one)");
     assert.ok(!JSON.stringify(rows).includes(code!), "never the code");
+    // mold_v0-286 (the built-in directory): the sign-in in words, the person by email, the code masked in the request.
+    const page = await http.req("GET", "/api/admin/audit/platform?limit=500&kind=sign_in", adminH);
+    const entries = (await page.json()).entries as any[];
+    const signed = entries.find((e) => e.status === 200);
+    assert.ok(signed && signed.who.email === email && signed.what === "Signed in" && signed.result === "OK", `the sign-in: ${JSON.stringify(signed?.who)} ${signed?.what}`);
+    const refused = entries.find((e) => e.status === 401);
+    assert.ok(refused && refused.what === "Tried to sign in (the code was refused)" && refused.result === "Refused" && refused.who.label === "System");
+    const kept = rows.find((r) => r.status === 200)!.request;
+    assert.ok(kept.body.code === "••••" && kept.body.email === email && !("x-forwarded-for" in kept.headers), "the request: the code masked, the address not kept");
     audit.setAuditForTest(null);
     await http.close();
     ok("sign-in (built-in): a refused code and a sign-in are platform trail entries with result, address, the person and the method; never the code");

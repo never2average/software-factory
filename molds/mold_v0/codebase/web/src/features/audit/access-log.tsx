@@ -1,33 +1,39 @@
 'use client';
-// The access log (mold_v0-197; src/audit-trail.ts): the audit trails on the records pages' own table (mold_v0-205). Each
-// trail is a read-only system area (no pack declares it, nothing writes it from here) drawn by RecordTableView, the
-// component every record area's page and tab draws, through its data adapter (features/records/record-pages.tsx
-// RecordSource): the search row with the trail's four cards under it (the list tabs' order, cards above search where the
-// table draws them so), an Action and an Actor column on both trails (mold_v0-209: what was done, and who did it in words,
-// from the server: src/audit-trail.ts actorLabel, platformAction; each filtered and sorted, both in the CSV and the
-// drawer) (GET /api/audit/<trail>/sparklines), filters on
-// who, action, area, door and the date range, the column picker, Download CSV (the server's own file: every entry,
-// not only the loaded pages) and a row drawer with the entry's details. Billing's Access log tab (/app/billing?tab=access-log,
-// mold_v0-209; features/portal/billing.tsx) is one workspace's, for its owners (GET /api/audit/data, /api/audit/platform:
-// its data trail and its slice of the platform trail);
-// /admin/access-log is the platform trail fleet-wide and any workspace's data trail, for platform staff
-// (GET /api/admin/audit/*). Never a record's values: the trails hold none.
-// One table, no tabs (mold_v0-270): with both trails on, both are one list, newest first, with a Kind column (Platform
-// call / Data access) filtered in the Filter menu, both trails' four cards above the search row, and Download CSV of
-// both (GET .../all.csv); with one trail on, that trail's table, without the Kind column. Staff see every workspace's
-// entries of both trails (a Workspace column, filtered like the rest).
-import { useMemo } from 'react';
+// The access log (mold_v0-197; src/audit-trail.ts): the audit trails on the records pages' own table (mold_v0-205),
+// drawn by RecordTableView (features/records/record-pages.tsx) through its data adapter (RecordSource) over a read-only
+// system area (no pack declares it). mold_v0-286: a plain activity feed. Columns When, Who, What, Workspace (staff only)
+// and Result, every one in words from the server (src/audit-words.ts: who by name and email from the sign-in directory,
+// a key by its name and owner, "Agent run for <email>", "Staff · <email>", System; what as one sentence; OK, Refused,
+// Failed or Not found). No kind, no internal id or sequence in the table: each row's key is hidden. A row opens the
+// shared side panel (mold_v0-278) with the sentence, the request that did it (its masked headers and JSON payload, a
+// copy button; GET .../entry/<trail>/...: src/audit-trail.ts readTrailEntry) and a collapsed Technical details
+// section (method, path, key prefix, latency, address, door, ids). Each row's ⋯ menu and the panel's have Export
+// entry (that entry as JSON, masked as stored). Filters on who, what, workspace and the date range; the four cards
+// above the search row (GET .../all/sparklines, or the one trail's); Download CSV (the server's file: every entry,
+// every field, plus who, name, email, what and result).
+// Billing's Access log tab (/app/billing?tab=access-log, mold_v0-209; features/portal/billing.tsx) is one workspace's,
+// for its owners (GET /api/audit/data, /api/audit/platform); /admin/access-log is every workspace's, for platform staff
+// (GET /api/admin/audit/*). With both trails on, both are one list, newest first (mold_v0-270).
+import { useEffect, useMemo, useState } from 'react';
 import PageContainer from '@/components/layout/page-container';
+import { Field } from '@/components/layout/record-view';
+import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { LIST_MAX, RecordTableView, type RecordRow, type RecordSource } from '@/features/records/record-pages';
+import { CopyButton } from '@/features/portal/shared';
+import { EmptyState } from '@/features/tabs/empty';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { useAccountRole } from '@/features/portal/role';
 import { dataTrailOn, platformTrailOn } from './config';
 
-interface DataEntry { seq: number; at: string; actor_kind: string; actor_id: string | null; key_id: number | null; action: string; actor: string; target: string; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: string }
-interface PlatformEntry { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; action: string; actor: string; channel: string; method: string; path: string; key_id: number | null; key_prefix: string | null;
-  actor_kind: string; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null }
+interface Who { label: string; name: string | null; email: string | null }
+interface Plain { who?: Who; what?: string; result?: string; workspace_name?: string | null; has_request?: boolean }
+interface DataEntry extends Plain { seq: number; at: string; org_id?: number; workspace?: string | null; actor_kind: string; actor_id: string | null; key_id: number | null; action: string; actor: string; target: string;
+  pack: string | null; area: string | null; area_label?: string | null; record_key: string | null; title?: string | null; rows: number | null; channel: string }
+interface PlatformEntry extends Plain { seq: number; scope_id?: number; at: string; org_id: number | null; workspace: string | null; kind: string; action: string; actor: string; channel: string; method: string; path: string;
+  key_id: number | null; key_prefix: string | null; actor_kind: string; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null }
+type Entry = ({ trail: 'data' } & DataEntry) | ({ trail: 'platform' } & PlatformEntry);
 type Page<T> = { entries: T[]; next: number | string | null };
 
 async function getJson<T>(url: string): Promise<T> {
@@ -50,114 +56,140 @@ async function loadAll<T>(url: string, row: (e: T) => RecordRow): Promise<{ reco
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
 const opts = (xs: string[]) => xs.map((value) => ({ value }));
-const CHANNELS = opts(['console', 'api', 'mcp', 'admin_console', 'admin_mcp', 'run', 'system']);
-const ACTOR_KINDS = opts(['user', 'key', 'staff', 'agent_run', 'system']);
 const f = (name: string, label: string, type: string, extra: Partial<RecordFieldSpec> = {}): RecordFieldSpec => ({ name, label, type, ...extra });
-/** A trail as a read-only system area: its fields typed as an area's are (an enum filters by its values). */
-const systemArea = (name: string, label: string, fields: RecordFieldSpec[], list: string[]): RecordAreaSpec =>
-  ({ pack: '_system', name, label, description: null, icon: 'shield', role: 'source', scope: 'workspace', fields, list_columns: list, links: [], lifecycle: null });
+const RESULTS = opts(['OK', 'Refused', 'Failed', 'Not found']);
+const DOORS: Record<string, string> = { console: 'Console', api: 'API', mcp: 'AI client (MCP)', admin_console: 'Staff console', admin_mcp: 'Staff AI client', run: 'Agent run', system: 'System' };
 
-const DATA_AREA = systemArea('access_log', 'Access log', [
-  f('action', 'Action', 'enum', { options: ['list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete'] }),
-  f('actor', 'Actor', 'enum'),
-  f('area', 'Area', 'enum'),
-  f('record_key', 'Record or file', 'text'),
-  f('rows', 'Rows', 'number'),
-  f('channel', 'Through', 'enum', { options: CHANNELS }),
-  f('target', 'Target', 'enum', { options: ['record', 'file', 'run_result'] }),
-  f('pack', 'Pack', 'enum'),
-  f('actor_kind', 'Actor kind', 'enum', { options: ACTOR_KINDS }),
-  f('key_id', 'Key', 'text'),
-], ['action', 'actor', 'area', 'record_key', 'rows', 'channel']);
-const dataRow = (e: DataEntry & { workspace?: string | null }): RecordRow => ({
-  key: `#${e.seq}${e.workspace ? ` · ${e.workspace}` : ''}`, title: when(e.at), updated_at: e.at,
-  data: { at: e.at, ...(e.workspace !== undefined ? { workspace: e.workspace } : {}), action: e.action, actor: e.actor, area: e.area, record_key: e.record_key, rows: e.rows, channel: e.channel,
-    target: e.target, pack: e.pack, actor_kind: e.actor_kind, key_id: e.key_id == null ? null : `#${e.key_id}` }
+/** The Access log as a read-only system area: When (the first column), then Who, What, Workspace (staff) and Result. */
+const accessArea = (fleet: boolean): RecordAreaSpec => ({
+  pack: '_system', name: fleet ? 'access_log_fleet' : 'access_log', label: 'Access log', description: null, icon: 'shield', role: 'source', scope: 'workspace',
+  fields: [
+    f('who', 'Who', 'enum'),
+    f('what', 'What', 'text'),
+    ...(fleet ? [f('workspace', 'Workspace', 'enum')] : []),
+    f('result', 'Result', 'enum', { options: RESULTS }),
+    f('door', 'Through', 'enum', { options: opts(Object.values(DOORS)) }),
+  ],
+  list_columns: ['who', 'what', ...(fleet ? ['workspace'] : []), 'result'], links: [], lifecycle: null
 });
+const HIDDEN = ['door'];
 
-const platformArea = (fleet: boolean) => systemArea(fleet ? 'platform_trail' : 'request_log', 'Requests', [
-  ...(fleet ? [f('workspace', 'Workspace', 'enum')] : []),
-  f('action', 'Action', 'enum', { options: opts(['read', 'change', 'delete', 'tool call', 'MCP request', 'sign-in', 'check']) }),
-  f('actor', 'Actor', 'enum'),
-  f('request', 'Request', 'text'),
-  f('key', 'Key', 'text'),
-  f('status', 'Result', 'number'),
-  f('latency_ms', 'Latency (ms)', 'number'),
-  f('channel', 'Through', 'enum', { options: CHANNELS }),
-  f('scopes', 'Scopes', 'text'),
-  f('actor_kind', 'Actor kind', 'enum', { options: ACTOR_KINDS }),
-  ...(fleet ? [f('ip', 'Address', 'text')] : []),
-], [...(fleet ? ['workspace'] : []), 'action', 'actor', 'request', 'key', 'status', 'latency_ms']);
-const platformRow = (e: PlatformEntry): RecordRow => ({
-  key: `#${e.seq}${e.ip !== undefined && e.workspace ? ` · ${e.workspace}` : ''}`, title: when(e.at), updated_at: e.at,
-  data: { at: e.at, workspace: e.workspace, action: e.action, actor: e.actor, request: `${e.method} ${e.path}`, key: e.key_prefix ? `${e.key_prefix}…` : null,
-    status: e.status, latency_ms: e.latency_ms, channel: e.channel, scopes: e.scopes.join(', ') || null, actor_kind: e.actor_kind, ...(e.ip !== undefined ? { ip: e.ip } : {}) }
+/** One entry as a row: a hidden key (never shown), the time as its title, the plain words as its cells. */
+const rowOf = (e: Entry): RecordRow => ({
+  key: e.trail === 'data' ? `d-${e.org_id ?? 0}-${e.seq}` : `p-${e.scope_id ?? 0}-${e.seq}`, title: when(e.at), updated_at: e.at,
+  data: { at: e.at, who: e.who?.label ?? e.actor, email: e.who?.email ?? null, what: e.what ?? e.action, workspace: e.workspace_name ?? e.workspace ?? null,
+    result: e.result ?? 'OK', door: DOORS[e.channel] ?? e.channel, entry: e }
 });
+const entryOf = (r: RecordRow) => r.data.entry as Entry;
+
+/** The entry's own address: the side panel's request and Export entry. */
+const entryUrl = (api: string, e: Entry, fleet: boolean) => (e.trail === 'data'
+  ? `${api}/entry/data/${fleet ? `${e.org_id ?? 0}/` : ''}${e.seq}`
+  : `${api}/entry/platform/${fleet ? `${e.scope_id ?? 0}/` : ''}${e.seq}`);
+
+/** Downloads one entry as JSON: everything the panel shows, the request masked as stored. */
+async function exportEntry(api: string, e: Entry, fleet: boolean) {
+  const { entry } = await getJson<{ entry: unknown }>(entryUrl(api, e, fleet));
+  const blob = new Blob([`${JSON.stringify(entry, null, 2)}\n`], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `access-log-entry-${e.at.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+interface RequestView { method?: string; path?: string; headers?: Record<string, string>; body?: unknown; tools?: { name: string; arguments: unknown }[]; truncated?: boolean; note?: string; withheld?: string; request_id?: string }
+
+/** The side panel's body: the sentence, the request (masked headers, the JSON payload, copy), then Technical details. */
+function EntryPanel({ row, api, fleet }: { row: RecordRow; api: string; fleet: boolean }) {
+  const e = entryOf(row);
+  const [req, setReq] = useState<{ request: RequestView | null } | { error: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setReq(null);
+    if (!e.has_request) { setReq({ request: null }); return; }
+    getJson<{ entry: { request: RequestView | null } }>(entryUrl(api, e, fleet))
+      .then((d) => live && setReq({ request: d.entry.request }), (err: Error) => live && setReq({ error: err.message }));
+    return () => { live = false; };
+  }, [api, e, fleet]);
+  const r = req && 'request' in req ? req.request : null;
+  const payload = r ? JSON.stringify(r.tools?.length ? { tools: r.tools, body: r.body } : r.body ?? null, null, 2) : '';
+  const tech: [string, unknown][] = e.trail === 'platform'
+    ? [['Method', e.method], ['Path', e.path], ['Key prefix', e.key_prefix ? `${e.key_prefix}…` : null], ['Latency', e.latency_ms != null ? `${e.latency_ms} ms` : null],
+      ['Status code', e.status], ['Address', e.ip], ['Through', e.channel], ['Entry type', e.kind], ['Scopes', e.scopes.join(', ') || null], ['Actor', `${e.actor_kind}${e.actor_id ? ` ${e.actor_id}` : ''}`],
+      ['Key id', e.key_id], ['Workspace', e.workspace ? `${e.workspace} (${e.org_id})` : null], ['Entry', `platform trail, scope ${e.scope_id ?? '?'}, #${e.seq}`], ['Request id', r?.request_id ?? null]]
+    : [['Action', e.action], ['Target', e.target], ['Pack', e.pack], ['Area', e.area], ['Record key', e.record_key], ['Rows', e.rows], ['Through', e.channel],
+      ['Actor', `${e.actor_kind}${e.actor_id ? ` ${e.actor_id}` : ''}`], ['Key id', e.key_id], ['Workspace', e.workspace ? `${e.workspace} (${e.org_id})` : e.org_id ?? null],
+      ['Entry', `data trail, #${e.seq}`], ['Request id', r?.request_id ?? null]];
+  return (
+    <div className='flex flex-col gap-4' data-access-entry=''>
+      <p className='text-sm leading-relaxed'>{e.what}</p>
+      <section className='flex flex-col gap-2' aria-label='Request'>
+        <div className='flex items-center justify-between gap-2'>
+          <h3 className='text-sm font-medium'>Request</h3>
+          {r && !r.withheld && <CopyButton text={payload} label='Copy payload' />}
+        </div>
+        {!req && <p className='text-muted-foreground text-xs'>Loading…</p>}
+        {req && 'error' in req && <p className='text-destructive text-xs'>{req.error}</p>}
+        {req && 'request' in req && !r && <p className='text-muted-foreground text-xs'>No request was kept for this entry (made by the system, or before requests were kept).</p>}
+        {r?.withheld && <p className='text-muted-foreground text-xs'>{r.withheld}</p>}
+        {r && !r.withheld && (<>
+          {r.method && <p className='font-mono text-xs break-all'>{r.method} {r.path}</p>}
+          {r.headers && Object.keys(r.headers).length > 0 && (
+            <dl className='bg-muted/40 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 rounded-md p-2 font-mono text-xs'>
+              {Object.entries(r.headers).map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='break-all'>{v}</dd></div>)}
+            </dl>
+          )}
+          <pre className='bg-muted/40 max-h-80 overflow-auto rounded-md p-2 font-mono text-xs whitespace-pre-wrap break-all'>{payload}</pre>
+          {r.note && <p className='text-muted-foreground text-xs'>{r.note}</p>}
+          <p className='text-muted-foreground text-xs'>Secrets, sign-in codes, file contents and sealed or encrypted fields are masked (••••) before anything is kept.</p>
+        </>)}
+      </section>
+      <details className='rounded-md border p-2' data-technical-details=''>
+        <summary className='cursor-pointer text-sm font-medium'>Technical details</summary>
+        <dl className='mt-2'>
+          {tech.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <Field key={k} label={k}><span className='font-mono text-xs break-all'>{String(v)}</span></Field>)}
+        </dl>
+      </details>
+    </div>
+  );
+}
+
+/** Both trails, or the one that is on, as one list, newest first (mold_v0-270). */
+async function loadEntries(api: string) {
+  const parts = await Promise.all([
+    ...(dataTrailOn() ? [loadAll(`${api}/data`, (e: DataEntry) => rowOf({ ...e, trail: 'data' }))] : []),
+    ...(platformTrailOn() ? [loadAll(`${api}/platform`, (e: PlatformEntry) => rowOf({ ...e, trail: 'platform' }))] : [])
+  ]);
+  const all = parts.flatMap((p) => p.records).sort((x, y) => String(y.data.at).localeCompare(String(x.data.at)));
+  return { records: all.slice(0, LIST_MAX), more: parts.some((p) => p.more) || all.length > LIST_MAX };
+}
 
 function CsvLink({ href }: { href: string }) {
   return <Button variant='outline' size='sm' render={<a href={href} download />}>Download CSV</Button>;
 }
 
-/** Both trails as one list (mold_v0-270): each trail's newest LIST_MAX entries, tagged with their kind, newest first. */
-async function loadBoth(dataUrl: string, platformUrl: string) {
-  const tag = (kind: string, prefix: string) => (r: RecordRow): RecordRow => ({ ...r, key: `${prefix} ${r.key}`, data: { ...r.data, kind } });
-  const [d, p] = await Promise.all([loadAll(dataUrl, (e: DataEntry) => tag('Data access', 'Data')(dataRow(e))), loadAll(platformUrl, (e: PlatformEntry) => tag('Platform call', 'Call')(platformRow(e)))]);
-  const all = [...d.records, ...p.records].sort((x, y) => String(y.data.at).localeCompare(String(x.data.at)));
-  return { records: all.slice(0, LIST_MAX), more: d.more || p.more || all.length > LIST_MAX };
-}
-
-/** Both trails' fields on one area: Kind first, then what both have (Action, Actor), then each trail's own. */
-const bothArea = (fleet: boolean) => systemArea(fleet ? 'access_log_fleet' : 'access_log_both', 'Access log', [
-  f('kind', 'Kind', 'enum', { options: opts(['Platform call', 'Data access']) }),
-  ...(fleet ? [f('workspace', 'Workspace', 'enum')] : []),
-  f('action', 'Action', 'enum', { options: opts(['read', 'change', 'delete', 'tool call', 'MCP request', 'sign-in', 'check', 'list', 'reveal', 'export', 'create', 'update', 'move']) }),
-  f('actor', 'Actor', 'enum'),
-  f('request', 'Request', 'text'),
-  f('area', 'Area', 'enum'),
-  f('record_key', 'Record or file', 'text'),
-  f('status', 'Result', 'number'),
-  f('rows', 'Rows', 'number'),
-  f('latency_ms', 'Latency (ms)', 'number'),
-  f('channel', 'Through', 'enum', { options: CHANNELS }),
-  f('key', 'Key', 'text'),
-  f('key_id', 'Key number', 'text'),
-  f('target', 'Target', 'enum', { options: ['record', 'file', 'run_result'] }),
-  f('pack', 'Pack', 'enum'),
-  f('scopes', 'Scopes', 'text'),
-  f('actor_kind', 'Actor kind', 'enum', { options: ACTOR_KINDS }),
-  ...(fleet ? [f('ip', 'Address', 'text')] : []),
-], ['kind', ...(fleet ? ['workspace'] : []), 'action', 'actor', 'request', 'area', 'record_key', 'status']);
-const BOTH_HIDDEN = ['rows', 'latency_ms', 'channel', 'key', 'key_id', 'target', 'pack', 'scopes', 'actor_kind'];
-
-/** The trail(s) on the records table: the rows through the data adapter, the four cards above the search row. */
-function TrailTable({ area, base, url, load, csv, cards, hidden, noun, id }: {
-  area: RecordAreaSpec; base: 'app' | 'admin'; url: string; load: () => Promise<{ records: RecordRow[]; more: boolean }>; csv: string; cards: string; hidden: string[]; noun: string; id: string;
-}) {
-  const source = useMemo<RecordSource>(() => ({
-    key: url, load, primary: <CsvLink href={csv} />, noun, hidden, updated: false,
-    title: { label: 'When', type: 'date', value: (r) => String(r.data.at ?? r.updated_at) }, defaultSort: [{ key: '_record', dir: 'desc' }]
-  }), [url, load, csv, noun, hidden]);
-  return (
-    <RecordTableView key={url} area={area} base={base} url={url} id={id} open={false} source={source}
-      summary={<Sparklines url={cards} tag={`audit/${area.name}`} />}
-      empty={<p className='text-muted-foreground py-10 text-center text-sm'>Nothing here yet.</p>} />
-  );
-}
-
-const DATA_HIDDEN = ['target', 'pack', 'actor_kind', 'key_id'];
-const PLATFORM_HIDDEN = ['channel', 'scopes', 'actor_kind'];
-const PLATFORM_HIDDEN_FLEET = [...PLATFORM_HIDDEN, 'ip'];
-
-/** Which table a page draws: both trails as one (with Kind), or the one trail that is on. Props for TrailTable. */
-function useAccessTable(api: string, base: 'app' | 'admin', fleet: boolean, idPrefix: string): Parameters<typeof TrailTable>[0] {
+/** The access log on the records table: the rows through the data adapter, the four cards above the search row. */
+function TrailTable({ api, base, fleet, id }: { api: string; base: 'app' | 'admin'; fleet: boolean; id: string }) {
   const both = dataTrailOn() && platformTrailOn();
-  const area = useMemo(() => (both ? bothArea(fleet) : dataTrailOn() ? DATA_AREA : platformArea(fleet)), [both, fleet]);
-  const load = useMemo(() => (both ? () => loadBoth(`${api}/data`, `${api}/platform`)
-    : dataTrailOn() ? () => loadAll(`${api}/data`, dataRow) : () => loadAll(`${api}/platform`, platformRow)), [both, api]);
-  if (both) return { area, base, url: `${api}/all`, load, csv: `${api}/all.csv`, cards: `${api}/all/sparklines`, hidden: [...BOTH_HIDDEN, ...(fleet ? ['ip'] : [])], noun: 'entries', id: `${idPrefix}-access-log` };
-  return dataTrailOn()
-    ? { area, base, url: `${api}/data`, load, csv: `${api}/data.csv`, cards: `${api}/data/sparklines`, hidden: DATA_HIDDEN, noun: 'entries', id: `${idPrefix}-access-log-data` }
-    : { area, base, url: `${api}/platform`, load, csv: `${api}/platform.csv`, cards: `${api}/platform/sparklines`, hidden: fleet ? PLATFORM_HIDDEN_FLEET : PLATFORM_HIDDEN, noun: 'requests', id: `${idPrefix}-access-log-platform` };
+  const which = both ? 'all' : dataTrailOn() ? 'data' : 'platform';
+  const area = useMemo(() => accessArea(fleet), [fleet]);
+  const csv = `${api}/${which}.csv`, cards = `${api}/${which}/sparklines`;
+  const source = useMemo<RecordSource>(() => ({
+    key: `${api}/${which}`, load: () => loadEntries(api), primary: <CsvLink href={csv} />, noun: 'entries', hidden: HIDDEN, updated: false,
+    title: { label: 'When', type: 'date', value: (r) => String(r.data.at ?? r.updated_at) }, defaultSort: [{ key: '_record', dir: 'desc' }],
+    render: (r) => <span className='text-sm whitespace-nowrap tabular-nums'>{r.title}</span>,
+    detailTitle: (r) => String(r.data.what ?? ''),
+    detail: (r) => <EntryPanel row={r} api={api} fleet={fleet} />,
+    actions: (r) => [{ label: 'Export entry', icon: <Icons.download />, onSelect: () => void exportEntry(api, entryOf(r), fleet).catch(() => undefined) }]
+  }), [api, which, csv, fleet]);
+  return (
+    <RecordTableView key={source.key} area={area} base={base} url={source.key} id={id} open={false} source={source}
+      summary={<Sparklines url={cards} tag={`audit/${area.name}`} />}
+      empty={<EmptyState empty={{ title: 'No activity yet.', text: 'Sign-ins, page visits, tool calls and record changes show here as they happen.', cta: null }} id={`${id}-empty`} />} />
+  );
 }
 
 /** Billing's Access log tab (mold_v0-209): this workspace's trails, for its owners. No page title of its own (the tab
@@ -165,20 +197,18 @@ function useAccessTable(api: string, base: 'app' | 'admin', fleet: boolean, idPr
  *  addresses: /api/audit/data/sparklines, /api/audit/platform/sparklines, /api/audit/all/sparklines. */
 export function WorkspaceAccessLog() {
   const { role, loaded } = useAccountRole();
-  const table = useAccessTable('/api/audit', 'app', false, 'app');
   if (!loaded) return null;
   if (role !== 'owner') return <p className='text-muted-foreground text-sm'>Only the workspace&apos;s owners read its access log.</p>;
-  return <TrailTable {...table} />;
+  return <TrailTable api='/api/audit' base='app' fleet={false} id='app-access-log' />;
 }
 
 /** /admin/access-log: both trails across every workspace, one table (mold_v0-270). A list page (mold_v0-231): no title
  *  or description above it; the cards, the search row, the table. The trails' addresses: /api/admin/audit/platform/sparklines,
  *  /api/admin/audit/data/sparklines, /api/admin/audit/all/sparklines. */
 export function OperatorAccessLogPage() {
-  const table = useAccessTable('/api/admin/audit', 'admin', true, 'admin');
   return (
     <PageContainer>
-      <TrailTable {...table} />
+      <TrailTable api='/api/admin/audit' base='admin' fleet id='admin-access-log' />
     </PageContainer>
   );
 }

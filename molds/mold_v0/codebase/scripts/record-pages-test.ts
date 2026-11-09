@@ -211,12 +211,13 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, above the search row (the table's summary)");
   assert.match(code, /primary: <CsvLink href=\{csv\} \/>/, "Download CSV: the server's file of every entry");
   assert.match(code, /title: \{ label: 'When', type: 'date'/, "the entry's time: sorted and filtered by date range");
-  for (const [name, type] of [["actor", "enum"], ["action", "enum"], ["area", "enum"], ["channel", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);
+  // mold_v0-286: filters on who, what, workspace (staff), the result and the date range (When).
+  for (const [name, type] of [["who", "enum"], ["what", "text"], ["workspace", "enum"], ["result", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);
   assert.match(code, /\/api\/audit\/data\/sparklines/); assert.match(code, /\/api\/admin\/audit\/platform\/sparklines/);
   const rp = src("features/records/record-pages.tsx");
   assert.match(rp, /source \? source\.load\(\) : loadAll\(url, rows\)/, "the table reads a data adapter's rows in place of a records route");
   assert.match(rp, /export interface RecordSource/);
-  ok("the Access log is the records table over a read-only system area: search, four cards, filters on who, action, area, door and date, column picker, Download CSV, a row drawer");
+  ok("the Access log is the records table over a read-only system area: search, four cards, filters on who, what, workspace, result and date, column picker, Download CSV, a row drawer");
 }
 
 // 7. The Access log as Billing's tab (mold_v0-209).
@@ -233,17 +234,26 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const body = log.slice(log.indexOf("export function WorkspaceAccessLog("), log.indexOf("export function OperatorAccessLogPage("));
   assert.ok(body.length > 0 && !/PageContainer|pageTitle/.test(body), "no title above the tab strip: the tab has no page title of its own");
   assert.match(body, /<TrailTable /);
-  // Action and Actor (mold_v0-209): both trails' tables have the two columns where the platform trail had Kind.
-  assert.equal((log.match(/f\('action', 'Action', 'enum'/g) ?? []).length, 3, "an Action column on each trail and on both together, filtered by its values");
-  assert.equal((log.match(/f\('actor', 'Actor', 'enum'\)/g) ?? []).length, 3, "an Actor column on each trail and on both together, filtered by its values");
-  assert.doesNotMatch(log, /'Who'/, "no Who column left");
-  // mold_v0-270: one table, no tabs; with both trails on, a Kind column (which trail) filtered in the Filter menu.
-  assert.equal((log.match(/f\('kind', 'Kind', 'enum', \{ options: opts\(\['Platform call', 'Data access'\]\) \}\)/g) ?? []).length, 1, "Kind: Platform call or Data access, only on the merged table");
+  // mold_v0-286: a plain activity feed. Columns When, Who, What, Workspace (staff only), Result: the server's words.
+  assert.match(log, /list_columns: \['who', 'what', \.\.\.\(fleet \? \['workspace'\] : \[\]\), 'result'\]/, "When (the first column), Who, What, Workspace (staff), Result");
+  assert.match(log, /who: e\.who\?\.label \?\? e\.actor, email: e\.who\?\.email \?\? null, what: e\.what/, "Who and What are the server's words");
+  // No Kind column, no Action or Actor of the old table, no internal id, sequence or slug in a row's key or cells.
+  assert.doesNotMatch(log, /f\('kind'|'Kind'|f\('action'|f\('actor'|f\('key_id'|f\('actor_kind'|f\('scopes'|f\('ip'/, "no Kind, Action, Actor, key id, actor kind, scopes or address column");
+  assert.doesNotMatch(log, /key: `#\$\{e\.seq\}|`Data \$\{|'Data', 'Call'|prefix\} \$\{r\.key\}/, "no '#48 · slug' row keys, no 'Data'/'Call' prefixes");
+  assert.match(log, /render: \(r\) => <span[^>]*>\{r\.title\}<\/span>/, "the first column shows the time alone, never the row's (hidden) key");
+  // The row opens the shared side panel: the sentence, the request (masked), a collapsed Technical details.
+  assert.match(log, /detail: \(r\) => <EntryPanel /);
+  assert.match(log, /<details[^>]*data-technical-details/, "Technical details: collapsed");
+  for (const t of ["'Method'", "'Path'", "'Key prefix'", "'Latency'", "'Address'", "'Through'", "'Request id'"]) assert.ok(log.includes(t), `Technical details: ${t}`);
+  assert.match(log, /<CopyButton text=\{payload\} label='Copy payload' \/>/, "the payload's copy button");
+  assert.match(log, /actions: \(r\) => \[\{ label: 'Export entry'/, "each row's ⋯ menu (and so the panel's): Export entry");
+  assert.match(log, /<EmptyState empty=/, "the shared empty state");
   assert.doesNotMatch(log, /function Tabs\(|variant=\{tab ===/, "no Requests / Data access switch");
-  assert.match(log, /\['kind', \.\.\.\(fleet \? \['workspace'\] : \[\]\), 'action', 'actor'/, "Kind first, then Action and Actor");
-  assert.match(log, /csv: `\$\{api\}\/all\.csv`/, "Download CSV covers both trails");
-  assert.match(log, /\['action', 'actor', 'area'/); assert.match(log, /'action', 'actor', 'request'/);
-  assert.match(log, /action: e\.action, actor: e\.actor/, "the row's Action and Actor are the server's words (the drawer shows both)");
+  assert.match(log, /const which = both \? 'all'/, "Download CSV covers both trails");
+  const rpSrc = src("features/records/record-pages.tsx");
+  assert.match(rpSrc, /render: source\?\.render \?\?/, "a source draws its own first cell");
+  assert.match(rpSrc, /detail=\{\(r\) => source\?\.detail \? source\.detail\(r\)/, "and its own panel body");
+  assert.match(rpSrc, /actions=\{source\?\.actions\}/, "and its rows' ⋯ menu");
   const { existsSync: exists } = await import("node:fs");
   assert.ok(!exists(path.join(WEB, "app", "app", "access-log")), "no /app/access-log page");
   assert.ok(exists(path.join(WEB, "app", "admin", "access-log", "page.tsx")), "the staff /admin/access-log stays");

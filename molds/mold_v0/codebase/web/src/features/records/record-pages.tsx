@@ -130,6 +130,15 @@ export interface RecordSource {
   updated?: false;
   defaultSort?: SortRule[];
   noun?: string;
+  /**
+   * mold_v0-286 (the Access log): the first column's cell drawn by the source (no key under it: a system area's rows
+   * have hidden keys), each row's ⋯ menu (also in the panel's), the panel's body in place of the area's fields, and
+   * the panel's title.
+   */
+  render?: (r: RecordRow) => ReactNode;
+  actions?: (r: RecordRow) => RowAction[];
+  detail?: (r: RecordRow) => ReactNode;
+  detailTitle?: (r: RecordRow) => ReactNode;
 }
 
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
@@ -137,12 +146,12 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
   const record: RecordCol<RecordRow> = {
     key: '_record', label: source?.title?.label ?? 'Record', title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
     value: source?.title?.value ?? ((r) => r.title || r.key),
-    render: (r) => (
+    render: source?.render ?? ((r) => (
       <span className='flex min-w-0 flex-col gap-1'>
         <span className='leading-snug font-medium'>{r.title || r.key}</span>
         {r.title && r.title !== r.key && <span className='text-muted-foreground font-mono text-xs leading-none break-all'>{r.key}</span>}
       </span>
-    )
+    ))
   };
   const hidden = new Set([...(source?.hidden ?? []), ...extra.filter((n) => !area.list_columns.includes(n))]);
   const fields = [...area.list_columns, ...hidden].map((name): RecordCol<RecordRow> => {
@@ -351,7 +360,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           keys={narrowed ? view.map((r) => r.key) : null} />
       ))}
       empty={empty}
-      detailTitle={(r) => r.title || r.key}
+      detailTitle={(r) => (source?.detailTitle ? source.detailTitle(r) : r.title || r.key)}
+      actions={source?.actions}
       // mold_v0-278: the panel's ⋯ menu: the row's own actions (a staff row's Edit), its page's Add <related record>
       // actions (flag record_pages), then Open in its own page.
       panelActions={(r) => rowActions?.(r) ?? []}
@@ -359,7 +369,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       pageHref={detailHref}
       // A record whose area declares its page's layout (flag record_pages): the laid-out record itself in the panel.
       properties={(r) => !laidOut(r)}
-      detail={(r) => laidOut(r) ? <RecordDetailBody area={area} recordKey={r.key} base={base} inPanel /> : (<>
+      detail={(r) => source?.detail ? source.detail(r) : laidOut(r) ? <RecordDetailBody area={area} recordKey={r.key} base={base} inPanel /> : (<>
         <dl>
           {detailNote?.(r)}
           {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}
