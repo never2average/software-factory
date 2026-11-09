@@ -139,6 +139,8 @@ export interface RecordSource {
   actions?: (r: RecordRow) => RowAction[];
   detail?: (r: RecordRow) => ReactNode;
   detailTitle?: (r: RecordRow) => ReactNode;
+  /** false: the panel draws only `detail` (one card), not the area's facts above it (the Access log, 2026-11-09). */
+  properties?: false;
 }
 
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
@@ -368,7 +370,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       panelMenu={base === 'app' && !source ? (r, items) => (recordArea(r) === area.name ? <RowCreateMenu area={area} recordKey={r.key} items={items} name={r.title || r.key} /> : undefined) : undefined}
       pageHref={detailHref}
       // A record whose area declares its page's layout (flag record_pages): the laid-out record itself in the panel.
-      properties={(r) => !laidOut(r)}
+      properties={(r) => source?.properties !== false && !laidOut(r)}
       detail={(r) => source?.detail ? source.detail(r) : laidOut(r) ? <RecordDetailBody area={area} recordKey={r.key} base={base} inPanel /> : (<>
         <dl>
           {detailNote?.(r)}
