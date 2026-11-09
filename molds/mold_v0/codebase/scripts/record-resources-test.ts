@@ -372,6 +372,21 @@ try {
     assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'op-1'")).length, 1, "never duplicated");
     assert.equal((await db.query("SELECT 1 FROM record_resources WHERE record_key = 'op-1'")).length, 1, "one database for it");
     assert.equal((await logs()).length, 2, "and logs nothing more");
+    // --replace (2026-11-09): a stored row holding a field the area no longer has (a schema change) refuses a merge; with
+    // --replace the file's row is the whole record, as a staff Edit + Save sends it, and the old field is dropped.
+    await db.query(`UPDATE platform_records SET data = data || '{"gone": "old"}'::jsonb WHERE area = 'fx_molds' AND key = 'imp-1'`);
+    const rfile = path.join(TMP, "replace.json");
+    writeFileSync(rfile, JSON.stringify({ records: [{ key: "imp-1", title: "One", data: { summary: "1, replaced" } }] }));
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", rfile, "--by", "ops-person", "--json"]);
+    assert.equal((r.json as { counts: { invalid: number } }).counts.invalid, 1, "a merge over a field the area no longer has is refused");
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", rfile, "--by", "ops-person", "--replace", "--dry-run", "--json"]);
+    assert.deepEqual((r.json as { counts: unknown }).counts, { new: 0, updated: 1, unchanged: 0, invalid: 0 }, "--replace --dry-run: counted, nothing written");
+    const storedData = async () => (await db.query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE area = 'fx_molds' AND key = 'imp-1'"))[0]!.data;
+    assert.equal((await storedData()).gone, "old", "the dry run wrote nothing");
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", rfile, "--by", "ops-person", "--replace", "--json"]);
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(await storedData(), { summary: "1, replaced" }, "--replace: the row is the whole record, the old field dropped");
+    assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'imp-1'")).length, 1, "still one record");
     // Refusals.
     assert.equal((await importRecordsCommand(["--area", "fx_molds"])).code, 2, "no --file");
     assert.equal((await importRecordsCommand(["--area", "fx_molds", "--file", file, "--force"])).code, 2, "an unknown argument");

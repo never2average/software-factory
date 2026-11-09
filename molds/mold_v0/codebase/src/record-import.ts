@@ -118,7 +118,7 @@ const countOf = <A extends string>(actions: readonly A[], rows: { action: A }[])
 };
 
 /** The staff import into a shared area: checked always, written unless `dryRun`. */
-export async function importRecords(area: RecordArea, raw: unknown, opts: { dryRun: boolean }): Promise<ImportReport> {
+export async function importRecords(area: RecordArea, raw: unknown, opts: { dryRun: boolean; replace?: boolean }): Promise<ImportReport> {
   if (area.scope !== "platform") throw new PackError(`area ${area.name} holds each workspace's own records`, 404);
   const read = readRows(area, raw);
   const stored = await platformStored(area, [...new Set(read.map((r) => r.key).filter((k) => RECORD_KEY.test(k)))]);
@@ -129,7 +129,9 @@ export async function importRecords(area: RecordArea, raw: unknown, opts: { dryR
     if (errors.length) { report("invalid"); continue; }
     const before = stored.get(key);
     // Merged over what is stored: a field the file leaves out keeps its value; no title column keeps the title.
-    const merged = { ...(before?.data ?? {}), ...given };
+    // `replace` (the operator's --replace, 2026-11-09): the file's row is the whole record, as a staff Edit + Save
+    // sends it, so a field the area no longer has (a schema change) or the file leaves out is dropped.
+    const merged = opts.replace ? { ...given } : { ...(before?.data ?? {}), ...given };
     const t = titleOf(title, before?.title);
     try { await checkRecord(area, merged, null, SYSTEM_ACTOR, `row ${n}`); }
     catch (e) { if (!(e instanceof PackError)) throw e; errors.push(...e.message.split("; ")); report("invalid"); continue; }
@@ -149,10 +151,10 @@ export async function importRecords(area: RecordArea, raw: unknown, opts: { dryR
  * naming who imported, and the platform trail's staff entries when it is on. An area whose generated create or update
  * tool a pack withholds takes no import (404, as its route answers).
  */
-export async function staffImport(area: RecordArea, raw: unknown, opts: { dryRun: boolean; actor: string; role: string; ip: string; channel: "admin_console" | "system" }): Promise<ImportReport> {
+export async function staffImport(area: RecordArea, raw: unknown, opts: { dryRun: boolean; replace?: boolean; actor: string; role: string; ip: string; channel: "admin_console" | "system" }): Promise<ImportReport> {
   const { areaOpWithheld } = await import("./mcp-withheld.js");
   if (areaOpWithheld(area.name, "admin_create") || areaOpWithheld(area.name, "admin_update")) throw new PackError("Not found", 404);
-  const report = await importRecords(area, raw, { dryRun: opts.dryRun });
+  const report = await importRecords(area, raw, { dryRun: opts.dryRun, replace: opts.replace });
   if (report.dry_run) return report;
   const written = report.rows.filter((x) => x.action === "create" || x.action === "update" || x.action === "override");
   if (!written.length) return report;
