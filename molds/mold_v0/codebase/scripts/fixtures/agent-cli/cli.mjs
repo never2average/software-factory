@@ -130,6 +130,7 @@ async function turn(m) {
       say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `b${turns}`, name: "Bash", input: { command: run[1] } }] } });
       await new Promise((r) => setTimeout(r, 300));
       const r = spawnSync("/bin/sh", ["-c", run[1]], { cwd: process.cwd(), encoding: "utf8", timeout: 20_000 });
+      say({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: `b${turns}`, content: String(r.stdout ?? ""), is_error: r.status !== 0 }] } });
       mcpSaid.push(`Ran: ${r.status ?? "signal"} ${String(r.stdout ?? "").trim().split("\n").join(" | ").slice(0, 2000)}`);
     }
     const se = /^search (.+)$/.exec(w);

@@ -1,16 +1,20 @@
 'use client';
 // The workspace agent (mold_v0-243; src/agent-routes.ts at /api/agent, staff /api/admin/onboarding/agent): its sessions
 // as the standard list, full page (four cards, the search row with Start a session, the table), and a session opened as
-// the list's full card in the same place: what the agent said and did, the composer to guide it mid-run (or wake it),
-// what it asks for (Approve or Decline, and Raise budget), Pause, Resume and Stop, and how it runs (what it reaches of
-// the workspace: its tools, which ask first, the context it was given; mold_v0-250). The top bar's agent icon opens this
-// page, and a session is ?session=<id> on it. One exception to the console's full-card rule, the operator's (mold_v0-249):
-// Start a session opens as a modal dialog (the first message, the model, the budget, Start), then the new session's
-// full card. Nothing else here is a dialog or a side sheet. mold_v0-261: the dialog offers the agent profiles this person
+// the whole content area (mold_v0-287, the operator's exception to the row-click side panel: no list beside it, Back to
+// sessions, ?session=<id> kept): the trace of everything it does, streamed live and full screen, with the conversation as
+// entries of the same stream and a composer pinned over its bottom edge to steer it (session-trace.tsx; the layout the
+// reference product's agent screens use). What it asks for (Approve or Decline, and Raise budget), Pause,
+// Resume and Stop, its budget (Add $5, Add $10, Set budget…, Spending by wake) and How this session runs (what it reaches of
+// the workspace: its tools, which ask first, the context it was given; mold_v0-250, behind a menu item since mold_v0-287)
+// are the session's ⋯ menu and the row's. The top bar's agent icon opens this page, and a session is ?session=<id> on it.
+// One exception to the console's full-card rule, the operator's (mold_v0-249): Start a session opens as a modal dialog
+// (the first message, the model, the budget, Start), then the new session. mold_v0-261: the dialog offers the agent profiles this person
 // may start (src/agent-profiles.ts; staff set them up in Admin › Agent profiles), each with its model and budget; a list's
 // start_agent action opens it with its profile and first message (?start=<profile>&message=...), and a session's card says
 // which profile and version it runs with, and the record it was started from.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { tokens, TraceStream, useTrace } from './session-trace';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { featureOn } from '@/config/features';
@@ -27,7 +31,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Icons } from '@/components/icons';
 import { adminApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -45,6 +48,8 @@ interface Session {
   budget_usd: number; spent_usd: number; remaining_usd: number; ceiling_usd: number; reserve_usd: number; wakes: number; crashes: number; web_calls: number;
   pause_requested: boolean; stop_requested: boolean; pending_request: Request | null; created_at: string; last_activity_at: string; ended_at: string | null;
   archived_at: string | null; pruned: boolean; can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
+  /** mold_v0-287: whether this person may change its budget (and why not), and the least it may be set to. */
+  budget_change: { allowed: boolean; why: string | null; floor_usd: number };
   /** mold_v0-261: the agent profile and the version it froze, and the record it was started from. */
   profile?: { id: string; name: string; version: number } | null;
   record?: { area: string; key: string } | null;
@@ -52,7 +57,7 @@ interface Session {
 interface Detail extends Session {
   messages: { id: number; role: 'person' | 'agent' | 'system'; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }[];
   requests: Request[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
-  wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
+  wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null; input_tokens: number; output_tokens: number }[];
   hooks: { event: string; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
     files?: string[]; hidden_tools?: string[]; credentials?: string[]; executables?: string[]; governance?: string | null;
@@ -130,9 +135,20 @@ function AgentList({ area }: { area: Area }) {
     setOpenState(k);
     const u = new URL(window.location.href);
     if (k) u.searchParams.set('session', k); else u.searchParams.delete('session');
-    window.history.replaceState(null, '', u.toString());
+    window.history.pushState(null, '', u.toString());
   };
+  useEffect(() => {
+    const h = () => setOpenState(new URLSearchParams(window.location.search).get('session'));
+    window.addEventListener('popstate', h);
+    return () => window.removeEventListener('popstate', h);
+  }, []);
+  const budget = useBudgetDialogs(call, load);
   if (error) return <PageContainer><ErrorState error={error} /></PageContainer>;
+  // mold_v0-287: an open session is the whole content area: no list beside it (the operator's exception to the side panel).
+  if (open) return (<PageContainer>
+    <SessionFull key={open} area={area} id={open} call={call} onChange={load} onBack={() => setOpen(null)} budget={budget} />
+    {budget.dialogs}
+  </PageContainer>);
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
     { key: 'title', label: 'Session', title: true, keep: true, type: 'text', className: 'min-w-56', value: (s) => s.title,
@@ -164,10 +180,10 @@ function AgentList({ area }: { area: Area }) {
         searchPlaceholder='Search sessions'
         toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='Start a session' icon={<Icons.add />} onClick={() => setStarting(true)} /></div> : undefined}
         empty={<p className='text-muted-foreground text-sm'>{area === 'app' ? (data?.can_start ? 'No sessions yet: Start a session gives the agent its first message.' : 'No sessions yet. A member of this workspace can start one.') : 'No workspace has started a session yet.'}</p>}
-        detailTitle={(s) => s.title}
-        panelMenu={(s, items) => <Controls area={area} s={s} call={call} onChange={load} extra={items} />}
-        detail={(s) => <SessionCard key={s.id} area={area} id={s.id} call={call} onChange={load} />}
+        detail={() => null}
+        actions={(s) => budget.items(s)}
       />
+      {budget.dialogs}
       {area === 'app' && data && <StartDialog open={starting} offer={data.offer} profiles={data.profiles ?? []} preset={preset} call={call} onOpenChange={(o) => {
         setStarting(o);
         if (!o && (params.get('start') || params.get('message'))) { const u = new URL(window.location.href); u.searchParams.delete('start'); u.searchParams.delete('message'); window.history.replaceState(null, '', u.toString()); }
@@ -243,9 +259,8 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
   );
 }
 
-/** Pause, Resume, Stop: on the card's top line. Stop asks once more in place (no dialog). */
-/** mold_v0-278: the session panel's ⋯ menu: Pause, Resume, Stop (asked first), then the panel's own items. */
-function Controls({ area, s, call, onChange, extra = [] }: { area: Area; s: Session; call: Call; onChange: () => unknown; extra?: RowAction[] }) {
+/** The session's ⋯ menu (mold_v0-278): Pause, Resume, Stop (asked first), then its budget actions and How this session runs. */
+function Controls({ area, s, call, onChange, budget, extra = [] }: { area: Area; s: Session; call: Call; onChange: () => unknown; budget: BudgetDialogs; extra?: RowAction[] }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const act = (what: 'pause' | 'resume' | 'stop') => async () => {
@@ -258,8 +273,9 @@ function Controls({ area, s, call, onChange, extra = [] }: { area: Area; s: Sess
     ...(area === 'app' && s.can.resume ? [{ label: 'Resume', icon: <Icons.play />, disabled: busy, onSelect: () => void act('resume')() }] : []),
     ...(s.can.stop ? [{ label: 'Stop', icon: <Icons.stop />, destructive: true, disabled: busy, onSelect: () => setConfirm(true) }] : []),
   ];
+  const budgetItems = budget.items(s).map((a, i) => (i === 0 && items.length ? { ...a, separator: true } : a));
   return (<>
-    <PanelMenu name={s.title} items={[...items, ...extra.map((a, i) => (i === 0 && items.length ? { ...a, separator: true } : a))]} />
+    <PanelMenu name={s.title} items={[...items, ...budgetItems, ...extra.map((a, i) => (i === 0 ? { ...a, separator: true } : a))]} />
     <AlertDialog open={confirm} onOpenChange={setConfirm}>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -275,51 +291,169 @@ function Controls({ area, s, call, onChange, extra = [] }: { area: Area; s: Sess
   </>);
 }
 
-/** One session, full card: its state and spend, what it asks for, the transcript, the composer, its details. */
-function SessionCard({ area, id, call, onChange }: { area: Area; id: string; call: Call; onChange: () => unknown }) {
+/** The budget actions shared by the session's ⋯ menu and the row's (mold_v0-287). */
+interface BudgetDialogs { items: (s: Session) => RowAction[]; dialogs: ReactNode }
+
+function useBudgetDialogs(call: Call, onChange: () => unknown): BudgetDialogs {
+  const [dialog, setDialog] = useState<{ kind: 'set' | 'spending'; s: Session } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const changed = async () => { await onChange(); window.dispatchEvent(new Event('agent-session-changed')); };
+  const add = async (s: Session, n: number) => {
+    setBusy(true);
+    try { await call('POST', `/${s.id}/budget`, { by_usd: n, reason: `Added $${n} from the session's menu` }); toast.success(`Added $${n}`); await changed(); }
+    catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const hint = (s: Session, n: number) => !s.budget_change.allowed ? (s.budget_change.why?.startsWith('Needs') ? 'Owner or billing only' : 'Session ended') : s.budget_usd + n > s.ceiling_usd + 1e-9 ? `Limit is ${usd(s.ceiling_usd)}` : undefined;
+  const items = (s: Session): RowAction[] => [
+    { label: 'Add $5', icon: <Icons.coin />, disabled: busy || !!hint(s, 5), hint: hint(s, 5), onSelect: () => void add(s, 5) },
+    { label: 'Add $10', icon: <Icons.coin />, disabled: busy || !!hint(s, 10), hint: hint(s, 10), onSelect: () => void add(s, 10) },
+    { label: 'Set budget…', icon: <Icons.coin />, disabled: !s.budget_change.allowed, hint: !s.budget_change.allowed ? (s.budget_change.why?.startsWith('Needs') ? 'Owner or billing only' : 'Session ended') : undefined, onSelect: () => setDialog({ kind: 'set', s }) },
+    { label: 'Spending by wake', icon: <Icons.history />, onSelect: () => setDialog({ kind: 'spending', s }) },
+  ];
+  const close = (o: boolean) => { if (!o) setDialog(null); };
+  const dialogs = dialog && (dialog.kind === 'set'
+    ? <SetBudgetDialog key={dialog.s.id} s={dialog.s} call={call} onChanged={changed} onOpenChange={close} />
+    : <SpendingDialog key={dialog.s.id} id={dialog.s.id} title={dialog.s.title} call={call} onOpenChange={close} />);
+  return { items, dialogs };
+}
+
+/** Set budget…: an amount and a reason; never above the session's ceiling, never below what it has spent. */
+function SetBudgetDialog({ s, call, onChanged, onOpenChange }: { s: Session; call: Call; onChanged: () => unknown; onOpenChange: (o: boolean) => void }) {
+  const [amount, setAmount] = useState(String(s.budget_usd));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const to = Number(amount);
+  const floor = s.budget_change.floor_usd;
+  const problem = !amount.trim() || !Number.isFinite(to) ? 'Enter an amount in dollars'
+    : to < floor ? `Not below what it has spent (${usd(floor)})`
+      : to > Math.max(s.budget_usd, s.ceiling_usd) + 1e-9 ? `At most ${usd(s.ceiling_usd)} for this session`
+        : Math.abs(to - s.budget_usd) < 0.005 ? 'That is its budget now'
+          : !reason.trim() ? 'Say why (it is kept with the change)' : null;
+  const submit = async () => {
+    if (problem) return;
+    setBusy(true);
+    try { await call('POST', `/${s.id}/budget`, { to_usd: to, reason }); toast.success(to > s.budget_usd ? 'Budget raised' : 'Budget lowered'); await onChanged(); onOpenChange(false); }
+    catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+      <DialogContent className='sm:max-w-md' data-agent-set-budget=''>
+        <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+          <DialogHeader>
+            <DialogTitle>Set budget</DialogTitle>
+            <DialogDescription>{usd(s.spent_usd)} spent of {usd(s.budget_usd)}. Between {usd(floor)} and {usd(s.ceiling_usd)}.</DialogDescription>
+          </DialogHeader>
+          <FormRow label='Budget (USD)' htmlFor='agent-set-budget-amount'>
+            <Input id='agent-set-budget-amount' type='number' min={floor} max={s.ceiling_usd} step='0.5' value={amount} autoFocus onChange={(e) => setAmount(e.target.value)} className='w-40' />
+          </FormRow>
+          <FormRow label='Why (kept with the change)' htmlFor='agent-set-budget-reason'>
+            <Input id='agent-set-budget-reason' value={reason} onChange={(e) => setReason(e.target.value)} />
+          </FormRow>
+          {problem && amount.trim() && <p className='text-muted-foreground text-sm' role='status'>{problem}</p>}
+          <DialogFooter>
+            <Button type='button' variant='outline' disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type='submit' disabled={busy || !!problem}>Save</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Spending by wake: what each wake cost and how many tokens it used. */
+function SpendingDialog({ id, title, call, onOpenChange }: { id: string; title: string; call: Call; onOpenChange: (o: boolean) => void }) {
+  const [d, setD] = useState<Detail | null>(null);
+  useEffect(() => { void call<{ session: Detail }>('GET', `/${id}`).then((r) => setD(r.session), fail); }, [call, id]);
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className='sm:max-w-lg' data-agent-spending=''>
+        <DialogHeader>
+          <DialogTitle>Spending by wake</DialogTitle>
+          <DialogDescription>{title}</DialogDescription>
+        </DialogHeader>
+        {!d ? <p className='text-muted-foreground text-sm'>Reading…</p> : d.wakes_list.length === 0 ? <p className='text-muted-foreground text-sm'>No wake has run yet.</p> : (
+          <div className='max-h-[60vh] overflow-y-auto'>
+            <table className='w-full text-sm tabular-nums'>
+              <thead><tr className='text-muted-foreground border-b text-left text-xs'><th className='py-1 font-medium'>Wake</th><th className='py-1 font-medium'>Status</th><th className='py-1 text-right font-medium'>Tokens in</th><th className='py-1 text-right font-medium'>Tokens out</th><th className='py-1 text-right font-medium'>Cost</th></tr></thead>
+              <tbody>{d.wakes_list.map((w, i) => (
+                <tr key={w.run_id} className='border-b last:border-b-0' data-wake-spend={w.run_id}>
+                  <td className='py-1.5'>Wake {i + 1}</td>
+                  <td className='py-1.5'>{w.status}{w.end_reason ? <span className='text-muted-foreground'> ({w.end_reason})</span> : null}</td>
+                  <td className='py-1.5 text-right'>{tokens(w.input_tokens)}</td>
+                  <td className='py-1.5 text-right'>{tokens(w.output_tokens)}</td>
+                  <td className='py-1.5 text-right'>{usd(w.cost_usd)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        <DialogFooter><Button variant='outline' onClick={() => onOpenChange(false)}>Close</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * One session, as the whole content area (mold_v0-287): Back to sessions, its state and spend, then the trace, the session's
+ * primary view (session-trace.tsx: streamed, the conversation in it), and the composer pinned over its bottom edge.
+ */
+function SessionFull({ area, id, call, onChange, onBack, budget }: { area: Area; id: string; call: Call; onChange: () => unknown; onBack: () => void; budget: BudgetDialogs }) {
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const [howOpen, setHowOpen] = useState(false);
   const load = useCallback(() => call<{ session: Detail }>('GET', `/${id}`).then((r) => { setD(r.session); setError(null); }, (e: Error) => setError(e)), [call, id]);
   useEffect(() => { void load(); const h = () => void load(); window.addEventListener('agent-session-changed', h); return () => window.removeEventListener('agent-session-changed', h); }, [load]);
+  // The stream tells it when the phase or spend moved (the trace itself comes down the stream); this catches anything else.
+  useEffect(() => { const t = setInterval(() => void load(), 15000); return () => clearInterval(t); }, [load]);
+  const streamUrl = area === 'admin' ? `/api/admin/onboarding/agent/${id}/trace/stream` : `/api/agent/${id}/trace/stream`;
+  const trace = useTrace(call, streamUrl, id, () => void load());
   const live = !!d && LIVE.includes(d.phase);
-  useEffect(() => { const t = setInterval(() => void load(), live ? 1500 : 8000); return () => clearInterval(t); }, [load, live]);
+  const [dockH, setDockH] = useState(0);
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = dockRef.current;
+    if (!el) { setDockH(0); return; }
+    setDockH(el.offsetHeight);
+    const ro = new ResizeObserver(() => setDockH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [d?.id]);
   const changed = async () => { await load(); await onChange(); };
-  if (error) return <ErrorState error={error} />;
-  if (!d) return <LoadingCards count={2} />;
+  const back = <Button variant='outline' size='sm' onClick={onBack}><Icons.chevronLeft />Back to sessions</Button>;
+  if (error) return <div className='flex flex-col gap-3'><div>{back}</div><ErrorState error={error} /></div>;
+  if (!d) return <div className='flex flex-col gap-3'><div>{back}</div><LoadingCards count={2} /></div>;
+  // The last model call failed and nothing has answered since: say so where the person is looking.
+  const lastModel = [...trace.steps].reverse().find((s) => s.kind === 'model' && s.http_status !== undefined);
+  const failing = live && lastModel?.status === 'error' ? (lastModel.error ?? 'The last model call failed.') : null;
   return (
-    <div className='flex flex-col gap-4' data-agent-session={d.id} data-phase={d.phase}>
-      <StateLine d={d} area={area} />
-      {d.pending_request && <RequestCard d={d} r={d.pending_request} call={call} onDone={changed} />}
-      <Transcript d={d} />
-      {area === 'app' && <Composer d={d} call={call} onSent={changed} />}
-      {!d.pending_request && d.can.raise && <RaiseBudget d={d} call={call} onDone={changed} compact />}
-      <Details d={d} />
+    <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
+      <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+        {back}
+        <h1 className='order-last min-w-0 basis-full truncate text-base font-medium sm:order-none sm:basis-0 sm:flex-1' title={d.title}>{d.title}</h1>
+        <PhaseBadge s={d} />
+        <span className='text-muted-foreground text-sm tabular-nums'>{usd(d.spent_usd)} of {usd(d.budget_usd)}</span>
+        <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
+          extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
+      </div>
+      {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['paused', 'withdrawn', 'budget'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
+      {d.pending_request && <div className='max-h-[45%] shrink-0 overflow-y-auto'><RequestCard d={d} r={d.pending_request} call={call} onDone={changed} /></div>}
+      <TraceStream sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
+        dock={area === 'app' ? <div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 border-t px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
+          <div className='mx-auto w-full max-w-4xl'><Composer d={d} call={call} onSent={changed} waitingOn={trace.waitingOn} failing={failing} /></div>
+        </div> : null} />
+      <Dialog open={howOpen} onOpenChange={setHowOpen}>
+        <DialogContent className='max-h-[85dvh] overflow-y-auto sm:max-w-2xl' data-agent-how=''>
+          <DialogHeader>
+            <DialogTitle>How this session runs</DialogTitle>
+            <DialogDescription className='sr-only'>What it reaches, its limits, its wakes and its decisions.</DialogDescription>
+          </DialogHeader>
+          <Details d={d} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function StateLine({ d, area }: { d: Detail; area: Area }) {
-  const pct = d.budget_usd > 0 ? Math.min(100, Math.round((d.spent_usd / d.budget_usd) * 100)) : 0;
-  return (
-    <div className='flex flex-col gap-2'>
-      <div className='flex flex-wrap items-center gap-x-4 gap-y-2 text-sm'>
-        <PhaseBadge s={d} />
-        <span className='text-muted-foreground'>{d.harness.label} · <span className='font-mono text-xs'>{d.harness.model}</span></span>
-        {d.profile && <span className='text-muted-foreground' data-agent-profile=''>Profile {d.profile.name} <span className='text-xs'>(version {d.profile.version})</span></span>}
-        <span className='text-muted-foreground'>{d.mode === 'task' ? 'Task' : 'Conversation'}</span>
-        {area === 'admin' && d.workspace?.slug && <span className='text-muted-foreground'>Workspace <span className='font-mono text-xs'>{d.workspace.slug}</span></span>}
-        <span className='text-muted-foreground'>Started by {d.mine ? 'you' : d.started_by}</span>
-      </div>
-      <div className='flex flex-wrap items-center gap-3 text-sm' aria-label={`Spent ${usd(d.spent_usd)} of ${usd(d.budget_usd)}`}>
-        <div className='bg-muted h-2 w-48 overflow-hidden rounded-full' aria-hidden><div className={cn('h-full rounded-full', pct >= 100 ? 'bg-destructive' : 'bg-primary')} style={{ width: `${pct}%` }} /></div>
-        <span className='tabular-nums'>{usd(d.spent_usd)} of {usd(d.budget_usd)}</span>
-        <span className='text-muted-foreground tabular-nums'>{usd(d.remaining_usd)} left · {d.wakes} wake{d.wakes === 1 ? '' : 's'}{d.crashes ? ` · ${d.crashes} crash${d.crashes === 1 ? '' : 'es'} in a row` : ''}</span>
-      </div>
-      {/* While it waits for a decision the request's own card says what it asked for (the reason is its raw subject). */}
-      {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['paused', 'withdrawn', 'budget'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
-    </div>
-  );
-}
 const reasonWords = (r: string) => r.startsWith('crashed: ') ? `It stopped unexpectedly: ${r.slice(9)}.` : r.startsWith('declined: ') ? `Declined: ${r.slice(10)}.`
   : r.startsWith('approved: ') ? `Approved: ${r.slice(10)}.` : r.startsWith('expired: ') ? `Nobody answered in time: ${r.slice(9)}.` : r === 'done' ? 'It finished its work.' : r;
 
@@ -400,35 +534,8 @@ function RaiseBudget({ d, call, onDone, compact }: { d: Detail; call: Call; onDo
   );
 }
 
-const STATUS_WORDS: Record<string, string> = { pending: 'Waiting to be delivered', delivered: 'Delivered', answered: 'Answered', discarded: 'Carried to the next wake' };
-
-function Transcript({ d }: { d: Detail }) {
-  const end = useRef<HTMLDivElement>(null);
-  const count = d.messages.length;
-  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [count]);
-  if (d.pruned) return <p className='text-muted-foreground text-sm'>This conversation was removed after its retention period; its spend and budget raises are kept below.</p>;
-  return (
-    <div className='bg-muted/30 flex max-h-[28rem] min-h-40 flex-col gap-3 overflow-y-auto rounded-lg border p-3' role='log' aria-live='polite' aria-label='Conversation' data-agent-transcript=''>
-      {d.messages.map((m) => m.role === 'system' ? (
-        <p key={m.id} className='text-muted-foreground self-center text-center text-xs'>{m.body} · <When d={m.at} /></p>
-      ) : (
-        <div key={m.id} className={cn('flex flex-col gap-1', m.role === 'person' ? 'items-end' : 'items-start')} data-message-role={m.role}>
-          <span className='text-muted-foreground text-xs'>{m.role === 'person' ? (m.by ?? 'Person') : 'Agent'} · <When d={m.at} /></span>
-          <Bubble variant={m.role === 'person' ? 'default' : 'outline'} align={m.role === 'person' ? 'end' : 'start'}>
-            <BubbleContent className='text-sm whitespace-pre-wrap'>{m.body}</BubbleContent>
-          </Bubble>
-          {m.role === 'person' && m.status && <span className='text-muted-foreground text-xs'>{STATUS_WORDS[m.status] ?? m.status}</span>}
-        </div>
-      ))}
-      {(d.phase === 'working' || d.phase === 'starting' || d.phase === 'waking') && (
-        <div className='text-muted-foreground flex items-center gap-2 text-xs' aria-live='polite'><span className='size-1.5 motion-safe:animate-pulse rounded-full bg-current' aria-hidden />{d.phase === 'working' ? 'The agent is working' : d.phase === 'waking' ? 'Waking up' : 'Starting'}</div>
-      )}
-      <div ref={end} />
-    </div>
-  );
-}
-
-function Composer({ d, call, onSent }: { d: Detail; call: Call; onSent: () => unknown }) {
+/** The composer, pinned over the trace's bottom edge: steers a working session, wakes a parked one; what it waits on is said in it. */
+function Composer({ d, call, onSent, waitingOn, failing }: { d: Detail; call: Call; onSent: () => unknown; waitingOn: string | null; failing: string | null }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const why: ReactNode = d.can.message ? null
@@ -444,16 +551,23 @@ function Composer({ d, call, onSent }: { d: Detail; call: Call; onSent: () => un
       await onSent();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  const working = d.phase === 'working' || d.phase === 'starting' || d.phase === 'waking';
   const placeholder = d.phase === 'working' ? 'Guide the agent while it works' : d.phase === 'parked' || d.phase === 'paused' ? 'Send a message to wake it' : 'Message the agent';
   return (
-    <form className='flex flex-col gap-2' onSubmit={(e) => { e.preventDefault(); void send(); }} aria-label='Message the agent' data-agent-composer=''>
+    <form className='flex flex-col gap-1.5' onSubmit={(e) => { e.preventDefault(); void send(); }} aria-label='Message the agent' data-agent-composer=''>
       <label htmlFor={`agent-msg-${d.id}`} className='sr-only'>Message the agent</label>
-      <div className='flex items-end gap-2'>
-        <Textarea id={`agent-msg-${d.id}`} rows={2} value={text} disabled={!d.can.message || busy} placeholder={why ? undefined : placeholder} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} className='min-h-11' />
-        <Button type='submit' disabled={!d.can.message || busy || !text.trim()} aria-label='Send' className='h-11 min-w-11'><Icons.send /><span className='hidden sm:inline'>Send</span></Button>
+      {(working || failing) && (
+        <p className={cn('flex items-center gap-2 px-1 text-xs', failing ? 'text-destructive' : 'text-muted-foreground')} aria-live='polite' data-agent-working=''>
+          {!failing && <span className='size-1.5 rounded-full bg-current motion-safe:animate-pulse' aria-hidden />}
+          {failing ?? (waitingOn ?? (d.phase === 'working' ? 'The agent is working' : d.phase === 'waking' ? 'Waking up' : 'Starting'))}
+        </p>
+      )}
+      <div className={cn('bg-background focus-within:ring-ring/40 flex items-end gap-2 rounded-xl border p-1.5 shadow-sm focus-within:ring-2', working && !failing && 'motion-safe:shadow-[0_0_12px_-2px_var(--color-primary)]')}>
+        <Textarea id={`agent-msg-${d.id}`} rows={1} value={text} disabled={!d.can.message || busy} placeholder={why ? undefined : placeholder} onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} className='max-h-32 min-h-9 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent' />
+        <Button type='submit' disabled={!d.can.message || busy || !text.trim()} aria-label='Send' className='h-9 min-w-9 shrink-0'><Icons.send /><span className='hidden sm:inline'>Send</span></Button>
       </div>
-      {why && <p className='text-muted-foreground text-xs'>{why}</p>}
+      {why && <p className='text-muted-foreground px-1 text-xs'>{why}</p>}
     </form>
   );
 }
@@ -465,9 +579,8 @@ function Details({ d }: { d: Detail }) {
   const list = (ts: Reach['tools']) => ts.length ? <span className='flex flex-wrap gap-x-3 gap-y-1'>{ts.map(toolName)}</span> : <span className='text-muted-foreground'>None</span>;
   const chars = (n: number) => `${n.toLocaleString('en')} character${n === 1 ? '' : 's'}`;
   return (
-    <details className='rounded-lg border px-3 py-2 text-sm' data-agent-details=''>
-      <summary className='cursor-pointer font-medium'>How this session runs</summary>
-      <dl className='mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]' data-agent-profile-terms=''>
+    <div className='text-sm' data-agent-details=''>
+      <dl className=' grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]' data-agent-profile-terms=''>
         <dt className='text-muted-foreground'>Profile</dt>
         <dd data-agent-profile-name=''>{d.profile ? <>{d.profile.name}, version {d.profile.version}<span className='text-muted-foreground block text-xs'>Fixed when it started: a later change to the profile applies to new sessions.</span></> : <span className='text-muted-foreground'>None: it started before profiles, with the platform settings of the time</span>}</dd>
         {d.record && <><dt className='text-muted-foreground'>Started from</dt><dd data-agent-record=''>{d.workspace ? <span className='font-mono text-xs'>{d.record.key}</span> : <a className='underline-offset-4 hover:underline' href={`/app/records/${encodeURIComponent(d.record.area)}/${encodeURIComponent(d.record.key)}`}>{d.record.key}</a>} <span className='text-muted-foreground text-xs'>({d.record.area})</span></dd></>}
@@ -506,6 +619,6 @@ function Details({ d }: { d: Detail }) {
       {d.grants.length > 0 && <div className='mt-3'><p className='font-medium'>Budget raises</p><ul className='mt-1 flex flex-col gap-1'>{d.grants.map((g) => <li key={g.id}>{usd(g.from_usd)} to {usd(g.to_usd)} by {g.by}, <When d={g.at} />: {g.reason}</li>)}</ul></div>}
       {d.wakes_list.length > 0 && <div className='mt-3'><p className='font-medium'>Wakes</p><ul className='mt-1 flex flex-col gap-1'>{d.wakes_list.map((w, i) => <li key={w.run_id} className='flex flex-wrap gap-x-2'>{featureOn('record_pages') ? <Link href={`/app/runs/${encodeURIComponent(w.run_id)}`} className='underline-offset-4 hover:underline' data-wake-run={w.run_id}>Wake {i + 1}</Link> : <span>Wake {i + 1}</span>}<span>{w.status}</span>{w.end_reason && <span className='text-muted-foreground'>{w.end_reason}</span>}<span className='tabular-nums'>{usd(w.cost_usd)}</span></li>)}</ul></div>}
       {d.requests.filter((r) => r.status !== 'pending').length > 0 && <div className='mt-3'><p className='font-medium'>Decisions</p><ul className='mt-1 flex flex-col gap-1'>{d.requests.filter((r) => r.status !== 'pending').map((r) => <li key={r.id}>{askWords(r)}: {r.status}{r.decided_by ? ` by ${r.decided_by}` : ''}{r.reason ? ` (${r.reason})` : ''}</li>)}</ul></div>}
-    </details>
+    </div>
   );
 }

@@ -103,6 +103,38 @@ export function toolUses(e: Record<string, unknown>): ToolUse[] {
     return { id: String(x.id ?? ""), name: String(x.name ?? ""), input: x.input && typeof x.input === "object" ? (x.input as Record<string, unknown>) : {} };
   });
 }
+/** The tool results of a `user` event (the CLI answers a tool_use this way): the call's id, its text, and whether it failed. */
+export function toolResults(e: Record<string, unknown>): { id: string; text: string; isError: boolean }[] {
+  if (e.type !== "user" || e.isReplay === true) return [];
+  const content = (e.message as { content?: unknown })?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter((b) => !!b && (b as { type?: string }).type === "tool_result").map((b) => {
+    const x = b as { tool_use_id?: unknown; content?: unknown; is_error?: unknown };
+    const text = typeof x.content === "string" ? x.content
+      : Array.isArray(x.content) ? x.content.map((c) => (typeof c === "string" ? c : (c as { text?: string })?.text ?? "")).join("\n") : "";
+    return { id: String(x.tool_use_id ?? ""), text, isError: x.is_error === true };
+  });
+}
+/**
+ * A trace event's data within the run's event limit (16 KB, src/runs.ts appendRunEvents), its long fields shortened
+ * (a tool's arguments or result can be any size). Fields are strings already redacted by the caller.
+ */
+export function fitEvent(data: Record<string, unknown>, limit = 15 * 1024): Record<string, unknown> {
+  const out = { ...data };
+  for (const k of ["input", "result", "preview"]) if (typeof out[k] === "string") out[k] = (out[k] as string).slice(0, k === "preview" ? 300 : 12_000);
+  for (let keep = 8000; Buffer.byteLength(JSON.stringify(out)) > limit && keep > 100; keep = Math.floor(keep / 2)) {
+    for (const k of ["input", "result"]) if (typeof out[k] === "string" && (out[k] as string).length > keep) { out[k] = (out[k] as string).slice(0, keep); out.truncated = true; }
+  }
+  return out;
+}
+
+/** The one identifying detail of a tool call in the trace: a command, a file path, a search; else its arguments. */
+export function previewOf(u: ToolUse): string {
+  const i = u.input;
+  const pick = u.name === "Bash" ? i.command : u.name === "Read" || u.name === "Edit" || u.name === "Write" ? i.file_path : u.name === "Grep" || u.name === "Glob" ? i.pattern : u.name === "WebFetch" ? i.url : u.name === "WebSearch" ? i.query : u.name === "Task" ? i.description : null;
+  return typeof pick === "string" ? pick : JSON.stringify(i);
+}
+
 /** A session's cumulative cost as the CLI reports it on a turn's result (never inferred from tokens). */
 export function observedCost(e: Record<string, unknown>): number | null {
   const v = e.total_cost_usd;
@@ -397,6 +429,24 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // A resumed session's running total restarts from its saved figure: reports are reduced by min(saved, charged).
     const baseline = w.resume ? resumedBaseline(savedSessionCost(path.join(home, ".claude"), w.resume), w.charged_usd) : 0;
 
+    // mold_v0-287: what the wake did, for the session's trace: each tool call and result (arguments and output as the
+    // transcript has them: every secret the wake holds redacted, then capped), its stages, retries. Sent in batches with
+    // the beat; a lost batch is never retried against a lease that is gone.
+    const trace: { type: string; data: Record<string, unknown> }[] = [];
+    const toolStarted = new Map<string, { at: number; name: string }>();
+    let flushTimer: NodeJS.Timeout | null = null;
+    const queueTrace = (type: string, data: Record<string, unknown>) => {
+      trace.push({ type, data: { ...data, t: new Date().toISOString() } });
+      if (!flushTimer) { flushTimer = setTimeout(() => { flushTimer = null; void flushTrace(); }, 400); flushTimer.unref(); }
+    };
+    const flushTrace = async () => {
+      const batch = trace.splice(0, 200);
+      if (!batch.length) return;
+      await client.events(run.id, lease, batch).catch((e) => { if ((e as { status?: number }).status === undefined && trace.length < 500) trace.unshift(...batch); });
+    };
+    const stage = (name: string) => queueTrace("agent_stage", { stage: name });
+    stage("Starting the agent's program");
+
     const ledger = new SteerLedger();
     const consumed: string[] = [];
     const t0 = now();
@@ -440,9 +490,22 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       if (typeof e.session_id === "string" && e.session_id) s.sessionId = e.session_id;
       const echoed = replayedUuid(e);
       if (echoed) { ledger.replayed(echoed); consumed.push(echoed); return; }
+      if (e.type === "user") {
+        for (const r of toolResults(e)) {
+          const began = toolStarted.get(r.id); toolStarted.delete(r.id);
+          const text = clean(r.text);
+          queueTrace("agent_tool_result", fitEvent({ id: r.id, name: began?.name ?? "tool", is_error: r.isError, result: text, preview: text, duration_ms: began ? now() - began.at : null }));
+        }
+        return;
+      }
       if (e.type === "assistant") {
         s.inTurn = true; s.lastActivity = now();
         const t = assistantText(e); if (t) s.turnText.push(t);
+        for (const u of toolUses(e)) {
+          toolStarted.set(u.id, { at: now(), name: u.name });
+          const input = clean(JSON.stringify(u.input));
+          queueTrace("agent_tool_call", fitEvent({ id: u.id, name: u.name, input, preview: clean(previewOf(u)), ...(typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id ? { parent: e.parent_tool_use_id } : {}) }));
+        }
         for (const u of toolUses(e)) {
           if (e.parent_tool_use_id) continue;
           const c = checkToolUse(u, policy, s.webCalls, s.mcpCalls, now());
@@ -474,10 +537,12 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
         if (budgetStopped(e)) { await postTurn(e); stop({ reason: "budget" }); return; }
         if (policy.mode === "conversation" && transientUpstreamError(e) && s.transientRetries < 2 && !s.stdinClosed) {
           s.transientRetries++;
+          queueTrace("agent_retry", { retry: s.transientRetries, error: clean(String(e.result)).slice(0, 2000) });
           setTimeout(() => { if (!s.stdinClosed) proc.stdin?.write(encodeStdinMessage(TRANSIENT_RETRY)); }, s.transientRetries * 10_000).unref();
           return;
         }
         if (!e.is_error) s.transientRetries = 0;
+        else queueTrace("agent_error", { subtype: typeof e.subtype === "string" ? e.subtype : null, error: clean(typeof e.result === "string" ? e.result : "").slice(0, 2000) });
         await postTurn(e);
         s.inTurn = false; s.lastActivity = now();
         if (policy.mode === "task") {
@@ -487,13 +552,14 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       }
     };
     const postTurn = async (e: Record<string, unknown>) => {
+      await flushTrace().catch(() => {}); // its steps first, so the answer follows them in the stream
       const text = clean(s.turnText.join("\n\n") || (typeof e.result === "string" ? e.result : "")).slice(0, 20_000);
       s.turnText = [];
       // The person's messages this turn answers: those the CLI echoed it took in (without echoes, every one delivered).
       const answered = consumed.splice(0).flatMap((u) => s.uuidIds.get(u) ?? []);
       await agent.turn(run.id, lease, { text, cost_usd: observedCost(e), answered: ledger.seen ? answered : null }).catch(() => {});
     };
-    const say = (t: string) => agent.turn(run.id, lease, { text: t }).catch(() => {});
+    const say = async (t: string) => { await flushTrace().catch(() => {}); return agent.turn(run.id, lease, { text: t }).catch(() => {}); };
     const armIdleClose = () => {
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.idleTimer = setTimeout(() => finish({ reason: "done", detail: "closed after an idle grace" }), policy.stdin_idle_seconds * 1000);
@@ -519,6 +585,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     let beatMs = opts.beatMs ?? 3000;
     let lost = false;
     const beat = async () => {
+      await flushTrace();
       const a = await agent.beat(run.id, lease, { in_turn: s.inTurn, total_cost_usd: s.cost, session_id: s.sessionId, web_calls: s.webCalls,
         ...(!s.baselineSent ? { baseline_usd: baseline } : {}), discarded: discarded.splice(0) });
       s.baselineSent = true;
@@ -574,8 +641,10 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     await Promise.all(queue);
     await beatLoop.catch(() => {});
     if (lost) return null;
-    // A last beat (its spend), the last checkpoint, then how it ended.
+    // A last beat (its spend), the last checkpoint, then how it ended (everything it did before the wake closes).
     await beat().catch(() => {});
+    if (flushTimer) clearTimeout(flushTimer);
+    while (trace.length) { const n = trace.length; await flushTrace(); if (trace.length >= n) break; }
     // mold_v0-271: what the agent proposes of the recipes its session used (.recipe-proposal/<recipe>/), sent once, then removed.
     await sendRecipeProposals(agent, run.id, lease, work, policy);
     if (s.sessionId) await checkpoint();

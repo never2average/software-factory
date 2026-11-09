@@ -13,6 +13,8 @@ import { ENV } from "./env-names.js";
 import { PROFILE } from "./profile.js";
 import { NS } from "./namespace.js";
 import { anthropicFirstParty, providerSafeEnv, type AttemptUsage } from "./provider-safe-env.js";
+import { redactText } from "./credential-redact.js";
+import { maskSecrets } from "./run-events.js";
 /** The error type a request over its budget gets (the namespace's, src/namespace.ts). */
 const BUDGET_EXCEEDED = `${NS}_budget_exceeded`;
 
@@ -272,12 +274,17 @@ const gwError = (res: Response, status: number, type: string, message: string) =
 /** Pulls token usage out of JSON or SSE bodies from Anthropic, OpenAI (chat + responses) and Gemini. */
 export class UsageMeter {
   input = 0; output = 0; cached = 0; cacheWrite = 0; cacheWrite1h = 0; bytes = 0; model = "";
+  /** mold_v0-287: the upstream's own error words (a JSON or SSE error), else the start of its body (a load balancer's page). */
+  error = "";
+  private head = "";
   private buf = "";
   private sse: boolean;
   constructor(contentType: string) { this.sse = /event-stream/.test(contentType); }
   feed(chunk: Buffer) {
     this.bytes += chunk.length;
-    this.buf += chunk.toString("utf8");
+    const text = chunk.toString("utf8");
+    if (this.head.length < 2000) this.head += text.slice(0, 2000 - this.head.length);
+    this.buf += text;
     if (this.sse) {
       const lines = this.buf.split("\n");
       this.buf = lines.pop() ?? "";
@@ -285,11 +292,15 @@ export class UsageMeter {
     } else if (this.buf.length > 4_000_000) this.buf = ""; // give up metering absurdly large bodies
   }
   end() { if (this.sse) { if (this.buf.startsWith("data:")) this.json(this.buf.slice(5).trim()); } else this.json(this.buf); }
+  /** What failed, in words: only meaningful once the response is finished and its status is an error. */
+  errorText() { return this.error || this.head.slice(0, 500); }
   private json(text: string) {
     if (!text || text === "[DONE]") return;
     let e: any;
     try { e = JSON.parse(text); } catch { return; }
     // The model the provider actually served (OpenAI chat/responses, Anthropic message_start, Gemini modelVersion).
+    const err = Array.isArray(e) ? e[0]?.error : e?.error;
+    if (err && !this.error) this.error = String(typeof err === "string" ? err : err.message ?? err.status ?? JSON.stringify(err)).slice(0, 2000);
     const model = e?.model ?? e?.message?.model ?? e?.response?.model ?? e?.modelVersion ?? (Array.isArray(e) ? e.at(-1)?.modelVersion : undefined);
     if (typeof model === "string" && model) this.model = model;
     const u = e?.usage ?? e?.message?.usage ?? e?.response?.usage ?? null;
@@ -333,18 +344,32 @@ export async function gatewayHandler(req: Request, res: Response) {
 
   // mold_v0-267: the key an agent profile chose for its primary inference provider (a key vault label), for its runs.
   let chosenLabel: string | null = null;
+  // mold_v0-287: a model call of a workspace agent's wake (its run has a session), recorded as a run event for its trace,
+  // whatever came of it: refused here, an upstream error (its own words, secrets taken out) or a success with its tokens.
+  const started = Date.now();
+  let traceRun: { id: string; org_id: number } | null = null;
+  let upstreamKey: string | null = null;
+  const traced = async (c: { status: number; model: string; error?: string | null; no_key?: boolean; input?: number; cached?: number; output?: number; bytes?: number; cost?: number }) => {
+    if (!traceRun) return;
+    await traceModelCall(traceRun, { provider: slug, ...c, t: new Date(started).toISOString(), duration_ms: Date.now() - started, secrets: [token, upstreamKey].filter((x): x is string => !!x) });
+  };
+  const refuse = async (status: number, type: string, message: string, model = "", noKey = false) => {
+    await traced({ status, error: noKey ? `No model key: the vault has no key for ${slug}, so this model call could not be made. Someone on the platform's staff adds it in the key vault. (${message})` : message, model, no_key: noKey || undefined }).catch(() => {});
+    return gwError(res, status, type, message);
+  };
   if (t.kind === "run") {
     // A run (mold_v0-041): only while it is running and not asked to stop, within its budget across every attempt.
-    const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number; org_id: number; pack: string; kind: string; spec: Record<string, unknown> | null }>(
-      "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd, org_id, pack, kind, spec FROM runs WHERE id = $1", [t.run_id]);
+    const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number; org_id: number; pack: string; kind: string; spec: Record<string, unknown> | null; harness_session_id: string | null }>(
+      "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd, org_id, pack, kind, spec, harness_session_id FROM runs WHERE id = $1", [t.run_id]);
+    if (run?.harness_session_id) traceRun = { id: t.run_id!, org_id: run.org_id };
     if (!run || run.status !== "running" || run.cancel_requested_at) return gwError(res, 401, "authentication_error", "This run is not running");
     const u = await runGatewayUsage(t.run_id!);
-    if (u.tokens >= RUN_MAX_TOKENS()) return gwError(res, 429, BUDGET_EXCEEDED, "This run's gateway budget is used up");
+    if (u.tokens >= RUN_MAX_TOKENS()) return refuse(429, BUDGET_EXCEEDED, "This run's gateway budget is used up");
     // Its budget (never above today's ceiling), its kind's month budget in the workspace and the account's allowance,
     // all live (mold_v0-018, 053; src/run-limits.ts): many small runs cannot spend past what one could.
     const { runSpendRefusal } = await import("./run-limits.js");
     const refusal = await runSpendRefusal({ ...run, spec: run.spec as never }, u.cost_usd);
-    if (refusal) return gwError(res, 429, BUDGET_EXCEEDED, refusal);
+    if (refusal) return refuse(429, BUDGET_EXCEEDED, refusal);
     const pk = (run.spec as { provider_key?: { provider?: unknown; label?: unknown } } | null)?.provider_key;
     if (pk && pk.provider === slug && typeof pk.label === "string") chosenLabel = pk.label;
   } else {
@@ -362,10 +387,10 @@ export async function gatewayHandler(req: Request, res: Response) {
   let json: Buffer | null = null;
   if (hasBody && /json/i.test(String(req.headers["content-type"] ?? ""))) {
     try { json = await readBody(req, BODY_LIMIT); }
-    catch (e) { return gwError(res, (e as { status?: number }).status ?? 400, "invalid_request_error", (e as Error).message); }
+    catch (e) { return refuse((e as { status?: number }).status ?? 400, "invalid_request_error", (e as Error).message); }
   }
   const asked = hasBody ? requestedModel(json, req.path) : "";
-  if (hasBody && asked && !isCountTokens && !(await hasPrice(asked))) return gwError(res, 400, "invalid_request_error", unpricedModel(asked));
+  if (hasBody && asked && !isCountTokens && !(await hasPrice(asked))) return refuse(400, "invalid_request_error", unpricedModel(asked), asked);
 
   let cred: { id: number; secret: string };
   // Vertex signs in with a service-account key (the Vertex AI provider's, or the provider's own "vertex" key, or
@@ -379,10 +404,11 @@ export async function gatewayHandler(req: Request, res: Response) {
     // Claude with no Anthropic key: run it on Vertex AI when the vault holds a Vertex key (project from the key,
     // region from the VERTEX_REGION setting), so adding the Vertex key is all it takes.
     const vertex = slug === "anthropic" && p.backend !== "vertex" ? await useVertexCredential(slug).catch(() => null) : null;
-    if (!vertex) return gwError(res, 503, "api_error", (e as Error).message);
+    if (!vertex) return refuse(503, "api_error", (e as Error).message, asked, true);
     cred = vertex;
     p = { ...p, backend: "vertex", backend_config: { region: "global" } }; // Claude 5 models are served from the global endpoint
   }
+  upstreamKey = cred.secret;
   const vcfg = p.backend === "vertex" ? vertexConfig(p.backend_config, cred.secret, settingText("VERTEX_REGION")) : p.backend_config;
 
   // Path after /gw/<provider>, query without our `key` parameter.
@@ -417,7 +443,7 @@ export async function gatewayHandler(req: Request, res: Response) {
       } else body = hasBody ? (json ? new Uint8Array(json) : (Readable.toWeb(req) as ReadableStream)) : undefined;
     } catch (e) {
       const err = e as Error & { status?: number };
-      return gwError(res, err.status ?? 502, err.status && err.status < 500 ? "invalid_request_error" : "api_error", err.message);
+      return refuse(err.status ?? 502, err.status && err.status < 500 ? "invalid_request_error" : "api_error", err.message, asked);
     }
   } else if (p.backend === "vertex") {
     try {
@@ -434,7 +460,7 @@ export async function gatewayHandler(req: Request, res: Response) {
       headers.set("authorization", `Bearer ${await vertexAccessToken(cred.id, cred.secret)}`);
     } catch (e) {
       const err = e as Error & { status?: number };
-      return gwError(res, err.status ?? 502, err.status && err.status < 500 ? "invalid_request_error" : "api_error", err.message);
+      return refuse(err.status ?? 502, err.status && err.status < 500 ? "invalid_request_error" : "api_error", err.message, asked);
     }
   } else {
     upstream = `${p.upstream_url!.replace(/\/$/, "")}${rest}${url.search}`;
@@ -454,26 +480,45 @@ export async function gatewayHandler(req: Request, res: Response) {
     });
   } catch (e) {
     await record(hash, slug, t, { requests: 1, errors: 1, input: 0, cached: 0, output: 0, bytes: 0, model: requestModel });
-    return gwError(res, 502, "api_error", `Upstream ${slug} unreachable: ${(e as Error).message}`);
+    return refuse(502, "api_error", `Upstream ${slug} unreachable: ${(e as Error).message}`, requestModel);
   }
 
   res.status(up.status);
   up.headers.forEach((v, k) => { if (!HOP.has(k) && k !== "content-encoding" && k !== "content-length") res.setHeader(k, v); });
   const meter = new UsageMeter(up.headers.get("content-type") ?? "");
+  let streamError: string | null = null;
   try {
     if (up.body) for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
       const b = Buffer.from(chunk);
       meter.feed(b);
       res.write(b);
     }
+  } catch (e) {
+    streamError = `The response stream ended early: ${(e as Error).message}`;
+    throw e;
   } finally {
     meter.end();
     res.end();
     const billed = !isCountTokens;
-    await record(hash, slug, t, { requests: 1, errors: up.status >= 400 ? 1 : 0, input: billed ? meter.input : 0, cached: billed ? meter.cached : 0,
+    const cost = await record(hash, slug, t, { requests: 1, errors: up.status >= 400 ? 1 : 0, input: billed ? meter.input : 0, cached: billed ? meter.cached : 0,
                                   cacheWrite: billed ? meter.cacheWrite : 0, cacheWrite1h: billed ? meter.cacheWrite1h : 0,
                                   output: billed ? meter.output : 0, bytes: meter.bytes, model: meter.model || requestModel, priceAs: requestModel });
+    // A model error after a 200 (an SSE error event) counts as failed too: the CLI retries it and the person should see it.
+    const failed = up.status >= 400 || !!streamError || !!meter.error;
+    await traced({ status: streamError && up.status < 400 ? 599 : up.status, model: meter.model || requestModel, error: failed ? streamError ?? meter.errorText() : null,
+                   input: billed ? meter.input : 0, cached: billed ? meter.cached : 0, output: billed ? meter.output : 0, bytes: meter.bytes, cost: cost ?? 0 }).catch(() => {});
   }
+}
+
+/** One model call of a wake, as a run event (mold_v0-287): its error words have the key and token taken out; bounded per run. */
+async function traceModelCall(run: { id: string; org_id: number }, c: { provider: string; status: number; model: string; error?: string | null; input?: number; cached?: number; output?: number; bytes?: number; cost?: number; duration_ms: number; t: string; no_key?: boolean; secrets: string[] }) {
+  const secrets = c.secrets.map((value) => ({ name: "provider key", value }));
+  const error = c.error ? maskSecrets(redactText(String(c.error), secrets)).slice(0, 2000) : null;
+  const data = { provider: c.provider, model: c.model || "unknown", status: c.status, error, input_tokens: c.input ?? 0, cached_tokens: c.cached ?? 0, output_tokens: c.output ?? 0, bytes: c.bytes ?? 0, cost_usd: Math.round((c.cost ?? 0) * 1e6) / 1e6, duration_ms: c.duration_ms, t: c.t, ...(c.no_key ? { no_key: true } : {}) };
+  await (await getDb()).query(
+    `/* tenant: internal: the event of a model call of the gateway token's own run */ INSERT INTO run_events (run_id, org_id, attempt, type, data)
+     SELECT r.id, r.org_id, r.attempt, 'model_call', $3 FROM runs r
+      WHERE r.id = $1 AND r.org_id = $2 AND (SELECT count(*) FROM run_events e WHERE e.run_id = r.id) < 20000`, [run.id, run.org_id, JSON.stringify(data)]);
 }
 
 async function record(hash: string, provider: string, t: { kind: string; session_id: string | null; orchestrator_id: string | null; run_id: string | null },
@@ -492,4 +537,5 @@ async function record(hash: string, provider: string, t: { kind: string; session
        cost_usd = gateway_usage.cost_usd + excluded.cost_usd, last_at = now()`,
     [hash, provider, t.session_id, t.orchestrator_id, u.requests, u.errors, u.input, u.output, u.bytes, cost, t.run_id ?? null],
   ).catch((e) => console.error("gateway usage record failed:", e.message));
+  return cost;
 }

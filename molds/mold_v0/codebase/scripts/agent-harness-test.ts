@@ -116,6 +116,21 @@ try {
     l3.injected("a"); l3.injected("b");
     // The opening turn is not counted: its result, then one per steer, the last closes.
     assert.equal(l3.turnEnded(), false); assert.equal(l3.turnEnded(), false); assert.equal(l3.turnEnded(), true, "without echoes: one turn per message");
+    // The trace, pure (mold_v0-287).
+    const T = await import("../src/harness-trace.js");
+    assert.deepEqual(A.toolResults({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "ok" }], is_error: true }] } }), [{ id: "t1", text: "ok", isError: true }], "a tool's result");
+    assert.deepEqual(A.toolResults({ type: "user", isReplay: true, message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "x" }] } }), [], "an echo is not a result");
+    assert.equal(A.previewOf({ id: "1", name: "Bash", input: { command: "ls -la" } }), "ls -la", "a command previews as itself");
+    assert.ok(Buffer.byteLength(JSON.stringify(A.fitEvent({ input: "\u0001".repeat(40_000), preview: "p" }))) <= 16 * 1024 && A.fitEvent({ input: "\u0001".repeat(40_000) }).truncated === true, "a huge tool input fits its event, and says it was cut");
+    const merged = T.traceSteps([
+      { id: 1, run_id: "r", attempt: 1, type: "agent_tool_call", at: "2026-01-01T00:00:01Z", data: { id: "a", name: "Bash", preview: "ls", t: "2026-01-01T00:00:00.500Z" } },
+      { id: 2, run_id: "r", attempt: 1, type: "agent_tool_result", at: "2026-01-01T00:00:02Z", data: { id: "a", name: "Bash", is_error: true, preview: "denied", duration_ms: 30 } },
+      { id: 3, run_id: "r", attempt: 1, type: "model_call", at: "2026-01-01T00:00:03Z", data: { model: "m", status: 503, error: "Overloaded" } }], new Map([["r", 1]]));
+    assert.deepEqual(merged.map((x) => [x.kind, x.status, x.title]), [["command", "error", "Bash"], ["model", "error", "m"]], "a call and its result are one step, a 503 a failed model step");
+    assert.equal(merged[0]!.at, "2026-01-01T00:00:00.500Z", "ordered by when it happened");
+    assert.match(T.waitingOn({ phase: "starting", run: { status: "queued", created_at: new Date(Date.now() - 5000) }, sandbox: null, waiting: null, started: false }) ?? "", /waiting in the queue for a free runner/);
+    assert.match(T.waitingOn({ phase: "starting", run: { status: "queued", created_at: new Date() }, sandbox: { run_id: "r", attempt: 1, state: "deleted", sandbox_id: null, created_at: new Date(), ready_at: null, claimed_at: null, deleted_at: new Date(), launch_step: "image", launch_error: "no capacity", reap_reason: null }, waiting: null, started: false }) ?? "", /could not start \(image: no capacity\)/, "a sandbox that failed says why in words");
+    assert.equal(T.waitingOn({ phase: "working", run: null, sandbox: null, waiting: null, started: true }), null, "only a session waiting to start");
     assert.deepEqual(H.accrueSpend(0, 0, 0.3), { charge: 0.3, high: 0.3 });
     assert.deepEqual(H.accrueSpend(0.3, 0, 0.3), { charge: 0, high: 0.3 }, "a replayed report charges nothing");
     assert.deepEqual(H.accrueSpend(0.3, 0, 0.2), { charge: 0, high: 0.3 }, "a lower report never refunds");
@@ -260,7 +275,7 @@ try {
     const w = await wake(s.id);
     await until("working", async () => (await read(s.id)).phase === "working");
     await assert.rejects(H.pauseSession(other.orgId, s.id, member), /no such session/, "another workspace's session is not found");
-    await assert.rejects(H.raiseBudget(org.orgId, s.id, owner, { to_usd: 2, reason: "more" }), /while the session is working/, "no raise while it works");
+    // mold_v0-287: a budget changes while it works (the gateway and the beat read it live): section 6b.
     const pv = await H.pauseSession(org.orgId, s.id, owner); // an owner may pause someone's session
     assert.equal(pv.pause_requested, true);
     await w.done;
@@ -351,7 +366,66 @@ try {
     await until("continues", () => agentSaid(s.id, /\(resumed /));
     await H.stopSession(org.orgId, s.id, member); await w.done;
     // A budget raise is not lost to retention, and a staff raise is recorded with its reason too (below).
-    ok("budgets: at its budget it stops and asks; a raise needs a reason and the role, stays under the ceiling, is never made while it works, is recorded and continues it");
+    ok("budgets: at its budget it stops and asks; a raise needs a reason and the role, stays under the ceiling, is recorded and continues it");
+  }
+
+  // ---------- 6b. budget changes (mold_v0-287): the ⋯ menu's Add and Set budget, while it works too ----------
+  {
+    const s = await H.startSession(org.orgId, member, { message: "slow 4000\nspend 0.1\nlong job" });
+    let w = await wake(s.id);
+    await until("working", async () => (await read(s.id)).phase === "working");
+    const asMember = await read(s.id);
+    assert.deepEqual([asMember.budget_change.allowed, asMember.budget_change.why], [false, "Needs the Billing manager or Owner role"], "a member: disabled, with the reason");
+    const asOwner = await read(s.id, owner);
+    assert.deepEqual([asOwner.budget_change.allowed, asOwner.budget_change.why], [true, null], "an owner may change it");
+    assert.equal(asOwner.ceiling_usd, 5, "the ceiling it is held to");
+    await assert.rejects(H.raiseBudget(org.orgId, s.id, member, { by_usd: 1, reason: "x" }), /Billing manager or Owner/, "a member may not add");
+    const viewer = { kind: "person" as const, user: "user_viewer", name: "viewer@example.org", role: "viewer" as const };
+    await assert.rejects(H.raiseBudget(org.orgId, s.id, viewer, { by_usd: 1, reason: "x" }), /Billing manager or Owner/, "a viewer may not add");
+    await assert.rejects(H.raiseBudget(org.orgId, s.id, owner, { by_usd: 5, reason: "x" }), /at most \$5\.00/, "Add beyond the ceiling is refused");
+    const billing = { kind: "person" as const, user: "user_billing", name: "billing@example.org", role: "billing" as const };
+    const added = await H.raiseBudget(org.orgId, s.id, billing, { by_usd: 2, reason: "Added $2 from the session's menu" });
+    assert.equal(added.budget_usd, 3, "a billing manager adds, while it works");
+    assert.equal(added.phase, "working", "it keeps working");
+    const [run] = await db.query<{ budget_usd: string }>("SELECT budget_usd FROM runs WHERE id = (SELECT current_run_id FROM harness_sessions WHERE id = $1)", [s.id]);
+    assert.equal(Number(run!.budget_usd), 3, "the running wake's own budget moved with it, for the gateway's next request");
+    let d = await H.raiseBudget(org.orgId, s.id, staff, { to_usd: 1.5, reason: "less is enough" });
+    assert.equal(d.budget_usd, 1.5, "staff may lower it, within the floor");
+    await assert.rejects(H.raiseBudget(org.orgId, s.id, owner, { to_usd: 1.5, reason: "x" }), /different amount/, "the same amount changes nothing");
+    await H.stopSession(org.orgId, s.id, member); await w.done;
+    d = await read(s.id, owner);
+    assert.deepEqual(d.grants.map((g) => [g.from_usd, g.to_usd, g.reason]), [[1, 3, "Added $2 from the session's menu"], [3, 1.5, "less is enough"]], "each change is its own grant, raised and lowered alike");
+    assert.ok(d.messages.some((m) => m.role === "system" && /raised the budget from \$1\.00 to \$3\.00/.test(m.body)) && d.messages.some((m) => m.role === "system" && /lowered the budget from \$3\.00 to \$1\.50/.test(m.body)), "both said in the conversation");
+    const ended = await H.raiseBudget(org.orgId, s.id, owner, { by_usd: 1, reason: "x" }).then(() => "changed", (e: Error) => e.message);
+    assert.match(ended, /has ended/, "a stopped session's budget stays");
+    assert.deepEqual([d.budget_change.allowed, d.budget_change.why], [false, "This session has ended"], "the menu says why");
+    const tr = await H.sessionTrace(org.orgId, s.id, owner);
+    const titles = tr.marks.filter((m) => m.kind === "budget").map((m) => m.title);
+    assert.deepEqual(titles, ["Budget raised from $1.00 to $3.00 by billing@example.org", "Budget lowered from $3.00 to $1.50 by staff-1"], "each budget change is in the trace");
+    assert.ok(tr.steps.some((x) => x.kind === "message" && x.role === "person" && /long job/.test(x.body ?? "")), "the conversation is in the same stream");
+    // Never below what it has spent: lowered to less than a parked session's spend is refused, and to more is allowed.
+    const floorSession = await H.startSession(org.orgId, member, { message: "spend 0.4\nparked job" });
+    w = await wake(floorSession.id);
+    await until("answered", () => agentSaid(floorSession.id, /Echo/));
+    await until("its spend reported", async () => (await read(floorSession.id, owner)).budget_change.floor_usd >= 0.4);
+    const fv = await read(floorSession.id, owner);
+    assert.ok(fv.budget_change.floor_usd >= 0.4, `floor is its spend (${fv.budget_change.floor_usd})`);
+    await assert.rejects(H.raiseBudget(org.orgId, floorSession.id, owner, { to_usd: 0.2, reason: "x" }), /below what the session has already spent/, "never below what it spent");
+    await H.stopSession(org.orgId, floorSession.id, member); await w.done;
+    // Raised while it worked and the harness stops at the allowance it was told: it is not asked again, it is woken.
+    const s2 = await H.startSession(org.orgId, member, { message: "slow 3000\nbudget" });
+    w = await wake(s2.id);
+    await until("working", async () => (await read(s2.id)).phase === "working");
+    await H.raiseBudget(org.orgId, s2.id, owner, { by_usd: 2, reason: "keep going" });
+    await w.done;
+    await until("woken again", async () => { const x = await read(s2.id); return x.wakes === 2 && !x.pending_request; });
+    await H.stopSession(org.orgId, s2.id, member);
+    // A wake stopped by its budget that nobody raised still asks.
+    const s3 = await H.startSession(org.orgId, member, { message: "budget" });
+    await (await wake(s3.id)).done;
+    assert.equal((await read(s3.id)).phase, "awaiting_approval", "unraised, it stops and asks");
+    await H.stopSession(org.orgId, s3.id, member);
+    ok("budget changes: Add and Set budget as the owner, a billing manager or staff, not a member or viewer; within the ceiling and never below what it spent; while it works too (the running wake's budget moves with it, and a harness stopped at its old allowance is woken again, not asked); raised and lowered each its own grant, said in the conversation and in the trace");
   }
 
   // ---------- 7. crash recovery ----------
@@ -432,6 +506,13 @@ try {
     if (raised) assert.equal((await read(raised.id)).grants.length, 1, "its budget raise is kept");
     const objects = await db.query("SELECT checkpoint FROM harness_sessions WHERE pruned_at IS NOT NULL AND checkpoint IS NOT NULL");
     assert.equal(objects.length, 0, "no checkpoint left");
+    // mold_v0-287: the trace's content goes with the conversation it records.
+    for (const x of pruned) {
+      const leftover = await db.query("SELECT 1 FROM run_events e JOIN runs r ON r.id = e.run_id WHERE r.harness_session_id = $1 AND e.type IN ('agent_tool_call', 'agent_tool_result', 'model_call') LIMIT 1", [x.id]);
+      assert.equal(leftover.length, 0, "no trace content past retention");
+      const pt = await H.sessionTrace(org.orgId, x.id, member);
+      assert.deepEqual([pt.steps.length, pt.marks.length], [0, 0], "a pruned session's trace is empty");
+    }
     ok("retention: unanswered requests expire, quiet sessions archive, past retention the conversation goes and the spend and raises stay");
   }
 
@@ -1007,6 +1088,17 @@ try {
       await until("the key", () => said(/^Env SEARCH_KEY/));
       assert.equal(await last(), "Env SEARCH_KEY: [credential vault:exa/agent]", "the platform key in its variable, redacted on its way out");
       assert.ok(!(await rd()).messages.some((m) => m.body.includes(TOOL_KEY)), "the value never leaves the wake");
+      // mold_v0-287: a tool call's arguments and result in the trace have the key taken out, list and detail alike.
+      await H.messageSession(W.orgId, s.id, owner, `run echo ${TOOL_KEY}`);
+      await until("the echo", () => said(/^Ran: 0 \[credential/));
+      const tracedRun = await H.sessionTrace(W.orgId, s.id, owner);
+      const echo = tracedRun.steps.find((x) => x.kind === "command" && /^echo /.test(x.preview ?? ""));
+      assert.ok(echo && echo.preview === "echo [credential vault:exa/agent]", `the command in the list is masked: ${echo?.preview}`);
+      assert.equal(echo!.status, "ok", "and its result merged into its row");
+      const step = await H.sessionTraceStep(W.orgId, s.id, owner, echo!.id);
+      assert.ok(!JSON.stringify(step).includes(TOOL_KEY) && /credential vault:exa\/agent/.test(JSON.stringify((step.step.data as any).agent_tool_call)), "its whole arguments, read when opened, carry no value");
+      // (Only the person's own message holds it: they typed it, and the conversation keeps what they typed.)
+      assert.ok(!JSON.stringify(tracedRun.steps.filter((x) => x.role !== "person")).includes(TOOL_KEY), "nothing the agent did in the trace does");
       const ev = await db.query<{ type: string; data: any }>("SELECT type, data FROM run_events WHERE run_id = $1 ORDER BY id", [w.claim.run.id]);
       assert.deepEqual(ev.find((e) => e.type === "credentials")?.data.delivered, ["vault:exa/agent"], "its run records the key's name, never its value");
       assert.ok(!JSON.stringify(ev).includes(TOOL_KEY));
@@ -1029,7 +1121,10 @@ try {
     {
       const { createServer } = await import("node:http");
       const seen: string[] = [];
-      const upstream = createServer((req, res) => { seen.push(String(req.headers["x-api-key"] ?? "")); req.resume(); req.on("end", () => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", content: [], usage: { input_tokens: 3, output_tokens: 2 } })); }); });
+      let upstreamFails: { status: number; body: (key: string) => string } | null = null;
+      const upstream = createServer((req, res) => { const key = String(req.headers["x-api-key"] ?? ""); seen.push(key); req.resume(); req.on("end", () => { res.setHeader("content-type", "application/json");
+        if (upstreamFails) { res.statusCode = upstreamFails.status; return void res.end(upstreamFails.body(key)); }
+        res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", content: [], usage: { input_tokens: 3, output_tokens: 2 } })); }); });
       await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", () => r()));
       const before = await kv.getProvider("anthropic");
       await kv.upsertProvider({ ...before!, upstream_url: `http://127.0.0.1:${(upstream.address() as import("node:net").AddressInfo).port}` });
@@ -1045,8 +1140,50 @@ try {
         await client.complete(c.run.id, c.lease_token, { outcome: "succeeded", results: [] });
         await H.stopSession(W.orgId, s.id, owner).catch(() => null);
       }
+      // mold_v0-287: model calls are recorded as the session's trace, a failure in the upstream's own words with secrets out,
+      // and a missing key as a step that says so.
+      {
+        const s = await H.startSession(W.orgId, owner, { message: "x", profile: "builder" });
+        const c = (await client.claim([`${C.AGENT_PACK}/${C.AGENT_KIND}`]))!;
+        await client.agent!.start(c.run.id, c.lease_token);
+        assert.equal(await call(c.gateway.token!), 200);
+        upstreamFails = { status: 503, body: (key) => JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `Overloaded, try again (key ${key})` } }) };
+        assert.equal(await call(c.gateway.token!), 503, "the upstream's 503 reaches the CLI unchanged");
+        upstreamFails = null;
+        assert.equal(await call(c.gateway.token!), 200);
+        // The vault has no usable key for this model (the first-run failure): the profile's chosen key is gone.
+        await db.query("UPDATE runs SET spec = jsonb_set(spec, '{provider_key}', '{\"provider\":\"anthropic\",\"label\":\"gone\"}'::jsonb) WHERE id = $1", [c.run.id]);
+        const noKey = await fetch(`${http.base}/gw/anthropic/v1/messages`, { method: "POST", headers: { "x-api-key": c.gateway.token!, "content-type": "application/json", "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: priced, max_tokens: 5, messages: [{ role: "user", content: "hi" }] }) });
+        assert.equal(noKey.status, 503, "a missing key is a 503 to the CLI, as before");
+        const tr = await H.sessionTrace(W.orgId, s.id, owner);
+        const models = tr.steps.filter((x) => x.kind === "model");
+        assert.deepEqual(models.map((m) => [m.status, m.http_status]), [["ok", 200], ["error", 503], ["ok", 200], ["error", 503]], "every model call of the wake, in order, each with its status");
+        const failed = models[1]!;
+        assert.match(failed.error ?? "", /Overloaded, try again/, "the 503 is visible with the upstream's message");
+        assert.ok(!(failed.error ?? "").includes(PRIMARY), "the key is taken out of the upstream's words");
+        assert.match(models[2]!.error ?? "", /^$/, "the success carries no error");
+        assert.equal(models[0]!.input_tokens, 3); assert.equal(models[0]!.output_tokens, 2); assert.ok((models[0]!.duration_ms ?? -1) >= 0); assert.ok(models[0]!.cost_usd! >= 0);
+        const missing = models[3]!;
+        assert.match(missing.title, /No model key/, "the missing key is a readable step of its own");
+        assert.match(missing.error ?? "", /the vault has no key for anthropic/);
+        // Later wakes of the same session are read, and another workspace's reader finds nothing.
+        await client.agent!.end(c.run.id, c.lease_token, { reason: "stopped" });
+        await client.complete(c.run.id, c.lease_token, { outcome: "succeeded", results: [] });
+        await assert.rejects(H.sessionTrace(W.orgId + 1, s.id, owner), /no such session/, "tenant-scoped");
+        const again = await H.sessionTrace(W.orgId, s.id, owner, tr.cursor);
+        assert.equal(again.steps.filter((x) => x.kind === "model").length, 0, "the cursor gives only what is new");
+        const stream = await http.req("GET", `/api/agent/${s.id}/trace/stream?after=${encodeURIComponent(tr.cursor)}`, h(own.token));
+        assert.equal(stream.status, 200);
+        assert.match(stream.headers.get("content-type") ?? "", /text\/event-stream/, "a real stream");
+        const reader = stream.body!.getReader();
+        const first = new TextDecoder().decode((await reader.read()).value ?? new Uint8Array());
+        await reader.cancel();
+        assert.match(first, /^data: \{/, "the stream carries the trace as it is read");
+        await H.stopSession(W.orgId, s.id, owner).catch(() => null);
+      }
       await kv.upsertProvider(before!);
       upstream.close();
+      ok("the trace records every model call of a wake (tokens, cost, duration, status), a gateway 503 stored with the upstream's message and the key taken out, the missing-key case as a step that says so, tenant-scoped and streamed");
       ok("the primary inference provider: a session of a profile that names its key sends its model requests with that key (the gateway's), one without uses the provider's default");
     }
 
