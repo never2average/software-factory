@@ -1464,6 +1464,40 @@ async function suite(kind: "pglite" | "postgres") {
     await r.drop(); await prior.drop();
     log(`  ✓ ${kind}: ${v} no upstream catalogs (a catalog's rows become staff rows, fields kept; an override stands alone; the index table and the private catalogs' provider go); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
+  // Record databases in the app's own Postgres (mold_v0-285, record_databases_core, found by name): the provider is core
+  // (the default; neon refused), Neon's key vault provider row goes unless a Neon key is held (then it stays); refused
+  // while a record still has a Neon database. Its rollback is refused while a record has a database, then leaves exactly
+  // what the migration before left (Neon's provider row back), and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "record_databases_core")!.version;
+    const mig = readFileSync(path.join(MIGRATIONS_DIR, `${String(v).padStart(4, "0")}_record_databases_core.sql`), "utf8");
+    const before = await shellAt(kind, v - 1);
+    await before.query("INSERT INTO record_resources (pack, area, record_key, field, provider, status) VALUES ('p', 'molds', 'n1', 'database', 'neon', 'provisioning')");
+    await assert.rejects(before.migrate((tx) => tx.exec(mig)), /are Neon projects/, "refused while a record has a Neon database");
+    await before.query("DELETE FROM record_resources");
+    await before.query("INSERT INTO vault_credentials (provider, label, ciphertext, iv, tag, key_id, hint) VALUES ('neon', 'default', 'x', 'x', 'x', 'x', 'ne…1')");
+    await before.migrate((tx) => tx.exec(mig));
+    assert.equal((await before.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 1, "a held Neon key keeps its provider row (deleted on Key vault, never offered)");
+    await before.drop();
+    const d = await shellAt(kind, v);
+    assert.equal((await d.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 0, "no Neon key held: its provider row goes");
+    await d.query("INSERT INTO record_resources (pack, area, record_key, field, status) VALUES ('p', 'molds', 'm1', 'database', 'provisioning')");
+    assert.deepEqual(await d.query("SELECT provider FROM record_resources"), [{ provider: "core" }], "core is the default");
+    await assert.rejects(d.query("INSERT INTO record_resources (pack, area, record_key, field, provider, status) VALUES ('p', 'molds', 'm2', 'database', 'neon', 'provisioning')"), /check constraint/, "neon is refused");
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_record_databases_core.sql`), "utf8");
+    await assert.rejects(d.exec(rb), /record database\(s\) still exist/, "rollback refused while a record has a database");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    assert.equal((await r.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 1, "Neon's provider row is back for the older release");
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_record_databases_core")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} record databases in the app's own Postgres (provider core, the default; neon refused; Neon's provider row gone unless a key is held; refused while a Neon database exists); its rollback refused while a database is there, then leaves exactly what ${v - 1} left, and it applies again`);
+  }
 
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {

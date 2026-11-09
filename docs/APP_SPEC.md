@@ -117,11 +117,13 @@ through the same check `factory.py validate` and the build use.
 
   Record-owned resources (mold_v0-282, `record_resources`): a shared (platform) area's field may be `"type":
   "repository"` (an existing GitHub repository, owner/name, that staff link to a record: read through the platform's
-  GitHub App on save, its default branch and last commit on the record's page) or `"type": "database", "provider":
-  "neon"` (one Postgres database per record, created in Neon when the record is created and deleted with it; it takes no
-  value, its connection string is sealed apart from the record's fields). The app then needs the Neon API key in its Key
-  vault (Admin › Key vault, Neon; or `NEON_API_KEY` on the server, imported once) and its GitHub App given access to each
-  linked repository; neither is ever in the spec or a pack. From the brief: `features.record_resources = true` in
+  GitHub App on save, its default branch and last commit on the record's page) or `"type": "database"` (mold_v0-285:
+  `"provider": "core"`, the default and the only one; `"neon"` is refused: a database per record lives inside the app's
+  own Postgres, as a schema of its own with, where the database allows CREATE ROLE, a login role limited to it; created
+  when the record is created and dropped with it; it takes no value, its connection string is sealed apart from the
+  record's fields; no key needed). The app then needs its GitHub App given access to each linked repository (never in
+  the spec or a pack). Records are imported from the factory with `provision.py <app> --operator import-records -- --area
+  <name> --file <import.json> [--dry-run]` (the staff Import's own path). From the brief: `features.record_resources = true` in
   `## Profile`.
 
   The staff sidebar's Records group (mold_v0-271) is a pack's `console.admin_records` or the profile's

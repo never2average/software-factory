@@ -215,7 +215,7 @@ def self_test(root):
     ok(any("needs agent_harness" in e for e in problems({}, listed, root)) and not problems({"features": {"agent_harness": True}}, listed, root), "workspace recipes need the workspace agent")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
     # mold_v0-282: record resources, asked for by a shared area's repository or database field; off by default, refused off
-    owning = [{"id": "m", "record_areas": [{"name": "molds", "scope": "platform", "fields": [{"name": "repo", "type": "repository"}, {"name": "db", "type": "database", "provider": "neon"}]}]}]
+    owning = [{"id": "m", "record_areas": [{"name": "molds", "scope": "platform", "fields": [{"name": "repo", "type": "repository"}, {"name": "db", "type": "database", "provider": "core"}]}]}]
     ok("resources" not in words(effective({}, owning, root)) and "resources" in words(effective({"features": {"record_resources": True}}, owning, root))
        and "resources" not in words(effective({"features": {"record_resources": True}}, [], root)),
        "record resources: off by default; on when the profile says and a shared area declares a repository or database field (mold_v0-282)")

@@ -53,8 +53,8 @@ const needOn = () => { if (!agentHarnessOn()) off(); };
 /**
  * Key vault providers whose keys no session is given: the object store's settings and the OAuth app clients reach every
  * workspace's data (a session holding them would step out of its own), so injecting them would break its isolation; the
- * Freestyle key (mold_v0-274) runs, lists and deletes every run's VM, the session's own included; the Neon key (mold_v0-282)
- * creates and deletes every shared record's database.
+ * Freestyle key (mold_v0-274) runs, lists and deletes every run's VM, the session's own included; a Neon key left
+ * from mold_v0-282 (gone in mold_v0-285, never offered) stays out too.
  */
 export const KEYS_NEVER_INJECTED = ["object_storage", "oauth_clients", "freestyle", "neon"] as const;
 /** Variables a wake sets itself (src/agent-harness.ts): a key is never delivered in one of them. */

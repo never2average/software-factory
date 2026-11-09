@@ -326,8 +326,15 @@ export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link",
  * database the platform creates for the record (its `provider`).
  */
 export const RESOURCE_FIELD_TYPES = ["repository", "database"] as const;
-/** The providers a database field may name (mold_v0-282): Neon, through its API v2 with the key vault's `neon` key. */
-export const DATABASE_PROVIDERS = ["neon"] as const;
+/**
+ * The providers a database field may name (mold_v0-285): `core`, the default, a schema of the record's own inside the
+ * app's own Postgres (DATABASE_URL). There is no outside database provider (mold_v0-282's `neon` is gone).
+ */
+export const DATABASE_PROVIDERS = ["core"] as const;
+/** Why a database field's provider is refused, in words (a pack that still says "neon" is told where databases live now). */
+export const databaseProviderError = (v: unknown) => v === "neon"
+  ? "provider \"neon\" is gone (mold_v0-285): a record's database lives in the app's own database, as a schema of its own; write provider \"core\" or leave provider out"
+  : `${JSON.stringify(v)?.slice(0, 40)} is not a database provider: the one provider is "core" (the app's own database; the default)`;
 /** A repository field's value (mold_v0-282): a GitHub repository as owner/name (GitHub's own limits on each part). */
 export const REPOSITORY_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9._-]{1,100}$/;
 /** The longest a url field's address may be (mold_v0-238). */
@@ -364,8 +371,9 @@ export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "
  *               shared record: checked on save through the platform's GitHub App, its default branch and last commit
  *               shown on the record's page
  *   database    (mold_v0-282, flag record_resources) one Postgres database of the record's own, created by the platform
- *               when the record is created (`provider: "neon"`) and deleted with it; it takes no value: its connection
- *               string is sealed apart from the record's fields (src/record-resources.ts)
+ *               when the record is created and deleted with it: a schema of its own in the app's own Postgres (`provider:
+ *               "core"`, the default; mold_v0-285), with a login role limited to it where the database allows one; it
+ *               takes no value: its connection string is sealed apart from the record's fields (src/record-resources.ts)
  * `required` refuses a write that leaves it empty.
  */
 /**
@@ -444,8 +452,8 @@ export const RecordFieldSchema = z.object({
    * as chips in its list's cells, its record's sections and facts, and the peek (the first four in a cell, then +N).
    */
   display: z.enum(["chips"]).optional(),
-  /** mold_v0-282 (flag record_resources): a database field's provider ("neon": a Neon project per record). */
-  provider: z.enum(DATABASE_PROVIDERS).optional(),
+  /** mold_v0-282/285 (flag record_resources): a database field's provider ("core", the default: a schema in the app's own database). */
+  provider: z.enum(DATABASE_PROVIDERS, { error: (i) => databaseProviderError(i.input) }).optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -468,8 +476,7 @@ export const RecordFieldSchema = z.object({
   if (f.copyable && (f.encrypted || f.type === "file" || f.type === "json")) bad(`copyable is for a value the page shows in full (not an encrypted, file or json field)`, "copyable");
   if (f.display === "chips" && (f.type !== "json" || f.encrypted)) bad("display: \"chips\" is for a json field holding a list of strings (not encrypted)", "display");
   if (f.preview && (!["text", "url"].includes(f.type) || f.encrypted)) bad("preview: \"document\" is for a url field, or a text field holding a URL (not encrypted)", "preview");
-  // mold_v0-282: a database field says who creates it; nothing else names a provider.
-  if (f.type === "database" && !f.provider) bad("a database field names its provider (provider: \"neon\")", "provider");
+  // mold_v0-282: only a database field names a provider (mold_v0-285: "core", the default, when it names none).
   if (f.type !== "database" && f.provider) bad("provider is for a database field only", "provider");
   if (f.type === "database" && f.required) bad("a database field takes no value (the platform creates it): it cannot be required", "required");
 });

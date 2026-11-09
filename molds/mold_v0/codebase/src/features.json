@@ -314,9 +314,9 @@
       "default": false,
       "quiet_off": true,
       "requested_by": "resources",
-      "requested_words": "a shared (platform) area declares a repository field or a database field (provider neon)",
+      "requested_words": "a shared (platform) area declares a repository field or a database field (provider core, the default)",
       "since": "mold_v0-282",
-      "about": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one Postgres database per record in Neon when the record is created (the key vault's neon key, never given to a session or a run), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and deletes it with the record. A missing Neon key is named on the New form and on Health. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.",
+      "about": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one database per record inside the app's own Postgres when the record is created (provider core, mold_v0-285: a schema of its own and, where the database allows CREATE ROLE, a login role limited to that schema; no outside provider, no key), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and drops the schema and role with the record. Health names a database that refuses CREATE SCHEMA or CREATE ROLE. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.",
       "off": "Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out."
     }
   ]

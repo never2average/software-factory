@@ -48,6 +48,13 @@
 //    (features/tabs/in-page-tabs.tsx, the customer sections tabs' too), each member's own list component below it;
 //    refused: one tab, a member twice (in one entry, in two, or also a plain entry), an unknown member, an id that is an
 //    area's name or a staff page's, no label, tabs inside a tab.
+// 13. Agent configuration and Agent profiles as one staff entry (mold_v0-284, flag agent_harness): Operations has one
+//    entry Agent configuration (/admin/configuration) with the in-page tabs Configuration and Profiles and no Agent
+//    profiles entry; lit on its page and each tab (a profile's panel open too); /admin/agent-profiles leads to
+//    ?tab=profiles (its query kept by the redirect); printed by --sidebar with its in-page tabs; drawn with the console's
+//    one strip over each page's own body (the profiles' side panel and New profile modal unchanged). With agent_harness
+//    off nothing changes (no tabs, no redirect, no Agent profiles entry); with console.admin_records listing
+//    agent-profiles (a plain entry or a tab of one) it stays there alone: no Profiles tab, no redirect to it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -279,6 +286,8 @@ for (const r of routes.routes as string[]) {
   if (r === '/app/settings/[group]') { if (settingsLayout() === 'groups') pages.push(...settingsGroups().flatMap((g) => [g.url, ...g.tabs.slice(1).map((t) => \`\${g.url}?tab=\${t.id}\`)])); continue; }
   // mold_v0-281: a staff Records entry of in-page tabs, on its own and on each of its tabs.
   if (r === '/admin/records-group/[group]') { pages.push(...adminNav.flatMap((g) => g.items).filter((i) => i.inPageTabs?.length).flatMap((i) => [i.url, ...i.inPageTabs!.map((t) => \`\${i.url}?tab=\${t.id}\`)])); continue; }
+  // mold_v0-284: a shell staff page of in-page tabs (Agent configuration), on its own and on each of its tabs.
+  { const own = adminNav.flatMap((g) => g.items).find((i) => i.url === r && i.inPageTabs?.length); if (own) { pages.push(r, ...own.inPageTabs!.map((t) => \`\${r}?tab=\${t.id}\`)); continue; } }
   if (r === '/admin/packs/[pack]/[page]') { pages.push(...adminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => u.startsWith('/admin/packs/'))); continue; }
   pages.push(r.replace('[slug]', 'acme').replace('/[[...section]]', ''));
 }
@@ -695,6 +704,64 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, features, lit: Objec
       assert.match(r.out, re, `${what}: ${r.out.slice(-800)}`);
     }
     console.log(`✓ a staff Records entry of in-page tabs (mold_v0-281): one entry, its members its tabs (a shell page among them leaves its group), their old addresses lead to their tabs (records' and recipes' own pages stay), lit on its page, tabs and members' records, printed with its tabs, the console's one strip (features/tabs/in-page-tabs.tsx) over each member's own list; refused: ${bad.map((x) => x[0]).join("; ")}`);
+  }
+  // ---------- 13. Agent configuration and Agent profiles as one staff entry (mold_v0-284) ----------
+  {
+    const AGENT = { features: { agent_harness: true } };
+    const PROBE13 = `import { adminNav } from '@/config/nav-config';
+import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
+import routes from '@/config/pack-routes.generated.json';
+const urls = navUrls(adminNav, []);
+const pages = ['/admin/configuration', '/admin/configuration?tab=configuration', '/admin/configuration?tab=profiles', '/admin/configuration?tab=profiles&profile=p1', '/admin/keys'];
+process.stdout.write('\\u0001' + JSON.stringify({ adminNav, redirects: routes.redirects, lit: Object.fromEntries(pages.map((p) => [p, activeNavUrl(p, urls, navOptions('admin'))])) }));
+`;
+    const probe13 = (c: string) => {
+      const web = path.join(c, "web"), file = path.join(web, "probe-agent-config.tsx");
+      writeFileSync(file, PROBE13);
+      try {
+        const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        assert.equal(r.status, 0, `agent configuration probe: ${r.stderr.slice(0, 2000)}`);
+        return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1)) as { adminNav: any[]; redirects: any[]; lit: Record<string, string> };
+      } finally { rmSync(file, { force: true }); }
+    };
+    const entries = (nav: any[], url: string) => nav.flatMap((g: any) => g.items.filter((i: any) => i.url === url).map((i: any) => ({ group: g.label, title: i.title, tabs: i.inPageTabs ?? null })));
+    const to = (redirects: any[], src: string) => redirects.filter((r: any) => r.source === src).map((r: any) => r.destination);
+    const C = "/admin/configuration", P = "/admin/agent-profiles";
+    // On: one entry, two tabs.
+    const on = built("agent-config-on", [], () => {}, AGENT);
+    const a = probe13(on);
+    assert.deepEqual(entries(a.adminNav, C), [{ group: "Operations", title: "Agent configuration", tabs: [
+      { id: "configuration", label: "Configuration", url: C }, { id: "profiles", label: "Profiles", url: P }] }], "one entry Agent configuration, its in-page tabs Configuration and Profiles");
+    assert.deepEqual(entries(a.adminNav, P), [], "no Agent profiles entry of its own");
+    assert.deepEqual(a.lit, { [C]: C, [`${C}?tab=configuration`]: C, [`${C}?tab=profiles`]: C, [`${C}?tab=profiles&profile=p1`]: C, "/admin/keys": "/admin/keys" }, "lit on its page and each tab (a profile's panel open too)");
+    assert.deepEqual(to(a.redirects, P), [`${C}?tab=profiles`], "/admin/agent-profiles leads to the Profiles tab (next.config passes its query on: ?profile=<id>)");
+    const tree = spawnSync(process.execPath, ["scripts/gen-packs.mjs", "--sidebar"], { cwd: on, encoding: "utf8" });
+    assert.equal(tree.status, 0, tree.stderr);
+    assert.match(tree.stdout, /\n    Agent configuration  \/admin\/configuration\n      in-page tabs: Configuration, Profiles\n/, tree.stdout);
+    assert.doesNotMatch(tree.stdout, /Agent profiles  \/admin\/agent-profiles/, tree.stdout);
+    // Drawn with the console's one strip, each page's own body below it (the profiles' panel and modal are that body's).
+    const read = (f: string) => readFileSync(path.join(ROOT, "web", "src", f), "utf8");
+    const page = read("features/admin/agent-configuration.tsx");
+    assert.match(read("app/admin/configuration/page.tsx"), /<AgentConfigurationPage\b/);
+    assert.match(page, /import \{ InPageTabs \} from '@\/features\/tabs\/in-page-tabs'/, "the shared strip");
+    assert.doesNotMatch(page, /<TabsList|<TabsTrigger/, "no strip of its own");
+    for (const c of ["<AgentProfilesPage key={tab.id} bare />", "<AdminConfiguration key={tab.id} bare />", "if (!agentConfigTabs.length) return <AdminConfiguration />;"])
+      assert.ok(page.includes(c), `each tab's own page body (or the settings alone without tabs): ${c}`);
+    // Off: as before the ticket.
+    const off = probe13(built("agent-config-off", []));
+    assert.deepEqual(entries(off.adminNav, C), [{ group: "Operations", title: "Agent configuration", tabs: null }], "agent_harness off: a plain entry");
+    assert.deepEqual(entries(off.adminNav, P), [], "agent_harness off: no Agent profiles entry");
+    assert.deepEqual(to(off.redirects, P), [], "agent_harness off: no redirect");
+    // The Records group lists the profiles: they stay there alone.
+    const plain = probe13(built("agent-config-records", [], () => {}, { ...AGENT, console: { admin_records: { show: ["agent-profiles"] } } }));
+    assert.deepEqual(entries(plain.adminNav, P).map((e: any) => `${e.group}: ${e.title}`), ["Records: Agent profiles"], "listed in Records: there only");
+    assert.deepEqual(entries(plain.adminNav, C).map((e: any) => e.tabs), [null], "listed in Records: Agent configuration has no Profiles tab");
+    assert.deepEqual(to(plain.redirects, P), [], "listed in Records: its address stays");
+    const PACKS = ["fixture_catalog", "fixture_journeys"];
+    const grouped = probe13(built("agent-config-records-tabs", PACKS, (id, j) => { if (id === "fixture_catalog") j.console = { ...(j.console ?? {}), admin_records: { show: [{ id: "agents", label: "Agents", tabs: ["agent-profiles", "regulators"] }] } }; }, AGENT));
+    assert.deepEqual(entries(grouped.adminNav, C).map((e: any) => e.tabs), [null], "a tab of a Records entry: Agent configuration has no Profiles tab");
+    assert.deepEqual(to(grouped.redirects, P), ["/admin/records-group/agents?tab=agent-profiles"], "a tab of a Records entry: its address leads to that tab only");
+    console.log("✓ Agent configuration and Agent profiles as one staff entry (mold_v0-284): Configuration and Profiles in-page tabs, no Agent profiles entry, lit on each tab, /admin/agent-profiles leads to ?tab=profiles, printed with its tabs, the console's one strip over each page's body; agent_harness off unchanged; listed in Records (plain or a tab) it stays there alone");
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {

@@ -2,8 +2,9 @@
 // A shared record's own resources on its staff page (mold_v0-282, flag record_resources; src/record-resources.ts): each
 // repository field's GitHub repository (read live through the platform's GitHub App: its default branch and last
 // commit, or in plain words why it cannot be read and where to fix it), and each database field's database (its
-// status: being created, ready, or failed with the reason, with Retry; its Neon project, region, host, database and
-// role, never its connection string). Read from GET /api/admin/records/_resources/<area>/<key>.
+// status: being created, ready, or failed with the reason, with Retry; its schema in the app's own database, its own
+// login role or, when the database gave none, "schema only, no own login"; never its connection string; mold_v0-285).
+// Read from GET /api/admin/records/_resources/<area>/<key>.
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Field } from '@/components/layout/record-view';
@@ -19,7 +20,7 @@ import { adminRecordsApi } from '@/lib/api-client';
 interface Repo { field: string; label: string; repository: string | null; url?: string; default_branch?: string; private?: boolean;
   last_commit?: { sha: string; message: string; date: string | null; author: string | null } | null; error?: string }
 export interface Database { field: string; label: string; provider: string; status: 'provisioning' | 'ready' | 'failed' | 'none'; reason: string | null;
-  project_id: string | null; region: string | null; host: string | null; database: string | null; role: string | null; retry: boolean; updated_at: string | null }
+  schema: string | null; role: string | null; login: boolean | null; host: string | null; database: string | null; note: string | null; retry: boolean; updated_at: string | null }
 interface Resources { repositories: Repo[]; databases: Database[] }
 
 /** Whether the area's records own a repository or a database (and the flag is on): only then is the card drawn. */
@@ -28,7 +29,6 @@ export const ownsResources = (area: Pick<RecordAreaSpec, 'scope' | 'fields'>) =>
 /** Whether the area's records own a database (deleting one deletes it: the confirmation says so). */
 export const ownsDatabase = (area: Pick<RecordAreaSpec, 'scope' | 'fields'>) => ownsResources(area) && area.fields.some((f) => f.type === 'database');
 
-const PROVIDER: Record<string, string> = { neon: 'Neon' };
 const STATUS: Record<Database['status'], { label: string; variant: 'secondary' | 'destructive' | 'outline' }> = {
   provisioning: { label: 'Being created', variant: 'outline' }, ready: { label: 'Ready', variant: 'secondary' },
   failed: { label: 'Failed', variant: 'destructive' }, none: { label: 'Not created', variant: 'outline' },
@@ -77,7 +77,7 @@ export function RecordResources({ area, recordKey }: { area: RecordAreaSpec; rec
                 <span className='flex flex-col items-start gap-1.5' data-database={d.status}>
                   <span className='flex flex-wrap items-center gap-2'>
                     <Badge variant={STATUS[d.status].variant}>{d.status === 'provisioning' && <Icons.spinner className='animate-spin' />}{STATUS[d.status].label}</Badge>
-                    <span className='text-muted-foreground text-xs'>{PROVIDER[d.provider] ?? d.provider} Postgres, this record’s own</span>
+                    <span className='text-muted-foreground text-xs'>A schema of this record’s own in this app’s database</span>
                     {d.retry && (
                       <Button type='button' size='sm' variant='outline' disabled={busy === d.field} onClick={() => void retry(d)} data-database-retry=''>
                         <Icons.refresh /> {busy === d.field ? 'Creating…' : d.status === 'none' ? 'Create database' : 'Retry'}
@@ -88,9 +88,10 @@ export function RecordResources({ area, recordKey }: { area: RecordAreaSpec; rec
                   {d.reason && d.status !== 'ready' && <span className={d.status === 'failed' ? 'text-destructive text-xs' : 'text-muted-foreground text-xs'} data-database-reason=''>{d.reason}</span>}
                   {d.status === 'ready' && (
                     <span className='text-muted-foreground font-mono text-xs break-all'>
-                      {[d.project_id && `project ${d.project_id}`, d.region, d.host, d.database && `database ${d.database}`, d.role && `role ${d.role}`].filter(Boolean).join(' · ')}
+                      {[d.schema && `schema ${d.schema}`, d.database && `database ${d.database}`, d.host, d.role ? `own login ${d.role}` : null].filter(Boolean).join(' · ')}
                     </span>
                   )}
+                  {d.status === 'ready' && d.login === false && <span className='text-xs' data-database-schema-only=''>{d.note ?? 'Schema only, no own login: the app’s connection is used.'}</span>}
                   {d.status === 'ready' && <span className='text-muted-foreground text-xs'>Its connection string is kept sealed on the server: it is never shown here or given to an agent.</span>}
                 </span>
               </Field>

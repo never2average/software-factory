@@ -1,67 +1,46 @@
 // Record-owned resources (mold_v0-282, flag record_resources; src/record-resources.ts, src/github-app.ts
 // readRecordRepository), offline: an embedded database, the HTTP server, a declared pack with a shared area whose records
-// own a GitHub repository and a Neon database, a stand-in for Neon's API v2 and a stand-in for GitHub's.
+// own a GitHub repository and a database of their own (mold_v0-285: a schema in the app's own database, provider core),
+// and a stand-in for GitHub's API.
 //   npm run test:record-resources
 //
 // 1. The declaration: a repository or database field only on a shared area written by staff (never a workspace area, a
-//    repository-fed area or a run's argument); a database field names its provider and takes no value; with the flag off
-//    the record's resources answer not found.
-// 2. No Neon key: the New form leaves the database field out and says the key is missing and where it is added; Health
-//    says the same; a record added anyway is stored, its database failed with that reason and a Retry.
-// 3. The Neon key in the key vault (a direct-mode key, accepted: the server's own; never given to a session or a run):
-//    Retry creates one Neon project for the record; its connection string is sealed in record_resources (never in the
-//    record's fields, never in an answer), opened only by the server's own code; a new record gets its database at once;
-//    an import's records each get theirs after the batch commits; a database value written by hand is refused.
+//    repository-fed area or a run's argument); a database field's provider is core, the default; "neon" is refused in
+//    words saying databases live in the app's own database; it takes no value; with the flag off the record's resources
+//    answer not found; Key vault offers no Neon key.
+// 2. A new record gets its schema and its own LOGIN role at once: the role is limited to its schema (USAGE and CREATE,
+//    every privilege on what is made in it, search_path the schema, no membership, no CREATEDB/CREATEROLE/BYPASSRLS) and,
+//    proved by acting as it (SET ROLE), reads none of the app's tables, creates nothing in public and cannot reach
+//    another record's schema; its connection string is sealed (never in the fields or an answer), opened by the
+//    server's own code; a database value written by hand is refused; an import's records each get theirs after the
+//    batch commits; an edit keeps it.
+// 3. Refusals, through the database itself (the DDL run as a role that may not): CREATE SCHEMA refused: the record is
+//    stored, its database failed with the reason, Health says so in plain words; Retry, once allowed, makes it. CREATE
+//    ROLE refused: the schema alone, "schema only, no own login: the app's connection is used" on the record's page,
+//    its sealed connection string the app's own with search_path the schema; Health says so.
 // 4. Repositories: one the platform's GitHub App can read is saved and shown with its default branch and last commit (an
 //    empty one with none); one the app is not installed on, or may not read, refuses the write in plain words naming
 //    where to fix it; an unchanged repository is not read again on save; no GitHub App: the words say where to set it.
-// 5. Neon failing: the record is stored and its database failed with Neon's words (never a connection string); Retry
-//    makes it. Delete: confirmed by the caller, the Neon project is deleted first; Neon refusing keeps the record and its
-//    database ("nothing was deleted"); then the delete goes through and the project and its row are gone; one Neon no
-//    longer knows counts as deleted. In a batch a database-owning record's delete is refused.
-// 6. Rotating the vault's master key re-seals the connection strings; Health is ok once the key is there.
+// 5. Delete: the caller confirms; a role the database will not drop (something else still depends on it) keeps the
+//    record, its schema and its role ("nothing was deleted"); then the delete drops the schema (CASCADE) and the role
+//    and its row; a schema-only database drops its schema; in a batch a database-owning record's delete is refused.
+// 6. Rotating the vault's master key re-seals the connection strings; Health says nothing of record databases once
+//    nothing is refused.
+// 7. operator:import-records (src/record-import-cli.ts, the staff Import's own path): a dry run counts new, updated and
+//    invalid (with reasons) and writes nothing; the real run writes, logs IMPORT lines naming who imported and makes each
+//    new record's database; a rerun is idempotent (unchanged, nothing written); a changed row is updated, not duplicated;
+//    bad arguments, a workspace area and a locked vault are refused (exit 2).
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
+import path from "node:path";
+import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
 const ok = (m: string) => console.log(`✓ ${m}`);
-const NEON_KEY = `neon_test_${randomBytes(8).toString("hex")}`;
-const SECRET_PW = `pw${randomBytes(6).toString("hex")}`;
-
-// ---------- the stand-in Neon API v2 ----------
-const projects = new Map<string, { name: string }>();
-const neonCalls: string[] = [];
-let neonFail: { create?: number; del?: number } = {};
-const neon = http.createServer((req, res) => {
-  const chunks: Buffer[] = [];
-  req.on("data", (c) => chunks.push(c));
-  req.on("end", () => {
-    const send = (s: number, b?: unknown) => { res.writeHead(s, { "content-type": "application/json" }); res.end(b === undefined ? "" : JSON.stringify(b)); };
-    if (req.headers.authorization !== `Bearer ${NEON_KEY}`) return send(401, { message: "authentication required" });
-    const url = new URL(String(req.url), "http://neon");
-    neonCalls.push(`${req.method} ${url.pathname}`);
-    if (req.method === "POST" && url.pathname === "/projects") {
-      if (neonFail.create) { const s = neonFail.create; neonFail.create = undefined; return send(s, { message: `boom at postgresql://x:${SECRET_PW}@leak/db` }); }
-      const b = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-      const id = `proj-${randomBytes(5).toString("hex")}`;
-      projects.set(id, { name: b.project?.name });
-      return send(201, { project: { id, name: b.project?.name, region_id: "aws-us-east-2" },
-        connection_uris: [{ connection_uri: `postgresql://neondb_owner:${SECRET_PW}@ep-${id}.us-east-2.aws.neon.tech/neondb?sslmode=require`,
-          connection_parameters: { database: "neondb", role: "neondb_owner", host: `ep-${id}.us-east-2.aws.neon.tech`, password: SECRET_PW } }] });
-    }
-    const m = /^\/projects\/([^/]+)$/.exec(url.pathname);
-    if (req.method === "DELETE" && m) {
-      if (neonFail.del) { const s = neonFail.del; neonFail.del = undefined; return send(s, { message: "project is locked" }); }
-      if (!projects.has(m[1]!)) return send(404, { message: "project not found" });
-      projects.delete(m[1]!);
-      return send(200, { project: { id: m[1] } });
-    }
-    send(404, { message: "no such route" });
-  });
-});
 
 // ---------- the stand-in GitHub ----------
 // Installation 77 on acme reads acme/widgets and acme/empty, not acme/secret; nothing is installed on ghost.
@@ -112,15 +91,14 @@ const PACK = {
     { name: "fx_molds", label: "Molds", role: "source", scope: "platform", fields: [
       { name: "summary", label: "Summary", type: "text" },
       { name: "repo", label: "Repository", type: "repository" },
-      { name: "database", label: "Database", type: "database", provider: "neon" }] },
+      { name: "database", label: "Database", type: "database" }] },
     { name: "fx_notes", label: "Notes", role: "source", scope: "platform", fields: [{ name: "note", label: "Note", type: "text" }] },
+    { name: "fx_own", label: "Own", role: "source", scope: "workspace", fields: [{ name: "note", label: "Note", type: "text" }] },
   ],
 };
 
 try {
-  await new Promise<void>((r) => neon.listen(0, "127.0.0.1", r));
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
-  process.env.NEON_API_URL = `http://127.0.0.1:${(neon.address() as AddressInfo).port}`;
   const F = await import("../src/features.js");
   const { setPacksForTest } = await import("../src/packs.js");
   const { compileDeclarations } = await import("../src/pack-manifest.js");
@@ -137,16 +115,33 @@ try {
   const rec = await import("../src/record-areas.js");
   const RR = await import("../src/record-resources.js");
   const area = rec.findArea("fx_molds")!;
-  const noSecret = (what: string, v: unknown) => assert.ok(!JSON.stringify(v).includes(SECRET_PW), `${what}: no connection string or password in it`);
+  const health = async () => (await call("GET", "/api/admin/onboarding/health/status")).body;
+  const dbCheck = async () => (await health()).checks?.find((c: { id: string }) => c.id === "record_databases");
+  /** What the role may do, by acting as it: the rows, or the error's code. */
+  const asRole = async (role: string, sql: string) => {
+    try { return await db.transaction(async (tx) => { await tx.query(`SET LOCAL ROLE "${role}"`); return tx.query(sql); }); }
+    catch (e) { return (e as { code?: string }).code ?? String(e); }
+  };
+  const schemaOf = async (key: string) => (await db.query<{ external_id: string | null; details: { role?: string | null; login?: boolean } }>(
+    "SELECT external_id, details FROM record_resources WHERE area = 'fx_molds' AND record_key = $1", [key]))[0];
+  const schemaThere = async (s: string) => (await db.query("SELECT 1 FROM pg_namespace WHERE nspname = $1", [s])).length === 1;
+  const roleThere = async (s: string) => (await db.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [s])).length === 1;
+  const passwordOf = (url: string | null) => (url ? decodeURIComponent(new URL(url).password) : "");
+  const secrets: string[] = [];
+  const noSecret = (what: string, v: unknown) => { for (const s of secrets) assert.ok(!JSON.stringify(v).includes(s), `${what}: no connection string or password in it`); };
 
   // ---------- 1. the declaration, and the flag ----------
   {
     const bad = (a: unknown) => RecordAreaSchema.safeParse(a);
     assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "workspace", fields: [{ name: "r", label: "R", type: "repository" }] }).error?.issues), /shared \(platform\) area/);
-    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", repository: "cat", fields: [{ name: "d", label: "D", type: "database", provider: "neon" }] }).error?.issues), /written through the record store/);
-    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "d", label: "D", type: "database" }] }).error?.issues), /names its provider/);
-    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "d", label: "D", type: "database", provider: "neon", required: true }] }).error?.issues), /cannot be required/);
-    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "t", label: "T", type: "text", provider: "neon" }] }).error?.issues), /provider is for a database field/);
+    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", repository: "cat", fields: [{ name: "d", label: "D", type: "database" }] }).error?.issues), /written through the record store/);
+    assert.ok(bad({ name: "ww", label: "W", role: "source", scope: "platform", fields: [{ name: "dd", label: "D", type: "database" }] }).success, "a database field needs no provider: core is the default");
+    assert.ok(bad({ name: "ww", label: "W", role: "source", scope: "platform", fields: [{ name: "dd", label: "D", type: "database", provider: "core" }] }).success, "provider core is right");
+    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "d", label: "D", type: "database", provider: "neon" }] }).error?.issues),
+      /provider \\"neon\\" is gone.*lives in the app's own database/, "neon is refused, saying where databases live now");
+    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "d", label: "D", type: "database", provider: "rds" }] }).error?.issues), /not a database provider.*core/);
+    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "d", label: "D", type: "database", required: true }] }).error?.issues), /cannot be required/);
+    assert.match(JSON.stringify(bad({ name: "w", label: "W", role: "source", scope: "platform", fields: [{ name: "t", label: "T", type: "text", provider: "core" }] }).error?.issues), /provider is for a database field/);
     assert.ok(JobKindSchema.safeParse({ name: "kk", label: "K", runner: "workspace-harness", entry: "packs/x/run.mjs", args: [{ name: "aa", label: "A", type: "text" }] }).success, "a kind with a text argument is right");
     assert.match(JSON.stringify(JobKindSchema.safeParse({ name: "kk", label: "K", runner: "workspace-harness", entry: "packs/x/run.mjs", args: [{ name: "rr", label: "R", type: "repository" }] }).error?.issues), /repository and database are a shared record area's fields, not a job kind's arguments/);
     assert.ok(bad(PACK.record_areas[0]).success, "the fixture's shared area with both fields is declared right");
@@ -160,70 +155,116 @@ try {
     assert.equal((await call("POST", "/api/admin/data/fx_molds", { key: "off-one", title: "Off", data: { summary: "x" } })).status, 201, "flag off: the area writes as any other");
     assert.equal((await resourcesOf("off-one")).status, 404, "flag off: a record's resources answer not found");
     assert.equal((await db.query("SELECT 1 FROM record_resources")).length, 0, "flag off: no database is made");
-    assert.equal(await (await import("../src/vault-providers.js")).providerInBuild("neon", 0), false, "flag off: Key vault does not list Neon");
     F.setFeatureForTest("record_resources", true);
-    assert.equal(await (await import("../src/vault-providers.js")).providerInBuild("neon", 0), true, "flag on, an area owns a database: Key vault lists Neon");
+    assert.equal(await (await import("../src/vault-providers.js")).providerInBuild("neon", 0), false, "flag on: Key vault offers no Neon key (no outside database provider)");
+    assert.equal((await db.query("SELECT 1 FROM vault_providers WHERE slug = 'neon'")).length, 0, "and 0062 took Neon's provider row out");
     assert.equal(F.featureOn("record_resources"), true);
-    ok("the declaration: repository and database fields only on a shared area written by staff, never a run's argument; a database names its provider and is never required; the flag alone shows the resources and Neon on Key vault");
+    ok("the declaration: repository and database fields only on a shared area written by staff, never a run's argument; a database's provider is core (the default), neon refused in words; never required; the flag alone shows the resources; no Neon on Key vault");
   }
 
-  // ---------- 2. no Neon key ----------
+  // ---------- 2. a record's own schema and role ----------
+  let alpha = "", alphaRole = "";
   {
     const form = (await call("GET", "/api/admin/records/_console/fx_molds/form")).body;
     assert.deepEqual(form.fields.map((f: { name: string }) => f.name), ["summary", "repo"], "the New form leaves the database field out (the platform creates it)");
-    assert.match(form.resources.database_key_missing, /No Neon key.*Admin › Key vault/, "it says the Neon key is missing and where it is added");
+    assert.deepEqual(form.resources.databases, [{ field: "database", label: "Database", provider: "core" }]);
+    assert.equal(form.resources.database_key_missing, undefined, "no key is asked for");
     assert.equal((await call("GET", "/api/admin/records/_console/fx_notes/form")).body.resources, undefined, "an area with no resource field says nothing of them");
-    const health = (await call("GET", "/api/admin/onboarding/health/status")).body;
-    const check = health.checks?.find((c: { id: string }) => c.id === "record_databases");
-    assert.equal(check?.state, "bad", `Health: the record databases check is bad (${JSON.stringify(health.checks?.map((c: { id: string }) => c.id))})`);
-    assert.match(health.database_key_missing?.text ?? "", /No Neon key.*Admin › Key vault/, "Health says where to add it");
-    const r = await call("POST", "/api/admin/data/fx_molds", { key: "nokey", title: "No key", data: { summary: "added without a key" } });
-    assert.equal(r.status, 201, `the record is stored (${JSON.stringify(r.body)})`);
-    const [d] = (await resourcesOf("nokey")).body.databases;
-    assert.equal(d.status, "failed"); assert.match(d.reason, /No Neon key/); assert.equal(d.retry, true);
-    assert.equal(neonCalls.length, 0, "Neon was never called without a key");
-    ok("no Neon key: the New form and Health say it is missing and where to add it; a record added anyway is stored, its database failed with that reason and a Retry");
-  }
-
-  // ---------- 3. the key, Retry, a new record, an import ----------
-  {
-    const { setCredential } = await import("../src/keyvault.js");
-    await setCredential("neon", NEON_KEY);
-    const { KEYS_NEVER_INJECTED } = await import("../src/agent-profiles.js");
-    const { ORCHESTRATOR_ONLY_PROVIDERS } = await import("../src/gateway.js");
-    assert.ok((KEYS_NEVER_INJECTED as readonly string[]).includes("neon") && ORCHESTRATOR_ONLY_PROVIDERS.has("neon"), "the Neon key is never given to a session or brokered to a run");
-    assert.equal((await call("POST", "/api/admin/records/_resources/fx_molds/nokey/database/retry", {}, viewer)).status, 403, "a staff viewer cannot retry");
-    const r = await call("POST", "/api/admin/records/_resources/fx_molds/nokey/database/retry", {});
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.database.status, "ready"); noSecret("the retry's answer", r.body);
-    assert.match(r.body.database.project_id, /^proj-/); assert.equal(r.body.database.database, "neondb"); assert.equal(r.body.database.region, "aws-us-east-2");
-    assert.equal(projects.get(r.body.database.project_id)?.name, "fixture_resources-fx_molds-nokey", "one Neon project, named for the record");
-    assert.equal((await call("POST", "/api/admin/records/_resources/fx_molds/nokey/database/retry", {})).status, 409, "a ready database is not retried");
-    // A new record gets its database at once.
+    assert.equal(await dbCheck(), undefined, "Health: nothing to say of record databases yet");
     const c = await call("POST", "/api/admin/data/fx_molds", { key: "alpha", title: "Alpha", data: { summary: "a mold" } });
-    assert.equal(c.status, 201); noSecret("the create's answer", c.body);
+    assert.equal(c.status, 201, JSON.stringify(c.body));
     assert.equal(c.body.record.data.database, undefined, "the record's fields hold no database value");
-    const res = (await resourcesOf("alpha")).body; noSecret("the resources answer", res);
-    assert.equal(res.databases[0].status, "ready");
-    const [row] = await db.query<{ secret_ciphertext: string; details: unknown; external_id: string }>("SELECT secret_ciphertext, details, external_id FROM record_resources WHERE record_key = 'alpha'");
-    assert.ok(row && !row.secret_ciphertext.includes(SECRET_PW)); noSecret("the stored details", row.details);
+    const res = (await resourcesOf("alpha")).body;
+    const d = res.databases[0];
+    assert.equal(d.status, "ready", JSON.stringify(d)); assert.equal(d.provider, "core"); assert.equal(d.login, true); assert.equal(d.note, null);
+    assert.match(d.schema, /^rec_fx_molds_[0-9a-f]{10}$/, "the schema is named for the record");
+    alpha = d.schema; alphaRole = d.role;
+    assert.equal(alphaRole, alpha, "its own login role, of the same name");
+    assert.ok(await schemaThere(alpha) && await roleThere(alphaRole), "the schema and the role are in the app's own database");
+    const url = await RR.recordDatabaseUrl(area, "alpha", "database");
+    assert.ok(url && new URL(url).username === alphaRole && passwordOf(url).length >= 32, "the server's own code opens the sealed connection string: the role's own login");
+    secrets.push(url!, passwordOf(url));
+    noSecret("the create's answer", c.body); noSecret("the resources answer", res);
+    const [row] = await db.query<{ secret_ciphertext: string; details: unknown }>("SELECT secret_ciphertext, details FROM record_resources WHERE record_key = 'alpha'");
+    assert.ok(row && !row.secret_ciphertext.includes(passwordOf(url))); noSecret("the stored details", row.details);
     const [stored] = await db.query<{ data: unknown }>("SELECT data FROM platform_records WHERE area = 'fx_molds' AND key = 'alpha'");
     noSecret("the record's stored fields", stored);
-    assert.match(String(await RR.recordDatabaseUrl(area, "alpha", "database")), new RegExp(`^postgresql://neondb_owner:${SECRET_PW}@ep-${row.external_id}`), "the server's own code opens the sealed connection string");
     for (const p of ["/api/admin/data/fx_molds/alpha", "/api/admin/records/fx_molds/alpha", "/api/admin/data/fx_molds"]) noSecret(p, (await call("GET", p)).body);
+    // The role, as the catalog says it is.
+    const [r] = await db.query<{ rolcanlogin: boolean; rolsuper: boolean; rolcreatedb: boolean; rolcreaterole: boolean; rolbypassrls: boolean; rolinherit: boolean; rolconfig: string[] | null }>(
+      "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit, rolconfig FROM pg_roles WHERE rolname = $1", [alphaRole]);
+    assert.deepEqual({ ...r, rolconfig: undefined }, { rolcanlogin: true, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolbypassrls: false, rolinherit: false, rolconfig: undefined });
+    assert.ok(r!.rolconfig?.some((x) => x === `search_path=${alpha}` || x === `search_path="${alpha}"`), `its search_path is its schema (${r!.rolconfig})`);
+    assert.equal((await db.query("SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = $1", [alphaRole])).length, 0, "it is a member of no role");
+    const [g] = await db.query<Record<string, boolean>>(
+      `SELECT has_schema_privilege($1, $2, 'USAGE') AS own_usage, has_schema_privilege($1, $2, 'CREATE') AS own_create,
+              has_schema_privilege($1, 'public', 'CREATE') AS public_create, has_table_privilege($1, 'public.platform_records', 'SELECT') AS app_table,
+              has_table_privilege($1, 'public.record_resources', 'SELECT') AS resources_table, has_table_privilege(app_tenant_role(), 'public.record_resources', 'SELECT') AS tenant_resources`, [alphaRole, alpha]);
+    assert.deepEqual(g, { own_usage: true, own_create: true, public_create: false, app_table: false, resources_table: false, tenant_resources: false }, "its grants: its schema only");
+    // A second record: its own schema and role, which the first cannot reach.
+    assert.equal((await call("POST", "/api/admin/data/fx_molds", { key: "beta", title: "Beta", data: { summary: "b" } })).status, 201);
+    const beta = (await resourcesOf("beta")).body.databases[0].schema as string;
+    assert.ok(beta && beta !== alpha);
+    await db.exec(`CREATE TABLE "${beta}".secrets (x int); INSERT INTO "${beta}".secrets VALUES (7); CREATE TABLE "${alpha}".made_by_app (x int); INSERT INTO "${alpha}".made_by_app VALUES (3)`);
+    // Acting as the role (SET ROLE: the embedded database has one connection, so the role is taken on it).
+    for (const t of ["public.platform_records", "public.record_resources", "public.organizations", "public.vault_credentials"])
+      assert.equal(await asRole(alphaRole, `SELECT * FROM ${t} LIMIT 1`), "42501", `as the record's role: ${t} is refused`);
+    assert.equal(await asRole(alphaRole, `SELECT * FROM "${beta}".secrets`), "42501", "as the record's role: another record's schema is refused");
+    assert.equal(await asRole(alphaRole, "CREATE TABLE public.sneaky (x int)"), "42501", "as the record's role: nothing is made in public");
+    // (SET ROLE does not apply the role's own search_path, a login's setting: checked above in pg_roles; named here.)
+    assert.deepEqual(await asRole(alphaRole, `CREATE TABLE "${alpha}".own_t (x int)`), [], "as the record's role: a table in its own schema");
+    assert.deepEqual(await asRole(alphaRole, `SELECT x FROM "${alpha}".made_by_app`), [{ x: 3 }], "and what the app makes in its schema is its to use (default privileges)");
+    assert.deepEqual(await db.query("SELECT tableowner FROM pg_tables WHERE schemaname = $1 AND tablename = 'own_t'", [alpha]), [{ tableowner: alphaRole }], "the table it made is its own (dropped with the schema, below)");
     // A value for the database field is refused.
-    const v = await call("POST", "/api/admin/data/fx_molds", { key: "beta", data: { database: "postgresql://x" } });
+    const v = await call("POST", "/api/admin/data/fx_molds", { key: "gamma", data: { database: "postgresql://x" } });
     assert.equal(v.status, 400); assert.match(v.body.error, /creates the record's database itself/);
     // An import: each record its database, after the batch commits.
-    const before = projects.size;
     const imp = await call("POST", "/api/admin/records/_console/fx_molds/import", { dry_run: false, rows: [{ key: "imp-1", title: "One", data: { summary: "1" } }, { key: "imp-2", title: "Two", data: { summary: "2" } }] });
     assert.equal(imp.status, 200, JSON.stringify(imp.body));
-    assert.equal(projects.size, before + 2, "two Neon projects for the two imported records");
     for (const k of ["imp-1", "imp-2"]) assert.equal((await resourcesOf(k)).body.databases[0].status, "ready");
-    // An edit keeps the record's database (no second project).
+    const before = (await db.query("SELECT 1 FROM pg_namespace WHERE nspname LIKE 'rec\\_%'")).length;
     assert.equal((await call("PUT", "/api/admin/data/fx_molds/alpha", { title: "Alpha 2", data: { summary: "edited" } })).status, 200);
-    assert.equal(projects.size, before + 2, "an edit makes no second database");
-    ok("the Neon key: Retry creates one Neon project per record; a new record and each imported one get theirs; the connection string is sealed, never in the fields or an answer, opened only by the server's code; a database value is refused; an edit keeps it");
+    assert.equal((await db.query("SELECT 1 FROM pg_namespace WHERE nspname LIKE 'rec\\_%'")).length, before, "an edit makes no second schema");
+    ok("a new record gets its own schema and LOGIN role in the app's own database; acting as the role, the app's tables, public and another record's schema are refused, its own schema is its; the connection string is sealed, opened only by the server's code; a database value is refused; imported records get theirs; an edit keeps it");
+  }
+
+  // ---------- 3. refusals: CREATE SCHEMA, CREATE ROLE ----------
+  {
+    // Roles the DDL runs as (the seam), so the database itself refuses: one with no right to create schemas, one that may
+    // create schemas but not roles.
+    await db.exec(`CREATE ROLE rr_no_schema NOLOGIN; CREATE ROLE rr_no_role NOLOGIN;
+      DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO rr_no_role', current_database()); END $$;`);
+    RR.setDdlRoleForTest("rr_no_schema");
+    let r = await call("POST", "/api/admin/data/fx_molds", { key: "noschema", title: "No schema", data: { summary: "x" } });
+    assert.equal(r.status, 201, "the record is stored whatever the database says");
+    let d = (await resourcesOf("noschema")).body.databases[0];
+    assert.equal(d.status, "failed"); assert.match(d.reason, /refused to create this record's schema \(CREATE SCHEMA\).*press Retry/); assert.equal(d.retry, true);
+    let h = await health();
+    let check = h.checks.find((c: { id: string }) => c.id === "record_databases");
+    assert.equal(check?.state, "bad"); assert.match(check.detail, /refuses to create schemas \(CREATE SCHEMA\), so 1 record database could not be made/);
+    assert.match(h.database_refused?.text ?? "", /refuses to create schemas/, "Health's line, in plain words");
+    RR.setDdlRoleForTest(null);
+    r = await call("POST", "/api/admin/records/_resources/fx_molds/noschema/database/retry", {});
+    assert.equal(r.status, 200); assert.equal(r.body.database.status, "ready", "Retry makes it once the database allows it");
+    assert.equal(await dbCheck(), undefined, "and Health has nothing more to say");
+    assert.equal((await call("POST", "/api/admin/records/_resources/fx_molds/noschema/database/retry", {})).status, 409, "a ready database is not retried");
+    assert.equal((await call("POST", "/api/admin/records/_resources/fx_molds/noschema/database/retry", {}, viewer)).status, 403, "a staff viewer cannot retry");
+    // CREATE ROLE refused: the schema alone, said in words.
+    RR.setDdlRoleForTest("rr_no_role");
+    r = await call("POST", "/api/admin/data/fx_molds", { key: "norole", title: "No role", data: { summary: "x" } });
+    RR.setDdlRoleForTest(null);
+    assert.equal(r.status, 201);
+    d = (await resourcesOf("norole")).body.databases[0];
+    assert.equal(d.status, "ready", JSON.stringify(d)); assert.equal(d.login, false); assert.equal(d.role, null);
+    assert.match(d.note, /^Schema only, no own login: the app's connection is used \(the database refused a login of its own: .*permission denied/);
+    assert.ok(await schemaThere(d.schema) && !(await roleThere(d.schema)), "the schema is made, no role");
+    const url = await RR.recordDatabaseUrl(area, "norole", "database");
+    assert.equal(new URL(url!).searchParams.get("options"), `-c search_path=${d.schema}`, "its connection string is the app's own, search_path the schema");
+    h = await health();
+    check = h.checks.find((c: { id: string }) => c.id === "record_databases");
+    assert.equal(check?.state, "warn"); assert.match(check.detail, /refuses to create logins \(CREATE ROLE\), so 1 record database is a schema only.*app's own connection is used/);
+    assert.match(h.database_refused?.text ?? "", /CREATE ROLE/);
+    ok("refusals: CREATE SCHEMA refused, the record is stored, its database failed with the reason, Health says it in plain words, Retry makes it once allowed; CREATE ROLE refused, the schema alone, \"schema only, no own login: the app's connection is used\" on the page and on Health, the app's connection with search_path the schema");
   }
 
   // ---------- 4. repositories ----------
@@ -256,60 +297,102 @@ try {
     ok("repositories: one the platform's GitHub App reads is saved and shown with its default branch and last commit (an empty one with none); one it is not installed on or may not read refuses the write in plain words, naming where to fix it; no app: where to set it; an unchanged one is not read again");
   }
 
-  // ---------- 5. Neon failing, and delete ----------
+
+  // ---------- 5. delete ----------
   {
-    neonFail.create = 500;
-    let r = await call("POST", "/api/admin/data/fx_molds", { key: "flaky", title: "Flaky", data: { summary: "x" } });
-    assert.equal(r.status, 201, "the record is stored whatever Neon says");
-    let d = (await resourcesOf("flaky")).body.databases[0];
-    assert.equal(d.status, "failed"); assert.match(d.reason, /Neon answered 500: boom/); noSecret("a failed database's reason", d);
-    r = await call("POST", "/api/admin/records/_resources/fx_molds/flaky/database/retry", {});
-    assert.equal(r.body.database.status, "ready", "Retry makes it");
-    const project = r.body.database.project_id as string;
-    // Delete: Neon refusing keeps everything.
-    neonFail.del = 500;
-    r = await call("DELETE", "/api/admin/data/fx_molds/flaky");
-    assert.equal(r.status, 502); assert.match(r.body.error, /could not be deleted at Neon.*nothing was deleted, the record stays/);
-    assert.ok(projects.has(project) && (await call("GET", "/api/admin/data/fx_molds/flaky")).status === 200, "the record and its project stay");
-    assert.equal((await call("DELETE", "/api/admin/data/fx_molds/flaky", undefined, viewer)).status, 403, "a staff viewer deletes nothing");
-    r = await call("DELETE", "/api/admin/data/fx_molds/flaky");
+    // A role the database will not drop (something outside its schema still grants it a right): nothing is deleted.
+    await db.exec(`CREATE TABLE public.rr_block (x int); GRANT SELECT ON public.rr_block TO "${alphaRole}"`);
+    let r = await call("DELETE", "/api/admin/data/fx_molds/alpha");
+    assert.equal(r.status, 502, JSON.stringify(r.body)); assert.match(r.body.error, /could not be dropped.*nothing was deleted, the record stays/);
+    noSecret("the refusal", r.body);
+    assert.ok((await call("GET", "/api/admin/data/fx_molds/alpha")).status === 200 && await schemaThere(alpha) && await roleThere(alphaRole), "the record, its schema and its role stay");
+    assert.ok(await schemaOf("alpha"), "and its row");
+    await db.exec(`REVOKE ALL ON public.rr_block FROM "${alphaRole}"; DROP TABLE public.rr_block`);
+    assert.equal((await call("DELETE", "/api/admin/data/fx_molds/alpha", undefined, viewer)).status, 403, "a staff viewer deletes nothing");
+    r = await call("DELETE", "/api/admin/data/fx_molds/alpha");
     assert.equal(r.status, 204, JSON.stringify(r.body));
-    assert.ok(!projects.has(project), "the Neon project is deleted with the record");
-    assert.equal((await db.query("SELECT 1 FROM record_resources WHERE record_key = 'flaky'")).length, 0, "and its row");
-    // A project Neon no longer knows counts as deleted.
-    const gone = (await resourcesOf("imp-1")).body.databases[0].project_id as string;
-    projects.delete(gone);
-    assert.equal((await call("DELETE", "/api/admin/data/fx_molds/imp-1")).status, 204, "a project Neon no longer knows: the record is deleted");
-    // In a batch, a database-owning record's delete is refused (its database is deleted with it, one at a time).
+    assert.ok(!(await schemaThere(alpha)) && !(await roleThere(alphaRole)), "the schema (with its tables) and the role are dropped with the record");
+    assert.equal(await schemaOf("alpha"), undefined, "and its row");
+    // A schema-only database: its schema goes.
+    const s = (await schemaOf("norole"))!.external_id!;
+    assert.equal((await call("DELETE", "/api/admin/data/fx_molds/norole")).status, 204);
+    assert.ok(!(await schemaThere(s)), "a schema-only database's schema is dropped");
+    assert.equal(await dbCheck(), undefined, "Health: nothing refused any more, nothing said");
+    // In a batch, a database-owning record's delete is refused (its database is dropped with it, one at a time).
     r = await call("POST", "/api/admin/data/_batch", { operations: [{ op: "delete", area: "fx_molds", key: "imp-2" }] });
     assert.equal(r.status, 409); assert.match(r.body.error, /delete imp-2 on its own/);
     assert.ok((await call("GET", "/api/admin/data/fx_molds/imp-2")).status === 200, "nothing of the batch was deleted");
-    // With no Neon key a record with a database is not deleted.
-    await db.query("UPDATE vault_credentials SET enabled = false WHERE provider = 'neon'");
-    r = await call("DELETE", "/api/admin/data/fx_molds/imp-2");
-    assert.equal(r.status, 409); assert.match(r.body.error, /with no Neon key it cannot be deleted, so the record stays/);
-    await db.query("UPDATE vault_credentials SET enabled = true WHERE provider = 'neon'");
-    ok("Neon failing: the record is stored, its database failed with Neon's words (a connection string cut out), Retry makes it; delete removes the Neon project first, Neon refusing (or no key) keeps the record and its database, a project Neon no longer knows counts as deleted, a batch delete is refused");
+    ok("delete: a role the database will not drop keeps the record, its schema and role (nothing deleted); then the schema (CASCADE) and role go with the record and its row; a schema-only one drops its schema; a batch delete is refused");
   }
 
-  // ---------- 6. rekey, Health ----------
+  // ---------- 6. rekey ----------
   {
-    const before = await RR.recordDatabaseUrl(area, "alpha", "database");
+    const before = await RR.recordDatabaseUrl(area, "beta", "database");
     process.env.APP_VAULT_KEY_PREVIOUS = process.env.APP_VAULT_KEY;
     process.env.APP_VAULT_KEY = randomBytes(32).toString("base64");
     const { rekey } = await import("../src/keyvault.js");
     await rekey();
     delete process.env.APP_VAULT_KEY_PREVIOUS;
-    assert.equal(await RR.recordDatabaseUrl(area, "alpha", "database"), before, "after a master key rotation the connection strings open with the new key alone");
-    const health = (await call("GET", "/api/admin/onboarding/health/status")).body;
-    assert.equal(health.checks.find((c: { id: string }) => c.id === "record_databases")?.state, "ok", "Health: record databases ok");
-    assert.equal(health.database_key_missing, undefined);
-    ok("rotating the vault's master key re-seals the connection strings; Health is ok with the key there and every database made");
+    assert.ok(before && await RR.recordDatabaseUrl(area, "beta", "database") === before, "after a master key rotation the connection strings open with the new key alone");
+    assert.equal((await health()).database_refused, undefined);
+    ok("rotating the vault's master key re-seals the connection strings; Health says nothing of record databases while nothing is refused");
+  }
+
+  // ---------- 7. operator:import-records ----------
+  {
+    const { importRecordsCommand } = await import("../src/record-import-cli.js");
+    const file = path.join(TMP, "import.json");
+    writeFileSync(file, JSON.stringify({ $comment: "a staff Import file", records: [
+      { key: "op-1", title: "Op one", data: { summary: "first" } },
+      { key: "imp-1", title: "One", data: { summary: "1, changed" } },
+      { key: "not a key!", title: "Bad", data: { summary: "x" } },
+      { key: "op-2", title: "Op two", data: { nope: 1 } }] }));
+    const logs = async () => (await db.query<{ actor: string; path: string }>("SELECT actor, path FROM admin_access_log WHERE method = 'IMPORT' AND actor = 'ops-person' ORDER BY id"));
+    let r = await importRecordsCommand(["--area", "fx_molds", "--file", file, "--dry-run", "--json"]);
+    const j = r.json as { counts: Record<string, number>; written: number; invalid: { key: string; reasons: string[] }[] };
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(j.counts, { new: 1, updated: 1, unchanged: 0, invalid: 2 }, "a dry run: new, updated, invalid counted");
+    assert.equal(j.written, 0);
+    assert.deepEqual(j.invalid.map((x) => x.key), ["not a key!", "op-2"]);
+    assert.match(j.invalid[0]!.reasons[0]!, /is not a record key/); assert.match(j.invalid[1]!.reasons[0]!, /has no field "nope"/);
+    assert.match(r.out, /a dry run, nothing written[\s\S]*new 1, updated 1, unchanged 0, invalid 2/);
+    assert.equal((await rec.getPlatform(area, "op-1")), null, "the dry run wrote nothing");
+    // The real run: through the staff Import's own path.
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", file, "--by", "ops-person", "--json"]);
+    const k = r.json as { counts: Record<string, number>; written: number; databases: { key: string; status: string }[] };
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(k.counts, { new: 1, updated: 1, unchanged: 0, invalid: 2 }); assert.equal(k.written, 2, "the two valid rows are written, the invalid skipped");
+    assert.deepEqual(k.databases, [{ key: "op-1", status: "ready", reason: null, login: true }], "the new record's database is made, as the console's import makes it");
+    assert.equal((await rec.getPlatform(area, "imp-1"))?.data.summary, "1, changed", "an existing record is updated");
+    assert.deepEqual((await logs()).map((x) => x.path), ["/api/admin/records/fx_molds/op-1 create", "/api/admin/records/fx_molds/imp-1 update"], "the staff access log names who imported each row");
+    // Rerun: idempotent.
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", file, "--by", "ops-person", "--json"]);
+    assert.deepEqual((r.json as { counts: unknown }).counts, { new: 0, updated: 0, unchanged: 2, invalid: 2 }, "a rerun writes nothing: unchanged");
+    assert.equal((r.json as { written: number }).written, 0);
+    assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'op-1'")).length, 1, "never duplicated");
+    assert.equal((await db.query("SELECT 1 FROM record_resources WHERE record_key = 'op-1'")).length, 1, "one database for it");
+    assert.equal((await logs()).length, 2, "and logs nothing more");
+    // Refusals.
+    assert.equal((await importRecordsCommand(["--area", "fx_molds"])).code, 2, "no --file");
+    assert.equal((await importRecordsCommand(["--area", "fx_molds", "--file", file, "--force"])).code, 2, "an unknown argument");
+    assert.equal((await importRecordsCommand(["--area", "fx_own", "--file", file])).code, 2, "a workspace area");
+    assert.equal((await importRecordsCommand(["--area", "nothing", "--file", file])).code, 2, "an unknown area");
+    assert.equal((await importRecordsCommand(["--area", "fx_molds", "--file", path.join(TMP, "none.json")])).code, 2, "a missing file");
+    const key = process.env.APP_VAULT_KEY; delete process.env.APP_VAULT_KEY;
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", file]);
+    process.env.APP_VAULT_KEY = key;
+    assert.equal(r.code, 2); assert.match(r.out, /sealed with the key vault's master key.*APP_VAULT_KEY.*nothing was written/);
+    // The door itself: a plain node line (as provision.py --operator runs it); bad arguments exit 2 before any database.
+    const door = spawnSync(process.execPath, ["--import=tsx", "scripts/operator/import-records.ts", "--area", "fx_molds"], { encoding: "utf8", env: { ...process.env, DATABASE_URL: "" } });
+    assert.equal(door.status, 2, door.stderr); assert.match(door.stderr, /--area and --file are both needed/);
+    const pkg = JSON.parse((await import("node:fs")).readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+    assert.equal(pkg.scripts["operator:import-records"], "node --env-file-if-exists=.env --import=tsx scripts/operator/import-records.ts", "listed where provision.py --operator reads the mold's operator:* scripts");
+    ok("operator:import-records: a dry run counts new, updated and invalid (with reasons) and writes nothing; the real run takes the staff Import's path (each row checked, the new record's database made, IMPORT lines naming who imported); a rerun writes nothing; bad arguments, a workspace area, a missing file and a locked vault are refused");
   }
   await http_.close();
   console.log(`record resources: all checks passed (${STAMP})`);
 } finally {
-  neon.close(); gh.close();
+  gh.close();
   cleanup();
 }
 process.exit(0);

@@ -49,9 +49,7 @@ import { anyArea, discardSharedFile, mountFileRoutes, recordUploadMax, uploadMax
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
-import { getDb } from "./db.js";
 import { featureOn } from "./features.js";
-import { auditStaffRows } from "./audit-trail.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -153,7 +151,7 @@ export function recordAdminRouter(): Router {
       remove: stored && can(role, "delete") && !areaOpWithheld(a.name, "admin_delete"),
       repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
       // mold_v0-282 (flag record_resources): a database field takes no value (the platform creates it), so the form leaves
-      // it out and says instead what is created, or that the Neon key is missing and where it is added.
+      // it out and says instead what is created (mold_v0-285: a schema of the record's own in the app's own database).
       fields: a.fields.filter((f) => f.type !== "database").map(formField),
       ...(resourcesShown(a) ? { resources: await (await import("./record-resources.js")).formResources(a) } : {}),
       // mold_v0-271: the most bytes a file staff upload into its file fields may have (null: it takes none).
@@ -164,10 +162,10 @@ export function recordAdminRouter(): Router {
   r.post("/_console/:area/import", need("library"), open("admin_create", "admin_update"), answer(async (req, res) => {
     const a = platformArea(String(req.params.area));
     const body = (req.body ?? {}) as { rows?: unknown; dry_run?: unknown };
-    const { importRecords } = await import("./record-import.js");
-    const report = await importRecords(a, body.rows, { dryRun: body.dry_run !== false });
-    if (!report.dry_run) recordImport(a, report.rows.filter((x) => x.action === "create" || x.action === "update" || x.action === "override"), res);
-    return report;
+    // The one path a staff import takes (mold_v0-285: operator:import-records takes it too): checked, written, logged.
+    const { staffImport } = await import("./record-import.js");
+    return staffImport(a, body.rows, { dryRun: body.dry_run !== false, actor: String(res.locals.adminActor ?? "unknown"), role: String(res.locals.adminRole ?? ""),
+      ip: String(res.req.ip ?? ""), channel: "admin_console" });
   }));
   r.get("/:area", need("read"), open("admin_list"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
@@ -233,15 +231,3 @@ async function withProvenance<T extends { key: string }>(a: RecordArea, rows: T[
   return rows.map((r) => (p.has(r.key) ? { ...r, provenance: p.get(r.key) } : r));
 }
 
-/**
- * An import's rows in the staff access log (admin_access_log, as every /api/admin request and admin MCP call): one IMPORT
- * line per row written, after the request's own line; and the platform trail's staff entries when it is on.
- */
-function recordImport(a: RecordArea, rows: { key: string; action: string }[], res: Response) {
-  if (!rows.length) return;
-  const actor = String(res.locals.adminActor ?? "unknown").replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
-  const paths = rows.map((x) => `/api/admin/records/${a.name}/${x.key} ${x.action}`.slice(0, 300));
-  void getDb().then((db) => db.query("INSERT INTO admin_access_log (actor, method, path, status, ip) SELECT $1, 'IMPORT', p, 200, $3 FROM unnest($2::text[]) AS p",
-    [actor, paths, String(res.req.ip ?? "").slice(0, 64)])).catch((e) => console.error(`admin access log: ${(e as Error).message}`));
-  auditStaffRows(actor, String(res.locals.adminRole ?? ""), paths);
-}
