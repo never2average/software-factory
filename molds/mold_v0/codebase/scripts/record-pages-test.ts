@@ -241,12 +241,13 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(log, /f\('kind'|'Kind'|f\('action'|f\('actor'|f\('key_id'|f\('actor_kind'|f\('scopes'|f\('ip'/, "no Kind, Action, Actor, key id, actor kind, scopes or address column");
   assert.doesNotMatch(log, /key: `#\$\{e\.seq\}|`Data \$\{|'Data', 'Call'|prefix\} \$\{r\.key\}/, "no '#48 · slug' row keys, no 'Data'/'Call' prefixes");
   assert.match(log, /render: \(r\) => <span[^>]*>\{r\.title\}<\/span>/, "the first column shows the time alone, never the row's (hidden) key");
-  // The row opens the shared side panel: the sentence, the request (masked), a collapsed Technical details.
-  assert.match(log, /detail: \(r\) => <EntryPanel /);
-  assert.match(log, /<details[^>]*data-technical-details/, "Technical details: collapsed");
-  for (const t of ["'Method'", "'Path'", "'Key prefix'", "'Latency'", "'Address'", "'Through'", "'Request id'"]) assert.ok(log.includes(t), `Technical details: ${t}`);
-  assert.match(log, /<CopyButton text=\{payload\} label='Copy payload' \/>/, "the payload's copy button");
-  assert.match(log, /actions: \(r\) => \[\{ label: 'Export entry'/, "each row's ⋯ menu (and so the panel's): Export entry");
+  // The row opens the shared side panel as ONE card (operator, 2026-11-09): every fact a row of one list (no area facts
+  // above it, no separate Request block, no collapsible), the masked headers and payload as rows; Copy payload and
+  // Export entry in the ⋯ menu (the row's and so the panel's).
+  assert.match(log, /detail: \(r\) => <EntryPanel row=\{r\} api=\{api\} fleet=\{fleet\} \/>, properties: false,/, "the panel draws the entry alone");
+  assert.doesNotMatch(log, /<details|data-technical-details|<CopyButton|<section/, "one card: no collapsible, no separate Request block, no copy button in the body");
+  for (const t of ["'When'", "'Who'", "'What'", "'Method'", "'Path'", "'Status code'", "'Latency'", "'Address'", "'Through'", "'Request ID'", "label='Headers'", "label='Payload'"]) assert.ok(log.includes(t), `one card: ${t}`);
+  assert.match(log, /actions: \(r\) => \[\s*\{ label: 'Copy payload'[\s\S]*?\{ label: 'Export entry'/, "each row's ⋯ menu (and so the panel's): Copy payload, Export entry");
   assert.match(log, /<EmptyState empty=/, "the shared empty state");
   assert.doesNotMatch(log, /function Tabs\(|variant=\{tab ===/, "no Requests / Data access switch");
   assert.match(log, /const which = both \? 'all'/, "Download CSV covers both trails");

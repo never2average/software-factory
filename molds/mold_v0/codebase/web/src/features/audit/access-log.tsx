@@ -21,7 +21,7 @@ import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { LIST_MAX, RecordTableView, type RecordRow, type RecordSource } from '@/features/records/record-pages';
-import { CopyButton } from '@/features/portal/shared';
+import { toast } from 'sonner';
 import { EmptyState } from '@/features/tabs/empty';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { useAccountRole } from '@/features/portal/role';
@@ -102,7 +102,23 @@ async function exportEntry(api: string, e: Entry, fleet: boolean) {
 
 interface RequestView { method?: string; path?: string; headers?: Record<string, string>; body?: unknown; tools?: { name: string; arguments: unknown }[]; truncated?: boolean; note?: string; withheld?: string; request_id?: string }
 
-/** The side panel's body: the sentence, the request (masked headers, the JSON payload, copy), then Technical details. */
+/** The masked request's JSON as the panel shows it (and Copy payload copies): its tool calls and body. */
+const payloadOf = (r: RequestView) => JSON.stringify(r.tools?.length ? { tools: r.tools, body: r.body } : r.body ?? null, null, 2);
+
+/** Copy payload (the row's and the panel's ⋯ menu): the entry's masked request, fetched, onto the clipboard. */
+async function copyPayload(api: string, e: Entry, fleet: boolean) {
+  if (!e.has_request) { toast.message('No request was kept for this entry.'); return; }
+  const { entry } = await getJson<{ entry: { request: RequestView | null } }>(entryUrl(api, e, fleet));
+  const r = entry.request;
+  if (!r || r.withheld) { toast.message(r?.withheld ?? 'No request was kept for this entry.'); return; }
+  await navigator.clipboard.writeText(payloadOf(r));
+  toast.success('Payload copied');
+}
+
+/**
+ * The side panel's body: one card (operator, 2026-11-09), every fact a row of one list: the plain words, then the
+ * request's technical facts, its masked headers and its JSON payload. Copy payload and Export entry are in the ⋯ menu.
+ */
 function EntryPanel({ row, api, fleet }: { row: RecordRow; api: string; fleet: boolean }) {
   const e = entryOf(row);
   const [req, setReq] = useState<{ request: RequestView | null } | { error: string } | null>(null);
@@ -115,45 +131,37 @@ function EntryPanel({ row, api, fleet }: { row: RecordRow; api: string; fleet: b
     return () => { live = false; };
   }, [api, e, fleet]);
   const r = req && 'request' in req ? req.request : null;
-  const payload = r ? JSON.stringify(r.tools?.length ? { tools: r.tools, body: r.body } : r.body ?? null, null, 2) : '';
-  const tech: [string, unknown][] = e.trail === 'platform'
-    ? [['Method', e.method], ['Path', e.path], ['Key prefix', e.key_prefix ? `${e.key_prefix}…` : null], ['Latency', e.latency_ms != null ? `${e.latency_ms} ms` : null],
-      ['Status code', e.status], ['Address', e.ip], ['Through', e.channel], ['Entry type', e.kind], ['Scopes', e.scopes.join(', ') || null], ['Actor', `${e.actor_kind}${e.actor_id ? ` ${e.actor_id}` : ''}`],
-      ['Key id', e.key_id], ['Workspace', e.workspace ? `${e.workspace} (${e.org_id})` : null], ['Entry', `platform trail, scope ${e.scope_id ?? '?'}, #${e.seq}`], ['Request id', r?.request_id ?? null]]
-    : [['Action', e.action], ['Target', e.target], ['Pack', e.pack], ['Area', e.area], ['Record key', e.record_key], ['Rows', e.rows], ['Through', e.channel],
-      ['Actor', `${e.actor_kind}${e.actor_id ? ` ${e.actor_id}` : ''}`], ['Key id', e.key_id], ['Workspace', e.workspace ? `${e.workspace} (${e.org_id})` : e.org_id ?? null],
-      ['Entry', `data trail, #${e.seq}`], ['Request id', r?.request_id ?? null]];
+  const who = row.data.email && row.data.email !== row.data.who ? `${row.data.who} (${row.data.email})` : row.data.who;
+  const facts: [string, unknown][] = [['When', row.title], ['Who', who], ['What', e.what], ['Workspace', row.data.workspace], ['Result', row.data.result], ['Through', row.data.door],
+    ...(e.trail === 'platform'
+      ? [['Method', e.method], ['Path', e.path], ['Status code', e.status], ['Latency', e.latency_ms != null ? `${e.latency_ms} ms` : null], ['Address', e.ip],
+        ['Key', e.key_prefix ? `${e.key_prefix}…` : null], ['Scopes', e.scopes.join(', ') || null]] as [string, unknown][]
+      : [['Area', e.area], ['Record', e.record_key], ['Rows', e.rows]] as [string, unknown][]),
+    ['Request ID', r?.request_id ?? null]];
+  const mono = (v: unknown) => <span className='font-mono text-xs break-all'>{String(v)}</span>;
   return (
-    <div className='flex flex-col gap-4' data-access-entry=''>
-      <p className='text-sm leading-relaxed'>{e.what}</p>
-      <section className='flex flex-col gap-2' aria-label='Request'>
-        <div className='flex items-center justify-between gap-2'>
-          <h3 className='text-sm font-medium'>Request</h3>
-          {r && !r.withheld && <CopyButton text={payload} label='Copy payload' />}
-        </div>
-        {!req && <p className='text-muted-foreground text-xs'>Loading…</p>}
-        {req && 'error' in req && <p className='text-destructive text-xs'>{req.error}</p>}
-        {req && 'request' in req && !r && <p className='text-muted-foreground text-xs'>No request was kept for this entry (made by the system, or before requests were kept).</p>}
-        {r?.withheld && <p className='text-muted-foreground text-xs'>{r.withheld}</p>}
-        {r && !r.withheld && (<>
-          {r.method && <p className='font-mono text-xs break-all'>{r.method} {r.path}</p>}
-          {r.headers && Object.keys(r.headers).length > 0 && (
-            <dl className='bg-muted/40 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 rounded-md p-2 font-mono text-xs'>
-              {Object.entries(r.headers).map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='break-all'>{v}</dd></div>)}
-            </dl>
-          )}
-          <pre className='bg-muted/40 max-h-80 overflow-auto rounded-md p-2 font-mono text-xs whitespace-pre-wrap break-all'>{payload}</pre>
-          {r.note && <p className='text-muted-foreground text-xs'>{r.note}</p>}
-          <p className='text-muted-foreground text-xs'>Secrets, sign-in codes, file contents and sealed or encrypted fields are masked (••••) before anything is kept.</p>
-        </>)}
-      </section>
-      <details className='rounded-md border p-2' data-technical-details=''>
-        <summary className='cursor-pointer text-sm font-medium'>Technical details</summary>
-        <dl className='mt-2'>
-          {tech.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <Field key={k} label={k}><span className='font-mono text-xs break-all'>{String(v)}</span></Field>)}
-        </dl>
-      </details>
-    </div>
+    <dl data-access-entry=''>
+      {facts.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => (
+        <Field key={k} label={k}>{['Method', 'Path', 'Address', 'Key', 'Request ID', 'Status code'].includes(k) ? mono(v) : String(v)}</Field>
+      ))}
+      {!req && <Field label='Request'><span className='text-muted-foreground text-xs'>Loading…</span></Field>}
+      {req && 'error' in req && <Field label='Request'><span className='text-destructive text-xs'>{req.error}</span></Field>}
+      {req && 'request' in req && !r && <Field label='Request'><span className='text-muted-foreground text-xs'>None kept (made by the system, or before requests were kept)</span></Field>}
+      {r?.withheld && <Field label='Request'><span className='text-muted-foreground text-xs'>{r.withheld}</span></Field>}
+      {r && !r.withheld && r.headers && Object.keys(r.headers).length > 0 && (
+        <Field label='Headers'>
+          <dl className='grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-xs leading-snug'>
+            {Object.entries(r.headers).map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='break-all'>{v}</dd></div>)}
+          </dl>
+        </Field>
+      )}
+      {r && !r.withheld && (
+        <Field label='Payload'>
+          <pre className='max-h-80 overflow-auto font-mono text-xs leading-snug whitespace-pre-wrap break-all'>{payloadOf(r)}</pre>
+          {r.note && <span className='text-muted-foreground mt-1 block text-xs'>{r.note}</span>}
+        </Field>
+      )}
+    </dl>
   );
 }
 
@@ -182,8 +190,10 @@ function TrailTable({ api, base, fleet, id }: { api: string; base: 'app' | 'admi
     title: { label: 'When', type: 'date', value: (r) => String(r.data.at ?? r.updated_at) }, defaultSort: [{ key: '_record', dir: 'desc' }],
     render: (r) => <span className='text-sm whitespace-nowrap tabular-nums'>{r.title}</span>,
     detailTitle: (r) => String(r.data.what ?? ''),
-    detail: (r) => <EntryPanel row={r} api={api} fleet={fleet} />,
-    actions: (r) => [{ label: 'Export entry', icon: <Icons.download />, onSelect: () => void exportEntry(api, entryOf(r), fleet).catch(() => undefined) }]
+    detail: (r) => <EntryPanel row={r} api={api} fleet={fleet} />, properties: false,
+    actions: (r) => [
+      { label: 'Copy payload', icon: <Icons.copy />, onSelect: () => void copyPayload(api, entryOf(r), fleet).catch(() => toast.error('Could not copy the payload')) },
+      { label: 'Export entry', icon: <Icons.download />, onSelect: () => void exportEntry(api, entryOf(r), fleet).catch(() => undefined) }]
   }), [api, which, csv, fleet]);
   return (
     <RecordTableView key={source.key} area={area} base={base} url={source.key} id={id} open={false} source={source}
