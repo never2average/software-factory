@@ -2461,7 +2461,7 @@ GitHub App's catalog token; the GitHub App itself stays, for workspaces' `github
 record's `repository` field, mold_v0-282, whose build now mounts its Key vault section) and the `private_catalogs` flag, `APP_CATALOG_AUTOINDEX` and `APP_DATA_ALLOW_FILE_UPSTREAM`.
 A pack.json or a code pack that still declares one is refused, by `gen-packs` and the server, with one plain sentence
 (`UPSTREAM_CATALOG_GONE`: make the areas platform records with New, Edit and Import, from a one-time import file); a
-profile's `features.private_catalogs` is refused the same way. `sql/migrations/0062_no_upstream_catalogs.sql` turns the
+profile's `features.private_catalogs` is refused the same way. `sql/migrations/0063_no_upstream_catalogs.sql` turns the
 rows a catalog wrote into staff rows (their source, fingerprint and commit cleared; titles and fields kept; an override
 drops what stood behind it) and drops `repository_index` and the `catalog_access` provider with what it held. pack.json
 `upstream` (mold_v0-050, the source offer) stays: it names a project the pack runs, never a list it reads. **The

@@ -1,6 +1,6 @@
--- Rolling back past 0062_no_upstream_catalogs (mold_v0-283), for a release from before it.
+-- Rolling back past 0063_no_upstream_catalogs (mold_v0-283), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0062_no_upstream_catalogs.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0063_no_upstream_catalogs.sql
 -- Puts back the empty index state table (0019) and the key vault's provider for private catalogs (0051), as they were
 -- made. The rows the migration made staff rows stay staff rows: an older release whose pack still declares a catalog
 -- indexes it again and finds them as staff overrides of its own rows (the catalog's version kept behind each). A private
