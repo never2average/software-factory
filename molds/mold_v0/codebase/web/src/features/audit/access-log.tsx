@@ -173,7 +173,8 @@ async function loadEntries(api: string) {
 }
 
 function CsvLink({ href }: { href: string }) {
-  return <Button variant='outline' size='sm' render={<a href={href} download />}>Download CSV</Button>;
+  // Operator, 2026-11-09: the spreadsheet icon and "Download logs" (the file is the same CSV, every entry).
+  return <Button variant='outline' size='sm' render={<a href={href} download />}><Icons.spreadsheet /> Download logs</Button>;
 }
 
 /** The access log on the records table: the rows through the data adapter, the four cards above the search row. */
