@@ -34,6 +34,12 @@ store (its scripts write none), and the deployment's non-secret settings a scrip
 (V0_SETTINGS: APP_RUN_SANDBOX), shown as they are. Its package lines run TypeScript through tsx
 (`node --import=tsx scripts/operator/<file>.ts`).
 
+SCRIPTS THAT SEAL (mold_v0-285). A mold_v0 script with a line `// SEALS. <what it seals>` among its first five (the
+mold's operator:import-records: a shared record's own database connection string) also gets the API project's
+APP_VAULT_KEY, the key vault's master key, for the run only: a secret like the database address, never printed, masked
+in everything the script prints. A project whose key Vercel never hands back (Sensitive) or that has none passes nothing
+and says so; the script then refuses the writes that need it. No other script ever gets it.
+
 READ-ONLY SCRIPTS. A script whose first line is `// READ-ONLY. <what it reads>` (mold_v0's operator:vault-status) still
 asks for the yes, since it reads a live app's database; the dry run and the request for the yes say it is read-only and
 what it reads, so the person knows what they are agreeing to.
@@ -79,6 +85,8 @@ PULLED_ENV = (DB_VAR,) + tuple(dict.fromkeys(v for vs in STORAGE_VARS.values() f
 SHOWN_VALUES = ("STORAGE_DRIVER", "STORAGE_S3_REGION", "STORAGE_S3_ADDRESSING")   # not secrets: printed as they are
 V0_SETTINGS = ("APP_RUN_SANDBOX",)   # mold_v0: settings a script reads, not secrets: passed and printed as they are
 READ_ONLY_LINE = re.compile(r"^//\s*READ-ONLY\.\s*(.*)$")
+SEALS_LINE = re.compile(r"^//\s*SEALS\.\s*(.*)$")
+V0_VAULT = "APP_VAULT_KEY"   # mold_v0: the key vault's master key, only for a script that says it SEALS (a secret)
 BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR")
 
 
@@ -146,6 +154,18 @@ def read_only_note(build, script_file):
     return said or "it writes nothing"
 
 
+def seals_note(build, script_file):
+    """The script's own word that it seals with the key vault's master key: a line `// SEALS. <what>` among its first
+    five -> that sentence, or None."""
+    try:
+        with open(os.path.join(build, script_file), encoding="utf-8") as f: head = [f.readline().strip() for _ in range(5)]
+    except (OSError, UnicodeDecodeError): return None
+    for line in head:
+        m = SEALS_LINE.match(line)
+        if m: return m.group(1).split(". ")[0].strip().rstrip(".:") or "what it writes"
+    return None
+
+
 # ---- masking ---------------------------------------------------------------------------------------------------------
 def mask_args(args):
     """The script's arguments as they may be shown: a value after a flag named like a secret is ***, and so is a
@@ -207,9 +227,15 @@ def child_env(vals, url, base=None, v0=None):
         env.update({k: vals[k] for k in V0_SETTINGS if vals.get(k) and vals[k] != "[SENSITIVE]"})
         env.update(NODE_ENV="production", WORKSPACE_OPS_URL=url)
         set_ = [f"{k}={env[k]}" for k in V0_SETTINGS if k in env]
+        seal = ""
+        if V0_VAULT in vals:   # only for a script that SEALS (mold_v0-285): _run_vercel asked for it
+            if vals[V0_VAULT] and vals[V0_VAULT] != "[SENSITIVE]":
+                env[V0_VAULT] = vals[V0_VAULT]; seal = f", and {V0_VAULT} (the key vault's master key, hidden) for what it seals"
+            else: seal = (f"; the project's {V0_VAULT} could not be read (missing, or marked Sensitive, which Vercel never hands back), "
+                          "so the script refuses the writes that need it")
         return env, ("it gets the app role's DATABASE_URL from the API project's production environment" +
                      (f", and {', '.join(set_)} from the same environment" if set_ else f" (the project sets no {', '.join(V0_SETTINGS)}: the script reads the default)")
-                     + "; no file store (its scripts write no files).")
+                     + seal + "; no file store (its scripts write no files).")
     store, said = storage_env(vals)
     env.update(store); env.update(NODE_ENV="production", WORKSPACE_OPS_URL=url)
     return env, said
@@ -217,7 +243,7 @@ def child_env(vals, url, base=None, v0=None):
 
 def _secret_values(passed):
     """Every value handed to the script that is a secret (all of the project's but the driver's name and plain options)."""
-    return [v for k, v in passed.items() if k in PULLED_ENV and k not in SHOWN_VALUES and k not in V0_SETTINGS]
+    return [v for k, v in passed.items() if v and (k in PULLED_ENV or k == V0_VAULT) and k not in SHOWN_VALUES and k not in V0_SETTINGS]
 
 
 def shown_env(names, proj):
@@ -325,10 +351,14 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
         names = (DB_VAR,) + (V0_SETTINGS if v0 is not None else ("BLOB_READ_WRITE_TOKEN",))
         shown = (shown_env((DB_VAR,) if v0 is not None else names, proj)
                  + "".join(f" {k}=<as the project sets it, if it does>" for k in (V0_SETTINGS if v0 is not None else ()))
+                 + (f" {V0_VAULT}=<hidden>" if v0 is not None and seals_note(build, argv[-1]) else "")
                  + f" NODE_ENV=production WORKSPACE_OPS_URL={shlex.quote(url)} " + shlex.join(argv + shown_args))
         say(f"{app_id}: {key} on Vercel, run here from {os.path.relpath(build, ROOT)}/ (the app's build copy):")
         say(f"    $ cd {shlex.quote(os.path.relpath(build, ROOT))}")
         say(f"    $ {shown}")
+        if v0 is not None and seals_note(build, argv[-1]):
+            detail["seals"] = seals_note(build, argv[-1])
+            say(f"    It SEALS {detail['seals']}, so it also gets the project's {V0_VAULT} (the key vault's master key, hidden; mold_v0-285).")
         if v0 is not None:
             say(f"    with nothing else of the project's environment (no file store: its scripts write no files), and of this machine's "
                 f"only {', '.join(BASE_ENV[:3])} and the like. The database address is the app role's, from {proj}'s production environment.")
@@ -381,8 +411,10 @@ def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pul
         pull_env = clone.pull_env
     proj = v0["env_project"] if v0 is not None else infra["vercel"]["project"]
     pulled = pull_env(proj, build) or {}
-    keep = (DB_VAR,) + V0_SETTINGS if v0 is not None else PULLED_ENV
+    seals = v0 is not None and seals_note(build, argv[-1]) is not None
+    keep = (DB_VAR,) + V0_SETTINGS + ((V0_VAULT,) if seals else ()) if v0 is not None else PULLED_ENV
     vals = {k: pulled[k] for k in keep if isinstance(pulled.get(k), str)}   # the allow-list: nothing else is kept
+    if seals: vals.setdefault(V0_VAULT, "")   # asked for: child_env says when it could not be read
     del pulled
     for v in _secret_values(vals): AR.forbid(v)
     db = vals.get(DB_VAR)
@@ -660,6 +692,26 @@ def self_test(check=None):
                "Sup3rS3cretPw" not in out and BLOB not in out and "DATABASE_URL=[hidden]" in out and "APP_RUN_SANDBOX=auto" in out and "address was never printed" in out, out)
             rc, out = go(["--operator", "vault-status", "--yes"], pull_=pull_with({"DATABASE_URL": DB}), run_=echo_run, v0=V0)
             ok("operator v0: no APP_RUN_SANDBOX on the project: said, the script reads the default", rc == 0 and "APP_RUN_SANDBOX" not in runs_[-1][1]["env"] and "reads the default" in out, out)
+            # mold_v0-285: a script that says it SEALS gets the API project's APP_VAULT_KEY, hidden; no other script does.
+            VKEY = "VaultMasterKey_" + "q" * 30
+            open(os.path.join(b0, "scripts", "operator", "seal.ts"), "w").write("// SEALS. A record's own connection string, with the vault key.\nconsole.log(1);\n")
+            pkg0 = json.load(open(os.path.join(b0, "package.json"))); pkg0["scripts"]["operator:seal"] = "node --import=tsx scripts/operator/seal.ts"
+            json.dump(pkg0, open(os.path.join(b0, "package.json"), "w"))
+            ok("operator v0: the SEALS line is read", seals_note(b0, "scripts/operator/seal.ts") == "A record's own connection string, with the vault key"
+               and seals_note(b0, "scripts/operator/vault-status.ts") is None)
+            rc, out = go(["--operator", "seal", "--dry-run"], pull_=pull_with({**V0FULL, "APP_VAULT_KEY": VKEY}), v0=V0)
+            ok("operator v0 285: --dry-run of a sealing script names APP_VAULT_KEY hidden, pulls nothing", rc == 0 and not runs_[len(runs_):] and "APP_VAULT_KEY=<hidden>" in out and VKEY not in out, out)
+            rc, out = go(["--operator", "seal", "--yes"], pull_=pull_with({**V0FULL, "APP_VAULT_KEY": VKEY}), run_=echo_run, v0=V0)
+            env_ = runs_[-1][1]["env"] if runs_ else {}
+            ok("operator v0 285: a sealing script gets APP_VAULT_KEY and nothing more, never printed (even echoed)",
+               rc == 0 and env_.get("APP_VAULT_KEY") == VKEY and set(env_) - basics == {"DATABASE_URL", "APP_RUN_SANDBOX", "APP_VAULT_KEY", "NODE_ENV", "WORKSPACE_OPS_URL"}
+               and VKEY not in out and "Sup3rS3cretPw" not in out, (sorted(env_), out))
+            AR._FORBIDDEN.clear()
+            rc, out = go(["--operator", "vault-status", "--yes"], pull_=pull_with({**V0FULL, "APP_VAULT_KEY": VKEY}), run_=echo_run, v0=V0)
+            ok("operator v0 285: a script that does not seal never gets APP_VAULT_KEY", rc == 0 and "APP_VAULT_KEY" not in runs_[-1][1]["env"], sorted(runs_[-1][1]["env"]))
+            rc, out = go(["--operator", "seal", "--yes"], pull_=pull_with({**V0FULL, "APP_VAULT_KEY": "[SENSITIVE]"}), run_=echo_run, v0=V0)
+            ok("operator v0 285: a Sensitive APP_VAULT_KEY passes nothing and says so", rc == 0 and "APP_VAULT_KEY" not in runs_[-1][1]["env"] and "could not be read" in out, out)
+            AR._FORBIDDEN.clear()
             rc, out = go(["--operator", "vault-status", "--yes"], inf={"target": "compose_remote", "compose_remote": {"production_url": "https://x.example.com"}}, v0=V0)
             ok("operator v0: a single-service app off Vercel is refused, exit 2", rc == 2 and "Vercel only" in out, out)
             AR._FORBIDDEN.clear()

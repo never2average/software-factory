@@ -297,10 +297,10 @@ export function auditPlatformAccount(actor: string, what: string, orgId: number 
  * Staff rows written by one console request that are not a request each (mold_v0-221: an import into a shared area,
  * src/record-routes.ts): one staff entry per row, its path naming the area, the key and what was done (never a value).
  */
-export function auditStaffRows(actor: string, role: string, paths: string[]) {
+export function auditStaffRows(actor: string, role: string, paths: string[], channel: "admin_console" | "system" = "admin_console") {
   if (!platformTrailOn()) return;
   const ip = current()?.req ? String(current()!.req!.ip ?? "").slice(0, 64) || null : null;
-  for (const path of paths) platformEntry({ kind: "staff", channel: "admin_console", method: "IMPORT", path: path.slice(0, 300), status: 200, latency_ms: null, ip,
+  for (const path of paths) platformEntry({ kind: "staff", channel, method: "IMPORT", path: path.slice(0, 300), status: 200, latency_ms: null, ip,
     actor: { kind: "staff", id: actor.slice(0, 120), scopes: ["staff", `platform:${role}`] }, org_id: null, org_slug: null });
 }
 

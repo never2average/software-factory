@@ -53,9 +53,9 @@ interface StaffForm {
   upload_max?: number;
   /**
    * mold_v0-282 (flag record_resources): the records' own repository and database fields; a database field is left out of
-   * `fields` (the platform creates it), and the Neon key's absence is said in words.
+   * `fields` (the platform creates it: mold_v0-285, a schema of the record's own in the app's own database).
    */
-  resources?: { repositories: { field: string; label: string }[]; databases: { field: string; label: string; provider: string }[]; database_key_missing: string | null };
+  resources?: { repositories: { field: string; label: string }[]; databases: { field: string; label: string; provider: string }[] };
 }
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -134,21 +134,17 @@ const editDescription = (area: RecordAreaSpec, row: RecordRow) => (row.provenanc
   : `${area.label}: its title and fields, saved whole.`);
 
 /**
- * mold_v0-282: what the New form says of the record's own resources: the database the platform creates for it, or, with
- * no Neon key, that it cannot be created yet and where the key is added; a repository is checked when it is saved.
+ * mold_v0-282: what the New form says of the record's own resources: the database the platform creates for it (mold_v0-285:
+ * a schema of its own in the app's own database); a repository is checked when it is saved.
  */
 function ResourcesNote({ form, noun }: { form: StaffForm; noun: string }) {
   const r = form.resources;
   if (!r || (!r.databases.length && !r.repositories.length)) return null;
   return (
     <div className='flex flex-col gap-2 pb-2 text-sm' data-resources-note=''>
-      {r.database_key_missing ? (
-        <p role='alert' data-database-key-missing='' className='border-destructive/30 bg-destructive/5 text-destructive rounded-lg border px-3 py-2'>
-          {r.database_key_missing} <a href='/admin/keys' className='font-medium underline underline-offset-2'>Open Key vault</a>
-        </p>
-      ) : r.databases.length ? (
-        <p className='text-muted-foreground'>Adding it creates its own {r.databases.map((d) => `${d.label.toLowerCase()} (${d.provider === 'neon' ? 'Neon Postgres' : d.provider})`).join(' and ')}: its status shows on the {noun}’s page.</p>
-      ) : null}
+      {r.databases.length > 0 && (
+        <p className='text-muted-foreground'>Adding it creates its own {r.databases.map((d) => d.label.toLowerCase()).join(' and ')} (a schema of its own in this app’s database): its status shows on the {noun}’s page.</p>
+      )}
       {r.repositories.length > 0 && <p className='text-muted-foreground'>{r.repositories.map((x) => x.label).join(' and ')}: an existing GitHub repository, owner/name; the platform’s GitHub App must be able to read it.</p>}
     </div>
   );

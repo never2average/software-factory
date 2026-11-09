@@ -2983,7 +2983,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `run_analytics` | off | always (the profile alone) | `/app/run-analytics`, `/admin/run-analytics`, `/api/analytics/runs`, `/api/admin/onboarding/run-analytics`, their sidebar entries and the Activity page's link. `quiet_off` |
 | `filters_in_address` | off | always (the profile alone) | the dashboards' filters kept in the address (staff's Overview, a workspace's Activity, run analytics). `quiet_off` |
 | `usage_tool` | off | always (the profile alone) | the customer MCP's `get_usage`. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
-| `record_resources` | off | a shared area's `repository` or `database` field | a shared record's own GitHub repository (linked, checked on save) and its own Neon database (created with the record, deleted with it): "Record-owned resources (mold_v0-282)" below. Off, either field is refused at build. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
+| `record_resources` | off | a shared area's `repository` or `database` field | a shared record's own GitHub repository (linked, checked on save) and its own database inside the app's own Postgres (a schema and, where allowed, a login role; created with the record, dropped with it; mold_v0-285): "Record-owned resources (mold_v0-282)" below. Off, either field is refused at build. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3854,11 +3854,11 @@ Flag `record_resources` (off by default, `quiet_off`; asked for by a shared area
 refused at build while off). Two field types of a **shared (platform) area whose records staff write** (never a
 workspace area, an area fed by a repository, or a job kind's argument: refused at declaration), each a thing the record
 owns outside the record store (`src/record-resources.ts`, the only writer; `sql/migrations/0061_record_resources.sql`
-with its rollback):
+and `0062_record_databases_core.sql` with their rollbacks):
 
 ```json
 { "name": "repository", "label": "Repository", "type": "repository" },
-{ "name": "database", "label": "Database", "type": "database", "provider": "neon" }
+{ "name": "database", "label": "Database", "type": "database" }
 ```
 
 - **`repository`**: an existing GitHub repository, `owner/name`, that staff link to the record (linked, never created).
@@ -3870,31 +3870,57 @@ with its rollback):
   access to the repository; no app: where to set it up). An unchanged repository is not read again on save. The
   record's page shows it with its default branch and last commit (read live, a minute's memory), or why it cannot be
   read. The form takes `owner/name` (a pasted `https://github.com/owner/name` is trimmed to it).
-- **`database`** (`provider: "neon"`, the only provider): one Postgres database of the record's own, **created when the
-  record is created** (never linked, never shared): a Neon project per record and field, through Neon's API v2 called
-  directly (`POST /projects`, `DELETE /projects/{id}`; fetch, no SDK), with the key vault's `neon` key (a platform
-  owner's, Admin › Key vault; `NEON_API_KEY` on the server is imported once, as every provider key is). The key is the
-  server's own: never given to a session or a run (`KEYS_NEVER_INJECTED`, `ORCHESTRATOR_ONLY_PROVIDERS`), and Key vault
-  lists Neon only while an area's records own a database. The field takes no value (a value is refused; the New and Edit
-  forms leave it out). The project's connection string is sealed with the key vault's master key (AES-256-GCM, its key
-  id kept; `rekey` re-seals it) into the record's own row of `record_resources`, never into the record's fields, an
-  answer, a log line or an error (a Neon message's connection string is cut out); the server's own code opens it
-  (`recordDatabaseUrl`). The row's status is the record page's: **provisioning**, **ready** (its Neon project, region,
-  host, database and role; never the password), or **failed** with the reason, with **Retry** (staff with `library`;
-  also for one cut short after two minutes, or a record written before the flag was on: Create database). Creating it
-  never undoes the record's write; inside a batch (an import) each record's database is created once the batch commits.
-  **Deleting** the record (staff with `delete`, after the console's confirmation, which says the database goes too)
-  deletes the Neon project first; Neon refusing, or no Neon key, keeps the record and its database ("nothing was
-  deleted"), and a project Neon no longer knows counts as deleted. A database-owning record is not deleted inside a
-  batch. **A missing Neon key** is said in plain words on the New form and on Health (Status's alert and its Record
-  databases check, which also counts the databases that failed), with where to add it.
+- **`database`** (`provider: "core"`, the default and the only provider; mold_v0-285): a database of the record's own,
+  **created when the record is created** (never linked, never shared), **inside the app's own Postgres** (its
+  `DATABASE_URL`): no outside provider and no key. `provider: "neon"` (mold_v0-282) is refused at declaration, saying
+  databases live in the app's own database. On create, in one transaction with the record's row:
+  - `CREATE SCHEMA rec_<area>_<10 hex>` (a hash of the database, pack, area, record and field), `REVOKE ALL ... FROM
+    PUBLIC` on it;
+  - where the database allows it, `CREATE ROLE` of the same name, `LOGIN` with a random password, `NOSUPERUSER
+    NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`, a member of nothing; `USAGE, CREATE` on its schema,
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA` it granting `ALL` on tables, sequences and functions; `REVOKE ALL` on public's
+    tables and sequences and on every other schema by name (no access to the app's tables or another record's schema);
+    its `search_path` set to the schema; `CONNECT` granted only when `PUBLIC` lacks it;
+  - when `CREATE ROLE` (or a grant after it) is refused, as hosted Postgres often does, the schema alone is kept and the
+    record's page says **"Schema only, no own login: the app's connection is used"** with the database's words.
+  The connection string (the role's own login; or, schema only, the app's own with `options=-c search_path=<schema>`)
+  is sealed with the key vault's master key (AES-256-GCM, its key id kept; `rekey` re-seals it) into the record's own
+  row of `record_resources`, never into the record's fields, an answer, a log line or an error; the server's own code
+  opens it (`recordDatabaseUrl`). The field takes no value (a value is refused; the New and Edit forms leave it out).
+  The row's status is the record page's: **provisioning**, **ready** (its schema, database, host and own login; never
+  the password), or **failed** with the reason, with **Retry** (staff with `library`; also for one cut short after two
+  minutes, or a record written before the flag was on: Create database; a retry drops what an earlier attempt left
+  first). Creating it never undoes the record's write; inside a batch (an import) each record's database is created once
+  the batch commits. **Deleting** the record (staff with `delete`, after the console's confirmation, which says the
+  database goes too) runs `DROP SCHEMA ... CASCADE` and `DROP ROLE` and deletes its row in one transaction; the database
+  refusing (a role something else still depends on) keeps the record, its schema and role ("nothing was deleted"). A
+  database-owning record is not deleted inside a batch. **Health** has a Record databases line only when there is
+  something to say: the app's database refusing `CREATE SCHEMA` (no database made: its login needs CREATE on the
+  database; then Retry) or `CREATE ROLE` (schemas only), in plain words with Status's alert, and databases that failed
+  or are stuck. The DDL runs as the app's own role (platform work, never in a workspace's tenant scope); every statement
+  carries its `/* tenant: admin-only (platform staff) */` note and is made of names the module makes itself
+  (`^rec_[a-z0-9_]+$`, a hex password). `sql/migrations/0062_record_databases_core.sql` (with its rollback) makes `core`
+  the provider (default), refuses to apply while a record still has a Neon database, and takes Neon's Key vault
+  provider row out unless a Neon key is still held (then it stays, never offered; a platform owner deletes it).
 
 Routes (staff, inside the admin router): `GET /api/admin/records/_resources/<area>/<key>` (the record's repositories and
 databases, never a secret) and `POST /api/admin/records/_resources/<area>/<key>/<field>/retry`; `_console/<area>/form`
-carries `resources` (the fields, and `database_key_missing`). Off, both routes answer not found and nothing is created.
-Proven offline by `npm run test:record-resources` (a stand-in Neon API v2 and a stand-in GitHub) and
-`npm run test:migrations` (0061: one database per record and field, the tenant role with no grant, a ready one sealed, a
-failed one with its reason; its rollback refused while a database or a Neon key is there).
+carries `resources` (the fields). Off, both routes answer not found and nothing is created.
+Proven offline by `npm run test:record-resources` (the embedded database; a stand-in GitHub: acting as a record's role,
+the app's tables, public and another record's schema are refused; CREATE SCHEMA and CREATE ROLE refused by the database
+itself; Retry; delete drops both, a refused drop keeps everything) and `npm run test:migrations` (0061, 0062 and their
+rollbacks).
+
+**Importing from the factory (`operator:import-records`, mold_v0-285).** A staff Import file (`{"records": [{key, title,
+data}]}`, the console's Import format) into one shared area, through exactly the staff console's Import
+(`src/record-import.ts staffImport`: each row checked, one batch, each new record's database made after it commits, an
+IMPORT line per written row in the staff access log and the platform trail naming who imported):
+`python3 .claude/scripts/provision.py <app> --operator import-records [--dry-run] -- --area <name> --file <path> [--dry-run] [--json] [--by <name>]`
+(provision.py's own `--dry-run` prints the command; the script's `--dry-run`, after `--`, checks and counts new /
+updated / unchanged / invalid with reasons and writes nothing). Idempotent by key: an existing record is updated, never
+duplicated; a rerun writes nothing. On a Vercel app it runs from the build copy with the API project's `DATABASE_URL`
+and, because its first line says `// SEALS.`, that project's `APP_VAULT_KEY` (hidden; lib/operator_run.py); without the
+key a real run into an area that makes databases is refused before anything is written (exit 2).
 
 ## Early access and sign-in editor (mold_v0-266)
 

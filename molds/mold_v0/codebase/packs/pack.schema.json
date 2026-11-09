@@ -681,7 +681,7 @@
                 "provider": {
                   "type": "string",
                   "enum": [
-                    "neon"
+                    "core"
                   ]
                 }
               },
@@ -4475,7 +4475,7 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "neon"
+                        "core"
                       ]
                     }
                   },
@@ -5053,7 +5053,7 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "neon"
+                        "core"
                       ]
                     }
                   },

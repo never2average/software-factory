@@ -320,11 +320,12 @@ export async function healthStatus() {
   // mold_v0-274: the runs' sandbox provider's key, when it is missing, in plain words (which key, and where it is set).
   const sbxNeed = (vault?.runs.needs ?? []).find((x) => (x.slug === "boat" || x.slug === "freestyle") && x.set === "no" && /sandboxes/.test(x.why));
   const sandboxMissing = sbxNeed ? { provider: sbxNeed.slug, name: sbxNeed.name, text: (await import("./run-sandboxes.js")).missingSandboxKeyText(sbxNeed.slug as "boat" | "freestyle") } : null;
-  // mold_v0-282 (flag record_resources): the shared records' databases: the Neon key, and how many could not be created.
+  // mold_v0-282/285 (flag record_resources): the shared records' databases, a line only when there is something to say:
+  // the app's database refusing CREATE SCHEMA (none made) or CREATE ROLE (schemas only), or databases not created.
   const resources = featureOn("record_resources")
     ? await (await import("./record-resources.js")).resourcesHealth((await import("./record-areas.js")).recordAreas()).catch(() => null) : null;
-  if (resources) checks.push({ id: "record_databases", label: "Record databases", state: !resources.key_set ? "bad" : resources.failed || resources.stuck ? "warn" : "ok",
-    value: !resources.key_set ? "Neon key missing" : resources.failed || resources.stuck ? `${resources.failed + resources.stuck} not created` : "ready", detail: resources.text });
+  if (resources?.text) checks.push({ id: "record_databases", label: "Record databases", state: resources.schema_refused || resources.failed || resources.stuck ? "bad" : "warn",
+    value: resources.schema_refused ? "schemas refused" : resources.failed || resources.stuck ? `${resources.failed + resources.stuck} not created` : "schemas only, no own login", detail: resources.text });
   const claude = vault?.providers.find((p) => p.slug === "anthropic") ?? null;
   checks.push({ id: "claude", label: "Claude provider", state: !claude ? "off" : claude.set === "yes" ? "ok" : "warn",
     value: !claude ? "not used by this build" : claude.set === "yes" ? (claude.backend === "vertex" || /Vertex/.test(claude.note ?? "") ? "set (through Vertex AI)" : "set (Anthropic)") : "missing",
@@ -339,8 +340,8 @@ export async function healthStatus() {
       keys: p.keys, last_changed_at: p.last_changed_at, last_used_at: p.last_used_at })),
     needs: (vault?.runs.needs ?? []).map((x) => ({ slug: x.slug, name: x.name, set: x.set, why: x.why })),
     sandbox_missing: sandboxMissing,
-    // mold_v0-282: the Neon key is missing (the shared records' databases cannot be created), in plain words.
-    ...(resources && !resources.key_set ? { database_key_missing: { provider: "neon", text: resources.text } } : {}),
+    // mold_v0-285: the app's database refuses to create a record's schema or its login, in plain words.
+    ...(resources && (resources.schema_refused || resources.role_refused) ? { database_refused: { text: resources.text } } : {}),
     release: {
       runtime: onVercel() ? "vercel" : "server",
       commit,
