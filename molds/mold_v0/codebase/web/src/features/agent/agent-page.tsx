@@ -184,29 +184,23 @@ type Call = ReturnType<typeof api>;
  * first message, the model (shown; staff choose it), the budget (this person's range), then Start; the new session then
  * opens as its full card. Focus stays inside while it is open, Esc closes it, and its title names it.
  */
-function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStarted }: {
+function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: {
   open: boolean; offer: Offer; profiles: StartProfile[]; preset: { profile: string | null; message: string | null }; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void;
 }) {
   // mold_v0-261: the profile chosen (the preset's when it is one this person may start, else the first: the Default).
   const first = profiles.find((p) => p.id === preset.profile) ?? profiles[0] ?? null;
   const [profileId, setProfileId] = useState<string | null>(first?.id ?? null);
   const profile = profiles.find((p) => p.id === profileId) ?? null;
-  const range = profile?.budget ?? offer.budget ?? { default_usd: offer.budget_usd, max_usd: offer.budget_usd, ceiling_usd: offer.ceiling_usd };
   const [message, setMessage] = useState('');
-  const [title, setTitle] = useState('');
-  const [mode, setMode] = useState<'conversation' | 'task'>('conversation');
-  const [budget, setBudget] = useState(String(range.default_usd));
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setMessage(preset.message ?? ''); setTitle(''); setMode('conversation'); setProfileId(first?.id ?? null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (open) setBudget(String(range.default_usd)); }, [open, profileId, range.default_usd]);
-  const b = Number(budget);
-  const budgetWrong = !Number.isFinite(b) || b < 0.1 || b > range.max_usd + 1e-9;
+  useEffect(() => { if (open) { setMessage(preset.message ?? ''); setProfileId(first?.id ?? null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const submit = async () => {
     if (!message.trim()) { toast.error('Say what the agent should do'); return; }
-    if (budgetWrong) { toast.error(`The budget is between $0.10 and ${usd(range.max_usd)}`); return; }
     setBusy(true);
     try {
-      const r = await call<{ session: Session }>('POST', '', { message, title: title || undefined, mode, ...(profile ? { profile: profile.id } : {}), ...(b !== range.default_usd ? { budget_usd: b } : {}) });
+      // Operator, 2026-11-09: the popup is the task and the message; the rest keep their defaults (the profile's default budget, a
+      // conversation, a title from its first words).
+      const r = await call<{ session: Session }>('POST', '', { message, mode: 'conversation', ...(profile ? { profile: profile.id } : {}) });
       toast.success('Started'); onStarted(r.session.id);
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
@@ -220,7 +214,6 @@ function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStar
     const first = items[0]!, last = items[items.length - 1]!, at = document.activeElement;
     if (e.shiftKey ? at === first || !e.currentTarget.contains(at) : at === last) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
   };
-  const tools = offer.workspace_tools === 'all' ? 'uses every tool you may use without asking' : offer.workspace_tools === 'reads_and_named' ? 'reads without asking, uses a few named tools, and asks you before any other change' : 'reads without asking and asks you before it changes anything';
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-start-dialog='' onKeyDown={keepTabInside}
@@ -228,46 +221,21 @@ function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStar
         <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <DialogHeader>
             <DialogTitle>Start a session</DialogTitle>
-            <DialogDescription>
-              {offer.harness} works in its own workspace and reaches this workspace&apos;s records as you, with your role: it {tools}.{offer.steerable ? ' You can guide it while it works.' : ''}
-            </DialogDescription>
+            <DialogDescription className='sr-only'>Choose the task and say what the agent should do.</DialogDescription>
           </DialogHeader>
-          <FormRow label='What should the agent do?' htmlFor='agent-start-message' hint='Its first message.'>
+          {profiles.length > 0 && (
+            <FormRow label='Task' htmlFor='agent-start-profile'>
+              <NativeSelect id='agent-start-profile' className='w-full' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} data-agent-start-profile=''>
+                {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
+              </NativeSelect>
+            </FormRow>
+          )}
+          <FormRow label='What should the agent do?' htmlFor='agent-start-message'>
             <Textarea id='agent-start-message' rows={5} autoFocus value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Summarise this workspace's records and say what needs attention first." />
           </FormRow>
-          <dl className='grid gap-x-4 gap-y-3 rounded-lg border p-3 text-sm sm:grid-cols-[auto_1fr]' data-agent-start-terms=''>
-            {profiles.length > 0 && <>
-              <dt className='text-muted-foreground'><label htmlFor='agent-start-profile'>Profile</label></dt>
-              <dd className='grid gap-1' data-agent-start-profile=''>
-                <NativeSelect id='agent-start-profile' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} aria-describedby='agent-start-profile-hint'>
-                  {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
-                </NativeSelect>
-                <span id='agent-start-profile-hint' className='text-muted-foreground text-xs'>{profile?.description || 'Its harness, model, keys and governance policy, as the platform’s staff set them up.'}{profile && profile.uploads > 0 ? ` It starts with ${profile.uploads} file${profile.uploads === 1 ? '' : 's'} in its workspace.` : ''}</span>
-              </dd>
-            </>}
-            <dt className='text-muted-foreground'>Model</dt>
-            <dd><span className='font-mono text-xs'>{profile?.model ?? offer.model}</span><span className='text-muted-foreground block text-xs'>Set by the platform&apos;s staff{profiles.length > 1 ? ' for this profile' : ' for every new session'}.</span></dd>
-            <dt className='text-muted-foreground'><label htmlFor='agent-start-budget'>Budget (USD)</label></dt>
-            <dd className='grid gap-1'>
-              <Input id='agent-start-budget' className='w-32' type='number' inputMode='decimal' min={0.1} max={range.max_usd} step='0.01' value={budget}
-                aria-invalid={budgetWrong || undefined} aria-describedby='agent-start-budget-hint' onChange={(e) => setBudget(e.target.value)} />
-              <span id='agent-start-budget-hint' className='text-muted-foreground text-xs'>
-                {range.max_usd > range.default_usd ? `${usd(range.default_usd)} unless you change it; you can give it up to ${usd(range.max_usd)}.` : `At most ${usd(range.max_usd)}; lower it if you like.`} When it is spent the session stops and asks{range.max_usd > range.default_usd ? '' : ' a billing manager or an owner'} to raise it, up to {usd(range.ceiling_usd)}.
-              </span>
-            </dd>
-            <dt className='text-muted-foreground'><label htmlFor='agent-start-mode'>Kind</label></dt>
-            <dd>
-              <NativeSelect id='agent-start-mode' value={mode} onChange={(e) => setMode(e.target.value as 'conversation' | 'task')}>
-                <NativeSelectOption value='conversation'>Conversation: waits for your next message, parks when quiet</NativeSelectOption>
-                <NativeSelectOption value='task'>Task: ends once its work is answered</NativeSelectOption>
-              </NativeSelect>
-            </dd>
-            <dt className='text-muted-foreground'><label htmlFor='agent-start-title'>Title</label></dt>
-            <dd><Input id='agent-start-title' value={title} placeholder='Optional: else its first words' onChange={(e) => setTitle(e.target.value)} /></dd>
-          </dl>
           <DialogFooter>
             <Button type='button' variant='outline' disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type='submit' disabled={busy || !message.trim() || budgetWrong}>{busy ? 'Starting…' : 'Start'}</Button>
+            <Button type='submit' disabled={busy || !message.trim()}>{busy ? 'Starting…' : 'Start'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
