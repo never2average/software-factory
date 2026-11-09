@@ -77,7 +77,8 @@ const duplicate = (t: Tip, tips: Tip[]): Partial<NudgeInput> => {
 };
 
 const VIEWS = (): RecordViewDef<Row>[] => [
-  { id: 'all', label: 'All', group: 'kind' },
+  // One flat list (operator, 2026-11-09): no row groups; the Kind column says what each row is.
+  { id: 'all', label: 'All' },
   { id: 'journeys', label: jw('{Guides}'), match: isJ },
   { id: 'promoted', label: 'Promoted', match: (r) => isJ(r) && r.p.promoted },
   { id: 'hidden', label: 'Hidden', match: (r) => isJ(r) && !r.p.promoted },
@@ -91,7 +92,7 @@ const VIEWS = (): RecordViewDef<Row>[] => [
 const cols = (): RecordCol<Row>[] => [
   { key: 'name', label: 'Name', keep: true, title: true, peek: false, type: 'text', value: (r) => r.kind === 'journey' ? r.p.name : r.t.message,
     render: (r) => r.kind === 'journey' ? <span className='leading-none font-medium'>{r.p.name}</span> : <span className='line-clamp-1 text-sm leading-none'>{r.t.message}</span> },
-  { key: 'kind', label: 'Kind', className: 'w-24', hidden: true, type: 'select', value: (r) => r.kind, options: [{ value: 'journey', label: jw('{Guide}') }, { value: 'tip', label: 'Tip' }],
+  { key: 'kind', label: 'Kind', className: 'w-24', type: 'select', value: (r) => r.kind, options: [{ value: 'journey', label: jw('{Guide}') }, { value: 'tip', label: 'Tip' }],
     render: (r) => <span className='text-muted-foreground text-sm leading-none'>{r.kind === 'journey' ? jw('{Guide}') : 'Tip'}</span> },
   { key: 'status', label: 'Status', className: 'w-28', keep: true, type: 'select', value: statusOf, options: Object.keys(TONE).map((value) => ({ value })),
     render: (r) => { const s = statusOf(r); return <StatusBadge tone={TONE[s]}>{s === 'shown' && r.kind === 'tip' ? `shown ${r.t.shown_count}×` : s}</StatusBadge>; } },
@@ -173,7 +174,7 @@ export function AdminJourneys({ bare = false }: { bare?: boolean } = {}) {
     <PageFrame bare={bare}>
       <ErrorBox error={error} />
       <RecordView<Row>
-        id='admin-journeys-v2' noun='items' exportName='journeys' groupable views={VIEWS()} defaultSort={[{ key: 'name', dir: 'asc' }]}
+        id='admin-journeys-v2' noun='items' exportName='journeys' views={VIEWS()} defaultSort={[{ key: 'name', dir: 'asc' }]}
         rows={rows} rowKey={(r) => r.key} cols={cols()} actions={actions} bulk={bulk} loading={isLoading}
         searchText={(r) => r.kind === 'journey' ? `journey ${r.p.name} ${r.p.id} ${r.p.outcome} ${r.p.who} ${r.p.stages.map((s) => s.title).join(' ')}` : `tip ${r.t.message} ${r.t.org_name} ${r.t.org_slug} ${r.t.email ?? ''} ${r.t.journey} ${r.t.step}`}
         searchPlaceholder={journeysOn() && tipsOn() ? jw('Search {guides} and tips') : journeysOn() ? jw('Search {guides}') : 'Search tips'}

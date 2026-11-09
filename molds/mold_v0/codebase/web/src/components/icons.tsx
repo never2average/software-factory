@@ -54,6 +54,7 @@ import {
   IconEyeOff,
   IconEye,
   IconFile,
+  IconFileSpreadsheet,
   IconFileText,
   IconFileTypePdf,
   IconFileTypeDoc,
@@ -204,6 +205,7 @@ export const Icons = {
 
   // Files
   page: IconFile,
+  spreadsheet: IconFileSpreadsheet,
   post: IconFileText,
   fileTypePdf: IconFileTypePdf,
   fileTypeDoc: IconFileTypeDoc,
