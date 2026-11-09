@@ -246,7 +246,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   // Export entry in the ⋯ menu (the row's and so the panel's).
   assert.match(log, /detail: \(r\) => <EntryPanel row=\{r\} api=\{api\} fleet=\{fleet\} \/>, properties: false,/, "the panel draws the entry alone");
   assert.doesNotMatch(log, /<details|data-technical-details|<CopyButton|<section/, "one card: no collapsible, no separate Request block, no copy button in the body");
-  for (const t of ["'When'", "'Who'", "'What'", "'Method'", "'Path'", "'Status code'", "'Latency'", "'Address'", "'Through'", "'Request ID'", "label='Headers'", "label='Payload'"]) assert.ok(log.includes(t), `one card: ${t}`);
+  for (const t of ["'When'", "'Who'", "'What'", "'Method'", "'Path'", "'Status code'", "'Latency'", "'Address'", "'Through'", "'Request ID'", "label='Payload'"]) assert.ok(log.includes(t), `one card: ${t}`);
+  assert.match(log, /r\.headers && Object\.entries\(r\.headers\)\.map\(\(\[k, v\]\) => \(\s*<Field key=\{`h:\$\{k\}`\} label=\{k\}>/, "each header its own two-column row");
   assert.match(log, /actions: \(r\) => \[\s*\{ label: 'Copy payload'[\s\S]*?\{ label: 'Export entry'/, "each row's ⋯ menu (and so the panel's): Copy payload, Export entry");
   assert.match(log, /<EmptyState empty=/, "the shared empty state");
   assert.doesNotMatch(log, /function Tabs\(|variant=\{tab ===/, "no Requests / Data access switch");

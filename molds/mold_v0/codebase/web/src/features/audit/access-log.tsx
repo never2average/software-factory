@@ -148,13 +148,10 @@ function EntryPanel({ row, api, fleet }: { row: RecordRow; api: string; fleet: b
       {req && 'error' in req && <Field label='Request'><span className='text-destructive text-xs'>{req.error}</span></Field>}
       {req && 'request' in req && !r && <Field label='Request'><span className='text-muted-foreground text-xs'>None kept (made by the system, or before requests were kept)</span></Field>}
       {r?.withheld && <Field label='Request'><span className='text-muted-foreground text-xs'>{r.withheld}</span></Field>}
-      {r && !r.withheld && r.headers && Object.keys(r.headers).length > 0 && (
-        <Field label='Headers'>
-          <dl className='grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-xs leading-snug'>
-            {Object.entries(r.headers).map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='break-all'>{v}</dd></div>)}
-          </dl>
-        </Field>
-      )}
+      {/* Each header its own row of the card: its name in the label column, its (masked) value beside it, two columns. */}
+      {r && !r.withheld && r.headers && Object.entries(r.headers).map(([k, v]) => (
+        <Field key={`h:${k}`} label={k}>{mono(v)}</Field>
+      ))}
       {r && !r.withheld && (
         <Field label='Payload'>
           <pre className='max-h-80 overflow-auto font-mono text-xs leading-snug whitespace-pre-wrap break-all'>{payloadOf(r)}</pre>
