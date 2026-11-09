@@ -1362,7 +1362,8 @@
         "sandbox": {
           "type": "string",
           "enum": [
-            "boat"
+            "boat",
+            "freestyle"
           ]
         },
         "object_storage": {
