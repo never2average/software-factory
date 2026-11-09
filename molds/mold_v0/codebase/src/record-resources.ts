@@ -3,8 +3,8 @@
  * types of a shared (platform) area whose records staff write, each a thing the record owns outside the record store.
  *
  *   repository   an existing GitHub repository (owner/name) staff link to the record: linked, never created. Every hand
- *                write that names one (new or changed) reads it first through the platform's GitHub App (the same
- *                app private catalogs are read with: Admin › Key vault, GitHub App; src/github-app.ts
+ *                write that names one (new or changed) reads it first through the platform's GitHub App (Admin ›
+ *                Key vault, GitHub App, mounted for it since mold_v0-283; src/github-app.ts
  *                readRecordRepository): a repository the app cannot read refuses the write in plain words, naming
  *                where to fix it. The record's page shows its default branch and last commit, read live.
  *   database     a database of the record's own, CREATED when the record is created (never linked, never shared), inside

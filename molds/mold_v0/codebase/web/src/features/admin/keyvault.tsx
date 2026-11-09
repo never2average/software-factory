@@ -20,7 +20,6 @@ import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, StatusBadge, When } from './ui';
 import { AdminGithubApp } from './github-app';
-import { AdminPrivateCatalogs } from './private-catalogs';
 import { AdminOAuthProviders } from './oauth-providers';
 
 // ---------- key vault ----------
@@ -80,7 +79,7 @@ export function AdminKeyVault() {
   const provOn = useAdminAction((v: { slug: string; enabled: boolean }) => post(`/compute/providers/${encodeURIComponent(v.slug)}/enabled`, { enabled: v.enabled }), { success: 'Provider updated' });
   const creds = data?.credentials ?? [];
   // The GitHub App's settings (mold_v0-014) are one sealed entry managed in their own section below, not a key to add here.
-  const providers = (data?.providers ?? []).filter((p) => p.slug !== 'github_app' && p.slug !== 'catalog_access'); // mold_v0-260: a private catalog's access has its own card (Private catalogs)
+  const providers = (data?.providers ?? []).filter((p) => p.slug !== 'github_app');
   const keysOf = (p: Provider) => creds.filter((c) => c.provider === p.slug);
   const cols: RecordCol<Provider>[] = [
     { key: 'provider', label: 'Provider', keep: true, type: 'text', value: (p) => nameOf(p.slug), render: (p) => (
@@ -154,7 +153,6 @@ export function AdminKeyVault() {
         </AlertDialogContent>
       </AlertDialog>
       <AdminGithubApp />
-      <AdminPrivateCatalogs />
       <AdminOAuthProviders />
     </PageContainer>
   );

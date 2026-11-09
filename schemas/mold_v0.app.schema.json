@@ -1542,7 +1542,7 @@
           "properties": {
             "repo": {
               "type": "string",
-              "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|ssh:\\/\\/git@[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
+              "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
             },
             "commit": {
               "type": "string",
@@ -2178,7 +2178,7 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "neon"
+                        "core"
                       ]
                     }
                   },
@@ -5972,7 +5972,7 @@
                         "provider": {
                           "type": "string",
                           "enum": [
-                            "neon"
+                            "core"
                           ]
                         }
                       },
@@ -6550,7 +6550,7 @@
                         "provider": {
                           "type": "string",
                           "enum": [
-                            "neon"
+                            "core"
                           ]
                         }
                       },
@@ -8944,342 +8944,6 @@
                   "kind"
                 ],
                 "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "upstream_catalog"
-                  },
-                  "$comment": {
-                    "type": "string",
-                    "maxLength": 2000
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 80,
-                    "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
-                  },
-                  "upstream": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "const": "pack.json#upstream"
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "repo": {
-                            "type": "string",
-                            "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|ssh:\\/\\/git@[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
-                          },
-                          "commit": {
-                            "type": "string",
-                            "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
-                          },
-                          "license": {
-                            "type": "string",
-                            "pattern": "^(?=.{1,80}$)\\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?( (AND|OR|WITH) \\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?)*$"
-                          }
-                        },
-                        "required": [
-                          "repo",
-                          "commit"
-                        ],
-                        "additionalProperties": false
-                      }
-                    ]
-                  },
-                  "transport": {
-                    "type": "string",
-                    "enum": [
-                      "git",
-                      "github"
-                    ]
-                  },
-                  "files": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9_]{0,62}$"
-                    },
-                    "additionalProperties": {
-                      "type": "string",
-                      "pattern": "^(?!\\/)[A-Za-z0-9._/{}*-]{1,300}$"
-                    }
-                  },
-                  "map": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
-                    },
-                    "additionalProperties": {
-                      "type": "object",
-                      "properties": {
-                        "from": {
-                          "type": "string",
-                          "pattern": "^[a-z][a-z0-9_]{0,62}$"
-                        },
-                        "each": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
-                        },
-                        "key": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 300
-                        },
-                        "title": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 300
-                        },
-                        "fields": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string",
-                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
-                          },
-                          "additionalProperties": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "maxLength": 300,
-                                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "value": {
-                                    "type": "string",
-                                    "maxLength": 300,
-                                    "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
-                                  },
-                                  "only": {
-                                    "type": "string",
-                                    "enum": [
-                                      "text",
-                                      "number",
-                                      "key",
-                                      "list",
-                                      "boolean"
-                                    ]
-                                  },
-                                  "matches": {
-                                    "type": "string",
-                                    "maxLength": 200
-                                  },
-                                  "max_length": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "maximum": 20000
-                                  },
-                                  "as": {
-                                    "type": "string",
-                                    "enum": [
-                                      "first",
-                                      "list"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "value"
-                                ],
-                                "additionalProperties": false
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "any": {
-                                    "minItems": 1,
-                                    "maxItems": 10,
-                                    "type": "array",
-                                    "items": {
-                                      "type": "object",
-                                      "properties": {
-                                        "value": {
-                                          "type": "string",
-                                          "maxLength": 300,
-                                          "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
-                                        },
-                                        "only": {
-                                          "type": "string",
-                                          "enum": [
-                                            "text",
-                                            "number",
-                                            "key",
-                                            "list",
-                                            "boolean"
-                                          ]
-                                        },
-                                        "matches": {
-                                          "type": "string",
-                                          "maxLength": 200
-                                        }
-                                      },
-                                      "required": [
-                                        "value"
-                                      ],
-                                      "additionalProperties": false
-                                    }
-                                  }
-                                },
-                                "required": [
-                                  "any"
-                                ],
-                                "additionalProperties": false
-                              }
-                            ]
-                          }
-                        },
-                        "where": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string",
-                            "maxLength": 300,
-                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
-                          },
-                          "additionalProperties": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "maxLength": 200
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "only": {
-                                    "type": "string",
-                                    "enum": [
-                                      "text",
-                                      "number",
-                                      "key",
-                                      "list",
-                                      "boolean"
-                                    ]
-                                  },
-                                  "matches": {
-                                    "type": "string",
-                                    "maxLength": 200
-                                  }
-                                },
-                                "additionalProperties": false
-                              }
-                            ]
-                          }
-                        },
-                        "retires": {
-                          "type": "string",
-                          "maxLength": 300,
-                          "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
-                        },
-                        "only_latest": {
-                          "type": "object",
-                          "properties": {
-                            "by": {
-                              "type": "string",
-                              "maxLength": 300,
-                              "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
-                            },
-                            "among": {
-                              "type": "object",
-                              "propertyNames": {
-                                "type": "string",
-                                "maxLength": 300,
-                                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
-                              },
-                              "additionalProperties": {
-                                "anyOf": [
-                                  {
-                                    "type": "string",
-                                    "maxLength": 200
-                                  },
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "only": {
-                                        "type": "string",
-                                        "enum": [
-                                          "text",
-                                          "number",
-                                          "key",
-                                          "list",
-                                          "boolean"
-                                        ]
-                                      },
-                                      "matches": {
-                                        "type": "string",
-                                        "maxLength": 200
-                                      }
-                                    },
-                                    "additionalProperties": false
-                                  }
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "by"
-                          ],
-                          "additionalProperties": false
-                        }
-                      },
-                      "required": [
-                        "key"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "prune": {
-                    "type": "object",
-                    "properties": {
-                      "max_fraction": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      },
-                      "allow_empty": {
-                        "type": "boolean"
-                      }
-                    },
-                    "additionalProperties": false
-                  },
-                  "index": {
-                    "type": "string",
-                    "enum": [
-                      "automatic",
-                      "manual"
-                    ]
-                  },
-                  "access": {
-                    "type": "string",
-                    "enum": [
-                      "public",
-                      "deploy_key",
-                      "github_app"
-                    ]
-                  }
-                },
-                "required": [
-                  "kind",
-                  "upstream"
-                ],
-                "additionalProperties": {}
               },
               {
                 "type": "object",
@@ -18253,13 +17917,6 @@
           "description": "A run started on a record takes its arguments from that record's fields (input_from_record: argument -> field, $key or $title): a record page's start_run action fills them on the server, and the kind's start tool takes record {area, key}, read as the caller in the caller's workspace; the run carries the record (runs.record_area, record_key). Asked for when a job kind takes arguments from the record it runs on (job_kinds[].input_from_record). Default false. Off: The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked.",
           "markdownDescription": "**Run inputs from a record** (mold_v0-260; board name `inputs`). A run started on a record takes its arguments from that record's fields (input_from_record: argument -> field, $key or $title): a record page's start_run action fills them on the server, and the kind's start tool takes record {area, key}, read as the caller in the caller's workspace; the run carries the record (runs.record_area, record_key).\n\n- **Asked for** when a job kind takes arguments from the record it runs on (job_kinds[].input_from_record).\n- **Default** `false`.\n- **Off**: The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked.\n\nBrief line: `features.record_run_inputs = true` in `## Profile`."
         },
-        "private_catalogs": {
-          "type": "boolean",
-          "default": false,
-          "title": "Private catalogs (mold_v0-260)",
-          "description": "A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack. Asked for when an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access). Default false. Off: A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out.",
-          "markdownDescription": "**Private catalogs** (mold_v0-260; board name `private`). A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack.\n\n- **Asked for** when an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access).\n- **Default** `false`.\n- **Off**: A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out.\n\nBrief line: `features.private_catalogs = true` in `## Profile`."
-        },
         "wide_lists": {
           "type": "boolean",
           "default": false,
@@ -18320,8 +17977,8 @@
           "type": "boolean",
           "default": false,
           "title": "Record resources (mold_v0-282)",
-          "description": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one Postgres database per record in Neon when the record is created (the key vault's neon key, never given to a session or a run), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and deletes it with the record. A missing Neon key is named on the New form and on Health. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry. Asked for when a shared (platform) area declares a repository field or a database field (provider neon). Default false. Off: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.",
-          "markdownDescription": "**Record resources** (mold_v0-282; board name `resources`). A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one Postgres database per record in Neon when the record is created (the key vault's neon key, never given to a session or a run), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and deletes it with the record. A missing Neon key is named on the New form and on Health. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.\n\n- **Asked for** when a shared (platform) area declares a repository field or a database field (provider neon).\n- **Default** `false`.\n- **Off**: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.\n\nBrief line: `features.record_resources = true` in `## Profile`."
+          "description": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one database per record inside the app's own Postgres when the record is created (provider core, mold_v0-285: a schema of its own and, where the database allows CREATE ROLE, a login role limited to that schema; no outside provider, no key), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and drops the schema and role with the record. Health names a database that refuses CREATE SCHEMA or CREATE ROLE. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry. Asked for when a shared (platform) area declares a repository field or a database field (provider core, the default). Default false. Off: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.",
+          "markdownDescription": "**Record resources** (mold_v0-282; board name `resources`). A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one database per record inside the app's own Postgres when the record is created (provider core, mold_v0-285: a schema of its own and, where the database allows CREATE ROLE, a login role limited to that schema; no outside provider, no key), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and drops the schema and role with the record. Health names a database that refuses CREATE SCHEMA or CREATE ROLE. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.\n\n- **Asked for** when a shared (platform) area declares a repository field or a database field (provider core, the default).\n- **Default** `false`.\n- **Off**: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.\n\nBrief line: `features.record_resources = true` in `## Profile`."
         }
       }
     }

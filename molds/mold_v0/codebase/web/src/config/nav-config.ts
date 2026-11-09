@@ -48,7 +48,7 @@ export const adminNav: NavGroup[] = withRecordsPlaced([
         { title: 'FinOps', url: '/admin/finops', icon: 'trendingUp', items: [] },
         // mold_v0-284: with agent_harness on, the workspace agent's profiles (mold_v0-261) are its Profiles tab (agentConfigTabs).
         { title: 'Agent configuration', url: AGENT_CONFIG_URL, icon: 'settings', items: [], ...(agentConfigTabs.length ? { inPageTabs: agentConfigTabs } : {}) },
-        // The packs' data repositories (mold_v0-129): their pins, index state and Index now, in a build that has one.
+        // The packs' data repositories (mold_v0-129): only in a build with a workspace_files repository (mold_v0-283).
         ...(repositoryCount ? [{ title: 'Data repositories', url: '/admin/repositories', icon: 'book' as const, items: [] }] : []),
         // The platform's staff are Accounts' Admins tab (/admin/accounts?section=admins, mold_v0-204), not an entry here.
         { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] }

@@ -41,9 +41,7 @@
           "owner"
         ]
       },
-      "repository": "tracker_library",
-      "rows": "one per policy (key: its code)",
-      "version": "upstream commit"
+      "rows": "one per policy (key: its code)"
     },
     {
       "name": "tracker_apps",
@@ -228,14 +226,6 @@
     }
   ],
   "repositories": {
-    "tracker_library": {
-      "kind": "upstream_catalog",
-      "$comment": "Read by mold_v0-059's adapter; declared and checked for its shape today.",
-      "upstream": "pack.json#upstream",
-      "files": {
-        "policies": "catalog/policies.json"
-      }
-    },
     "tracker_ledger": {
       "kind": "workspace_files",
       "store": "fixture_tracker",

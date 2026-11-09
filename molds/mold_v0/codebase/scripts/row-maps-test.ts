@@ -8,8 +8,8 @@
 //    worst pattern taken runs on the worst text in milliseconds.
 // 2. Declarations: valid computed fields, where tests, retires and only_latest are taken; refused, each with its
 //    reason: a bad pattern, an unknown kind, a list path where only a value path goes, __proto__ in a list path, an
-//    empty `any`, an empty where test, retires on a file that is not append_only or on a directory, only_latest on an
-//    upstream catalog, either on an API's map.
+//    empty `any`, an empty where test, retires on a file that is not append_only or on a directory, either on an API's
+//    map. (mold_v0-283: the case of only_latest on an upstream catalog went with that repository kind.)
 // 3. Values: a list's first item ([0]), every item ([]), `as` first or list, `only` (text, number, key, list,
 //    boolean), `matches`, `max_length`, `any` (always true or false); where with a test; a value that does not fit is
 //    no value, never an error.
@@ -85,14 +85,12 @@ const PACK = (edit: (j: any) => void = () => {}) => {
       { name: "rw_points", label: "Points", role: "check", scope: "workspace", repository: "points", fields: pointFields },
       { name: "rw_plain", label: "Plain", role: "check", scope: "workspace", repository: "plain", fields: [{ name: "label", label: "Label", type: "text" }] },
       { name: "rw_folders", label: "Folders", role: "check", scope: "workspace", repository: "folders", fields: [{ name: "meta", label: "Meta", type: "json" }] },
-      { name: "rw_catalog", label: "Catalog", role: "source", scope: "platform", repository: "catalog", fields: [{ name: "label", label: "Label", type: "text" }] },
     ],
     repositories: {
       entries: { kind: "workspace_files", store: "fixture_rows", path: "data/entries.jsonl", format: "jsonl", append_only: true, map: { rw_entries: entryMap } },
       points: { kind: "workspace_files", store: "fixture_rows", path: "data/points.jsonl", format: "jsonl", append_only: true, map: { rw_points: pointMap } },
       plain: { kind: "workspace_files", store: "fixture_rows", path: "data/plain.jsonl", format: "jsonl", append_only: true, map: { rw_plain: { key: "{id}", where: { kind: "entry" }, fields: { label: "label" } } } },
       folders: { kind: "workspace_files", store: "fixture_rows", dir: "folders/{name}", files: { meta: "meta.json" } },
-      catalog: { kind: "upstream_catalog", upstream: { repo: "https://example.org/a/b", commit: "0".repeat(40) }, files: { all: "c.json" }, map: { rw_catalog: { from: "all", each: "items", key: "{id}", fields: { label: { value: "name", only: "text" } } } } },
     },
   });
   edit(j);
@@ -118,7 +116,6 @@ const install = (j = PACK()) => setPacksForTest([{ manifest, declared: compileDe
     ["retires where the last line does not win", (j) => { j.repositories.entries.append_only = false; }, /its map of rw_entries declares retires, which needs a workspace_files path with append_only: true/],
     ["retires on a directory", (j) => { j.repositories.folders.map = { rw_folders: { key: "{@name}", retires: "x" } }; }, /declares retires, which needs a workspace_files path/],
     ["only_latest on a directory", (j) => { j.repositories.folders.map = { rw_folders: { key: "{@name}", only_latest: { by: "x" } } }; }, /declares only_latest, which reads the lines of a workspace_files path/],
-    ["only_latest on an upstream catalog", (j) => { j.repositories.catalog.map.rw_catalog.only_latest = { by: "at" }; }, /declares only_latest, which reads the lines of a workspace_files path/],
   ];
   for (const [what, edit, re] of refused) assert.throws(() => install(PACK(edit)), re, what);
   // An API's map takes computed fields, never the line operators.

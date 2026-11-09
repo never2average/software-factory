@@ -131,7 +131,7 @@ try {
     assert.deepEqual(ref.packs.map((p: any) => [p.id, p.name]), [["fixture_tracker", fixture("fixture_tracker").name], ["fixture_review", "Fixture review"]], "per pack, by its name");
     const all = ref.packs.flatMap((p: any) => p.tools) as { name: string; description: string; roles: string[]; role_labels: string[]; input_schema: any; read_only: boolean }[];
     const names = all.map((t) => t.name);
-    for (const t of ["review_cancel_review", "review_admin_create_review_guides", "review_admin_delete_review_guides", "fixture_tracker_admin_sync_tracker_library"]) assert.ok(!names.includes(t), `${t} (admin_only, excluded or staff) is not in the reference`);
+    for (const t of ["review_cancel_review", "review_admin_create_review_guides", "review_admin_delete_review_guides"]) assert.ok(!names.includes(t), `${t} (admin_only, excluded or staff) is not in the reference`);
     assert.ok(!names.some((n) => n.includes("_admin_")), "no staff tool");
     // Exactly what each role is offered on the customer MCP (the shell's own and the record tools aside).
     for (const role of ["viewer", "member", "billing", "owner"] as const) {

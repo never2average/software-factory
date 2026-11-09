@@ -563,20 +563,6 @@ export async function installationTokenForServer(orgId: number): Promise<string 
 }
 
 /**
- * mold_v0-260 (flag private_catalogs; src/catalog-access.ts): a token of the platform's own installation `installationId`
- * for one private catalog's fetch: read contents of repository `repo` alone, revoked by `revoke` once the fetch is done.
- * Refused (409) while the platform has no GitHub App; never a token in a message.
- */
-export async function installationTokenForCatalog(installationId: number, repo: string): Promise<{ token: string; revoke: () => Promise<void> }> {
-  const c = await appConfig();
-  if (!c) throw new PackError("the platform's GitHub App is not set: Admin › Key vault, GitHub App", 409);
-  let t: MintedToken;
-  try { t = await mintToken(c, installationId, { repositories: [repo], permissions: { ...TOKEN_PERMISSIONS } }); }
-  catch (e) { throw new PackError(e instanceof Error && !/token [a-z0-9_]{8,}/i.test(e.message) ? `GitHub refused a token for the catalog: ${e.message.slice(0, 200)}` : "GitHub refused a token for the catalog", 502); }
-  return { token: t.token, revoke: async () => { await revokeOnGithub(t.token).catch(() => false); } };
-}
-
-/**
  * mold_v0-282 (flag record_resources; src/record-resources.ts): a repository a shared record links (owner/name), read
  * through the platform's GitHub App: its installation on the repository's owner found with the app's own key, a token
  * for that one repository (read contents) minted, the repository's default branch and that branch's last commit read,

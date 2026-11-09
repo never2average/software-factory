@@ -2,7 +2,7 @@
 // staff, the way to fill it now. Never the area's raw key pattern: the words come from the area's label and from where
 // its rows come from (its data repository, src/data-repositories.ts, as /api/admin/data/_repositories reports it).
 // Pure, so a test can read it without a browser (scripts/record-pages-test.ts); features/tabs/empty.tsx draws it.
-import type { RecordAreaSpec } from '../../config/pack-nav.generated';
+import { repositoryCount, type RecordAreaSpec } from '../../config/pack-nav.generated';
 import { fill } from '../../lib/vocabulary';
 
 export interface EmptyText { title: string; text: string; cta: { label: string; href: string } | null }
@@ -11,12 +11,9 @@ export interface EmptyText { title: string; text: string; cta: { label: string; 
 export interface RepoState {
   name: string;
   kind: string;
-  index?: 'automatic' | 'manual';
-  upstream?: { repo: string; commit: string };
-  state?: { indexing: boolean; current: boolean; last_error: string | null; pin: string | null } | null;
 }
 
-/** Where staff fill an area from its repository: the Data repositories page (mold_v0-129). */
+/** Where staff read an area's repository: the Data repositories page (mold_v0-129; a page only with a workspace_files repository, mold_v0-283). */
 export const REPOSITORIES_URL = '/admin/repositories';
 
 /** The repository that feeds `area`, from the repositories' status (each lists the areas it feeds). */
@@ -40,22 +37,13 @@ export function recordEmptyText(area: Pick<RecordAreaSpec, 'label' | 'scope'>, b
       cta: null
     };
   }
-  if (repo?.upstream) {
-    const s = repo.state;
-    const where = `Its records come from an upstream catalog, ${repo.upstream.repo.replace(/^https?:\/\//, '')} (data repository ${repo.name}), indexed into this area at the commit its pack pins.`;
-    const now = s?.indexing ? 'An index is running now: this page fills when it finishes.'
-      : s?.last_error ? `The last index failed: ${s.last_error}. Open Data repositories to see why and index again.`
-      : repo.index === 'manual' ? 'This catalog is indexed by hand: open Data repositories and press Index now.'
-      : 'It indexes itself when its pin changes; to fill it now, open Data repositories and press Index now.';
-    return { title, text: `${where} ${now} The admin MCP server does the same with admin_sync_${repo.name}.`, cta: { label: 'Open Data repositories', href: REPOSITORIES_URL } };
-  }
   if (repo) {
     const from: Record<string, string> = {
       workspace_files: fill("each {workspace}'s files, after its {runs} commit them"),
       http_api: 'an external API, read when the page opens',
       shell_tables: 'the console, the tools and the data API'
     };
-    return { title, text: `Its records come from the ${repo.name} repository: ${from[repo.kind] ?? lower(repo.kind.replace(/_/g, ' '))}.`, cta: { label: 'Open Data repositories', href: REPOSITORIES_URL } };
+    return { title, text: `Its records come from the ${repo.name} repository: ${from[repo.kind] ?? lower(repo.kind.replace(/_/g, ' '))}.`, cta: repositoryCount > 0 ? { label: 'Open Data repositories', href: REPOSITORIES_URL } : null };
   }
   return { title, text: 'Records are added by the packs and by staff through the admin MCP server and the data API (/api/admin/records).', cta: null };
 }

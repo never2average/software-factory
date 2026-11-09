@@ -3,7 +3,7 @@
   "id": "fixture_catalog",
   "name": "Fixture catalog",
   "version": "0.1.0",
-  "description": "A test fixture for the data API and data repositories (mold_v0-059, 066; scripts/data-api-test.ts, scripts/data-repositories-test.ts). Its repositories have the shape of the second app's declaration: an upstream catalog at a pin, a workspace ledger and workspace application folders. Never shipped.",
+  "description": "A test fixture for the data API and data repositories (mold_v0-059, 066; scripts/data-api-test.ts, scripts/data-repositories-test.ts). Its shared areas (regulators, controls) are staff-kept platform records (mold_v0-283: no upstream catalog); its repositories have the shape of the second app's declaration: a workspace ledger, workspace application folders and an external API. Never shipped.",
   "entry": "index.ts",
   "upstream": {
     "repo": "https://example.org/fixture/catalog",
@@ -16,9 +16,7 @@
       "label": "Regulators",
       "role": "source",
       "scope": "platform",
-      "repository": "catalogs",
       "rows": "one per regulator (key: its code) and one per instrument (key: its instrument id)",
-      "version": "upstream commit",
       "fields": [
         {
           "name": "kind",
@@ -78,9 +76,7 @@
       "label": "Controls",
       "role": "check",
       "scope": "platform",
-      "repository": "catalogs",
       "rows": "one per catalog control (key: <instrument>:<control id>, ( and ) kept)",
-      "version": "upstream commit",
       "fields": [
         {
           "name": "instrument",
@@ -429,18 +425,6 @@
     }
   ],
   "repositories": {
-    "catalogs": {
-      "kind": "upstream_catalog",
-      "upstream": "pack.json#upstream",
-      "files": {
-        "regulators": "schemas/vocab/regulators.schema.json",
-        "instruments": "references/instruments.json",
-        "catalogs_dir": "references/catalogs"
-      },
-      "catalog_file_from": "instruments[].catalogFile",
-      "catalog_kind": "fixture.catalog.regulator",
-      "instruments_kind": "fixture.catalog.instruments"
-    },
     "company_ledger": {
       "kind": "workspace_files",
       "store": "fixture_catalog",

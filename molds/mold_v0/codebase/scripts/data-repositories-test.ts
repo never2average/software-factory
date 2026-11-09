@@ -1,17 +1,15 @@
-// Data repositories (mold_v0-059; src/data-repositories.ts), offline: an embedded database, a local git repository
-// standing in for an upstream catalog (never the network), a workspace's files, a local HTTP API, a fake Clerk.
+// Data repositories (mold_v0-059; src/data-repositories.ts), offline: an embedded database, a workspace's files, a local
+// HTTP API, a fake Clerk.
 //   npm run test:data-repositories
 //   SECOND_APP_DECLARATION=<a declaration.json> npm run test:data-repositories   also runs a real declaration's shape
 //
 // 1. Declarations: gen-packs builds the fixture (shaped like the second app's declaration); the kinds' rules are
 //    refused at build (scope per kind, writes on read-only areas, the store, the API's egress and credential, maps,
-//    loaders, never_read, a reference into a live area).
-// 2. An upstream catalog at a pin (git): read at the pinned commit whatever the branch says; idempotent by fingerprint
-//    (a second index writes nothing); a new pin updates; a prune of more than half refused unless forced; staff rows
-//    never pruned or overwritten, forced too (mold_v0-221: an override wins, the repository's version kept behind it and
-//    refreshed; removing it restores that; a repository's row is read only); a commit that is not there refused; a redirect refused (and git without the setting would follow
-//    it); an index that fails part-way writes nothing; the same with a declared map and no code; the staff route.
-// 3. The github transport: the commit checked, every request at the pin with redirects refused.
+//    loaders, never_read, a reference into a live area); an upstream_catalog repository is refused in plain words, by
+//    the server and by gen-packs (mold_v0-283).
+//    (mold_v0-283 deleted what were sections 2 and 3, the upstream catalog at a pin over git and over GitHub, and the
+//    staff route that indexed one: the kind is gone. A workspace_files repository's loader, which the catalog
+//    fixture's loader used to prove, is proved in section 4.)
 // 4. A workspace's files: the ledger (last line wins, other kinds left out), application folders (globs, never_read),
 //    sealed rows keyed with the workspace's own fingerprint key; idempotent; pruned when a folder goes (the committed
 //    files are the truth); two workspaces never touch each other's rows; re-indexed by the run engine
@@ -19,16 +17,15 @@
 // 5. An external API, live: the workspace's own credential, each workspace its own items, filters and sorts, keys with
 //    ( and ) encoded, read only, a redirect refused, private addresses refused, egress enforced, the token never shown.
 import assert from "node:assert/strict";
-import { execFile, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
-import { catalogPack, catalogPackDir, catalogRepo, fixtureJson, workspaceFiles } from "./lib/catalog-fixture.js";
+import { catalogPack, catalogPackDir, fixtureJson, workspaceFiles } from "./lib/catalog-fixture.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.APP_DATA_ALLOW_FILE_UPSTREAM = "1";
 process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 const listen = (h: http.RequestListener) => new Promise<{ port: number; close: () => void }>((ok) => { const s = http.createServer(h).listen(0, "127.0.0.1", () => ok({ port: (s.address() as AddressInfo).port, close: () => s.close() })); });
@@ -59,7 +56,8 @@ try {
       ["an API host outside its egress", (j) => { j.repositories.vendor_api.base_url = "https://elsewhere.example/v1"; }, /base_url's host elsewhere\.example is not in its egress list/],
       ["an API credential that is not declared", (j) => { j.repositories.vendor_api.credential = "nope"; }, /names credential nope, which this pack does not declare/],
       ["workspace files feeding a shared area", (j) => { j.record_areas[0].repository = "company_ledger"; }, /a workspace_files repository feeds a workspace's own areas/],
-      ["an upstream feeding a workspace area", (j) => { j.record_areas[2].repository = "catalogs"; }, /an upstream catalog feeds shared areas/],
+      ["an upstream catalog (mold_v0-283)", (j) => { j.repositories.catalogs = { kind: "upstream_catalog", upstream: "pack.json#upstream", files: { all: "c.json" } }; j.record_areas[0].repository = "catalogs"; },
+        /repositories\.catalogs: the upstream_catalog repository kind was removed \(mold_v0-283\).*New, Edit and Import/],
       ["a lifecycle on a read-only area", (j) => { const t = j.record_areas.find((a: any) => a.name === "tasks"); t.repository = "company_ledger"; }, /read only\): it cannot have a lifecycle/],
       ["writes declared on a read-only area", (j) => { j.record_areas[2].permissions = { update: ["owner"] }; }, /read only\): it cannot declare update/],
       ["another pack's store", (j) => { j.repositories.company_ledger.store = "other_pack"; }, /store other_pack is not this pack's own store/],
@@ -68,152 +66,28 @@ try {
       ["a path leaving the files", (j) => { j.repositories.company_ledger.path = "../x/{company}.jsonl"; }, /no \. or \.\. part/],
       ["a branch as the pin", (j) => { j.upstream.commit = "main"; }, /a full commit id/],
       ["a reference into a live area", (j) => { j.record_areas.find((a: any) => a.name === "tasks").fields.push({ name: "item", label: "Item", type: "reference", to: "vendor_items" }); }, /refers to vendor_items, which is read live from an API/],
-      ["an unknown kind", (j) => { j.repositories.catalogs.kind = "ftp_site"; }, /repositories\.catalogs/],
+      ["an unknown kind", (j) => { j.repositories.company_ledger.kind = "ftp_site"; }, /repositories\.company_ledger/],
     ];
     for (const [what, edit, re] of refused) assert.throws(() => tryJson(edit)(), re, what);
+    // A code pack declaring one is refused by the server as plainly (src/pack-api.ts validatePack).
+    assert.throws(() => definePack({ id: "pk", repositories: { cat: { kind: "upstream_catalog" } } } as never), /repositories\.cat: the upstream_catalog repository kind was removed/);
+    // gen-packs refuses a pack.json that still declares one, with the same plain words (no build).
+    {
+      const gone = path.join(TMP, "gen-gone", "packs");
+      const d = catalogPackDir(gone);
+      const j = fixtureJson();
+      j.repositories.catalogs = { kind: "upstream_catalog", upstream: "pack.json#upstream", files: { all: "c.json" } };
+      j.record_areas[0].repository = "catalogs";
+      writeFileSync(path.join(d, "pack.json"), JSON.stringify(j, null, 2));
+      const r = spawnSync(process.execPath, [path.join(ROOT, "scripts", "gen-packs.mjs"), "--packs", gone, "--out", path.join(TMP, "gen-gone", "out"), "--profile", path.join(TMP, "none.json")], { cwd: ROOT, encoding: "utf8" });
+      assert.equal(r.status, 1, `gen-packs refuses an upstream catalog: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /repositories\.catalogs: the upstream_catalog repository kind was removed \(mold_v0-283\).*platform records .*New, Edit and Import/);
+    }
     assert.throws(() => installPacks([{ manifest: { id: "pk", name: "pk", version: "1", entry: "index.ts", migrations: null, words: {} }, definition: definePack({ id: "pk", loaders: { nowhere: () => ({}) } }) }]), /loader nowhere names no repository/);
-    console.log(`✓ declarations: gen-packs builds the fixture (7 areas, 4 repositories); ${refused.length + 1} broken declarations refused, each with its reason`);
+    console.log(`✓ declarations: gen-packs builds the fixture (7 areas, 3 repositories); ${refused.length + 1} broken declarations refused, each with its reason; an upstream catalog refused in plain words by the server and gen-packs`);
   }
 
-  // ---------- 2. an upstream catalog at a pin ----------
-  const settings = fixtureJson().repositories.catalogs;
-  const up = catalogRepo(settings);
-  const pin = async (commit: string, edit?: (j: any) => void) => { const p = await catalogPack((j) => { j.upstream = { repo: up.url, commit }; edit?.(j); }); setPacksForTest([p]); return p; };
-  const shared = async (area: string) => (await db.query<{ key: string; title: string; data: any; version: string; updated_at: string; source: string | null }>("SELECT key, title, data, version, updated_at::text, source FROM platform_records WHERE area = $1 ORDER BY key", [area]));
   const counts = (r: { areas: { area: string; created: number; updated: number; unchanged: number; deleted: number }[] }) => Object.fromEntries(r.areas.map((a) => [a.area, [a.created, a.updated, a.unchanged, a.deleted]]));
-  {
-    await pin(up.c1);
-    const r1 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs");
-    assert.deepEqual(counts(r1), { regulators: [5, 0, 0, 0], controls: [15, 0, 0, 0] });
-    assert.equal(r1.version, up.c1);
-    const c = await shared("controls");
-    const k = c.find((x) => x.key === "alpha-rules-2024:7(2)(b)")!;
-    assert.deepEqual([k.data.prose, k.version, k.source], ["Requirement 7(2)(b)", up.c1, "catalogs"], "read at the pinned commit, though the branch is at c3");
-    assert.ok(c.some((x) => x.key === "beta-code-2023:B.12") && !c.some((x) => x.key === "alpha-rules-2024:7(3)"), "c1's controls, not c2's or c3's");
-    // Idempotent: the same pin writes nothing.
-    const r2 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs");
-    assert.deepEqual([r2.written, counts(r2)], [false, { regulators: [0, 0, 5, 0], controls: [0, 0, 15, 0] }]);
-    assert.deepEqual((await shared("controls")).map((x) => x.updated_at), c.map((x) => x.updated_at), "no row was touched");
-    // A row staff added by hand is never pruned; one changed by hand is written back by the next index.
-    await rec.putPlatform(null, "controls", "hand:extra", { title: "Staff's own", data: { control_id: "extra" } });
-    await rec.putPlatform(null, "controls", "alpha-rules-2024:34(vii)", { title: "edited by hand", data: { control_id: "34(vii)" } });
-    // A new pin: what changed is written, the rest untouched.
-    await pin(up.c2);
-    const r3 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs");
-    assert.deepEqual(counts(r3), { regulators: [0, 5, 0, 0], controls: [1, 14, 0, 0] }, "a new pin rewrites every row it wrote (its version is the commit) and adds the new one");
-    assert.equal(r3.areas.find((a) => a.area === "controls")!.kept_by_hand, 2, "the hand-edited row and staff's own row are kept and counted");
-    assert.equal((await shared("controls")).find((x) => x.key === "alpha-rules-2024:7(2)(b)")!.data.prose, "Changed requirement");
-    assert.equal((await shared("controls")).find((x) => x.key === "alpha-rules-2024:34(vii)")!.title, "edited by hand", "a hand edit is never overwritten by an index (unless forced)");
-    // c3 drops 10 of beta's 12 controls: more than half of what this repository wrote; refused unless forced.
-    await pin(up.c3);
-    const before = JSON.stringify(await shared("controls"));
-    await assert.rejects(repos.syncUpstreamCatalog("fixture_catalog", "catalogs"), (e: any) => e.status === 409 && /would remove 10 of its 15 rows/.test(e.message));
-    assert.equal(JSON.stringify(await shared("controls")), before, "nothing pruned or written");
-    const r4 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs", { force: true });
-    assert.equal(r4.areas.find((a) => a.area === "controls")!.deleted, 10);
-    assert.ok((await shared("controls")).some((x) => x.key === "hand:extra"), "staff's own row survives every prune");
-    // mold_v0-221: a shared row staff wrote is staff's, forced or not. The hand-edited row is an override: it stays, the
-    // repository's version of its key kept behind it (refreshed by each index); removing it puts that version back.
-    const row = async (key: string) => (await db.query<{ title: string; source: string | null; version: string | null; upstream: any }>("SELECT title, source, version, upstream FROM platform_records WHERE area = 'controls' AND key = $1", [key]))[0];
-    const ov = await row("alpha-rules-2024:34(vii)");
-    assert.deepEqual([ov!.title, ov!.source, ov!.upstream?.source, ov!.upstream?.version], ["edited by hand", null, "catalogs", up.c3], "a forced index keeps staff's override, the repository's version at the new pin behind it");
-    assert.equal((await repos.syncUpstreamCatalog("fixture_catalog", "catalogs")).written, false, "idempotent: the same pin writes nothing, behind an override either");
-    const prov = await rec.platformProvenance(rec.areaOrThrow("controls"), ["alpha-rules-2024:34(vii)", "alpha-rules-2024:7(2)(b)", "hand:extra"]);
-    assert.deepEqual(prov.get("alpha-rules-2024:34(vii)"), { by: "staff", repository: "catalogs", overrides: { title: ov!.upstream.title, version: up.c3 } }, "the staff pages' mark: overridden by staff");
-    assert.deepEqual([prov.get("alpha-rules-2024:7(2)(b)"), prov.get("hand:extra")], [{ by: "repository", repository: "catalogs", overrides: null }, { by: "staff", repository: null, overrides: null }]);
-    await assert.rejects(rec.deletePlatform(null, "controls", "alpha-rules-2024:7(2)(b)"), (e: any) => e.status === 409 && /comes from repository catalogs: read only \(override it instead\)/.test(e.message), "a repository's row is read only to every door");
-    assert.equal(await rec.deletePlatform(null, "controls", "alpha-rules-2024:34(vii)"), true);
-    const back = await row("alpha-rules-2024:34(vii)");
-    assert.deepEqual([back!.title, back!.source, back!.version, back!.upstream], [ov!.upstream.title, "catalogs", up.c3, null], "removing the override puts the repository's row back");
-    assert.equal((await repos.syncUpstreamCatalog("fixture_catalog", "catalogs")).written, false, "exactly the repository's row: the next index finds it unchanged");
-    // A key staff add before the repository has it becomes an override once it does; an override whose key the
-    // repository drops stays, with nothing behind it, and removing it deletes it.
-    await pin(up.c1);
-    await repos.syncUpstreamCatalog("fixture_catalog", "catalogs");
-    await rec.putPlatform(null, "controls", "alpha-rules-2024:7(3)", { title: "Staff's 7(3)", data: { control_id: "7(3)" } });
-    await rec.putPlatform(null, "controls", "beta-code-2023:B.12", { title: "Staff's B.12", data: { control_id: "B.12" } });
-    assert.equal((await row("beta-code-2023:B.12"))!.upstream?.source, "catalogs", "an edit of a repository's row keeps it behind");
-    await pin(up.c3);
-    await repos.syncUpstreamCatalog("fixture_catalog", "catalogs", { force: true });
-    const added = await row("alpha-rules-2024:7(3)"), dropped = await row("beta-code-2023:B.12");
-    assert.deepEqual([added!.title, added!.source, added!.upstream?.source], ["Staff's 7(3)", null, "catalogs"], "staff's row wins over the key the repository added");
-    assert.deepEqual([dropped!.title, dropped!.source, dropped!.upstream], ["Staff's B.12", null, null], "the repository dropped the key: the staff row stays, nothing behind it");
-    assert.equal(await rec.deletePlatform(null, "controls", "alpha-rules-2024:7(3)"), true);
-    assert.equal((await row("alpha-rules-2024:7(3)"))!.source, "catalogs", "and removing it puts the repository's row back");
-    assert.equal(await rec.deletePlatform(null, "controls", "beta-code-2023:B.12"), true);
-    assert.equal(await row("beta-code-2023:B.12"), undefined, "a staff row with nothing behind it is deleted");
-    // A commit that is not in the repository: refused, nothing changed.
-    const now = JSON.stringify(await shared("controls"));
-    await pin("f".repeat(40));
-    await assert.rejects(repos.syncUpstreamCatalog("fixture_catalog", "catalogs"), (e: any) => e.status === 502 && /could not be fetched at f{40}/.test(e.message));
-    // An index that fails part-way writes nothing: a loader whose last row breaks the area's types.
-    const p = await pin(up.c2);
-    const orig = p.definition.loaders.catalogs;
-    p.definition.loaders.catalogs = async (input: any) => { const rows = await orig(input); rows.controls.push({ key: "bad", data: { mandatory: "yes" } }); return rows; };
-    await assert.rejects(repos.syncUpstreamCatalog("fixture_catalog", "catalogs"), (e: any) => e.status === 422 && /field mandatory .* must be a boolean/.test(e.message));
-    assert.equal(JSON.stringify(await shared("controls")), now, "a refused index leaves the area exactly as it was");
-    // The same catalog with no code: a declared map.
-    const mapped = await catalogPack((j) => {
-      j.upstream = { repo: up.url, commit: up.c2 };
-      j.repositories.catalogs.map = {
-        regulators: { from: "instruments", each: "instruments", key: "{instrumentId}", title: "{shortName}", fields: { kind: "$.kind", regulator: "regulator", short_name: "shortName" } },
-        controls: { from: "catalogs_dir", each: "groups.controls", key: "{$.instrumentId}:{id}", title: "{title}", fields: { instrument: "$.instrumentId", regulator: "$.regulator", control_id: "id" } },
-      };
-    });
-    setPacksForTest([{ ...mapped, definition: null }]);
-    const r5 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs", { force: true });
-    assert.equal(r5.areas.find((a) => a.area === "controls")!.desired, 16, "a declared map reads every catalog in the directory");
-    const m = (await shared("controls")).find((x) => x.key === "alpha-rules-2024:7(3)")!;
-    assert.deepEqual([m.data.instrument, m.data.control_id, m.data.prose], ["alpha-rules-2024", "7(3)", "Requirement 7(3)"], "values by path, by the field's name, from the document's root");
-    assert.equal((await shared("regulators")).find((x) => x.key === "beta-code-2023")!.data.kind, "fixture.catalog.instruments");
-    console.log("✓ upstream catalog at a pin (git): read at the pin, idempotent (nothing written twice), new pins update, a big prune refused unless forced, staff rows kept (forced too: overrides win, the repository's version behind them; removing one restores it; a repository's row read only), a missing commit refused, a failed index writes nothing, a declared map needs no code");
-
-    // A redirect is refused (git's own following is turned off): a local server that redirects to another.
-    let targetHits = 0;
-    const target = await listen((_q, s) => { targetHits++; s.statusCode = 404; s.end(); });
-    const redirector = await listen((q, s) => { s.statusCode = 302; s.setHeader("location", `http://127.0.0.1:${target.port}${q.url}`); s.end(); });
-    try {
-      await assert.rejects(repos.gitSource({ repo: `http://127.0.0.1:${redirector.port}/x.git`, commit: up.c1 }), (e: any) => e.status === 502);
-      assert.equal(targetHits, 0, "the redirect was not followed");
-      // And git with its default setting would have followed it: the test is a real one.
-      // (Asynchronously: the two servers live in this process.)
-      await new Promise((done) => execFile("git", ["ls-remote", `http://127.0.0.1:${redirector.port}/x.git`], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "http", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 30_000 }, done));
-      assert.ok(targetHits > 0, "git's default follows a redirect");
-    } finally { target.close(); redirector.close(); }
-    delete process.env.APP_DATA_ALLOW_FILE_UPSTREAM;
-    await assert.rejects(repos.gitSource({ repo: up.url, commit: up.c1 }), /for tests only/, "file:// and http:// upstreams are refused outside tests");
-    process.env.APP_DATA_ALLOW_FILE_UPSTREAM = "1";
-    console.log("✓ a redirect is refused (git without the setting follows it); file:// and http:// upstreams only with the test switch");
-  }
-
-  // ---------- 3. the github transport ----------
-  {
-    const commit = "a".repeat(40);
-    const seen: { url: string; redirect: unknown }[] = [];
-    const files: Record<string, string> = { "x/one.json": "{\"a\":1}" };
-    const fake = (opts: { sha?: string; throwOn?: RegExp; truncated?: boolean } = {}) => (async (url: string, init: RequestInit) => {
-      seen.push({ url, redirect: init?.redirect });
-      if (opts.throwOn?.test(url)) throw new TypeError("fetch failed: redirect mode is set to error");
-      if (url.includes("/commits/")) return new Response(JSON.stringify({ sha: opts.sha ?? commit }), { status: 200 });
-      if (url.includes("/git/trees/")) return new Response(JSON.stringify({ truncated: !!opts.truncated, tree: Object.keys(files).map((p) => ({ path: p, type: "blob" })) }), { status: 200 });
-      const rel = url.split(`/${commit}/`)[1]!;
-      return files[rel] ? new Response(files[rel], { status: 200 }) : new Response("", { status: 404 });
-    }) as typeof fetch;
-    const src = await repos.githubSource({ repo: "https://github.com/example/catalog", commit }, fake());
-    assert.equal(await src.read("x/one.json"), "{\"a\":1}");
-    assert.equal(await src.read("x/none.json"), null);
-    assert.deepEqual(await src.list("x"), ["x/one.json"]);
-    assert.ok(seen.every((s) => s.redirect === "error"), "every request refuses a redirect");
-    assert.ok(seen.every((s) => s.url.includes(commit)), "every request names the pinned commit");
-    assert.deepEqual([...new Set(seen.map((s) => new URL(s.url).host))].sort(), ["api.github.com", "raw.githubusercontent.com"]);
-    await assert.rejects(repos.githubSource({ repo: "https://github.com/example/catalog", commit }, fake({ sha: "b".repeat(40) })), /no commit a{40}.*refused/, "the API names another commit");
-    await assert.rejects(repos.githubSource({ repo: "https://github.com/example/catalog", commit }, fake({ throwOn: /commits/ })), /redirected \(refused\)|could not be reached/);
-    const t = await repos.githubSource({ repo: "https://github.com/example/catalog", commit }, fake({ truncated: true }));
-    await assert.rejects(t.list("x"), /could not be read whole/);
-    await assert.rejects(repos.githubSource({ repo: "https://gitlab.example/x/y", commit }, fake()), /github\.com/);
-    await assert.rejects(src.read("../etc/passwd"), /not a path inside the repository/);
-    console.log("✓ github transport: the commit is checked, every request is at the pin with redirects refused, paths stay inside");
-  }
 
   // ---------- 4. a workspace's files ----------
   const fx = await catalogPack();
@@ -254,6 +128,42 @@ try {
     assert.equal((await ws(A, "control_status")).length, 2, "A's rows stay");
     assert.deepEqual(await repos.indexWorkspaceFiles(A.orgId, "fixture_catalog").then((r) => r.map((x) => x.source)), ["no snapshot yet", "no snapshot yet"], "with no committed snapshot there is nothing to index");
     console.log("✓ workspace files: ledger and application folders become rows (last line wins, globs, never_read), sealed rows keyed per workspace, idempotent, pruned (the files are the truth), two workspaces apart");
+
+    // A workspace_files repository's loader (code, when the declared map is not enough): it reads the files only through
+    // RepositoryInput and returns rows by area, each checked as any write; a row that breaks the area's types refuses the
+    // whole index, which then writes nothing.
+    {
+      const def = (bad: boolean) => definePack({
+        id: "fixture_loader",
+        recordAreas: [{ name: "ld_items", label: "Items", role: "asset", scope: "workspace", repository: "files", fields: [{ name: "count", label: "Count", type: "number" }, { name: "names", label: "Names", type: "json" }] }] as never,
+        repositories: { files: { kind: "workspace_files", path: "lists/{list}.json" } },
+        loaders: {
+          files: async (input) => {
+            assert.deepEqual([input.kind, input.version, input.areas.map((a) => a.name)], ["workspace_files", null, ["ld_items"]]);
+            const rows = [];
+            for (const p of await input.list("lists")) {
+              const doc = JSON.parse((await input.read(p))!);
+              rows.push({ key: path.posix.basename(p, ".json"), title: doc.title, data: { count: doc.names.length, names: doc.names } });
+            }
+            if (bad) rows.push({ key: "broken", title: "Broken", data: { count: "many" } } as never);
+            return { ld_items: rows };
+          },
+        },
+      });
+      const install = (bad: boolean) => setPacksForTest([{ manifest: { id: "fixture_loader", name: "Loader", version: "1", entry: "index.ts", migrations: null, words: {} }, definition: def(bad) }]);
+      const lists = [{ path: "lists/one.json", body: JSON.stringify({ title: "List one", names: ["a", "b"] }) }, { path: "lists/two(2).json", body: JSON.stringify({ title: "List two", names: ["c"] }) }];
+      install(false);
+      const r1 = await repos.indexWorkspaceFiles(A.orgId, "fixture_loader", lists);
+      assert.deepEqual(r1.map(counts), [{ ld_items: [2, 0, 0, 0] }]);
+      const rows = (await withTenant(A.orgId, () => rec.workspaceRecords("fixture_loader", A.orgId).list("ld_items"))).records;
+      assert.deepEqual(rows.map((r) => [r.key, r.title, r.data.count]), [["one", "List one", 2], ["two(2)", "List two", 1]], "the loader's rows, keys with ( and )");
+      assert.equal((await repos.indexWorkspaceFiles(A.orgId, "fixture_loader", lists))[0]!.written, false, "idempotent");
+      install(true);
+      await assert.rejects(repos.indexWorkspaceFiles(A.orgId, "fixture_loader", [...lists, { path: "lists/three.json", body: JSON.stringify({ title: "Three", names: [] }) }]), (e: any) => e.status === 422 && /count/.test(e.message));
+      assert.deepEqual((await withTenant(A.orgId, () => rec.workspaceRecords("fixture_loader", A.orgId).list("ld_items"))).records.map((r) => r.key), ["one", "two(2)"], "a refused index writes nothing");
+      setPacksForTest([fx]);
+      console.log("✓ a workspace_files repository's loader: rows from the files through RepositoryInput, checked, idempotent; a bad row refuses the whole index");
+    }
 
     // Re-indexed by the run engine after a commit: results naming the indexed rows are accepted only then.
     const harness = await import("../src/run-harness.js");
@@ -365,16 +275,6 @@ try {
       assert.ok(!got.some((u) => u.includes("tok-")), "the token never travels in a URL");
       console.log("✓ external API, live: each workspace's own credential and items, filters and sorts, keys encoded, read only, over REST; a redirect, a private address, plain http and a host outside egress refused; tokens in no answer");
 
-      // The staff route that indexes an upstream catalog.
-      setPacksForTest([await catalogPack((j) => { j.upstream = { repo: up.url, commit: up.c2 }; })]);
-      const operator = await httpSrv.adminToken("operator"), owner = await httpSrv.adminToken("owner");
-      const sync = (tok: string, body: unknown) => httpSrv.req("POST", "/api/admin/data/_repositories/fixture_catalog/catalogs/sync", { authorization: `Bearer ${tok}` }, body);
-      const s1 = await sync(operator, {});
-      assert.equal(s1.status, 200, await s1.clone().text());
-      assert.equal((await sync(operator, { force: true })).status, 403, "forcing a prune needs delete");
-      assert.equal((await sync(owner, { force: true })).status, 200);
-      assert.equal((await httpSrv.req("POST", "/api/admin/data/_repositories/fixture_catalog/company_ledger/sync", { authorization: `Bearer ${operator}` }, {})).status, 400, "only an upstream catalog is synced by staff");
-      console.log("✓ staff index an upstream catalog over REST (library; forcing a prune needs delete)");
     } finally { await httpSrv.close(); api.close(); }
   }
 
@@ -382,25 +282,23 @@ try {
   const real = process.env.SECOND_APP_DECLARATION;
   if (real && existsSync(real)) {
     const decl = JSON.parse(readFileSync(real, "utf8"));
-    const repoNames = Object.keys(decl.repositories);
-    const catName = repoNames.find((n) => decl.repositories[n].kind === "upstream_catalog")!;
-    const upReal = catalogRepo(decl.repositories[catName]);
-    const json = { id: "second_app", name: "Second app", version: "1", upstream: { repo: upReal.url, commit: upReal.c1 }, record_areas: decl.record_areas,
-      repositories: Object.fromEntries(Object.entries(decl.repositories).map(([n, r]: [string, any]) => [n, r.kind === "workspace_files" ? { ...r, store: "second_app" } : r])) };
+    // mold_v0-283: an upstream catalog it may still declare is left out, and the areas it fed become staff-kept records.
+    const gone = Object.keys(decl.repositories).filter((n) => decl.repositories[n].kind === "upstream_catalog");
+    const repoNames = Object.keys(decl.repositories).filter((n) => !gone.includes(n));
+    const json = { id: "second_app", name: "Second app", version: "1",
+      record_areas: decl.record_areas.map((a: any) => (gone.includes(a.repository) ? (({ repository: _r, ...rest }) => rest)(a) : a)),
+      repositories: Object.fromEntries(repoNames.map((n) => [n, decl.repositories[n].kind === "workspace_files" ? { ...decl.repositories[n], store: "second_app" } : decl.repositories[n]])) };
     const { compileDeclarations } = await import("../src/pack-manifest.js");
-    const fixtureLoader = (await catalogPack()).definition.loaders.catalogs;
-    setPacksForTest([{ manifest: { id: "second_app", name: "Second app", version: "1", entry: null, migrations: null, words: {} }, declared: compileDeclarations(json), definition: { id: "second_app", loaders: { [catName]: fixtureLoader } } }]);
-    const r = await repos.syncUpstreamCatalog("second_app", catName);
-    const again = await repos.syncUpstreamCatalog("second_app", catName);
+    setPacksForTest([{ manifest: { id: "second_app", name: "Second app", version: "1", entry: null, migrations: null, words: {} }, declared: compileDeclarations(json) }]);
     // Its workspace repositories: the fixture's files at its declared paths (the company and application folders).
     const files = workspaceFiles("acme", "A");
     const w = await repos.indexWorkspaceFiles(A.orgId, "second_app", files);
     const w2 = await repos.indexWorkspaceFiles(B.orgId, "second_app", workspaceFiles("globex", "B"));
     const wAgain = await repos.indexWorkspaceFiles(A.orgId, "second_app", files);
-    console.log(`✓ the second app's declaration (${path.basename(real)}): ${repoNames.length} repositories; catalog at the pin ${JSON.stringify(counts(r))}, again written=${again.written}; ` +
+    console.log(`✓ the second app's declaration (${path.basename(real)}): ${repoNames.length} repositories${gone.length ? ` (${gone.join(", ")} left out: an upstream catalog)` : ""}; ` +
       `workspace A ${JSON.stringify(w.map(counts))}, B ${JSON.stringify(w2.map(counts))}, A again written=${wAgain.some((x) => x.written)}`);
-    assert.ok(!again.written && !wAgain.some((x) => x.written), "idempotent");
-    assert.ok(r.areas.every((a) => a.desired > 0) && w.every((x) => x.areas.every((a) => a.desired > 0)), "every area fed");
+    assert.ok(!wAgain.some((x) => x.written), "idempotent");
+    assert.ok(w.every((x) => x.areas.every((a) => a.desired > 0)), "every area fed");
   } else console.log("- the second app's declaration: not given (SECOND_APP_DECLARATION)");
   await db.close();
   console.log("DATA REPOSITORIES TEST PASS");

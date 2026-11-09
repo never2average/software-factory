@@ -2434,30 +2434,6 @@
       }
     },
     {
-      "name": "fixture_tracker_admin_sync_tracker_library",
-      "title": "Index tracker_library",
-      "description": "Staff: index the upstream catalog tracker_library at its pinned commit into its shared areas (idempotent; force passes the guard against pruning many rows and needs the delete permission). Needs the Operator role.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "force": {
-            "description": "Pass the prune guard (needs the delete permission)",
-            "type": "boolean"
-          }
-        },
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": true,
-        "openWorldHint": true
-      },
-      "execution": {
-        "taskSupport": "forbidden"
-      }
-    },
-    {
       "name": "review_cancel_review",
       "title": "Cancel a review",
       "description": "Staff, for one workspace: Cancel a queued or running review of Fixture review: a queued one ends now; a running one stops spending at once and ends at its next heartbeat. Needs the Operator role.",

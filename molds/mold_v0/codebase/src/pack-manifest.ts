@@ -12,7 +12,7 @@
  * (src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only, the server's instructions and the
  * declared slash commands (`prompts`, mold_v0-137). No key is reserved now.
  * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
- * `repository`; "pack.json#upstream" is resolved here to the pack.json's own `upstream` pin). Declared and checked for
+ * `repository`; an upstream_catalog is refused with a plain sentence, mold_v0-283). Declared and checked for
  * their shape today, read by the ticket that builds it: `run_results` (how a run's output becomes run_results rows:
  * mold_v0-061). `metrics` and `charts` are wired by mold_v0-063 (src/metrics.ts), `tabs` by mold_v0-058 (the console's
  * sidebar and tab pages); what they name across the build is checked by src/metric-spec.ts.
@@ -34,7 +34,7 @@ import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
 import { PackAgentProfileSchema } from "./agent-profile-spec.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -565,6 +565,9 @@ export class PackJsonError extends Error {
 
 /** Check a pack.json against the schema; every problem as "path: message". */
 export function checkPackJson(json: unknown): PackJson {
+  // mold_v0-283: an upstream catalog is gone for good; said in plain words, not as a schema mismatch.
+  const gone = upstreamCatalogNames((json as { repositories?: unknown } | null)?.repositories);
+  if (gone.length) throw new PackJsonError(gone.map((n) => `repositories.${n}: ${UPSTREAM_CATALOG_GONE}`));
   const r = PackJsonSchema.safeParse(json);
   if (!r.success) throw new PackJsonError(flatIssues(r.error.issues as unknown as Issue[]).map((i) => `${where(i.path) || "pack.json"}: ${i.message}`));
   return json as PackJson;
@@ -589,17 +592,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.charts?.length) out.charts = p.charts;
   if (p.tabs?.length) out.tabs = p.tabs;
   if (p.checks?.length) out.checks = p.checks;
-  if (p.repositories && Object.keys(p.repositories).length) {
-    // An upstream catalog may point at pack.json's own pin: resolved here, so the definition carries the pin itself.
-    const problems: string[] = [];
-    out.repositories = Object.fromEntries(Object.entries(p.repositories).map(([n, r]) => {
-      if (r.kind !== "upstream_catalog" || r.upstream !== "pack.json#upstream") return [n, r];
-      const pin = UpstreamSchema.safeParse(p.upstream);
-      if (!pin.success) problems.push(`repositories.${n}.upstream: pack.json#upstream needs pack.json upstream {repo, commit}: ${pin.error.issues.map((i) => `${where(i.path) || "upstream"} ${i.message}`).join("; ")}`);
-      return [n, { ...r, upstream: pin.success ? pin.data : r.upstream }];
-    }));
-    if (problems.length) throw new PackJsonError(problems);
-  }
+  if (p.repositories && Object.keys(p.repositories).length) out.repositories = p.repositories;
   if (p.run_results) out.runResults = p.run_results;
   if (p.mcp) out.mcp = p.mcp;
   if (p.workspace_store) out.workspaceStore = p.workspace_store;

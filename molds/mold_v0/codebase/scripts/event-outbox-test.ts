@@ -47,7 +47,7 @@ const env: NodeJS.ProcessEnv = {
   APP_VAULT_KEY: randomBytes(32).toString("base64"),
   APP_REGISTRY: "scripts/fixtures/registry.json",
   APP_WORKER_TOKEN: `test-worker-${randomBytes(8).toString("hex")}`,
-  REASONS_ENABLED: "off", APP_AUTOSCALE: "off", APP_CATALOG_AUTOINDEX: "off", APP_ORG_MONTHLY_BUDGET_USD: "1000",
+  REASONS_ENABLED: "off", APP_AUTOSCALE: "off", APP_ORG_MONTHLY_BUDGET_USD: "1000",
   APP_PREVIEW: "1", // a local receiver (a preview server's rule)
 };
 const PG = process.env.OUTBOX_PG_URL ?? "";

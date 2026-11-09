@@ -89,7 +89,7 @@ export const workspacePortalNav: NavGroup[] = [];
 /** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */
 export const packOnboardingSteps = 0;
 
-/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */
+/** How many workspace_files repositories the packs declare (mold_v0-129, mold_v0-283): the admin console's Data repositories page shows with one. */
 export const repositoryCount = 0;
 
 /** Whether a kind of this build may need a workspace's private network (mold_v0-036): Settings › Credentials and the guide

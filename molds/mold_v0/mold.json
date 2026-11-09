@@ -30,11 +30,6 @@
     "mode": "fail_closed",
     "pass": "RLS CHECK PASS (postgres)"
   },
-  "catalogs": {
-    "$comment": "The upstream catalogs' index after a deploy (mold_v0-128; its scripts/catalogs-index.ts): every upstream catalog of the build's packs not indexed at its pin is indexed once, right after the deploy's health checks (compose_remote: in a one-off container of the new release, with the server's env file; vercel: on this machine against the api project's production database, from the app's build copy). Applies only while the codebase's package.json has the script. Never a failed deploy: what it said ('said', its summary line) is printed and recorded in infrastructure.json catalog_index; the server indexes a catalog it could not by itself and shows the error to staff.",
-    "script": "catalogs:index",
-    "said": "CATALOGS INDEX:"
-  },
   "platform_account": {
     "$comment": "The platform account after a deploy (mold_v0-276; its src/platform-account.ts): the app's own POST `path` makes the one account the platform's staff use the portal in (named from the brand, slug platform) when there is none, and puts every platform admin who has signed in before in it as owner, so they can use /app straight away; an admin who signs in later is put in it at that sign-in by the app itself. Called right after the deploy's health checks (compose_remote: inside the app's running container, with the worker token the container already holds; vercel: from this machine with the api project's `vercel_secret`, pulled and never printed). Applies only while the codebase's src/http.ts serves the path. Never a failed deploy: what it said is printed and recorded in infrastructure.json platform_account. Counts only: the app's answer names nobody.",
     "path": "/api/cron/platform-account",

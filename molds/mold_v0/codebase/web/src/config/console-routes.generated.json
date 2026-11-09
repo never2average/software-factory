@@ -25,7 +25,6 @@
     "/admin/records-group/[group]",
     "/admin/records/[area]",
     "/admin/records/[area]/[key]",
-    "/admin/repositories",
     "/admin/requests",
     "/admin/spend",
     "/app",

@@ -78,7 +78,6 @@ def requested(flag, docs, settings_on=None, kind=None):
     # mold_v0-260 (the shell's src/features.ts gapAsks and gen-packs say the same)
     tabs = [t for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict)]
     if by == "record_inputs": return any(k.get("input_from_record") for k in _kinds(docs))
-    if by == "private_catalogs": return any(isinstance(r, dict) and r.get("kind") == "upstream_catalog" and r.get("access") not in (None, "public") for d in docs for r in (d.get("repositories") or {}).values())
     if by == "wide_lists": return any(len(a.get("list_columns") or []) > 8 for a in _areas(docs)) or any(len(t.get("columns") or []) > 8 for t in tabs)
     if by == "record_rules": return (any(a.get("on_save") or any(isinstance(f, dict) and f.get("where") for f in a.get("fields") or []) for a in _areas(docs))
                                      or any(isinstance(f, dict) and f.get("where") for k in _kinds(docs) for f in k.get("args") or []))
@@ -112,7 +111,9 @@ def block_problems(v, root, at="features"):
     if not isinstance(v, dict) or not v: return [f"{at} must be an object of flags, {{\"<flag>\": true|false}} (flags: {', '.join(ids(root))})"]
     known, errs = ids(root), []
     for k, x in v.items():
-        if k not in known: errs.append(f"{at}.{k} is not a flag (flags: {', '.join(known)})")
+        # mold_v0-283: the private catalogs' flag went with the upstream catalogs (the shell's gen-packs says the same)
+        if k == "private_catalogs" and k not in known: errs.append(f"{at}.private_catalogs was removed with upstream catalogs (mold_v0-283): shared lists are staff-kept platform records (New, Edit, Import); take the flag out")
+        elif k not in known: errs.append(f"{at}.{k} is not a flag (flags: {', '.join(known)})")
         elif not isinstance(x, bool): errs.append(f"{at}.{k} must be true or false (got {json.dumps(x)[:40]})")
     return errs
 
@@ -163,7 +164,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 28 and len(set(ids(root))) == 28, "the registry names 28 flags, each once")
+    ok(len(flags) == 27 and len(set(ids(root))) == 27, "the registry names 27 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -181,14 +182,13 @@ def self_test(root):
        "forms in a side panel: off by default, on when the profile says (mold_v0-256)")
     # mold_v0-260
     gaps = [{"id": "m", "job_kinds": [{"name": "k", "args": [{"name": "a"}], "input_from_record": {"a": "x"}}],
-             "repositories": {"cat": {"kind": "upstream_catalog", "access": "deploy_key"}},
              "record_areas": [{"name": "w", "scope": "workspace", "list_columns": list("abcdefghi"), "on_save": [{"check": "c", "message": "no"}], "fields": [{"name": "r", "type": "reference", "to": "t", "where": {"field": "s", "equals": "on"}}]}],
              "credentials": [{"name": "hosts", "bound_to": "tenant", "area": "t", "entries": {"label": "Host"}}],
              "tabs": [{"id": "home", "kind": "overview", "include": ["setup"], "rail": ["recent_runs", "attention"], "sparklines": list("abcde")}]}]
-    all_on = {"features": {i: True for i in ("record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool")}}
-    ok(all(x not in words(effective({}, gaps, root)).split(", ") for x in ("inputs", "private", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage"))
-       and all(x in words(effective(all_on, gaps, root)).split(", ") for x in ("inputs", "private", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage")),
-       "mold_v0-260's nine flags: off by default; on when the profile says and (for six of them) a pack declares what asks for it")
+    all_on = {"features": {i: True for i in ("record_run_inputs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool")}}
+    ok(all(x not in words(effective({}, gaps, root)).split(", ") for x in ("inputs", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage"))
+       and all(x in words(effective(all_on, gaps, root)).split(", ") for x in ("inputs", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage")),
+       "mold_v0-260's eight flags (private_catalogs went with mold_v0-283): off by default; on when the profile says and (for five of them) a pack declares what asks for it")
     ok(not any("wide" in w for w in words(effective(all_on, [], root)).split(", ")), "wide lists: on only when a list asks for it")
     ok(len([e for e in problems({}, gaps, root) if "is off but a pack declares" in e]) == 4 and not [e for e in problems(all_on, gaps, root) if "is off but" in e],
        "a wide list, a record rule and a credential set are refused while their flag is off (mold_v0-260)")
@@ -205,6 +205,7 @@ def self_test(root):
     ok(any("in the clear" in e for e in problems({"features": {"encrypted_fields": False}}, [{"record_areas": [{"scope": "workspace", "fields": [{"name": "x", "encrypted": True}]}]}], root)), "encrypted_fields off with an encrypted field is refused")
     ok(any("nobody could give" in e for e in problems({"features": {"customer_key_vault": False}}, audit_app_like, root)), "the key vault off while a kind needs a credential is refused")
     ok(any("not a flag" in e for e in problems({"features": {"nope": True}}, [], root)), "an unknown flag is refused")
+    ok(any("removed with upstream catalogs" in e for e in problems({"features": {"private_catalogs": True}}, [], root)), "the private catalogs' flag is refused in plain words (mold_v0-283)")
     ok(any("kind is the switch" in e for e in problems({"features": {"developer_surface": True, "audit.platform": True}}, [], root, kind="tool")), "developer_surface true on a tool app is refused (kind is the switch)")
     # mold_v0-271: workspace recipes, asked for by the staff Records group listing them (a pack's, or the profile's own console), needing the agent
     listed = [{"id": "m", "console": {"admin_records": {"show": [{"id": "recipes", "label": "Recipes"}, "molds"]}}}]

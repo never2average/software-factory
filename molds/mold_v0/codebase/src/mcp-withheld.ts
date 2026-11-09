@@ -2,7 +2,7 @@
  * What a pack's mcp settings withhold beyond the MCP tool (mold_v0-067; src/mcp-catalog.ts WithheldTool). A tool a pack
  * `exclude`s (or leaves out of `include`) or marks `admin_only` is not only off the customer MCP: the same operation's
  * route for the workspace answers 404 and its console tab is not shown (scripts/gen-packs.mjs leaves it out of the
- * sidebar). An excluded staff tool (admin_list_, admin_get_, admin_create_, admin_update_, admin_delete_, admin_sync_)
+ * sidebar). An excluded staff tool (admin_list_, admin_get_, admin_create_, admin_update_, admin_delete_)
  * withholds the staff route of the same operation likewise. An admin_only tool stays usable by staff on the admin MCP.
  *
  *   tool op          workspace route(s) withheld
@@ -19,7 +19,6 @@
  *   run_results      its results on GET /api/runs/:id and its result counts on GET /api/runs
  *   start            POST /api/schedules for the kind (the pack's own default schedules still fire)
  *   admin_list/get/create/update/delete   the same on /api/admin/data and /api/admin/records
- *   admin_sync       POST /api/admin/data/_repositories/:pack/:name/sync
  *   get_started      nothing beyond the tool (mold_v0-105: the console's Setup page still shows the checklist)
  *
  * With zero packs, or packs with no mcp settings, nothing is withheld and every route answers as before.
@@ -77,6 +76,3 @@ export function batchWithheld(ops: unknown, door: "workspace" | "admin"): string
 /** Whether a pack's run op (list_runs, run_status, run_results) or its metrics are withheld. */
 export const packOpWithheld = (pack: string, op: GeneratedOp): boolean => withheldTools().some((w) => w.pack === pack && w.op === op);
 
-/** Whether an upstream catalog's sync is withheld from staff. */
-export const syncWithheld = (pack: string, repository: string): boolean =>
-  withheldTools().some((w) => w.pack === pack && w.op === "admin_sync" && w.repository === repository);

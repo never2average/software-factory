@@ -21,7 +21,6 @@
  *   <run>_status, list_<runs>, get_<run>_results, cancel_<run>   the pack's runs, in the pack's word for a run
  *   get_<kind>_report                   a kind that declares a report file
  *   admin_list_/admin_get_/admin_create_/admin_update_/admin_delete_<area>   shared areas, on the admin MCP (staff)
- *   admin_sync_<repository>             an upstream catalog, on the admin MCP (staff)
  * The customer tools wrap the data API's workspace door (src/data-api.ts DATA_API_OPERATIONS) and the run engine; the
  * admin ones its admin door. Text from a declaration (labels, help, descriptions) reaches a description only as plain
  * text: one line, no control, zero-width or direction characters, no < > or `, capped. No record value ever does.
@@ -32,7 +31,7 @@ import type { Permission as AdminPermission } from "./admin-roles.js";
 import { AgentJobKindSchema, CredentialSchema, isFieldUrl, REPOSITORY_NAME, URL_MAX, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
 export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
-  | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
+  | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete";
 
 export interface GeneratedTool {
   /** The name clients see (after `mcp.rename`). */
@@ -47,7 +46,6 @@ export interface GeneratedTool {
   admin_only: boolean;
   area?: string;
   kind?: string;
-  repository?: string;
   /** The record action a record tool needs, for the caller's role (src/record-areas.ts allowedRoles). */
   action?: RecordAction;
   /** The account permission a customer tool needs beyond the area's (src/account-roles.ts). */
@@ -69,7 +67,7 @@ export interface CatalogPack { id: string; name: string; words?: Record<string, 
  * workspace (the data API, the console's record and run data) and its console tab are withheld too
  * (src/mcp-withheld.ts, scripts/gen-packs.mjs); an excluded staff tool withholds the staff route likewise.
  */
-export interface WithheldTool { pack: string; generated: string; op: GeneratedOp; door: "workspace" | "admin"; area?: string; kind?: string; repository?: string; reason: "exclude" | "admin_only" }
+export interface WithheldTool { pack: string; generated: string; op: GeneratedOp; door: "workspace" | "admin"; area?: string; kind?: string; reason: "exclude" | "admin_only" }
 
 /** The names a generated tool may not take: the shell's and the packs' own tools, and the admin MCP's. */
 export interface Reserved {
@@ -223,7 +221,7 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
   const problems: string[] = [];
   const withheld: WithheldTool[] = [];
   const held = (t: GeneratedTool, reason: WithheldTool["reason"]) => withheld.push({ pack: t.pack, generated: t.generated, op: t.op, door: t.door,
-    ...(t.area ? { area: t.area } : {}), ...(t.kind ? { kind: t.kind } : {}), ...(t.repository ? { repository: t.repository } : {}), reason });
+    ...(t.area ? { area: t.area } : {}), ...(t.kind ? { kind: t.kind } : {}), reason });
   const areaLabels = new Map<string, string>();
   for (const p of packs) for (const a of p.definition.recordAreas ?? []) {
     const r = RecordAreaSchema.safeParse(a);
@@ -446,7 +444,7 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
       }
     }
 
-    // ---------- the admin MCP: shared areas and upstream catalogs, for platform staff ----------
+    // ---------- the admin MCP: shared areas, for platform staff ----------
     for (const a of areas.filter((x) => x.scope === "platform")) {
       const label = plain(a.label, 80);
       const readOnly = !!repoKind(a) && (READ_ONLY_KINDS as readonly string[]).includes(repoKind(a)!);
@@ -470,13 +468,6 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
       add({ generated: n("admin_delete", a.name), op: "admin_delete", door: "admin", area: a.name, admin_needs: "delete",
         title: `Shared ${label}: delete`, description: `Staff: delete a shared ${label} record.`,
         input: { key: recordKey(`The ${label} record's key`) }, annotations: WRITE(true, true) });
-    }
-    for (const [rn, raw] of Object.entries(p.definition.repositories ?? {})) {
-      const r = RepositorySchema.safeParse(raw);
-      if (!r.success || r.data.kind !== "upstream_catalog") continue;
-      add({ generated: n("admin_sync", rn), op: "admin_sync", door: "admin", repository: rn, admin_needs: "library",
-        title: `Index ${rn}`, description: `Staff: index the upstream catalog ${rn} at its pinned commit into its shared areas (idempotent; force passes the guard against pruning many rows and needs the delete permission).`,
-        input: { force: z.boolean().optional().describe("Pass the prune guard (needs the delete permission)") }, annotations: WRITE(true, true, true) });
     }
 
     // ---------- the pack's mcp settings ----------

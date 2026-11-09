@@ -52,9 +52,7 @@ export const storeOutsideVault = () => Boolean((ENV.R2_BUCKET && ENV.R2_ENDPOINT
  * shell's own; a gateway provider some pack's job kind names; the packs' operator credentials and OAuth clients only when
  * a pack declares them; boat when the session engine runs orchestrators on it or the packs' runs may go there
  * (boatForRuns); object storage with the engine (its trace archive) or a pack whose runs keep a workspace store; the
- * engine's when the build has the engine; the private catalogs' access (catalog_access, mold_v0-260) only when a pack
- * reads an upstream catalog with a deploy key or the GitHub App (src/catalog-access.ts privateCatalogs: it has its own
- * card, Private catalogs, like the GitHub App; mold_v0-264); Freestyle (mold_v0-274) only when the runs' sandboxes come
+ * engine's when the build has the engine; Freestyle (mold_v0-274) only when the runs' sandboxes come
  * from it (the platform setting APP_RUN_SANDBOX, the profile's run_sandbox: src/run-sandboxes.ts runSandboxMode), so a
  * build that never uses it is not asked for its key; a provider staff added by hand.
  */
@@ -67,7 +65,6 @@ export async function providerInBuild(slug: string, keys: number): Promise<boole
   if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
   if (slug === "freestyle") return (await import("./run-sandboxes.js")).RUN_SANDBOXES.mode() === "freestyle";
   if (slug === OBJECT_STORAGE) return sessionEngine() || (await storeKinds()).length > 0;
-  if (slug === "catalog_access") return (await import("./catalog-access.js")).privateCatalogs().length > 0;
   // mold_v0-285: a Neon key left from mold_v0-282 (0062 keeps the provider row while one is held) is never offered:
   // the shared records' databases live in the app's own database. Its key shows (keys > 0, above) so it can be deleted.
   if (slug === "neon") return false;

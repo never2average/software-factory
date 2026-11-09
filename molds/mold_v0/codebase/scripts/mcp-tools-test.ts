@@ -333,7 +333,7 @@ try {
     await owner.close();
     const staffViewer = await adminClient("viewer"), operator = await adminClient("operator");
     const an = (await operator.client.listTools()).tools.map((t) => t.name);
-    for (const t of ["review_cancel_review", "review_admin_create_review_guides", "fixture_tracker_admin_sync_tracker_library"]) assert.ok(an.includes(t), `${t} is on the admin MCP`);
+    for (const t of ["review_cancel_review", "review_admin_create_review_guides"]) assert.ok(an.includes(t), `${t} is on the admin MCP`);
     assert.ok(!an.includes("review_admin_delete_review_guides"), "an excluded tool is nowhere");
     const live = (await ok(ca, "review_start_review_pass", { item: "item-a" })).run.id;
     const refused = await staffViewer.call("review_cancel_review", { workspace: A.org.slug, run_id: live });
