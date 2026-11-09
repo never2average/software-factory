@@ -60,9 +60,9 @@ export function registerAgentTools(server: McpServer, org: Org) {
   }, wrap(async (a: { session: string; request: string; decision: string; reason?: string }) => { const s = await H.decideRequest(org.orgId, a.session, a.request, actorFor(org), a.decision, a.reason, org); return out(brief(s), { session: s }); }));
   server.registerTool("raise_agent_budget", {
     title: "Raise an agent session's budget",
-    description: "Raise a stopped or parked session's budget, with a reason (kept with the raise), up to the platform's ceiling for a session; a session waiting on its budget continues. Billing managers and owners.",
+    description: "Raise a session's budget, with a reason (kept with the raise), up to the platform's ceiling for a session, at any time (while it works too); a session waiting on its budget continues. Billing managers and owners.",
     inputSchema: { session: id, to_usd: z.number().positive().optional(), by_usd: z.number().positive().optional(), reason: z.string() },
-  }, wrap(async (a: { session: string; to_usd?: number; by_usd?: number; reason: string }) => { const s = await H.raiseBudget(org.orgId, a.session, actorFor(org), a, org); return out(brief(s), { session: s }); }));
+  }, wrap(async (a: { session: string; to_usd?: number; by_usd?: number; reason: string }) => { const s = await H.raiseBudget(org.orgId, a.session, actorFor(org), { ...a, raise_only: true }, org); return out(brief(s), { session: s }); }));
 }
 
 /** The admin MCP's agent tools (src/admin-mcp.ts adminTools), with the flag on: every workspace's sessions, and stop. */

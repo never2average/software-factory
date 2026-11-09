@@ -10,7 +10,12 @@
  *     POST   /:id/messages          {message} the person who started it: guidance mid-run, or a wake
  *     POST   /:id/pause | /resume | /stop
  *     POST   /:id/requests/:rid     {decision: approve | decline, reason?}
- *     POST   /:id/budget            {to_usd | by_usd, reason} a billing manager or owner; never while it works
+ *     POST   /:id/budget            {to_usd | by_usd, reason} a billing manager or owner: raises to the ceiling or lowers to
+ *                                    what it has spent, while it works too (mold_v0-287)
+ *     GET    /:id/trace?after=<c>   the session's trace: what it did and said, in order (mold_v0-287); after: the cursor of the last read
+ *     GET    /:id/trace/stream      the same as a stream (server-sent events), from ?after=, until the connection or this
+ *                                    request's time ends; the page reconnects with the last cursor
+ *     GET    /:id/trace/:step       one step's full detail (a tool's arguments and result, secrets masked)
  *     GET    /icon                  the workspace's own agent icon (mold_v0-252; src/agent-icon.ts) or null
  *     PUT    /icon, DELETE /icon    refused (403): since mold_v0-262 platform staff set it, on the account's page
  *
@@ -49,6 +54,7 @@ import { AGENT_ICON_MAX_BYTES, readAgentIcon, resetAgentIcon, saveAgentIcon } fr
 import * as P from "./agent-profiles.js";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
+import { sseStart } from "./docs-answers.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.json(v); }
@@ -66,6 +72,45 @@ export function agentOffer() {
     park_after_minutes: settingNumber("AGENT_PARK_AFTER_MINUTES"),
     // mold_v0-250: which of the workspace's own tools a new session uses without asking (the rest ask the person first).
     workspace_tools: settingText("AGENT_WORKSPACE_TOOLS") };
+}
+
+/**
+ * A session's trace as a stream (mold_v0-287): what is new, as a `data:` event each time, read from the database where
+ * the engine writes it (no event bus: nothing else needs one, and a poll per open screen is one indexed read). Ends
+ * before a hosted function's limit; the page reconnects from the cursor it last received. A first read that refuses (not
+ * found, not on) answers with its status before the stream starts.
+ */
+const TRACE_STREAM_SECONDS = 240, TRACE_STREAM_LIVE_MS = 800, TRACE_STREAM_IDLE_MS = 3000;
+const TRACE_LIVE = new Set(["starting", "working", "waiting", "waking"]);
+function traceStream(read: (req: Request, res: Response, after: unknown) => Promise<H.TraceAnswer>) {
+  return async (req: Request, res: Response) => {
+    let after: unknown = req.query.after;
+    const first = await read(req, res, after);
+    sseStart(res);
+    let closed = false;
+    req.on("close", () => { closed = true; });
+    let last = "", wrote = 0, cursor = first.cursor;
+    const send = (a: H.TraceAnswer) => {
+      after = a.cursor; cursor = a.cursor;
+      const j = JSON.stringify(a);
+      if (j === last) return;
+      res.write(`data: ${j}\n\n`); last = j; wrote = Date.now();
+    };
+    send(first);
+    let live = TRACE_LIVE.has(first.phase), more = first.more;
+    const started = Date.now();
+    while (!closed && Date.now() - started < TRACE_STREAM_SECONDS * 1000) {
+      if (!more) await new Promise((r) => setTimeout(r, live ? TRACE_STREAM_LIVE_MS : TRACE_STREAM_IDLE_MS));
+      if (closed) break;
+      const a = await read(req, res, after).catch(() => null);
+      if (!a) break;
+      send(a);
+      live = TRACE_LIVE.has(a.phase); more = a.more;
+      if (Date.now() - wrote > 15_000) { res.write(": alive\n\n"); wrote = Date.now(); }
+    }
+    res.write(`event: close\ndata: ${JSON.stringify({ cursor })}\n\n`);
+    res.end();
+  };
 }
 
 export function agentAppRouter(): Router {
@@ -94,6 +139,9 @@ export function agentAppRouter(): Router {
   r.delete("/icon", staffOnly);
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
+  r.get("/:id/trace/stream", answer(traceStream((req, res, after) => H.sessionTrace(S(res).org, id(req), actor(res), after))));
+  r.get("/:id/trace", answer(async (req, res) => H.sessionTrace(S(res).org, id(req), actor(res), req.query.after)));
+  r.get("/:id/trace/:step", answer(async (req, res) => H.sessionTraceStep(S(res).org, id(req), actor(res), String(req.params.step))));
   r.post("/:id/messages", answer(async (req, res) => H.messageSession(S(res).org, id(req), actor(res), (req.body ?? {}).message, org(res))));
   r.post("/:id/pause", answer(async (req, res) => ({ session: await H.pauseSession(S(res).org, id(req), actor(res)) })));
   r.post("/:id/resume", answer(async (req, res) => ({ session: await H.resumeSession(S(res).org, id(req), actor(res), org(res)) })));
@@ -111,6 +159,9 @@ export function agentAdminRoutes(admin: Router, need: Need, who: (req: Request, 
   const id = (req: Request) => String(req.params.id);
   admin.get("/agent", answer(async (req, res) => ({ sessions: await H.listSessions(null, actor(req, res)), offer: agentOffer() })));
   admin.get("/agent/:id", answer(async (req, res) => ({ session: await H.readSession(null, id(req), actor(req, res)) })));
+  admin.get("/agent/:id/trace/stream", answer(traceStream((req, res, after) => H.sessionTrace(null, id(req), actor(req, res), after))));
+  admin.get("/agent/:id/trace", answer(async (req, res) => H.sessionTrace(null, id(req), actor(req, res), req.query.after)));
+  admin.get("/agent/:id/trace/:step", answer(async (req, res) => H.sessionTraceStep(null, id(req), actor(req, res), String(req.params.step))));
   admin.post("/agent/:id/pause", need("accounts"), answer(async (req, res) => {
     const s = await H.pauseSession(null, id(req), actor(req, res));
     log(who(req, res), "agent.pause", s.workspace?.slug ?? null, { session: s.id });
@@ -122,8 +173,9 @@ export function agentAdminRoutes(admin: Router, need: Need, who: (req: Request, 
     return { session: s };
   }));
   admin.post("/agent/:id/budget", need("accounts"), answer(async (req, res) => {
+    const before = await H.readSession(null, id(req), actor(req, res));
     const s = await H.raiseBudget(null, id(req), actor(req, res), req.body ?? {});
-    log(who(req, res), "agent.budget_raised", s.workspace?.slug ?? null, { session: s.id, to_usd: s.budget_usd, reason: String(req.body?.reason ?? "").slice(0, 300) });
+    log(who(req, res), s.budget_usd < before.budget_usd ? "agent.budget_lowered" : "agent.budget_raised", s.workspace?.slug ?? null, { session: s.id, from_usd: before.budget_usd, to_usd: s.budget_usd, reason: String(req.body?.reason ?? "").slice(0, 300) });
     return { session: s };
   }));
   admin.post("/agent/:id/requests/:rid", need("accounts"), answer(async (req, res) => {

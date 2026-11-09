@@ -13,7 +13,8 @@
  *   stop       the starter, an owner or staff: ends it for good (a turn in progress finishes); read only afterwards
  *   requests   what the agent asked for that its policy does not allow (a web host, a tool) and a stop on its budget:
  *              approve grants exactly that and wakes it; decline records the refusal and parks it with that said
- *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, never while a wake runs
+ *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, down to what it has spent (mold_v0-287), also
+ *              while a wake runs (the gateway and the beat read the budget live; the CLI stops at what it was told and is woken again)
  *   beat       the wake's heartbeat (src/run-routes.ts /agent/beat): the lease, the spend, the steer, pause and end
  *   reach      what it may use of its workspace (src/harness-reach.ts, mold_v0-250): the app's own customer MCP tools as
  *              the person who started it (a token per wake, revoked when the wake ends, a pause or stop is asked, at its
@@ -43,6 +44,8 @@ import { applyOnStart } from "./agent-profile-spec.js";
 import { governedEgressHosts, type FrozenGovernance } from "./agent-governance.js";
 import { governanceWords, uploadParts } from "./agent-profiles.js";
 import { settingNumber } from "./settings.js";
+import { maskSecrets } from "./run-events.js";
+import { messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
 
 // ---------------------------------------------------------------- types
 
@@ -79,6 +82,8 @@ export interface SessionView {
   wakes: number; crashes: number; web_calls: number; pause_requested: boolean; stop_requested: boolean;
   pending_request: RequestView | null; created_at: string; last_activity_at: string; ended_at: string | null; archived_at: string | null; pruned: boolean;
   can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
+  /** mold_v0-287: whether this person may change its budget (and why not), and the least it may be set to (what it has spent). */
+  budget_change: { allowed: boolean; why: string | null; floor_usd: number };
   /** mold_v0-261: the agent profile it started with, its name and the version it froze; null for a session from before. */
   profile: { id: string; name: string; version: number } | null;
   /** mold_v0-261: the record it was started from (a record page's start_agent action), or null. */
@@ -86,7 +91,7 @@ export interface SessionView {
 }
 export interface SessionDetail extends SessionView {
   messages: MessageView[]; requests: RequestView[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
-  wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
+  wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null; input_tokens: number; output_tokens: number }[];
   hooks: { event: HookEvent; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
     /** mold_v0-261: the files its profile gave its workspace (their paths), and the tools its profile hides. */
@@ -172,7 +177,7 @@ function permissions(r: SessionRow, a: Actor) {
     resume: open && mine && (r.state === "paused" || r.state === "parked"),
     stop: open && (mine || owner || staff),
     decide: open && (mine || owner),
-    raise: open && (staff || a.kind === "key" || canAccount(a.role, "budget")) && !["live", "starting", "waking"].includes(r.state),
+    raise: open && (staff || a.kind === "key" || canAccount(a.role, "budget")),
   };
 }
 
@@ -193,6 +198,7 @@ function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: strin
     wakes: r.wakes, crashes: r.crashes, web_calls: r.web_calls, pause_requested: !!r.pause_requested_at, stop_requested: !!r.stop_requested_at,
     pending_request: pending, created_at: iso(r.created_at)!, last_activity_at: iso(r.last_activity_at)!, ended_at: iso(r.ended_at), archived_at: iso(r.archived_at),
     pruned: !!r.pruned_at, can: permissions(r, a),
+    budget_change: { allowed: permissions(r, a).raise, why: closed(r) ? "This session has ended" : permissions(r, a).raise ? null : "Needs the Billing manager or Owner role", floor_usd: money(spent + reserve) },
     profile: r.profile_id && r.profile_version ? { id: r.profile_id, name: r.policy?.profile?.name ?? r.profile_id, version: r.profile_version } : null,
     record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null,
   };
@@ -442,9 +448,11 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
       "SELECT id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
     const grants = await q.query<{ id: string; from_usd: string; to_usd: string; reason: string; granted_by: string; created_at: Date }>(
       "SELECT id, from_usd, to_usd, reason, granted_by, created_at FROM harness_budget_grants WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
-    const wakes = await q.query<{ id: string; status: string; started_at: Date | null; ended_at: Date | null; cost: string; end_reason: string | null; error: string | null }>(
+    const wakes = await q.query<{ id: string; status: string; started_at: Date | null; ended_at: Date | null; cost: string; end_reason: string | null; error: string | null; input_tokens: string; output_tokens: string }>(
       `SELECT r.id, r.status, r.started_at, r.ended_at, GREATEST(r.cost_usd, coalesce(w.charged_usd, 0),
-              coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.cost_usd) FROM gateway_usage g WHERE g.run_id = r.id), 0)) AS cost, w.end_reason, r.error
+              coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.cost_usd) FROM gateway_usage g WHERE g.run_id = r.id), 0)) AS cost, w.end_reason, r.error,
+              coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.input_tokens) FROM gateway_usage g WHERE g.run_id = r.id), 0) AS input_tokens,
+              coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.output_tokens) FROM gateway_usage g WHERE g.run_id = r.id), 0) AS output_tokens
          FROM runs r LEFT JOIN harness_wake_spend w ON w.run_id = r.id AND w.org_id = r.org_id
         WHERE r.org_id = $1 AND r.harness_session_id = $2 ORDER BY r.created_at`, [r.org_id, r.id]);
     const win = r.policy?.approval_window_hours ?? 24;
@@ -452,9 +460,11 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
     const p = r.policy;
     return {
       ...view(r, actor, requests.find((x) => x.status === "pending") ?? null, o?.slug ?? null),
+      // The ceiling a budget change is held to, this workspace's own (a list shows the one its process last read).
+      ceiling_usd: Math.min(ceilingOf(r.policy), await loadPlatformCeiling(r.org_id)),
       messages: msgs.map((m) => ({ id: Number(m.id), role: m.role, body: m.body, status: m.status, by: m.by_name, cost_usd: m.cost_usd === null ? null : num(m.cost_usd), at: iso(m.created_at)!, run_id: m.run_id })),
       requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: iso(g.created_at)! })),
-      wakes_list: wakes.map((w) => ({ run_id: w.id, status: w.status, started_at: iso(w.started_at), ended_at: iso(w.ended_at), cost_usd: money(num(w.cost)), end_reason: w.end_reason, error: w.error })),
+      wakes_list: wakes.map((w) => ({ run_id: w.id, status: w.status, started_at: iso(w.started_at), ended_at: iso(w.ended_at), cost_usd: money(num(w.cost)), end_reason: w.end_reason, error: w.error, input_tokens: num(w.input_tokens), output_tokens: num(w.output_tokens) })),
       hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
       policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
         web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
@@ -640,40 +650,131 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
 const requestWords = (kind: RequestKind, subject: string) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${workspaceToolOf(subject) ? `the workspace tool ${workspaceToolOf(subject)}` : subject}` : `more budget (at ${subject})`;
 
 /**
- * Raise a session's budget, with a reason: up to its ceiling (never above the platform's own ceiling for one run), never
- * while a wake runs (a running harness was told its allowance when it started). Recorded as its own grant; a session
- * waiting on its budget is woken.
+ * Change a session's budget, with a reason (mold_v0-287: raise, or lower it to no less than it has spent; while it works
+ * too): up to its ceiling (never above the platform's own ceiling for one run). Recorded as its own grant, from and to, a
+ * system message and in the trace. The gateway reads a wake's budget on each request (src/run-limits.ts runSpendRefusal)
+ * and the beat reads the session's, so a change reaches a running wake at once: its run's budget moves by the same
+ * amount. The harness CLI keeps the allowance it was started with, so one whose budget rose stops at the old allowance
+ * and is woken again (wakeEnd). A session waiting on its budget is woken.
  */
-export async function raiseBudget(orgId: number | null, id: string, actor: Actor, input: { to_usd?: unknown; by_usd?: unknown; reason?: unknown }, org?: import("./auth.js").Org): Promise<SessionDetail> {
+export async function raiseBudget(orgId: number | null, id: string, actor: Actor, input: { to_usd?: unknown; by_usd?: unknown; reason?: unknown; raise_only?: boolean }, org?: import("./auth.js").Org): Promise<SessionDetail> {
   needOn();
   const r = await read((q) => rowOf(q, orgId, id));
   const why = typeof input.reason === "string" ? input.reason.trim() : "";
-  if (!why) throw new PackError("reason: say why this session needs more (it is kept with the raise)", 400);
+  if (!why) throw new PackError("reason: say why this session needs it (it is kept with the change)", 400);
   const c = permissions(r, actor);
-  if (closed(r)) throw new PackError("This session has ended: its budget cannot be raised", 409);
-  if (["live", "starting", "waking"].includes(r.state)) throw new PackError("A budget cannot be raised while the session is working: pause it first, or wait until it stops at its budget", 409);
-  if (!c.raise) throw new PackError("Raising a budget needs the Billing manager or Owner role", 403);
+  if (closed(r)) throw new PackError("This session has ended: its budget cannot be changed", 409);
+  if (!c.raise) throw new PackError("Changing a budget needs the Billing manager or Owner role", 403);
   const from = num(r.budget_usd);
-  const to = input.to_usd !== undefined ? Number(input.to_usd) : from + Number(input.by_usd);
-  if (!Number.isFinite(to) || to <= from) throw new PackError(`to_usd: more than the budget now ($${from.toFixed(2)})`, 400);
+  const to = input.to_usd !== undefined && input.to_usd !== null ? Number(input.to_usd) : from + Number(input.by_usd);
+  if (!Number.isFinite(to)) throw new PackError("to_usd: a number of dollars", 400);
+  if (Math.abs(to - from) < 0.005) throw new PackError(`to_usd: a different amount from the budget now ($${from.toFixed(2)})`, 400);
+  const raising = to > from;
+  if (!raising && input.raise_only) throw new PackError(`to_usd: more than the budget now ($${from.toFixed(2)})`, 400);
   const ceiling = Math.min(ceilingOf(r.policy), await loadPlatformCeiling(r.org_id));
-  if (to > ceiling + 1e-9) throw new PackError(`A session's budget can be raised to at most $${ceiling.toFixed(2)}`, 400);
-  if (to - num(r.spent_usd) - num(r.reserve_usd) < 0.01) throw new PackError("That raise would leave this session nothing to spend: raise it further", 400);
+  if (raising && to > ceiling + 1e-9) throw new PackError(`A session's budget can be raised to at most $${ceiling.toFixed(2)}`, 400);
+  const floor = num(r.spent_usd) + num(r.reserve_usd);
+  if (to < floor - 1e-9 || (raising && to - floor < 0.01)) throw new PackError(raising ? "That raise would leave this session nothing to spend: raise it further"
+    : `A budget cannot go below what the session has already spent ($${floor.toFixed(2)})`, 400);
   const wake = await tx(async (q) => {
     const x = await rowOf(q, orgId, id, true);
     if (Math.abs(num(x.budget_usd) - from) > 1e-9) throw new PackError("The budget changed meanwhile: look again", 409);
+    const liveFloor = num(x.spent_usd) + num(x.reserve_usd);
+    if (to < liveFloor - 1e-9) throw new PackError(`A budget cannot go below what the session has already spent ($${liveFloor.toFixed(2)})`, 400);
     await q.query("INSERT INTO harness_budget_grants (id, session_id, org_id, from_usd, to_usd, reason, granted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [newId("hsg"), x.id, x.org_id, from, money(to), why.slice(0, 500), actor.name ?? actor.kind]);
     await q.query("UPDATE harness_sessions SET budget_usd = $3, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, money(to)]);
-    const [req] = await q.query<{ id: string }>(
+    // A wake already queued or running: its own budget moves by the same amount, for the gateway's next request (and the
+    // allowance a queued wake's harness is started with). Never below a positive amount: the gateway refuses when spent reaches it.
+    if (x.current_run_id) await q.query("UPDATE runs SET budget_usd = GREATEST(budget_usd + $3, 0.000001) WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')", [x.current_run_id, x.org_id, money(to - from)]);
+    const [req] = raising ? await q.query<{ id: string }>(
       "UPDATE harness_session_requests SET status = 'approved', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND session_id = $2 AND status = 'pending' AND kind = 'budget' RETURNING id",
-      [x.org_id, x.id, actor.name ?? actor.kind, why.slice(0, 500)]);
-    await systemMessage(q, x, `${actor.name ?? "Someone"} raised the budget from $${from.toFixed(2)} to $${to.toFixed(2)}: ${why.slice(0, 300)}`);
+      [x.org_id, x.id, actor.name ?? actor.kind, why.slice(0, 500)]) : [];
+    await systemMessage(q, x, `${actor.name ?? "Someone"} ${raising ? "raised" : "lowered"} the budget from $${from.toFixed(2)} to $${to.toFixed(2)}: ${why.slice(0, 300)}`);
     if (req) await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = 'budget raised' WHERE id = $1 AND org_id = $2 AND state = 'awaiting'", [x.id, x.org_id]);
     return !!req;
   });
   if (wake) await queueWake(r.org_id, id, "raise", actor, org);
   return readSession(orgId, id, actor);
+}
+
+/**
+ * One read of a session's trace (mold_v0-287): the run events and messages since `cursor` (light form: a tool's whole
+ * arguments are read one step at a time), the marks, what a start waits on, and the state a person sees change.
+ */
+export interface TraceAnswer { steps: TraceStep[]; marks: TraceStep[]; cursor: string; more: boolean; waiting_on: string | null; phase: AgentPhase; spent_usd: number; budget_usd: number }
+const TRACE_PAGE = 500;
+
+/** "<event id>:<message id>", what the last read reached; the zero cursor for the first. */
+const parseCursor = (raw: unknown): { events: number; messages: number } => {
+  const [e, m] = String(raw ?? "").split(":");
+  return { events: Math.max(0, Math.trunc(Number(e) || 0)), messages: Math.max(0, Math.trunc(Number(m) || 0)) };
+};
+
+/** The session's own wakes, each with its number. */
+async function traceWakes(q: Queryable, r: SessionRow) {
+  const wakes = await q.query<TraceWakeRow & { harness_session_id: string }>(
+    "SELECT id, status, created_at, started_at, ended_at, error, scope FROM runs WHERE org_id = $1 AND harness_session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
+  return { wakes, ids: wakes.map((w) => w.id), wakeIndex: new Map(wakes.map((w, i) => [w.id, i + 1])) };
+}
+
+/**
+ * Everything the session has done, in order (src/harness-trace.ts): the events and messages after `cursor` (so a live
+ * session is read incrementally: the stream below sends only what is new), up to one page, and the marks, always whole. A
+ * message still being delivered is resent until it settles, so its status changes in place.
+ */
+export async function sessionTrace(orgId: number | null, id: string, actor: Actor, cursor?: unknown): Promise<TraceAnswer> {
+  needOn();
+  return read(async (q) => {
+    const r = await rowOf(q, orgId, id);
+    const { wakes, ids, wakeIndex } = await traceWakes(q, r);
+    const facts = { phase: phaseOf(r), spent_usd: money(num(r.spent_usd)), budget_usd: num(r.budget_usd) };
+    if (r.pruned_at) return { steps: [], marks: [], cursor: "0:0", more: false, waiting_on: null, ...facts };
+    const since = parseCursor(cursor);
+    const events = ids.length ? await q.query<TraceEventRow>(
+      "SELECT id, run_id, attempt, type, at, data - 'input' - 'result' AS data FROM run_events WHERE org_id = $1 AND run_id = ANY ($2::text[]) AND id > $3 ORDER BY id LIMIT $4",
+      [r.org_id, ids, since.events, TRACE_PAGE + 1]) : [];
+    const msgs = await q.query<TraceMessageRow>(
+      "SELECT id, role, body, status, by_name, created_at, run_id FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND (id > $3 OR status IN ('pending', 'delivered')) ORDER BY id LIMIT $4",
+      [r.org_id, r.id, since.messages, TRACE_PAGE + 1]);
+    const more = events.length > TRACE_PAGE || msgs.length > TRACE_PAGE;
+    const page = events.slice(0, TRACE_PAGE), msgPage = msgs.slice(0, TRACE_PAGE);
+    const sandboxes = ids.length ? await q.query<TraceSandboxRow>(
+      "/* tenant: the sandboxes of the session's own wakes, listed above */ SELECT run_id, attempt, state, sandbox_id, created_at, ready_at, claimed_at, deleted_at, launch_step, launch_error, reap_reason FROM run_sandboxes WHERE run_id = ANY ($1::text[]) ORDER BY id", [ids]) : [];
+    const requests = await q.query<TraceRequestRow>(
+      "SELECT id, kind, subject, status, decided_by, decided_at, reason, created_at, detail FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
+    const grants = await q.query<{ id: string; from_usd: string; to_usd: string; reason: string; granted_by: string; created_at: Date }>(
+      "SELECT id, from_usd, to_usd, reason, granted_by, created_at FROM harness_budget_grants WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
+    const marks = traceMarks({ wakes, sandboxes, requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: g.created_at })), wakeIndex });
+    const current = wakes.find((w) => w.id === r.current_run_id) ?? null;
+    const sandbox = current ? [...sandboxes].reverse().find((s) => s.run_id === current.id) ?? null : null;
+    const [waited] = current ? await q.query<{ reason: string | null }>("SELECT data->>'reason' AS reason FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'waiting' ORDER BY id DESC LIMIT 1", [r.org_id, current.id]) : [];
+    const [startedEv] = current ? await q.query("SELECT 1 FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'agent_wake' LIMIT 1", [r.org_id, current.id]) : [];
+    const nextEvent = page.length ? Number(page.at(-1)!.id) : since.events;
+    const nextMsg = Math.max(since.messages, ...msgPage.map((m) => Number(m.id)));
+    return { steps: [...traceSteps(page, wakeIndex), ...msgPage.map((m) => messageStep(m, wakeIndex))], marks, cursor: `${nextEvent}:${nextMsg}`, more,
+      waiting_on: waitingOn({ phase: phaseOf(r), run: current, sandbox, waiting: waited?.reason ?? null, started: !!startedEv }), ...facts };
+  });
+}
+
+/** One step's full detail (its event's whole data, arguments and result included), when it is opened. */
+export async function sessionTraceStep(orgId: number | null, id: string, actor: Actor, stepId: string): Promise<{ step: { id: string; type: string; at: string; data: unknown } }> {
+  needOn();
+  return read(async (q) => {
+    const r = await rowOf(q, orgId, id);
+    const { ids } = await traceWakes(q, r);
+    if (!ids.length) throw new PackError("no such step", 404);
+    const tool = /^tool:(.{1,200})$/.exec(stepId)?.[1];
+    const event = /^e(\d{1,20})$/.exec(stepId)?.[1];
+    if (!tool && !event) throw new PackError("no such step", 404);
+    const rows = await q.query<{ id: string; type: string; at: Date; data: Record<string, unknown> | null }>(
+      tool ? "SELECT id, type, at, data FROM run_events WHERE org_id = $1 AND run_id = ANY ($2::text[]) AND type IN ('agent_tool_call', 'agent_tool_result') AND data->>'id' = $3 ORDER BY id LIMIT 2"
+        : "SELECT id, type, at, data FROM run_events WHERE org_id = $1 AND run_id = ANY ($2::text[]) AND id = $3 LIMIT 1",
+      [r.org_id, ids, tool ?? event]);
+    if (!rows.length) throw new PackError("no such step", 404);
+    const mask = (v: unknown): unknown => { const m = maskSecrets(JSON.stringify(v ?? {})); try { return JSON.parse(m); } catch { return m; } };
+    return { step: { id: stepId, type: rows[0]!.type, at: new Date(rows[0]!.at).toISOString(), data: Object.fromEntries(rows.map((x) => [x.type, mask(x.data)])) } };
+  });
 }
 
 // ---------------------------------------------------------------- the wake's side (the runner, with the run's lease)
@@ -884,7 +985,14 @@ export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: u
     await revokeToolTokens(q, s.org_id, s.id, reason === "awaiting" ? "awaiting a decision" : reason, w.id);
     await runEvent(q, w.id, s.org_id, "agent_end", { reason, detail });
     let state: HarnessState = s.state;
-    if (reason === "budget") { await ensureBudgetRequest(q, s, "the session reached its budget", w.id); state = "awaiting"; }
+    if (reason === "budget") {
+      // mold_v0-287: raised while it worked: the CLI stopped at the allowance it was told, but the budget has moved. It parks
+      // and is woken again at once (reconcileWake's next: "budget raised"); nobody is asked for what they already gave.
+      const [g] = await q.query("/* tenant: within the session's workspace */ SELECT 1 FROM harness_budget_grants g JOIN runs r ON r.id = $3 AND r.org_id = g.org_id WHERE g.org_id = $1 AND g.session_id = $2 AND g.to_usd > g.from_usd AND g.created_at >= coalesce(r.started_at, r.created_at) LIMIT 1", [s.org_id, s.id, w.id]);
+      const raised = !!g && num(s.budget_usd) - num(s.spent_usd) - num(s.reserve_usd) >= 0.01;
+      if (raised) { await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = 'budget raised', in_turn = false, updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]); return { state: "parked" as HarnessState }; }
+      await ensureBudgetRequest(q, s, "the session reached its budget", w.id); state = "awaiting";
+    }
     else if (reason === "awaiting") state = (await pendingOf(q, s)) ? "awaiting" : "parked";
     else if (reason === "parked" || reason === "web_limit") state = "parked";
     else if (reason === "paused") state = "paused";
@@ -1084,6 +1192,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
     for (const d of due) await tx(async (q) => {
       await q.query("DELETE FROM harness_session_messages WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
       await q.query("DELETE FROM harness_session_requests WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
+      // mold_v0-287: the trace's content (tool arguments and results, model errors) goes with the conversation it records.
+      await q.query("/* tenant: the pruned session's own wakes, within its workspace */ DELETE FROM run_events e USING runs r WHERE e.run_id = r.id AND e.org_id = r.org_id AND r.org_id = $1 AND r.harness_session_id = $2 AND e.type = ANY ($3::text[])", [d.org_id, d.id, TRACE_CONTENT_EVENTS]);
       await q.query("UPDATE harness_sessions SET pruned_at = $3, checkpoint = NULL, harness_session = NULL, archived_at = coalesce(archived_at, $3), updated_at = now() WHERE id = $1 AND org_id = $2",
         [d.id, d.org_id, now]);
       if (d.checkpoint?.key) keys.push(d.checkpoint.key);
