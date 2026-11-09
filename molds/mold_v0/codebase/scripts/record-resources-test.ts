@@ -387,6 +387,19 @@ try {
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(await storedData(), { summary: "1, replaced" }, "--replace: the row is the whole record, the old field dropped");
     assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'imp-1'")).length, 1, "still one record");
+    // --remove (2026-11-09): the file's keys removed as the console's Remove does (a record's database with it).
+    const xfile = path.join(TMP, "remove.json");
+    writeFileSync(xfile, JSON.stringify({ records: [{ key: "op-1" }, { key: "never-there" }] }));
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", xfile, "--by", "ops-person", "--remove", "--dry-run", "--json"]);
+    assert.deepEqual((r.json as { counts: unknown }).counts, { found: 1, missing: 1, removed: 0, failed: 0 }, "--remove --dry-run: counted, nothing removed");
+    assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'op-1'")).length, 1);
+    r = await importRecordsCommand(["--area", "fx_molds", "--file", xfile, "--by", "ops-person", "--remove", "--json"]);
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual((r.json as { counts: unknown }).counts, { found: 1, missing: 1, removed: 1, failed: 0 });
+    assert.equal((await db.query("SELECT 1 FROM platform_records WHERE area = 'fx_molds' AND key = 'op-1'")).length, 0, "the record is removed");
+    assert.equal((await db.query("SELECT 1 FROM record_resources WHERE record_key = 'op-1'")).length, 0, "and its database with it");
+    assert.equal((await db.query("SELECT 1 FROM admin_access_log WHERE method = 'REMOVE' AND actor = 'ops-person'")).length, 1, "the staff access log names who removed it");
+    assert.equal((await importRecordsCommand(["--area", "fx_molds", "--file", xfile, "--remove", "--replace"])).code, 2, "--remove with --replace refused");
     // Refusals.
     assert.equal((await importRecordsCommand(["--area", "fx_molds"])).code, 2, "no --file");
     assert.equal((await importRecordsCommand(["--area", "fx_molds", "--file", file, "--force"])).code, 2, "an unknown argument");

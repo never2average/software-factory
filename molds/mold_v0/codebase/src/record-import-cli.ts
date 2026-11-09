@@ -9,6 +9,8 @@
  *   --file <path>   the Import file (required): {"records": [...]} or a bare list of rows
  *   --dry-run       checked and counted, nothing written
  *   --replace       each row is the whole record (fields it leaves out, or the area no longer has, are dropped)
+ *   --remove        removes the file's rows (by key; other columns ignored) as the staff console's Remove does, a
+ *                   record's own database with it; a key not there is counted as missing
  *   --json          one JSON result
  *   --by <name>     who imports, as the logs name them (default "operator")
  *
@@ -23,12 +25,12 @@ import { readFileSync } from "node:fs";
 
 export interface ImportCliResult { code: number; out: string; json: unknown }
 
-const USAGE = "usage: operator:import-records -- --area <shared area> --file <import.json> [--dry-run] [--replace] [--json] [--by <name>]";
+const USAGE = "usage: operator:import-records -- --area <shared area> --file <import.json> [--dry-run] [--replace | --remove] [--json] [--by <name>]";
 
 class Usage extends Error {}
 
 function parse(argv: string[]) {
-  const o: { area?: string; file?: string; dry: boolean; replace: boolean; json: boolean; by: string } = { dry: false, replace: false, json: false, by: "operator" };
+  const o: { area?: string; file?: string; dry: boolean; replace: boolean; remove: boolean; json: boolean; by: string } = { dry: false, replace: false, remove: false, json: false, by: "operator" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => { const v = argv[++i]; if (v === undefined || v.startsWith("--")) throw new Usage(`${a} needs a value. ${USAGE}`); return v; };
@@ -37,10 +39,12 @@ function parse(argv: string[]) {
     else if (a === "--by") o.by = val();
     else if (a === "--dry-run") o.dry = true;
     else if (a === "--replace") o.replace = true;
+    else if (a === "--remove") o.remove = true;
     else if (a === "--json") o.json = true;
     else throw new Usage(`unknown argument ${a.slice(0, 40)}. ${USAGE}`);
   }
   if (!o.area || !o.file) throw new Usage(`--area and --file are both needed. ${USAGE}`);
+  if (o.replace && o.remove) throw new Usage(`--replace and --remove cannot go together. ${USAGE}`);
   return o as Required<typeof o>;
 }
 
@@ -65,6 +69,32 @@ export async function importRecordsCommand(argv: string[]): Promise<ImportCliRes
   const { vaultUnlocked } = await import("./keyvault.js");
   if (!o.dry && makesDatabases && !vaultUnlocked())
     return bad(2, `${area.label} records each get a database of their own, whose connection string is sealed with the key vault's master key, and this run has none (APP_VAULT_KEY): nothing was written`);
+
+  // --remove (2026-11-09): each row's key removed through the staff data API's own delete (the console's Remove), a
+  // record's own database deleted with it; logged on the staff access log as REMOVE lines naming who removed.
+  if (o.remove) {
+    const { adminDataApi } = await import("./data-api.js");
+    const keys = [...new Set((rows as unknown[]).map((r) => String((r as { key?: unknown })?.key ?? "").trim()).filter(Boolean))];
+    const there: string[] = [], missing: string[] = [], removed: string[] = [], failed: { key: string; reason: string }[] = [];
+    for (const k of keys) ((await adminDataApi.get(area.name, k).catch(() => null)) ? there : missing).push(k);
+    if (!o.dry) for (const k of there) {
+      try { if (await adminDataApi.delete(area.name, k)) removed.push(k); else missing.push(k); }
+      catch (e) { failed.push({ key: k, reason: String((e as Error).message ?? e).replace(/postgres(ql)?:\/\/\S+/g, "postgres://***").slice(0, 200) }); }
+    }
+    if (removed.length) {
+      const actor = o.by.replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
+      const { getDb } = await import("./db.js");
+      const { asPlatform } = await import("./tenant-scope.js");
+      await asPlatform(async () => (await getDb()).query("INSERT INTO admin_access_log (actor, method, path, status, ip) SELECT $1, 'REMOVE', p, 200, '' FROM unnest($2::text[]) AS p",
+        [actor, removed.map((k) => `/api/admin/records/${area.name}/${k} delete`.slice(0, 300))])).catch((e) => console.error(`admin access log: ${(e as Error).message}`));
+      const { flushAudit } = await import("./audit-trail.js");
+      await flushAudit().catch(() => {});
+    }
+    const json = { ok: failed.length === 0, area: area.name, dry_run: o.dry, rows: keys.length, counts: { found: there.length, missing: missing.length, removed: removed.length, failed: failed.length }, removed, missing, failed };
+    const out = [`import-records --remove: ${area.label} (${area.name}), ${keys.length} key${keys.length === 1 ? "" : "s"}${o.dry ? ": a dry run, nothing removed" : `, by ${o.by}`}`,
+      `  found ${there.length}, missing ${missing.length}${o.dry ? "" : `; removed ${removed.length}, failed ${failed.length}`}`, ...failed.map((f) => `  ${f.key}: failed: ${f.reason}`)].join("\n");
+    return { code: failed.length ? 1 : 0, out, json };
+  }
 
   const { staffImport } = await import("./record-import.js");
   const { PackError } = await import("./pack-api.js");
