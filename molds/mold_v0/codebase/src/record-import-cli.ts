@@ -8,6 +8,7 @@
  *   --area <name>   the shared area (required)
  *   --file <path>   the Import file (required): {"records": [...]} or a bare list of rows
  *   --dry-run       checked and counted, nothing written
+ *   --replace       each row is the whole record (fields it leaves out, or the area no longer has, are dropped)
  *   --json          one JSON result
  *   --by <name>     who imports, as the logs name them (default "operator")
  *
@@ -22,12 +23,12 @@ import { readFileSync } from "node:fs";
 
 export interface ImportCliResult { code: number; out: string; json: unknown }
 
-const USAGE = "usage: operator:import-records -- --area <shared area> --file <import.json> [--dry-run] [--json] [--by <name>]";
+const USAGE = "usage: operator:import-records -- --area <shared area> --file <import.json> [--dry-run] [--replace] [--json] [--by <name>]";
 
 class Usage extends Error {}
 
 function parse(argv: string[]) {
-  const o: { area?: string; file?: string; dry: boolean; json: boolean; by: string } = { dry: false, json: false, by: "operator" };
+  const o: { area?: string; file?: string; dry: boolean; replace: boolean; json: boolean; by: string } = { dry: false, replace: false, json: false, by: "operator" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => { const v = argv[++i]; if (v === undefined || v.startsWith("--")) throw new Usage(`${a} needs a value. ${USAGE}`); return v; };
@@ -35,6 +36,7 @@ function parse(argv: string[]) {
     else if (a === "--file") o.file = val();
     else if (a === "--by") o.by = val();
     else if (a === "--dry-run") o.dry = true;
+    else if (a === "--replace") o.replace = true;
     else if (a === "--json") o.json = true;
     else throw new Usage(`unknown argument ${a.slice(0, 40)}. ${USAGE}`);
   }
@@ -68,7 +70,7 @@ export async function importRecordsCommand(argv: string[]): Promise<ImportCliRes
   const { PackError } = await import("./pack-api.js");
   let report: Awaited<ReturnType<typeof staffImport>>;
   try {
-    report = await staffImport(area, rows, { dryRun: o.dry, actor: o.by, role: "operator", ip: "", channel: "system" });
+    report = await staffImport(area, rows, { dryRun: o.dry, replace: o.replace, actor: o.by, role: "operator", ip: "", channel: "system" });
     const { flushAudit } = await import("./audit-trail.js");
     await flushAudit().catch(() => {});
   } catch (e) {
