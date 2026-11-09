@@ -341,7 +341,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   };
   // What a list starts with: its cards (a summary, StatStrip, the sparklines), its table (RecordView and the components
   // that draw one), or the in-page tab strip it sits under (drawn in place, or made beforehand and placed as {tabs}).
-  const LIST = /summary=|<(?:RecordView|RecordTableView|AreaRecordList|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}|\{tabs\}/;
+  const LIST = /summary=|<(?:RecordView|RecordTableView|AreaRecordList|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|InPageTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}|\{tabs\}/;
   // A title or a description: a heading, the shell's Heading, a titled Section, a muted paragraph.
   const TITLE = /<h1\b|<h2\b|<Heading\b|<Section\b[^>]*\btitle=|<p className='text-muted-foreground(?: text-sm)?'>/;
   const before = (body: string) => {
@@ -380,7 +380,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     ["/admin/requests", "app/admin/requests/page.tsx", "AccessRequestsPage", [["features/admin/access-pages.tsx", "AccessRequestsPage"], ["features/admin/requests.tsx", "AdminRequests"]]],
     ["/admin/accounts (Accounts, Admins)", "app/admin/accounts/page.tsx", "AccountsPage",
       [["features/admin/accounts-tabs.tsx", "AccountsPage"], ["features/admin/accounts.tsx", "AdminAccounts"], ["features/admin/admins.tsx", "AdminAdmins"]]],
-    ["/admin/configuration", "app/admin/configuration/page.tsx", "AdminConfiguration", [["features/admin/configuration.tsx", "AdminConfiguration"]]],
+    // mold_v0-284: with agent_harness on, its Configuration and Profiles in-page tabs (the shared strip) over each body.
+    ["/admin/configuration", "app/admin/configuration/page.tsx", "AgentConfigurationPage",
+      [["features/admin/agent-configuration.tsx", "AgentConfigurationPage"], ["features/admin/configuration.tsx", "AdminConfiguration"]]],
     // mold_v0-261 (flag agent_harness): Admin › Agent profiles, the standard list.
     ["/admin/agent-profiles", "app/admin/agent-profiles/page.tsx", "AgentProfilesPage", [["features/agent/profiles-page.tsx", "AgentProfilesPage"]]],
     ["/admin/keys", "app/admin/keys/page.tsx", "AdminKeyVault", [["features/admin/keyvault.tsx", "AdminKeyVault"]]],
