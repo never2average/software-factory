@@ -54,7 +54,7 @@ const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 
 const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_td:first-child]:bg-background [&_tr[data-state=selected]>td:first-child]:bg-muted [&_th:first-child]:bg-background [&_tr>*:first-child]:shadow-[1px_0_0_var(--border)]';
 
 export function RecordView<T>({
-  rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, actions, empty, noun = 'items', loading, initialSize,
+  rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, canOpen, actions, empty, noun = 'items', loading, initialSize,
   id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide
 }: {
   /**
@@ -74,6 +74,8 @@ export function RecordView<T>({
   /** The record, shown in the panel beside the table when a row is clicked (mold_v0-278); without it rows are not clickable. */
   detail?: (row: T, close: () => void) => ReactNode;
   detailTitle?: (row: T) => ReactNode;
+  /** mold_v0-288: the rows that have a record to open, where only some do (without it: all of them, given detail). */
+  canOpen?: (row: T) => boolean;
   /** The row's ⋯ menu: toggles and actions live here, not in the cells. */
   actions?: (row: T) => RowAction[];
   empty: ReactNode;
@@ -199,7 +201,8 @@ export function RecordView<T>({
   const allOnPage = pageKeys.length > 0 && pageKeys.every((k) => sel.has(k)), someOnPage = pageKeys.some((k) => sel.has(k));
   const toggle = (keys: string[], on: boolean) => setSel((s) => { const n = new Set(s); keys.forEach((k) => (on ? n.add(k) : n.delete(k))); return n; });
 
-  const current = open ? rows.find((r) => rowKey(r) === open) : undefined;
+  const opens = (r: T) => Boolean(detail) && (!canOpen || canOpen(r));
+  const current = open ? rows.find((r) => rowKey(r) === open && opens(r)) : undefined;
   // The panel's close asks first when an editor in it has unsaved changes, then focuses the row again.
   const panelClose = useRef<(() => void) | null>(null);
   const close = () => (panelClose.current ? panelClose.current() : setOpen(null));
@@ -209,7 +212,7 @@ export function RecordView<T>({
   const openRow = (k: string) => { if (k !== open) guarded(() => setOpen(k)); };
 
   // ↑ ↓ walk the rows as listed (collapsed groups skipped), turning the page when needed.
-  const navRows = data.items.flatMap((i) => (i.row ? [i.row] : []));
+  const navRows = data.items.flatMap((i) => (i.row && opens(i.row) ? [i.row] : []));
   const at = current ? navRows.indexOf(current) : -1;
   const go = (d: number) => {
     const next = navRows[at + d];
@@ -389,7 +392,7 @@ export function RecordView<T>({
               <TableBody>
                 {loading || data.items.length === 0 ? null : page.rows.map((it, i) => {
                   const head = it.g && (i === 0 || page.rows[i - 1].g !== it.g);
-                  const r = it.row, k = r ? rowKey(r) : '';
+                  const r = it.row, k = r ? rowKey(r) : '', can = r ? opens(r) : false;
                   return (
                     <Fragment key={r ? k : `g:${it.g!.value}`}>
                       {head && it.g && (
@@ -404,12 +407,12 @@ export function RecordView<T>({
                         </TableRow>
                       )}
                       {r && (
-                        <TableRow data-state={open === k ? 'selected' : undefined} data-row-key={detail ? k : undefined} aria-current={detail && open === k ? 'true' : undefined}
-                          className={cn('align-top', detail && 'cursor-pointer', sel.has(k) && open !== k && 'bg-muted/40')}
+                        <TableRow data-state={can && open === k ? 'selected' : undefined} data-row-key={can ? k : undefined} aria-current={can && open === k ? 'true' : undefined}
+                          className={cn('align-top', can && 'cursor-pointer', sel.has(k) && open !== k && 'bg-muted/40')}
                           // mold_v0-278: a row opens its record in the panel beside the list (never a page of its own).
-                          onClick={detail ? (e) => { if ((e.target as HTMLElement).closest('a[href]')) return; openRow(k); } : undefined}
-                          onKeyDown={detail ? (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) openRow(k); } : undefined}
-                          tabIndex={detail ? 0 : undefined}>
+                          onClick={can ? (e) => { if ((e.target as HTMLElement).closest('a[href]')) return; openRow(k); } : undefined}
+                          onKeyDown={can ? (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) openRow(k); } : undefined}
+                          tabIndex={can ? 0 : undefined}>
                           {bulk && (
                             <TableCell className='w-8 py-3' onClick={(e) => e.stopPropagation()}>
                               <Checkbox aria-label='Select row' checked={sel.has(k)} onCheckedChange={(on) => toggle([k], !!on)} />

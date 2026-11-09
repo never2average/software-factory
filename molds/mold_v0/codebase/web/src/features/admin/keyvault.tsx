@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, StatusBadge, When } from './ui';
-import { AdminGithubApp } from './github-app';
+import { GithubAppPanel, liveInstallations, useGithubApp } from './github-app';
 import { AdminOAuthProviders } from './oauth-providers';
 
 // ---------- key vault ----------
@@ -36,7 +36,9 @@ const NAME: Record<string, string> = {
   // The bucket's four settings, one entry (mold_v0-181: src/storage.ts uses it when the server has no R2_*).
   object_storage: 'Object storage (R2 / S3)',
   // mold_v0-274: the runs' sandboxes as Freestyle VMs (listed only while the Sandbox provider setting says freestyle).
-  freestyle: 'Freestyle'
+  freestyle: 'Freestyle',
+  // mold_v0-288: not a key: one row for the platform's GitHub App, its settings and installations in the row's panel.
+  github_app: 'GitHub App'
 };
 const nameOf = (slug: string) => NAME[slug] ?? slug;
 interface Credential { id: number; provider: string; label: string; hint: string; enabled: boolean; uses: number; last_used_at: string | null; project_id?: string | null; client_email?: string; bucket?: string; endpoint?: string; access_key_hint?: string | null }
@@ -47,9 +49,9 @@ const TYPE: Record<string, string> = {
   anthropic: 'Inference', openai: 'Inference', google: 'Inference', cloudflare: 'Inference', dashscope: 'Inference', vertex: 'Inference',
   boat: 'Sandbox', freestyle: 'Sandbox', exa: 'Search', libraries_io: 'Search', resend: 'Email',
   amp: 'Coding agent', cursor: 'Coding agent', factory: 'Coding agent', github_copilot: 'Coding agent',
-  oauth_clients: 'Connection', pack_credentials: 'Run credential', object_storage: 'Storage'
+  oauth_clients: 'Connection', pack_credentials: 'Run credential', object_storage: 'Storage', github_app: 'Source control'
 };
-const TYPES = ['Inference', 'Sandbox', 'Storage', 'Search', 'Email', 'Coding agent', 'Connection', 'Run credential', 'Other'];
+const TYPES = ['Inference', 'Sandbox', 'Storage', 'Search', 'Email', 'Coding agent', 'Connection', 'Run credential', 'Source control', 'Other'];
 /** What a provider's keys are for, where its name alone does not say (on hover, and as the Add a key form's hint). */
 const ABOUT: Record<string, string> = {
   oauth_clients: 'The client id and secret of each OAuth provider workspaces connect to, under the labels OAuth providers (below) names',
@@ -58,9 +60,10 @@ const ABOUT: Record<string, string> = {
   freestyle: "The Freestyle API key the autoscaler creates, watches and deletes each run's VM with (freestyle.sh dashboard, API keys); never given to a run or a session"
 };
 const OBJECT_STORAGE = 'object_storage';
+const GITHUB_APP = 'github_app';
 const typeOf = (slug: string) => TYPE[slug] ?? 'Other';
 /** Server-only keys (email) are used by the API itself; never by orchestrators or agents. */
-const SERVER_ONLY = new Set(['resend', 'object_storage', 'freestyle']);
+const SERVER_ONLY = new Set(['resend', 'object_storage', 'freestyle', GITHUB_APP]);
 const useOf = (p: { slug: string; mode: string }) => (SERVER_ONLY.has(p.slug) ? 'Server only' : p.mode === 'gateway' ? 'Gateway' : 'Orchestrator');
 /** 12400 → "12.4k". */
 const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
@@ -78,9 +81,12 @@ export function AdminKeyVault() {
   const remove = useAdminAction((id: number) => adminApi('DELETE', `/compute/keys/${id}`), { success: 'Key deleted' });
   const provOn = useAdminAction((v: { slug: string; enabled: boolean }) => post(`/compute/providers/${encodeURIComponent(v.slug)}/enabled`, { enabled: v.enabled }), { success: 'Provider updated' });
   const creds = data?.credentials ?? [];
-  // The GitHub App's settings (mold_v0-014) are one sealed entry managed in their own section below, not a key to add here.
-  const providers = (data?.providers ?? []).filter((p) => p.slug !== 'github_app');
-  const keysOf = (p: Provider) => creds.filter((c) => c.provider === p.slug);
+  // The GitHub App's settings (mold_v0-014) are one sealed entry, not a key to add, import or delete: a row of its own
+  // (mold_v0-288), there exactly when its staff route is mounted, opening a panel where every other row has none.
+  const providers = (data?.providers ?? []).filter((p) => p.slug !== GITHUB_APP);
+  const github = useGithubApp();
+  const rows: Provider[] = github ? [...providers, { slug: GITHUB_APP, mode: 'direct', backend: 'direct', enabled: true, keys: 0, enabled_keys: 0, last_used_at: data?.providers.find((p) => p.slug === GITHUB_APP)?.last_used_at ?? null }] : providers;
+  const keysOf = (p: Provider) => (p.slug === GITHUB_APP ? [] : creds.filter((c) => c.provider === p.slug));
   const cols: RecordCol<Provider>[] = [
     { key: 'provider', label: 'Provider', keep: true, type: 'text', value: (p) => nameOf(p.slug), render: (p) => (
       <span className='flex flex-col gap-0.5'><span className='font-medium' title={ABOUT[p.slug] ?? p.slug}>{nameOf(p.slug)}</span><span className='text-muted-foreground text-xs'>{typeOf(p.slug)}</span></span>
@@ -88,7 +94,8 @@ export function AdminKeyVault() {
     { key: 'type', label: 'Type', hidden: true, type: 'select', value: (p) => typeOf(p.slug), options: TYPES.map((t) => ({ value: t })), render: (p) => typeOf(p.slug) },
     { key: 'use', label: 'Access', hidden: true, type: 'select', value: useOf,
       render: (p) => <span className='text-muted-foreground'>{useOf(p)}{p.backend !== 'direct' && ` · ${p.backend}`}</span> },
-    { key: 'keys', label: 'Keys', className: 'w-72 max-w-72', type: 'number', value: (p) => keysOf(p).length, render: (p) => {
+    { key: 'keys', label: 'Keys', className: 'w-72 max-w-72', type: 'number', value: (p) => (p.slug === GITHUB_APP ? (github?.app.configured ? 1 : 0) : keysOf(p).length), render: (p) => {
+      if (p.slug === GITHUB_APP && github) return <GithubAppCell connected={github.app.configured} installations={liveInstallations(github)} />;
       const mine = keysOf(p);
       if (p.slug === OBJECT_STORAGE) return <ObjectStorageCell p={p} entry={mine[0] ?? null} unlocked={data?.unlocked !== false} test={store} onEdit={() => setStoring(true)} />;
       if (p.slug === PACK_CREDENTIALS && data?.pack_credentials?.length) return <PackCredentialsCell declared={data.pack_credentials} keys={mine} />;
@@ -107,18 +114,18 @@ export function AdminKeyVault() {
     } },
     { key: 'uses', label: 'Uses', hidden: true, className: 'text-right', type: 'number', value: (p) => keysOf(p).reduce((t, c) => t + c.uses, 0),
       render: (p) => <span className='tabular-nums'>{keysOf(p).reduce((t, c) => t + c.uses, 0).toLocaleString()}</span> },
-    { key: 'last', label: 'Last used', type: 'date', value: (p) => p.last_used_at ?? undefined, render: (p) => (
+    { key: 'last', label: 'Last used', type: 'date', value: (p) => p.last_used_at ?? undefined, render: (p) => p.slug === GITHUB_APP ? (p.last_used_at ? <When d={p.last_used_at} /> : <span className='text-muted-foreground'>—</span>) : (
       <span className='flex flex-col gap-0.5'>{p.last_used_at ? <When d={p.last_used_at} /> : <span className='text-muted-foreground'>never</span>}
         <span className='text-muted-foreground text-xs tabular-nums'>{COMPACT.format(keysOf(p).reduce((t, c) => t + c.uses, 0))} uses</span></span>
     ) },
     { key: 'on', label: 'On', className: 'w-16 text-right', keep: true,
-      render: (p) => <span onClick={(e) => e.stopPropagation()}><Gate need='keys'><Switch aria-label={`${p.slug} on`} checked={p.enabled} disabled={provOn.isPending} onCheckedChange={(c) => provOn.mutate({ slug: p.slug, enabled: c })} /></Gate></span> }
+      render: (p) => p.slug === GITHUB_APP ? null : <span onClick={(e) => e.stopPropagation()}><Gate need='keys'><Switch aria-label={`${p.slug} on`} checked={p.enabled} disabled={provOn.isPending} onCheckedChange={(c) => provOn.mutate({ slug: p.slug, enabled: c })} /></Gate></span> }
   ];
   return (
     <PageContainer>
       <ErrorBox error={error} />
       {data && !data.unlocked && <Notice>The key vault is locked: set <Mono>APP_VAULT_KEY</Mono> on the server to add keys.</Notice>}
-      <RecordView id='key-vault' rows={providers} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
+      <RecordView id='key-vault' rows={rows} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
         searchText={(p) => `${p.slug} ${nameOf(p.slug)} ${typeOf(p.slug)} ${keysOf(p).map((c) => `${c.label} ${c.hint} ${c.project_id ?? ''}`).join(' ')}`}
         searchPlaceholder='Search providers and keys · encrypted at rest; agents get scoped gateway tokens, never these keys'
         // The first four kinds this build has a provider of (a build without the session engine has no sandbox or search).
@@ -126,7 +133,8 @@ export function AdminKeyVault() {
         defaultSort={[{ key: 'type', dir: 'asc' }]}
         primary={<Gate need='keys'><Button onClick={() => setAdding(providers.find((p) => p.slug !== OBJECT_STORAGE)?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
         primaryMenu={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
-        actions={(p) => [
+        detail={(p) => (p.slug === GITHUB_APP && github ? <GithubAppPanel data={github} /> : null)} detailTitle={(p) => nameOf(p.slug)} panelKind='editor' canOpen={(p) => p.slug === GITHUB_APP}
+        actions={(p) => p.slug === GITHUB_APP ? [] : [
           ...(p.slug === OBJECT_STORAGE
             ? [{ label: keysOf(p).length ? 'Edit…' : 'Set up…', icon: keysOf(p).length ? <Icons.edit /> : <Icons.add />, disabled: data?.unlocked === false, onSelect: () => setStoring(true) },
                ...(keysOf(p).length ? [{ label: 'Test', icon: <Icons.play />, disabled: store.isPending, onSelect: () => store.mutate() }] : [])]
@@ -152,7 +160,6 @@ export function AdminKeyVault() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AdminGithubApp />
       <AdminOAuthProviders />
     </PageContainer>
   );
@@ -420,6 +427,16 @@ function useStoreTest() {
     onError: (e) => toast.error(e.message)
   });
   return { ...m, last };
+}
+
+/** The Keys cell of the GitHub App row: whether it is set up, and how many workspaces connected it (never a key). */
+function GithubAppCell({ connected, installations }: { connected: boolean; installations: number }) {
+  return (
+    <span className='flex flex-col gap-0.5'>
+      {connected ? <span>Connected</span> : <span className='text-amber-700 dark:text-amber-400'>Not set up</span>}
+      <span className='text-muted-foreground text-xs tabular-nums'>{installations} {installations === 1 ? 'installation' : 'installations'}</span>
+    </span>
+  );
 }
 
 /** The Keys cell of the Object storage row: the bucket and endpoint (never a key), what the server uses, and Test. */
