@@ -3138,17 +3138,50 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   system (a repository's index: one entry per index, not per row). Each entry: actor (kind and id, the key's id), action,
   target, pack, area or store, the record's key or the file's path, how many rows, when, and the door (console, api,
   mcp, admin_console, admin_mcp, run, system). A list or an export is **one entry per page or file, never one per row**,
-  and an entry never holds a field's value or a title; a sealed area's read is a `reveal`; a batch's entries are written
+  and an entry's own columns never hold a field's value or a title (its `request`, below, keeps the request that made
+  it, masked); a sealed area's read is a `reveal`; a batch's entries are written
   only when it commits. Per workspace under row-level security: the workspace's owners read it on Billing's
   **Access log** tab (`/app/billing?tab=access-log`, mold_v0-209; Download CSV), `GET /api/audit/data[.csv]`, and the
   MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
   MCP's `read_audit_trail` (by slug).
 - **One Access log table** (mold_v0-270). With both trails on, the Access log (staff's `/admin/access-log`, every
-  workspace; Billing's tab, the workspace's own) is one list of both, newest first, with a **Kind** column (Platform
-  call / Data access) filtered in the Filter menu, both trails' four cards (`GET .../all/sparklines`: platform calls,
-  data access, changes, refused or failed) and Download CSV of both (`GET .../all.csv`, a `kind` column first). With
-  one trail on, that trail's table, without the Kind column. Staff read every workspace's data entries
-  (`GET /api/admin/audit/data[.csv]`, each naming its workspace).
+  workspace; Billing's tab, the workspace's own) is one list of both, newest first, both trails' four cards
+  (`GET .../all/sparklines`: platform calls, data access, changes, refused or failed) and Download CSV of both
+  (`GET .../all.csv`, a `kind` column first). With one trail on, that trail's entries. Staff read every workspace's
+  data entries (`GET /api/admin/audit/data[.csv]`, each naming its workspace).
+- **In plain words** (mold_v0-286). The table is an activity feed: **When, Who, What, Workspace** (staff only) and
+  **Result**; no kind, no internal id, sequence or slug anywhere in it (each row's key is hidden). Every entry the API
+  returns carries, beside its raw fields (unchanged), `who` (`label`, `name`, `email`), `what`, `result` and the
+  workspace's name (`src/audit-words.ts`): a person by name and email, read through the active sign-in directory
+  (Clerk or the built-in one; batched per page, cached in memory for a minute); a key by its name and its owner's
+  email; `Agent run for <email>` (the person who started it); `Staff · <email>`; `System`. A workspace's owners see
+  their own workspace's people only (its directory's memberships: anyone else is "Someone outside this workspace")
+  and staff as "Platform staff"; staff see everyone. What is one sentence: `Viewed <record title> in <Area>` (the
+  title where it is cheap: the owners' view of their own unsealed records and the shared areas'; else the key),
+  `Listed <Area> (n rows)`, `Added/Changed/Moved/Deleted …`, `Exported …`, `Signed in`, `Used the <tool> tool`,
+  `Checked the connection`, `Opened <page>` / `Called <API>` (the common paths by name, any other path in words
+  without its ids). Result: OK, Refused, Failed or Not found. Filters on who, what, workspace, result and the date. A row
+  opens the shared side panel (mold_v0-278): the sentence, the **Request** (below) with a copy button, and a collapsed
+  **Technical details** (method, path, key prefix, latency, status code, address for staff, door, scopes, ids). Each
+  row's ⋯ menu and the panel's have **Export entry**: that entry as JSON, everything the panel shows, masked as stored.
+  The CSV keeps every column it had and adds `who`, `name`, `email`, `what` and `result` at the end.
+- **The request each entry keeps** (mold_v0-286, `sql/migrations/0064_audit_request_payloads.sql`, rollback
+  `sql/rollback/0064_audit_request_payloads.sql`; going forward only, no backfill). A platform entry keeps its
+  request's headers and JSON body (an MCP call's tool name and arguments too); a data entry the request that caused
+  it (the first entry of a request keeps it, the rest of that request name it by its request id). At most **16 KB**
+  per entry: past it, the body's first part as text, `truncated` and a note. **Masked before it is stored**
+  (`src/audit-request.ts`), to `••••`: `Authorization` and `Proxy-Authorization` (the scheme word kept, `Bearer ••••`;
+  a key's public prefix kept, as the key list shows it), `Cookie`, `Set-Cookie`, `X-Api-Key` and every header or body
+  field named for a token, secret, key, password, session, signature, credential or sign-in code; every value of a
+  request that touched a sealed area or a credential, key vault or key route (only the words that say what was done
+  stay: op, area, pack, action, paging); every encrypted and file field of an area the request touched; file contents;
+  and any value that looks like a credential whatever its name (a bearer token, a JWT, a PEM block, a prefixed key).
+  The caller's address headers are not kept (the entry's `ip` is, for staff only); a non-JSON body is kept as its type
+  and size. This replaces the old rule that a trail holds no record values: an unsealed area's values a request sent
+  are kept in its request, sealed and encrypted fields never. Read only in the side panel and Export entry
+  (`GET /api/audit/entry/<trail>/<seq>`, owners, their own workspace's; `GET /api/admin/audit/entry/<trail>/<scope>/<seq>`,
+  staff, any), never in the list, the CSV or MCP; a staff member's request is withheld from a workspace's owners.
+  Not part of the chained and signed fields (`src/ledger.ts` names its columns).
 - **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
   arguments) and sign-in (the built-in code check and Google's return, the MCP authorization server's token grants):
   the key's id (its prefix joined on read, never the key), the actor, the scopes it acted with (workspace key, member key
@@ -3160,6 +3193,7 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   The worker API (runs) and cron are machine traffic, not entries.
 - **Retention.** `retention_days` (default 400) for the data trail, `platform_retention_days` (default the same) for
   the platform trail: pruned 5,000 rows a trail per call, hourly on a server and after each Vercel cron tick (`/api/cron/autoscale`).
+  An entry's request (mold_v0-286) is kept exactly as long as its entry: it goes with it.
 - **Separate from usage metering.** `mcp_events`, `compute_events` and `run_events` are unchanged (billing, analytics,
   the factory board's `run_spend.py` and `app_usage.py`).
 - **Off** (the default): nothing is written (not even a sequence row), no route is mounted, no console page or sidebar
@@ -3183,9 +3217,9 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   `/api/admin/audit/platform/sparklines` and `/api/admin/audit/data/<workspace>/sparklines`, `src/audit-trail.ts`
   `trailSparklines`: this week's entries, changes, exports and reveals, people and keys; or requests, sign-ins, refused
   or failed, average latency; each with twelve weeks, counts only), filters on who, action, area, door and the date
-  range, the column picker (the entry's kind, pack, actor kind and key on request), sort, a pager and a row drawer with
-  the entry's details. /admin/access-log is the same table (the platform trail fleet-wide; a workspace's data trail by
-  its slug). Owners only, never a value, each workspace's own rows under row-level security, as before.
+  range, the column picker, sort, a pager and a row drawer with the entry's details (mold_v0-286: the columns and
+  the panel above, "In plain words"). /admin/access-log is the same table (the platform trail fleet-wide; a workspace's data trail by
+  its slug). Owners only, each workspace's own rows under row-level security, as before; no value in the table (a request's, masked, only in the side panel: mold_v0-286).
 - **The customers' Access log is Billing's 4th tab** (mold_v0-209): Billing's in-page tabs are People, Teams, Budget
   rules (admins) and **Access log**, each held in `?tab=` (`/app/billing?tab=access-log`; People, the first, has none).
   The tab shows only where the profile turns `audit.data` on, and only to the workspace's owners (anyone else asking for
