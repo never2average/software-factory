@@ -22,7 +22,7 @@ async function getJson<T>(url: string): Promise<T> {
   return body;
 }
 
-interface RecentRun { id: string; pack: string; kind: string; label: string; status: string; created_at: string; ended_at: string | null; cost_usd: number; by: string }
+interface RecentRun { session_id?: string | null; id: string; pack: string; kind: string; label: string; status: string; created_at: string; ended_at: string | null; cost_usd: number; by: string }
 interface Attention { records: { area: string; area_label: string; key: string; title: string | null; tone: 'warning' | 'danger'; notice: string; updated_at: string }[]; total: number; more: boolean }
 
 const TONE: Record<string, 'ok' | 'warn' | 'bad' | 'info' | 'neutral'> = { succeeded: 'ok', failed: 'bad', running: 'info', queued: 'neutral', cancelled: 'neutral' };
@@ -51,7 +51,7 @@ export function RecentRunsCard() {
         <ul className='flex flex-col gap-0.5' aria-label={fill('Recent {runs}')} data-recent-runs=''>
           {data.runs.map((r) => (
             <li key={r.id}>
-              <Link href={runHref(r)} className='hover:bg-muted/60 flex items-center gap-3 rounded-lg px-2 py-2 text-sm'>
+              <Link href={r.session_id ? `/app/agent?session=${encodeURIComponent(r.session_id)}` : runHref(r)} className='hover:bg-muted/60 flex items-center gap-3 rounded-lg px-2 py-2 text-sm'>
                 <span className='flex min-w-0 flex-1 flex-col'>
                   <span className='truncate font-medium'>{r.label}</span>
                   <span className='text-muted-foreground truncate text-xs'>{r.by} · {ago(r.created_at)}{r.cost_usd > 0 ? ` · $${r.cost_usd.toFixed(2)}` : ''}</span>

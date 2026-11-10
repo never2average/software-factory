@@ -13,7 +13,6 @@ import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/layout/section';
 import { Input } from '@/components/ui/input';
@@ -412,8 +411,7 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
   const current = items.find((x) => !x.done)?.id;
   const uid = useId();
   return (
-    <Section title={title} description={`${done} of ${total} ${noun} done.`}
-      action={<div className='flex items-center gap-3'><Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge></div>}>
+    <Section title={title} description={`${done} of ${total} ${noun} done.`}>
       <div className='bg-muted h-1.5 overflow-hidden rounded-full'><div className='bg-primary h-full rounded-full transition-all' style={{ width: `${pct}%` }} /></div>
       <ol className='mt-3'>
         {items.map((x, i) => {
