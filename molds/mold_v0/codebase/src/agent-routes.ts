@@ -55,6 +55,7 @@ import * as P from "./agent-profiles.js";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 import { sseStart } from "./docs-answers.js";
+import { programAppRoutes } from "./program-routes.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.json(v); }
@@ -149,6 +150,8 @@ export function agentAppRouter(): Router {
   r.post("/:id/stop", answer(async (req, res) => ({ session: await H.stopSession(S(res).org, id(req), actor(res)) })));
   r.post("/:id/requests/:rid", answer(async (req, res) => ({ session: await H.decideRequest(S(res).org, id(req), String(req.params.rid), actor(res), (req.body ?? {}).decision, (req.body ?? {}).reason, org(res)) })));
   r.post("/:id/budget", answer(async (req, res) => ({ session: await H.raiseBudget(S(res).org, id(req), actor(res), req.body ?? {}, org(res)) })));
+  // mold_v0-291: a session's tree of children (flag nested_runs).
+  programAppRoutes(r, (res) => S(res).org, actor);
   return r;
 }
 

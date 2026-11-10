@@ -415,6 +415,8 @@ export const PackJsonSchema = z.object({
   workspace_store: WorkspaceStoreSchema.optional(),
   /** Declarative yes/no checks answered from the records (mold_v0-196; src/check-spec.ts, src/checks.ts; definePack checks). */
   checks: z.array(CheckSchema).max(50).optional(),
+  /** mold_v0-291: Programs the app declares (JSON only; src/program-spec.ts checks each, src/programs.ts brings them in). */
+  programs: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/), name: z.string().trim().min(1).max(80), description: z.string().max(500).optional(), config: z.record(z.string(), z.unknown()) }).strict()).max(50).optional(),
   /** The company's own email: a sender the workspace may set, and a mailbox intake into one of its areas (mold_v0-192; src/company-email-config.ts). */
   email: EmailPackSchema.optional(),
   /** Document previews: the hosts a field's URL documents may be fetched from (mold_v0-220; src/record-files-config.ts). */
@@ -545,8 +547,8 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles"] as const;
+export type DeclaredPack = Pick<PackDefinition, "programs" | "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles", "programs"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -597,6 +599,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.charts?.length) out.charts = p.charts;
   if (p.tabs?.length) out.tabs = p.tabs;
   if (p.checks?.length) out.checks = p.checks;
+  if (p.programs?.length) out.programs = p.programs;
   if (p.repositories && Object.keys(p.repositories).length) out.repositories = p.repositories;
   if (p.run_results) out.runResults = p.run_results;
   if (p.mcp) out.mcp = p.mcp;

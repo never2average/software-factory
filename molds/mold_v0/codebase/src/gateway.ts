@@ -344,6 +344,14 @@ export async function gatewayHandler(req: Request, res: Response) {
 
   // mold_v0-267: the key an agent profile chose for its primary inference provider (a key vault label), for its runs.
   let chosenLabel: string | null = null;
+  // mold_v0-291: a run in a tree: the worst this request can cost is held from its budget before it is sent.
+  let treeRun: { id: string; org_id: number; budget_usd: number } | null = null;
+  let treeHold: string | null = null, treeRewrote = false;
+  const releaseTreeHold = async () => {
+    if (!treeHold) return;
+    const held = treeHold; treeHold = null;
+    await import("./nested-runs.js").then((n) => n.releaseHold(held)).catch(() => {});
+  };
   // mold_v0-287: a model call of a workspace agent's wake (its run has a session), recorded as a run event for its trace,
   // whatever came of it: refused here, an upstream error (its own words, secrets taken out) or a success with its tokens.
   const started = Date.now();
@@ -354,6 +362,7 @@ export async function gatewayHandler(req: Request, res: Response) {
     await traceModelCall(traceRun, { provider: slug, ...c, t: new Date(started).toISOString(), duration_ms: Date.now() - started, secrets: [token, upstreamKey].filter((x): x is string => !!x) });
   };
   const refuse = async (status: number, type: string, message: string, model = "", noKey = false) => {
+    await releaseTreeHold(); // nothing was spent: what it held goes back at once
     await traced({ status, error: noKey ? `No model key: the vault has no key for ${slug}, so this model call could not be made. Someone on the platform's staff adds it in the key vault. (${message})` : message, model, no_key: noKey || undefined }).catch(() => {});
     return gwError(res, status, type, message);
   };
@@ -370,6 +379,7 @@ export async function gatewayHandler(req: Request, res: Response) {
     const { runSpendRefusal } = await import("./run-limits.js");
     const refusal = await runSpendRefusal({ ...run, spec: run.spec as never }, u.cost_usd);
     if (refusal) return refuse(429, BUDGET_EXCEEDED, refusal);
+    if ((run.spec as { nested?: unknown } | null)?.nested === true) treeRun = { id: t.run_id!, org_id: run.org_id, budget_usd: Number(run.budget_usd) };
     const pk = (run.spec as { provider_key?: { provider?: unknown; label?: unknown } } | null)?.provider_key;
     if (pk && pk.provider === slug && typeof pk.label === "string") chosenLabel = pk.label;
   } else {
@@ -391,6 +401,14 @@ export async function gatewayHandler(req: Request, res: Response) {
   }
   const asked = hasBody ? requestedModel(json, req.path) : "";
   if (hasBody && asked && !isCountTokens && !(await hasPrice(asked))) return refuse(400, "invalid_request_error", unpricedModel(asked), asked);
+  // mold_v0-291: a body the gateway cannot read cannot be held against the budget: in a tree it is not sent.
+  if (treeRun && hasBody && !isCountTokens && json === null) return refuse(415, "invalid_request_error", "A session in a tree sends JSON model requests only: anything else could not be held against its budget", asked);
+  if (treeRun && hasBody && asked && !isCountTokens) {
+    const { admitTreeRequest } = await import("./nested-runs.js");
+    const a = await admitTreeRequest(treeRun, json, asked);
+    if ("refused" in a) return refuse(429, BUDGET_EXCEEDED, a.refused, asked);
+    treeHold = a.hold; treeRewrote = a.rewritten; json = a.body;
+  }
 
   let cred: { id: number; secret: string };
   // Vertex signs in with a service-account key (the Vertex AI provider's, or the provider's own "vertex" key, or
@@ -422,6 +440,7 @@ export async function gatewayHandler(req: Request, res: Response) {
     headers.set(k, Array.isArray(v) ? v.join(", ") : v);
   }
   headers.set("accept-encoding", "identity"); // keep the body readable for metering
+  if (treeRewrote) headers.delete("content-length"); // mold_v0-291: its max_tokens was lowered to what its budget can pay for
 
   // Where and what to send: straight through to upstream_url, or rewritten for Google Cloud Vertex AI.
   let upstream: string;
@@ -503,6 +522,7 @@ export async function gatewayHandler(req: Request, res: Response) {
     const cost = await record(hash, slug, t, { requests: 1, errors: up.status >= 400 ? 1 : 0, input: billed ? meter.input : 0, cached: billed ? meter.cached : 0,
                                   cacheWrite: billed ? meter.cacheWrite : 0, cacheWrite1h: billed ? meter.cacheWrite1h : 0,
                                   output: billed ? meter.output : 0, bytes: meter.bytes, model: meter.model || requestModel, priceAs: requestModel });
+    await releaseTreeHold(); // its cost is recorded now: the hold has done its job
     // A model error after a 200 (an SSE error event) counts as failed too: the CLI retries it and the person should see it.
     const failed = up.status >= 400 || !!streamError || !!meter.error;
     await traced({ status: streamError && up.status < 400 ? 599 : up.status, model: meter.model || requestModel, error: failed ? streamError ?? meter.errorText() : null,

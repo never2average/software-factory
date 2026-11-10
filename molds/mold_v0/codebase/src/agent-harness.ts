@@ -34,7 +34,7 @@ import type { Claim } from "./runs.js";
 import type { AgentPolicy } from "./agent-harness-config.js";
 import type { BeatAnswer, BeatInput, EndReason, WakeStart } from "./harness-sessions.js";
 import { redactText, type Secret } from "./credential-redact.js";
-import { governToolUse, VIOLATION_WORDS, type GovernanceViolation } from "./agent-governance.js";
+import { governToolUse, isNestedTool, VIOLATION_WORDS, type GovernanceViolation } from "./agent-governance.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { linkTools, RUN_TOOL_CATALOG, verifyToolSet } from "./run-tools.js";
 import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-users.js";
@@ -67,6 +67,8 @@ export interface AgentRunnerClient {
   uploadPart(runId: string, lease: string, uploadId: string, part: number): Promise<Buffer>;
   /** mold_v0-271: the agent's proposed next version of a recipe its session used (a bundle of its proposal's folder). */
   recipeProposal?(runId: string, lease: string, recipe: string, bundle: Buffer, executable: string[]): Promise<{ proposal: string }>;
+  /** mold_v0-291: the candidate a machine's state produced (a bundle of its `.candidate/`). */
+  candidate?(runId: string, lease: string, bundle: Buffer): Promise<{ sha256: string; paths: number }>;
 }
 
 // ---------------------------------------------------------------- stream-json (pure; the tests drive these)
@@ -209,6 +211,14 @@ export type ToolCheckResult =
  * or one of the app's tools, a shell command that downloads; `mcpCalls` is this wake's calls of the app's tools.
  */
 export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number, mcpCalls = 0, now = Date.now()): ToolCheckResult {
+  const c = checkToolUseInner(t, policy, webCalls, mcpCalls, now);
+  // mold_v0-291: a child never asks a person for more: what its policy (the intersection with its parent's) does not allow ends it.
+  if (!c.ok && "request" in c && policy.nested?.is_child) return { ok: false, violation: c.request.kind === "web" ? "web_fetch_domain_not_allowed" : "mcp_tool_not_allowed" };
+  return c;
+}
+function checkToolUseInner(t: ToolUse, policy: AgentPolicy, webCalls: number, mcpCalls = 0, now = Date.now()): ToolCheckResult {
+  // mold_v0-291: the session's own spawn and collect tools, on a session that has them: no governance allowlist is theirs to hide.
+  if (policy.nested && isNestedTool(t.name, WORKSPACE) && policy.tools.includes(t.name)) return { ok: true, web: false };
   if (policy.governance) {
     const g = governToolUse(t, policy.governance, { webCalls, mcpCalls, now, appServer: WORKSPACE });
     if (g.decision === "allow") return { ok: true, web: g.web, mcp: g.mcp };
@@ -647,6 +657,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     while (trace.length) { const n = trace.length; await flushTrace(); if (trace.length >= n) break; }
     // mold_v0-271: what the agent proposes of the recipes its session used (.recipe-proposal/<recipe>/), sent once, then removed.
     await sendRecipeProposals(agent, run.id, lease, work, policy);
+    await sendCandidate(agent, run.id, lease, work, policy);
     if (s.sessionId) await checkpoint();
     const out: { reason: EndReason; detail?: string } = ended ?? (code === 0
       ? { reason: policy.mode === "task" ? "done" : s.sessionId ? "parked" : "stopped", detail: "the harness exited" }
@@ -698,6 +709,21 @@ export async function sendRecipeProposals(agent: Pick<AgentRunnerClient, "recipe
     rmSync(dir, { recursive: true, force: true });
   }
   return sent;
+}
+
+/**
+ * mold_v0-291: the candidate a machine's state produced: everything under `.candidate/` of its working directory, sent once
+ * as a bundle when its wake ends. The candidate is only ever measured by the server's evaluator; nothing the agent says about it counts.
+ */
+export async function sendCandidate(agent: Pick<AgentRunnerClient, "candidate">, runId: string, lease: string, work: string, policy: Pick<AgentPolicy, "nested">): Promise<boolean> {
+  const dir = path.join(work, ".candidate");
+  if (!policy.nested?.candidate || !agent.candidate || !existsSync(dir) || isLink(dir)) return false;
+  try {
+    const { bundle } = packBundle(dir);
+    await agent.candidate(runId, lease, bundle);
+    rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch (e) { console.error(`agent ${runId}: the candidate was not taken: ${(e as Error).message}`); return false; }
 }
 
 const TRANSIENT_RETRY = "Your previous response was cut off by a temporary error from the model provider. Nothing you said after the cut reached the person. Continue from where you left off, without repeating tool calls whose results you already have.";

@@ -35,6 +35,7 @@ import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter, sparklineAppRouter } from "./view-routes.js";
 import { tabActionAppRouter } from "./tab-actions.js";
 import { workspaceFileAppRouter } from "./workspace-files.js";
+import { programAdminRoutes } from "./program-routes.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
 import { runWorkerRouter } from "./run-routes.js";
@@ -909,6 +910,8 @@ export function createApp() {
   agentAdminRoutes(ob, need, adminActor);
   // mold_v0-271: the workspace recipes (flag workspace_recipes with agent_harness): staff's, at /api/admin/onboarding/recipes.
   recipeAdminRoutes(ob, need, adminActor);
+  // mold_v0-291: Programs and their acceptance (flag nested_runs): staff's.
+  programAdminRoutes(ob, need, adminActor);
   accessPageAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.

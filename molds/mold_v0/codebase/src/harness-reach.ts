@@ -155,7 +155,7 @@ export async function revokeToolTokens(q: Queryable, orgId: number, sessionId: s
 interface TokenRow {
   session_id: string; org_id: number; run_id: string; acts_as: string | null; expires_at: Date; revoked_at: Date | null; revoked_reason: string | null;
   state: string; current_run_id: string | null; pause_requested_at: Date | null; stop_requested_at: Date | null; archived_at: Date | null;
-  budget_usd: string; spent_usd: string; reserve_usd: string; policy: AgentPolicy; run_status: string | null; slug: string; name: string; clerk_org_id: string | null;
+  budget_usd: string; spent_usd: string; reserve_usd: string; children_spent_usd: string; policy: AgentPolicy; run_status: string | null; slug: string; name: string; clerk_org_id: string | null;
 }
 
 /**
@@ -167,7 +167,7 @@ export async function resolveToolToken(token: string, now = new Date()): Promise
   const [t] = await read((q) => q.query<TokenRow>(
     `/* tenant: a tool token, by its hash; the session and run are its own (same org_id) */
      SELECT t.session_id, t.org_id, t.run_id, t.acts_as, t.expires_at, t.revoked_at, t.revoked_reason, s.state, s.current_run_id, s.pause_requested_at,
-            s.stop_requested_at, s.archived_at, s.budget_usd, s.spent_usd, s.reserve_usd, s.policy, r.status AS run_status, o.slug, o.name, o.clerk_org_id
+            s.stop_requested_at, s.archived_at, s.budget_usd, s.spent_usd, s.reserve_usd, s.children_spent_usd, s.policy, r.status AS run_status, o.slug, o.name, o.clerk_org_id
        FROM harness_session_tokens t JOIN harness_sessions s ON s.id = t.session_id AND s.org_id = t.org_id
        JOIN organizations o ON o.id = t.org_id LEFT JOIN runs r ON r.id = t.run_id AND r.org_id = t.org_id
       WHERE t.token_hash = $1`, [sha256(token)]));
@@ -181,7 +181,8 @@ export async function resolveToolToken(token: string, now = new Date()): Promise
   if (t.current_run_id !== t.run_id || t.run_status !== "running" || t.state !== "live" || t.archived_at) return refuse("this session's wake has ended", "the wake ended");
   if (t.stop_requested_at) return refuse("this session is stopping", "stopped");
   if (t.pause_requested_at) return refuse("this session is pausing", "paused");
-  if (Number(t.spent_usd) >= Number(t.budget_usd) - 1e-9) return refuse("this session reached its budget", "budget");
+  // mold_v0-291: what its children spent is gone; what is still carved comes back, and it must be able to collect it.
+  if (Number(t.spent_usd) + Number(t.children_spent_usd) >= Number(t.budget_usd) - 1e-9) return refuse("this session reached its budget", "budget");
   let role: Org["role"] | undefined;
   if (t.acts_as) {
     // The person's role now, as a member key's is (src/auth.ts memberRole): gone, suspended or unreadable, refused.
@@ -192,7 +193,8 @@ export async function resolveToolToken(token: string, now = new Date()): Promise
   }
   void read((q) => q.query("/* tenant: the token just resolved, by its hash */ UPDATE harness_session_tokens SET last_used_at = now(), calls = calls + 1 WHERE token_hash = $1", [sha256(token)])).catch(() => {});
   return { org: { orgId: t.org_id, slug: t.slug, name: t.name, ...(t.acts_as ? { userId: t.acts_as } : {}), ...(role ? { role } : {}),
-    client: { name: "workspace-agent", version: null }, agentSession: { session: t.session_id, allowed: allowedWorkspaceTools(t.policy), ...(t.policy?.workspace?.hidden?.length ? { hidden: t.policy.workspace.hidden } : {}) } } };
+    client: { name: "workspace-agent", version: null }, agentSession: { session: t.session_id, run: t.run_id, allowed: allowedWorkspaceTools(t.policy), ...(t.policy?.workspace?.hidden?.length ? { hidden: t.policy.workspace.hidden } : {}),
+      ...(t.policy?.nested ? { nested: { spawn: t.policy.nested.can_spawn, child: t.policy.nested.is_child } } : {}) } } };
 }
 
 /**

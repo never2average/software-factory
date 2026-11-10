@@ -61,6 +61,7 @@ import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidR
 import { ENV } from "./env-names.js";
 import { now as clockNow, REFRESH_MARGIN_MS } from "./clock.js";
 import { runAgentHarness, type AgentCliOverride, type AgentRunnerClient } from "./agent-harness.js";
+import { runProgramEvaluation, type EvaluationClient } from "./program-evaluator.js";
 
 /** Kept here for callers that imported it from the harness (it lives in src/run-users.ts, mold_v0-078). */
 export { sweepUserFiles };
@@ -79,6 +80,8 @@ export interface RunnerClient {
   credentials(runId: string, lease: string): Promise<RunCredentials>;
   /** The workspace agent's wake (mold_v0-243, src/agent-harness.ts): its start, beat, turns, requests, checkpoints and end. */
   agent?: AgentRunnerClient;
+  /** mold_v0-291: the acceptance evaluator's calls (src/program-evaluator.ts). */
+  evaluation?: EvaluationClient;
 }
 
 /**
@@ -117,6 +120,13 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
       checkpointGet: async (id, lease) => (await (await import("./harness-sessions.js")).wakeCheckpointBody(id, lease))?.body ?? null,
       uploadPart: async (id, lease, upload, n) => (await import("./harness-sessions.js")).wakeUploadPart(id, lease, upload, n),
       recipeProposal: async (id, lease, recipe, bundle, executable) => (await import("./harness-sessions.js")).wakeRecipeProposal(id, lease, recipe, bundle, executable),
+      candidate: async (id, lease, bundle) => (await import("./nested-runs.js")).wakeCandidate(id, lease, bundle),
+    },
+    evaluation: {
+      start: async (id, lease) => (await import("./nested-runs.js")).evaluationStart(id, lease),
+      bundle: async (id, lease, which) => (await import("./nested-runs.js")).evaluationBundle(id, lease, which),
+      file: async (id, lease, n) => (await import("./nested-runs.js")).evaluationFile(id, lease, n),
+      result: async (id, lease, r) => (await import("./nested-runs.js")).evaluationResult(id, lease, r),
     },
   };
 }
@@ -259,6 +269,23 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
       },
       // mold_v0-271: the agent's proposed version of a recipe its session used.
       recipeProposal: (id, lease, recipe, bundle, executable) => call("POST", runPath(id, `/agent/recipes/${encodeURIComponent(recipe)}/proposal`), lease, undefined, bundle, { "x-recipe-executable": encodeURIComponent(JSON.stringify(executable)) }),
+      // mold_v0-291: the candidate a machine's state produced.
+      candidate: (id, lease, bundle) => call("POST", runPath(id, "/agent/candidate"), lease, undefined, bundle),
+    },
+    evaluation: {
+      start: (id, lease) => call("POST", runPath(id, "/evaluation/start"), lease),
+      bundle: async (id, lease, which) => {
+        const res = await fetch(url(runPath(id, `/evaluation/bundle/${which}`)), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });
+        if (res.status === 204) return null;
+        if (!res.ok) throw Object.assign(new Error(`GET evaluation bundle: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+        return Buffer.from(await res.arrayBuffer());
+      },
+      file: async (id, lease, n) => {
+        const res = await fetch(url(runPath(id, `/evaluation/files/${Math.trunc(n)}`)), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });
+        if (!res.ok) throw Object.assign(new Error(`GET evaluation file: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+        return Buffer.from(await res.arrayBuffer());
+      },
+      result: (id, lease, r) => call("POST", runPath(id, "/evaluation/result"), lease, r),
     },
   };
 }
@@ -474,6 +501,8 @@ function runProgram(cmd0: string, args0: string[], o: { cwd: string; env: Record
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
   // The workspace agent's wakes (mold_v0-243): a harness CLI a person talks to, carried out by src/agent-harness.ts.
   if ((claim.run.spec as { runner?: string }).runner === "agent-harness") return runAgentHarness(client, claim, opts);
+  // mold_v0-291: the acceptance evaluator: a clean sandbox, a frozen test, no agent and no model.
+  if ((claim.run.spec as { runner?: string }).runner === "program-evaluation") return runProgramEvaluation(client, claim, opts);
   const iso = runIsolation(opts);
   const prog = (cmd: string, args: string[], o: Omit<Parameters<typeof runProgram>[2], "nnp">) => runProgram(cmd, args, { ...o, nnp: !!opts.noNewPrivs });
   const run = claim.run, spec = run.spec, lease = claim.lease_token;

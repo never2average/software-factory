@@ -61,7 +61,7 @@ export type EndReason = "parked" | "paused" | "awaiting" | "budget" | "stopped" 
 /** Who acts: a signed-in person (with their account role), an account key (no person), platform staff, or the platform. */
 export interface Actor { kind: "person" | "key" | "staff" | "system"; user: string | null; name: string | null; role: AccountRole | null }
 
-interface SessionRow {
+export interface SessionRow {
   id: string; org_id: number; title: string; started_by: string | null; started_by_name: string | null; state: HarnessState; in_turn: boolean;
   state_reason: string | null; pause_requested_at: Date | null; stop_requested_at: Date | null; flavour: string; model: string; provider: string;
   policy: AgentPolicy; harness_session: string | null; checkpoint: Checkpoint | null; checkpoint_seq: number; budget_usd: string | number;
@@ -69,15 +69,21 @@ interface SessionRow {
   current_run_id: string | null; last_activity_at: Date; created_at: Date; updated_at: Date; ended_at: Date | null; archived_at: Date | null;
   retention_until: Date | null; pruned_at: Date | null;
   profile_id: string | null; profile_version: number | null; record_area: string | null; record_key: string | null;
+  /** mold_v0-291 (flag nested_runs): where it sits in its tree, and what is carved out for and spent by its children. */
+  parent_id: string | null; root_id: string | null; depth: number; ref: string | null; carved_usd: string | number; children_spent_usd: string | number; program_id: string | null; program_version: number | null;
 }
 export interface Checkpoint { seq: number; key: string; sha256: string; bytes: number; at: string; run_id: string }
 const COLS = `id, org_id, title, started_by, started_by_name, state, in_turn, state_reason, pause_requested_at, stop_requested_at, flavour, model, provider,
   policy, harness_session, checkpoint, checkpoint_seq, budget_usd, spent_usd, reserve_usd, crash_spent_usd, wakes, crashes, web_calls, current_run_id,
-  last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at, profile_id, profile_version, record_area, record_key`;
+  last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at, profile_id, profile_version, record_area, record_key,
+  parent_id, root_id, depth, ref, carved_usd, children_spent_usd, program_id, program_version`;
 
 export interface RequestView { id: string; kind: RequestKind; subject: string; /** The tool's own title (a workspace tool), else the subject in plain words. */ subject_title: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
 export interface MessageView { id: number; role: "person" | "agent" | "system"; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }
+/** mold_v0-291: where a session sits in its tree (flag nested_runs: absent otherwise). */
+export interface SessionNested { ref: string | null; parent_id: string | null; root_id: string; depth: number; program: string | null; carved_usd: number; children_spent_usd: number }
 export interface SessionView {
+  nested?: SessionNested;
   id: string; title: string; phase: AgentPhase; state: HarnessState; reason: string | null; mode: AgentPolicy["mode"]; started_by: string | null; mine: boolean;
   workspace?: { id: number; slug: string | null };
   harness: { flavour: string; label: string; model: string; provider: string; steerable: boolean };
@@ -123,14 +129,14 @@ function reachView(p: AgentPolicy | null): ReachView | null {
 }
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
-const num = (v: unknown) => Number(v ?? 0);
-const money = (v: number) => Math.round(v * 1e6) / 1e6;
-const tx = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => (await getDb()).transaction(fn));
-const read = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => fn(await getDb()));
+export const num = (v: unknown) => Number(v ?? 0);
+export const money = (v: number) => Math.round(v * 1e6) / 1e6;
+export const tx = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => (await getDb()).transaction(fn));
+export const read = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => fn(await getDb()));
 const SESSION_ID = /^hss_[A-Za-z0-9_-]{8,40}$/;
 const REQUEST_ID = /^hsr_[A-Za-z0-9_-]{8,40}$/;
 export const MAX_MESSAGE_CHARS = 20_000;
-const newId = (p: string) => `${p}_${randomBytes(12).toString("base64url")}`;
+export const newId = (p: string) => `${p}_${randomBytes(12).toString("base64url")}`;
 
 function off(): never { throw new PackError("The workspace agent is not on in this app", 404); }
 function needOn() { if (!agentHarnessOn()) off(); }
@@ -166,9 +172,12 @@ export function crashReserve(wakeSpent: number, activeSeconds: number, silentSec
 
 const phaseOf = (r: SessionRow): AgentPhase => r.archived_at ? "archived"
   : r.state === "live" ? (r.in_turn ? "working" : "waiting") : r.state === "awaiting" ? "awaiting_approval" : r.state;
+/** What a session has committed: spent, held back after a crash, carved out for children and spent by them (mold_v0-291). */
+export const committedUsd = (r: Pick<SessionRow, "spent_usd" | "reserve_usd" | "carved_usd" | "children_spent_usd">) => num(r.spent_usd) + num(r.reserve_usd) + num(r.carved_usd) + num(r.children_spent_usd);
+const isChild = (r: Pick<SessionRow, "parent_id">) => !!r.parent_id;
 const mineOf = (r: SessionRow, a: Actor) => a.kind !== "staff" && a.kind !== "system" && (r.started_by ?? null) === startedByOf(a);
 const startedByOf = (a: Actor) => (a.kind === "person" ? a.user : a.kind === "key" ? "account" : null);
-const closed = (r: SessionRow) => r.state === "stopped" || r.state === "failed" || !!r.archived_at;
+export const closed = (r: SessionRow) => r.state === "stopped" || r.state === "failed" || !!r.archived_at;
 /** Whether an ended session can be continued on its own harness session: nothing was pruned, it has something to resume, and it did not end by its governance policy. */
 const resumable = (r: SessionRow) => !r.pruned_at && !!(r.harness_session || r.checkpoint) && !/^(policy|egress_approval_denied|approval_timeout)/.test(r.state_reason ?? "");
 
@@ -178,12 +187,14 @@ function permissions(r: SessionRow, a: Actor) {
   return {
     // The person who started it can always send one (mold_v0-289): held for a pending decision or a working wake, and on an
     // ended session it continues it, which spends as a start does, so an ended one also needs a role that may start sessions.
-    message: mine && (open || a.kind === "key" || canAccount(a.role, "launch")),
+    // mold_v0-291: a child that has settled is read-only: it spent what it was carved, and its parent has moved on.
+    message: mine && (open || (!isChild(r) && (a.kind === "key" || canAccount(a.role, "launch")))),
     pause: open && (mine || owner || staff) && ["starting", "live", "waking", "parked"].includes(r.state) && !r.pause_requested_at,
     resume: open && mine && (r.state === "paused" || r.state === "parked"),
     stop: open && (mine || owner || staff),
     decide: open && (mine || owner),
-    raise: open && (staff || a.kind === "key" || canAccount(a.role, "budget")),
+    // A child's budget is carved from its parent's: raising it would let the tree pass its root.
+    raise: open && !isChild(r) && (staff || a.kind === "key" || canAccount(a.role, "budget")),
   };
 }
 
@@ -206,11 +217,12 @@ function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: strin
     started_by: r.started_by_name, mine: mineOf(r, a),
     ...(a.kind === "staff" ? { workspace: { id: r.org_id, slug: slug ?? null } } : {}),
     harness: { flavour: r.flavour, label: f?.label ?? r.flavour, model: r.model, provider: r.provider, steerable: f?.holds_stdin_open !== false },
-    budget_usd: budget, spent_usd: money(spent), remaining_usd: money(Math.max(0, budget - spent - reserve)), ceiling_usd: ceilingOf(r.policy), reserve_usd: money(reserve),
+    budget_usd: budget, spent_usd: money(spent), remaining_usd: money(Math.max(0, budget - committedUsd(r))), ceiling_usd: ceilingOf(r.policy), reserve_usd: money(reserve),
     wakes: r.wakes, crashes: r.crashes, web_calls: r.web_calls, pause_requested: !!r.pause_requested_at, stop_requested: !!r.stop_requested_at,
     pending_request: pending, created_at: iso(r.created_at)!, last_activity_at: iso(r.last_activity_at)!, ended_at: iso(r.ended_at), archived_at: iso(r.archived_at),
     pruned: !!r.pruned_at, can: permissions(r, a),
-    budget_change: { allowed: permissions(r, a).raise, why: closed(r) ? "This session has ended" : permissions(r, a).raise ? null : "Needs the Billing manager or Owner role", floor_usd: money(spent + reserve) },
+    budget_change: { allowed: permissions(r, a).raise, why: closed(r) ? "This session has ended" : isChild(r) ? "A child's budget comes from its parent: change the root session's" : permissions(r, a).raise ? null : "Needs the Billing manager or Owner role", floor_usd: money(committedUsd(r)) },
+    ...(r.root_id ? { nested: { ref: r.ref, parent_id: r.parent_id, root_id: r.root_id, depth: r.depth, program: r.program_id, carved_usd: money(num(r.carved_usd)), children_spent_usd: money(num(r.children_spent_usd)) } } : {}),
     profile: r.profile_id && r.profile_version ? { id: r.profile_id, name: r.policy?.profile?.name ?? r.profile_id, version: r.profile_version } : null,
     record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null,
   };
@@ -234,7 +246,7 @@ async function loadPlatformCeiling(orgId: number): Promise<number> {
   return c;
 }
 
-async function rowOf(q: Queryable, orgId: number | null, id: string, lock = false): Promise<SessionRow> {
+export async function rowOf(q: Queryable, orgId: number | null, id: string, lock = false): Promise<SessionRow> {
   if (!SESSION_ID.test(String(id))) throw new PackError("no such session", 404);
   const [r] = await q.query<SessionRow>(
     `/* tenant: by session id, within the caller's workspace when it has one (staff: any) */ SELECT ${COLS} FROM harness_sessions
@@ -249,10 +261,10 @@ async function pendingOf(q: Queryable, r: SessionRow): Promise<RequestView | nul
   return p ? requestView(p, r.policy?.approval_window_hours ?? 24, r.policy) : null;
 }
 
-async function systemMessage(q: Queryable, r: { id: string; org_id: number }, body: string, runId: string | null = null) {
+export async function systemMessage(q: Queryable, r: { id: string; org_id: number }, body: string, runId: string | null = null) {
   await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, run_id) VALUES ($1, $2, 'system', $3, $4)", [r.id, r.org_id, body.slice(0, 2000), runId]);
 }
-async function runEvent(q: Queryable, runId: string | null, orgId: number, type: string, data: Record<string, unknown>) {
+export async function runEvent(q: Queryable, runId: string | null, orgId: number, type: string, data: Record<string, unknown>) {
   if (!runId) return;
   await q.query(
     `INSERT INTO run_events (run_id, org_id, attempt, type, data) SELECT $1, $2, attempt, $3, $4 FROM runs WHERE id = $1 AND org_id = $2`,
@@ -260,7 +272,7 @@ async function runEvent(q: Queryable, runId: string | null, orgId: number, type:
 }
 
 /** Recompute a session's spend from its wakes: per wake the greater of the gateway's meter and the harness's accrual. */
-async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): Promise<number> {
+export async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): Promise<number> {
   const [r] = await q.query<{ spent: string }>(
     `UPDATE harness_sessions s SET spent_usd = coalesce((
         SELECT sum(GREATEST(r.cost_usd, coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.cost_usd) FROM gateway_usage g WHERE g.run_id = r.id), 0),
@@ -350,12 +362,16 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     console.error(`agent session: the workspace's tools could not be listed (${(e as Error).message}): it starts without them`);
   }
   const id = newId("hss");
+  // mold_v0-291: with nested runs on (and the workspace's tools, which carry them), a session may spawn children.
+  const nested = (policy.workspace && await nestedModule()) || null;
+  if (nested) await nested.prepareRootPolicy(policy, id, prof.id);
   await tx(async (q) => {
+    const ref = nested ? await nested.nextRootRef(q, orgId) : null;
     await q.query(
-      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key)
-       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref)
+       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget, prof.id, prof.version,
-        opts.record?.area ?? null, opts.record?.key ?? null]);
+        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, ref]);
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
       [id, orgId, message, actor.user, actor.name]);
   });
@@ -368,6 +384,12 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   return readSession(orgId, id, actor);
 }
 
+/** The nested-runs module, only while its flag is on: with it off, nothing of it loads or runs. */
+export async function nestedModule() {
+  const { featureSetting } = await import("./feature-flags.js");
+  return featureSetting("nested_runs") && agentHarnessOn() ? import("./nested-runs.js") : null;
+}
+
 const text = (v: unknown, what: string) => {
   if (typeof v !== "string" || !v.trim()) throw new PackError(`${what}: say something`, 400);
   if (v.length > MAX_MESSAGE_CHARS) throw new PackError(`${what}: at most ${MAX_MESSAGE_CHARS} characters`, 413);
@@ -378,14 +400,14 @@ const text = (v: unknown, what: string) => {
  * Queue a wake: a run of the built-in kind whose budget is what the session has left (the gateway refuses past it). A
  * session with nothing left waits for a raise instead (a budget request).
  */
-async function queueWake(orgId: number, sessionId: string, reason: "start" | "message" | "resume" | "approval" | "auto_resume" | "raise", actor: Actor, org?: import("./auth.js").Org): Promise<string | null> {
+export async function queueWake(orgId: number, sessionId: string, reason: "start" | "message" | "resume" | "approval" | "auto_resume" | "raise" | "children", actor: Actor, org?: import("./auth.js").Org): Promise<string | null> {
   const { startRun } = await import("./runs.js");
   // One wake at a time: taken under the session's lock while nothing runs for it (a wake still ending is settled by
   // reconcileWake, which wakes it again for what arrived meanwhile). Undone if the run cannot start.
   const taken = await tx(async (q) => {
     const r = await rowOf(q, orgId, sessionId, true);
     if (r.current_run_id || r.archived_at || !["starting", "parked", "paused", "awaiting"].includes(r.state)) return null;
-    const left = money(num(r.budget_usd) - num(r.spent_usd) - num(r.reserve_usd));
+    const left = money(num(r.budget_usd) - committedUsd(r));
     if (left < 0.01) {
       await ensureBudgetRequest(q, r, "the session has spent its budget");
       await q.query("UPDATE harness_sessions SET state = 'awaiting', state_reason = 'budget', updated_at = now() WHERE id = $1 AND org_id = $2", [r.id, orgId]);
@@ -507,6 +529,7 @@ export async function messageSession(orgId: number, id: string, actor: Actor, bo
   // Locked, so two messages racing onto a parked session wake it once: the second finds it waking and waits pending.
   const next = await tx(async (q): Promise<"none" | "wake" | "continued" | "follow_on"> => {
     const x = await rowOf(q, orgId, id, true);
+    if (closed(x) && isChild(x)) throw new PackError("This child run has finished: message the session that started it", 409);
     if (closed(x) && !permissions(x, actor).message) throw new PackError("Your role cannot start agent sessions, so it cannot continue one that has ended", 403);
     if (closed(x) && !resumable(x)) return "follow_on";
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
@@ -616,10 +639,12 @@ export async function stopSession(orgId: number | null, id: string, actor: Actor
     return run?.status === "queued" ? x.current_run_id : null;
   });
   if (queued) await withdraw(r.org_id, queued, actor);
+  // mold_v0-291: stopping a session stops its children: they act only for it.
+  if (r.root_id) await (await nestedModule())?.cancelChildrenOf(r.org_id, r.id, `stopped by ${actor.name ?? "someone"}`);
   return read(async (q) => view(await rowOf(q, orgId, id), actor, null));
 }
 
-async function endSession(q: Queryable, x: { id: string; org_id: number; policy?: AgentPolicy }, state: "stopped" | "failed", reason: string) {
+export async function endSession(q: Queryable, x: { id: string; org_id: number; policy?: AgentPolicy }, state: "stopped" | "failed", reason: string) {
   // mold_v0-267: a governance policy may keep the conversation for less than the platform does, never longer.
   const own = x.policy?.governance?.retention_days;
   const days = Math.min(settingNumber("AGENT_RETENTION_DAYS"), own && own > 0 ? own : Number.POSITIVE_INFINITY);
@@ -663,6 +688,7 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     if (req.status !== "pending") throw new PackError(`This request was already ${req.status}`, 409);
     if (req.kind === "budget" && decision === "approve") throw new PackError("Approve a budget request with Raise budget (an amount and a reason)", 400);
     if (decision === "approve" && actor.kind === "staff") throw new PackError("Staff may decline a request, not grant a session more than its workspace allows", 403);
+    if (decision === "approve" && isChild(x)) throw new PackError("A child run cannot be given more than its parent has: it never asks, and nothing can be approved for it", 403);
     if (governed && req.kind === "web" && actor.kind === "person" && !canAccount(actor.role, "manage"))
       throw new PackError("This session's governance policy has a workspace owner decide where it may reach: ask an owner", 403);
     if (governed && req.kind === "web" && decision === "decline") {
@@ -724,6 +750,7 @@ export async function raiseBudget(orgId: number | null, id: string, actor: Actor
   if (!why) throw new PackError("reason: say why this session needs it (it is kept with the change)", 400);
   const c = permissions(r, actor);
   if (closed(r)) throw new PackError("This session has ended: its budget cannot be changed", 409);
+  if (isChild(r)) throw new PackError("A child's budget comes from its parent: change the root session's", 409);
   if (!c.raise) throw new PackError("Changing a budget needs the Billing manager or Owner role", 403);
   const from = num(r.budget_usd);
   const to = input.to_usd !== undefined && input.to_usd !== null ? Number(input.to_usd) : from + Number(input.by_usd);
@@ -733,13 +760,13 @@ export async function raiseBudget(orgId: number | null, id: string, actor: Actor
   if (!raising && input.raise_only) throw new PackError(`to_usd: more than the budget now ($${from.toFixed(2)})`, 400);
   const ceiling = Math.min(ceilingOf(r.policy), await loadPlatformCeiling(r.org_id));
   if (raising && to > ceiling + 1e-9) throw new PackError(`A session's budget can be raised to at most $${ceiling.toFixed(2)}`, 400);
-  const floor = num(r.spent_usd) + num(r.reserve_usd);
+  const floor = committedUsd(r);
   if (to < floor - 1e-9 || (raising && to - floor < 0.01)) throw new PackError(raising ? "That raise would leave this session nothing to spend: raise it further"
     : `A budget cannot go below what the session has already spent ($${floor.toFixed(2)})`, 400);
   const wake = await tx(async (q) => {
     const x = await rowOf(q, orgId, id, true);
     if (Math.abs(num(x.budget_usd) - from) > 1e-9) throw new PackError("The budget changed meanwhile: look again", 409);
-    const liveFloor = num(x.spent_usd) + num(x.reserve_usd);
+    const liveFloor = committedUsd(x);
     if (to < liveFloor - 1e-9) throw new PackError(`A budget cannot go below what the session has already spent ($${liveFloor.toFixed(2)})`, 400);
     await q.query("INSERT INTO harness_budget_grants (id, session_id, org_id, from_usd, to_usd, reason, granted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [newId("hsg"), x.id, x.org_id, from, money(to), why.slice(0, 500), actor.name ?? actor.kind]);
@@ -841,7 +868,7 @@ export async function sessionTraceStep(orgId: number | null, id: string, actor: 
 // ---------------------------------------------------------------- the wake's side (the runner, with the run's lease)
 
 interface WakeRun { id: string; org_id: number; status: string; session: SessionRow }
-async function wakeOf(q: Queryable, runId: string, leaseToken: string, lock = false): Promise<WakeRun> {
+export async function wakeOf(q: Queryable, runId: string, leaseToken: string, lock = false): Promise<WakeRun> {
   // The run's lease, checked on this query's own connection (as src/runs.ts leased does): only its current attempt's holder.
   const [run] = await q.query<{ id: string; org_id: number; harness_session_id: string | null }>(
     "/* tenant: the leased run, by id and its lease */ SELECT id, org_id, harness_session_id FROM runs WHERE id = $1 AND lease_token_hash = $2 AND status = 'running'",
@@ -883,7 +910,7 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
       first.push({ id: Number(m.id), uuid, text: i === 0 && onStart ? applyOnStart(onStart, m.body) : m.body });
     }
     // Why it talks again, when the person did not say (a resume, an approval, a crash): the on_resume hook and the reason.
-    const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed)/.test(s.state_reason) ? `(${s.state_reason})` : null;
+    const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed|children settled)/.test(s.state_reason) ? `(${s.state_reason})` : null;
     const resumeHook = s.policy.hooks?.find((h) => h.event === "on_resume")?.text ?? null;
     // mold_v0-289: a follow-on session is told the conversation it continues, ahead of its first message.
     const preface = s.wakes > 1 ? [why, first.length ? null : resumeHook].filter(Boolean).join(" ") || null : s.policy.follow_on?.context ?? null;
@@ -985,8 +1012,11 @@ export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput):
       if (steer.length) await runEvent(q, w.id, s.org_id, "steer_delivered", { count: steer.length });
     }
     const pending = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' LIMIT 1", [s.org_id, s.id]);
-    if (spent >= num(s.budget_usd) - 1e-9) await revokeToolTokens(q, s.org_id, s.id, "budget", w.id);
-    return { cancel: hb.cancel, reason: hb.reason, steer, pause: !!s.pause_requested_at, end: !!s.stop_requested_at, budget: spent >= num(s.budget_usd) - 1e-9,
+    // mold_v0-291: what its children spent is gone. What is still carved is not: it comes back, so a parent that gave most
+    // of its budget away keeps running to read their results (the gateway already holds it to what it has left).
+    const beatUsed = spent + num(s.children_spent_usd);
+    if (beatUsed >= num(s.budget_usd) - 1e-9) await revokeToolTokens(q, s.org_id, s.id, "budget", w.id);
+    return { cancel: hb.cancel, reason: hb.reason, steer, pause: !!s.pause_requested_at, end: !!s.stop_requested_at, budget: beatUsed >= num(s.budget_usd) - 1e-9,
       // Quicker while a person is talking to it, so a message arrives in seconds.
       interval_seconds: pending.length || b.in_turn ? 3 : 10 };
   });
@@ -1021,6 +1051,7 @@ export async function wakeRequest(runId: string, leaseToken: string, r: { kind?:
   return tx(async (q) => {
     const w = await wakeOf(q, runId, leaseToken, true);
     const s = w.session;
+    if (s.parent_id) throw new PackError("A child run never asks for more than its policy allows", 403);
     // mold_v0-261: a tool its profile hides is never asked for (the harness does not; a request for one is refused).
     const own = kind === "tool" ? workspaceToolOf(String(r.subject).trim()) : null;
     if (own && (s.policy.workspace?.hidden ?? []).includes(own)) throw new PackError(`This session's agent profile does not give it ${own}: it cannot be asked for`, 400);
@@ -1051,7 +1082,7 @@ export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: u
       // mold_v0-287: raised while it worked: the CLI stopped at the allowance it was told, but the budget has moved. It parks
       // and is woken again at once (reconcileWake's next: "budget raised"); nobody is asked for what they already gave.
       const [g] = await q.query("/* tenant: within the session's workspace */ SELECT 1 FROM harness_budget_grants g JOIN runs r ON r.id = $3 AND r.org_id = g.org_id WHERE g.org_id = $1 AND g.session_id = $2 AND g.to_usd > g.from_usd AND g.created_at >= coalesce(r.started_at, r.created_at) LIMIT 1", [s.org_id, s.id, w.id]);
-      const raised = !!g && num(s.budget_usd) - num(s.spent_usd) - num(s.reserve_usd) >= 0.01;
+      const raised = !!g && num(s.budget_usd) - committedUsd(s) >= 0.01;
       if (raised) { await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = 'budget raised', in_turn = false, updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]); return { state: "parked" as HarnessState }; }
       await ensureBudgetRequest(q, s, "the session reached its budget", w.id); state = "awaiting";
     }
@@ -1127,12 +1158,14 @@ export async function wakeCheckpointBody(runId: string, leaseToken: string): Pro
  */
 export async function reconcileWake(runId: string): Promise<void> {
   if (!agentHarnessOn()) return;
+  let settledSession: { org: number; id: string; root: boolean } | null = null;
   const auto = await tx(async (q) => {
     const [run] = await q.query<{ id: string; org_id: number; status: string; error_kind: string | null; error: string | null; harness_session_id: string | null;
       started_at: Date | null; heartbeat_at: Date | null; ended_at: Date | null }>(
       "/* tenant: the ended run, by id */ SELECT id, org_id, status, error_kind, error, harness_session_id, started_at, heartbeat_at, ended_at FROM runs WHERE id = $1", [runId]);
     if (!run?.harness_session_id || !["succeeded", "failed", "cancelled"].includes(run.status)) return null;
     const s = await rowOf(q, run.org_id, run.harness_session_id, true);
+    if (s.root_id) settledSession = { org: s.org_id, id: s.id, root: s.root_id === s.id };
     await revokeToolTokens(q, s.org_id, s.id, "the wake ended", run.id);
     const spent = await recomputeSpend(q, s.id, s.org_id);
     if (s.current_run_id !== run.id) return null;
@@ -1144,7 +1177,7 @@ export async function reconcileWake(runId: string): Promise<void> {
       await endSession(q, s, "failed", said === "policy" ? (w!.end_reason ?? "policy").slice(0, 300) : s.state_reason!);
       return null;
     }
-    if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" ? "done" : "stopped"); return null; }
+    if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" && !(s.parent_id && s.stop_requested_at) ? "done" : "stopped"); return null; }
     // What arrived while the wake was ending wakes it again: a message (a parked session), or a decision made meanwhile.
     const next = async (state: HarnessState) => {
       if (state === "parked") {
@@ -1203,6 +1236,9 @@ export async function reconcileWake(runId: string): Promise<void> {
     await queueWake(auto.org, auto.id, auto.reason, { kind: "system", user: null, name: "the platform", role: null }).catch((e) =>
       console.error(`agent session ${auto.id}: ${auto.reason === "auto_resume" ? "automatic resume" : "wake"} refused: ${(e as Error).message}`));
   }
+  // mold_v0-291: a child settles, or a parent that ended reaps its children; idempotent, and the sweep says it again.
+  const settled = settledSession as { org: number; id: string; root: boolean } | null;
+  if (settled) await (await nestedModule())?.afterWake(settled.org, settled.id).catch((e: Error) => console.error(`nested runs: ${settled.id}: ${e.message}`));
 }
 
 // ---------------------------------------------------------------- the sweep (src/schedules.ts schedulerTick)
@@ -1258,6 +1294,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
     for (const d of due) await tx(async (q) => {
       await q.query("DELETE FROM harness_session_messages WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
       await q.query("DELETE FROM harness_session_requests WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
+      // mold_v0-291: what passed to and from its children goes with the conversation; what they cost stays.
+      await q.query("UPDATE harness_children SET inputs = '{}'::jsonb, outputs = NULL, answer = NULL, error = NULL, machine = NULL, updated_at = now() WHERE org_id = $1 AND (parent_id = $2 OR session_id = $2) AND settled_at IS NOT NULL", [d.org_id, d.id]);
       // mold_v0-287: the trace's content (tool arguments and results, model errors) goes with the conversation it records.
       await q.query("/* tenant: the pruned session's own wakes, within its workspace */ DELETE FROM run_events e USING runs r WHERE e.run_id = r.id AND e.org_id = r.org_id AND r.org_id = $1 AND r.harness_session_id = $2 AND e.type = ANY ($3::text[])", [d.org_id, d.id, TRACE_CONTENT_EVENTS]);
       await q.query("UPDATE harness_sessions SET pruned_at = $3, checkpoint = NULL, harness_session = NULL, archived_at = coalesce(archived_at, $3), updated_at = now() WHERE id = $1 AND org_id = $2",
@@ -1269,6 +1307,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
   }
   // 5. Tool tokens a day past their expiry, and those of pruned sessions (mold_v0-250).
   await tx((q) => sweepToolTokens(q, now));
+  // mold_v0-291: the durable reconcile of every tree (children, machines, evaluations): all of it is in the database.
+  await (await nestedModule())?.nestedTick(now).catch((e: Error) => console.error(`nested runs: the tick: ${e.message}`));
   return out;
 }
 

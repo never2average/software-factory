@@ -2874,6 +2874,8 @@ export interface PackDefinition {
    * on the API (POST /api/checks/<name>) and as an MCP tool (check_<name>), for the caller's own workspace. No code.
    */
   checks?: z.input<typeof CheckSchema>[];
+  /** mold_v0-291: Programs the app declares (src/programs.ts). */
+  programs?: { id: string; name: string; description?: string; config: Record<string, unknown> }[];
   /**
    * The workspace store's settings (mold_v0-056; src/workspace-store-policy.ts): how long old versions are kept
    * (retention: keep_last, keep_days, under the platform's ceiling) and the files the console's viewer never shows

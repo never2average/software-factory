@@ -316,3 +316,51 @@ an issue with the selected model", nothing spent), so the session ran on `claude
   (said only in its init event): the server is `app`. The start dialog's budget field stepped by 0.5 from 0.1, so the
   browser refused the default $1: it steps by 0.01. The dialog library let Tab leave the dialog after its last control
   and did not give focus back to Start a session on Esc: the dialog wraps Tab itself and names where focus returns.
+
+## Nested runs and Programs (mold_v0-291, flag `nested_runs`)
+
+A running session can start children: each a full session in its **own sandbox**, with its own run, token and wake
+lifecycle. Off by default (`features.nested_runs`, needs `agent_harness`); with it off nothing here runs and no tool, route
+or page exists.
+
+- **Tools.** `spawn(program | prompt, inputs, name?, budget_usd?)` answers with a handle at once; `collect(handles?,
+  timeout?)` reads `{status: queued | running | done | error | cancelled, settled, answer, outputs, error}`; `list_children`
+  and `cancel_child`; a child also has `submit_outputs(answer, outputs)`. They are listed only to a session's own workspace
+  token (`src/harness-reach.ts`): never to a person or an account key. The session is the token's, never an input.
+- **The tree.** `harness_sessions` gains `parent_id`, `root_id`, `depth`, a number (`AGI-001`, its first child `AGI-001.1`),
+  `carved_usd` and `children_spent_usd`. A depth of 2, 8 children to a root's tree and 4 at once are the shell's ceilings;
+  an app's `nested_runs` block in `profile.json` (`max_depth`, `max_children`, `max_concurrent`) can only lower them. What
+  waits says why. Every session in the tree counts against the 8, a machine's steps included; a machine also has its own bound
+  (`max_children`, default `max_transitions + 1`), and every step counts against the 4.
+- **Budgets.** A child's budget is carved under the parent's row lock from what it has left (`spawnable = budget − spent −
+  reserve − carved − children_spent`, its in-flight requests held out too), taken off the parent's running wake at once, and
+  what it did not use is returned when it settles. A child cannot be raised; a person raises the root, and a root's floor includes what it carved. The gateway
+  **holds** each model request's worst cost from its run's budget before sending it (`harness_gateway_holds`, released once its
+  cost is recorded, expiring by themselves), and lowers `max_tokens` when the rest will not cover it, so concurrent requests
+  cannot pass the root: the bound treats a request's bytes as at least two per token and prices every input token at the long cache-write rate.
+- **What a child may do.** `intersectChildPolicy` (`src/nested-policy.ts`, pure): its web allowlist, credentials, vault keys,
+  app tools and limits are the intersection of its program's and its parent's, and never a sandbox provider's key. It acts as
+  the root's person (role re-read on every call). It never asks: a request is refused at the runner and the API; a host or
+  tool outside its policy ends it. Inputs and outputs are redacted on the way in and out.
+- **Durable.** Everything is Postgres; `nestedTick` (the scheduler's tick) settles what a lost process left, reaps the children
+  of a parent that ended, pumps queues, and refuses evaluations whose run ended without measurements.
+
+**Programs** (`src/program-spec.ts`, `src/programs.ts`) are versioned records (staff at `/admin/programs`, shell page id
+`programs` in `admin_records`; or `programs` in a pack.json, JSON only, brought in once and never over a staff edit): icon,
+agent profile, prompt, JSON Schemas of inputs and outputs (a keyword the validator does not implement is refused, never
+ignored), budget, limits, failure policy (`fail_fast`, `continue`, `escalate`), retries, `spawned_by` (profile ids, `["*"]`,
+or `[]` for a person only), an optional **machine** (`src/program-machine.ts`: states, guarded transitions, `foreach`, joins,
+cycles bounded by `max_transitions`), and how its results show (`dock`). A child's outputs are checked server-side; a missing
+or invalid output gets one retry, then the failure policy.
+
+**Acceptance** (`src/program-acceptance.ts`) is server-owned, per program, and carried out by an `acceptance` state: no tool can
+write a decision. A candidate (`.candidate/` from a machine's step, sealed with the workspace's key) runs against the frozen
+test in a clean sandbox with trusted code (`src/program-evaluator.ts`: its own run kind `_agent/acceptance`, no model, no
+credentials; the candidate, the current best and the scorer each a run user of its own reading root-owned, read-only trees, each with a fresh HOME and environment built by the runner; the test's and the current best's files hashed before and after). It
+needs at least 5 cases, must beat the current best by `min_lift` (default 5%), with the 95% confidence interval's lower bound
+above zero, on every floor. Tampering, changes outside the declared `surface`, a missing metric or an evaluation that does
+not finish are refusals. With no test, or no current best yet, the outcome is `needs_review` and a person decides. An accepted
+candidate becomes the next version of its target (`harness_champions`, per workspace, with rollback); a person applies it:
+for a recipe, a proposal staff accept in Recipes; a harness policy or a mold ref only records who applied what, this shell
+pushes to no app and no default branch. Limits today: the worst-case hold assumes two bytes per token (a request far below that is not bounded).
+

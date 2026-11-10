@@ -114,6 +114,8 @@ export interface Profile {
    * resolved by scripts/gen-packs.mjs); absent when none declares it. The server reads which staff pages it lists.
    */
   admin_records?: { show: readonly string[] };
+  /** mold_v0-291 (flag nested_runs): a build's own limits on its trees, each lower only than the shell's (depth 2, 8 children, 4 at once). */
+  nested_runs?: { max_depth?: number; max_children?: number; max_concurrent?: number };
 }
 
 /** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */

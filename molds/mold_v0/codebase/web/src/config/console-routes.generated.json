@@ -20,6 +20,7 @@
     "/admin/keys",
     "/admin/packs/[pack]/[page]",
     "/admin/profile",
+    "/admin/programs",
     "/admin/recipes",
     "/admin/recipes/[id]",
     "/admin/records-group/[group]",
