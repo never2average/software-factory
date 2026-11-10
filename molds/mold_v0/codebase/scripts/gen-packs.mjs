@@ -2366,7 +2366,7 @@ for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
  */
 // mold_v0-261: Admin › Agent profiles (one page since mold_v0-267: a profile opens in its modal), agent_harness's too
 // (since mold_v0-284 Agent configuration's Profiles tab, its own address leading there, unless the Records group lists it).
-const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
+const FEATURE_PAGES = { nested_runs: ["/app/agent/runs", "/app/agent/runs/[id]"], agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
 const OFF_PAGES = [...Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list),
   // mold_v0-283: Data repositories, a page of the build only with a workspace_files repository.
   ...(workspaceFilesRepositories.length ? [] : ["/admin/repositories"])];
@@ -2389,7 +2389,7 @@ const appPageUrl = (id) => `/app/${id}`;
 /** A home tab (mold_v0-134): an overview that includes the Setup page's checklist, the build's home page. */
 const isHomeTab = (t) => t.kind === "overview" && (t.include ?? []).includes("setup");
 /** The shell's page a tab of each kind opens (the sidebar's entry for it). */
-const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys", agent: "/app/agent",
+const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys", agent: "/app/agent", agent_runs: "/app/agent/runs",
   "connected-apps": "/app/connected-apps" };
 /** mold_v0-280: the shown tabs that sit inside Settings (a team or keys tab declared `inside: "settings"`), not in the sidebar. */
 function insideTabs() { return shownTabs().filter((t) => t.inside === "settings"); }
@@ -2617,7 +2617,7 @@ const nav = (area) => {
 };
 const allPages = packs.flatMap((p) => p.pages);
 /** A tab's icon when it declares none, by kind (the sidebar's entry for it). */
-const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code" };
+const DEFAULT_ICONS = { agent_runs: "play", overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code" };
 /**
  * Each record area's icon (mold_v0-242; src/record-icons.ts): its own `icon`; else the icon of the customer tab that
  * shows it (the sidebar entry of the first shown tab over it alone, else of one that merges it: the tab itself, or the
@@ -2965,7 +2965,9 @@ function shownTabsAlone() {
     // nor one that opens a shell page the build hides (mold_v0-130)
     && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind]))
     // nor the workspace agent's entry while the agent is off (features.agent_harness): it simply leaves the sidebar
-    && !(t.kind === "agent" && !FEATURE_ON.agent_harness));
+    && !(t.kind === "agent" && !FEATURE_ON.agent_harness)
+    // nor Active runs while nested runs are off (mold_v0-292)
+    && !(t.kind === "agent_runs" && !(FEATURE_ON.nested_runs && FEATURE_ON.agent_harness)));
 }
 
 /**
@@ -3031,7 +3033,7 @@ function viewsModule() {
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
     `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
-    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent';\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent' | 'agent_runs';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
     (FEATURE_ON.record_pages ? "  /** Columns computed from related records (mold_v0-256): each one's place among the columns, heading, area and what it shows. */\n  related_columns?: { id: string; at: number; area: string; show: string; label: string }[];\n" : "") +

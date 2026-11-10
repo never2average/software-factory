@@ -20,6 +20,8 @@
 //                state; not drawn for a role that may not read that area
 //   runs         a section listing the runs that ran on this record: kind (a link to the run), status, started,
 //                duration, cost, who started it
+import { TargetVersions } from '@/features/agent/dock/target-versions';
+import { featureOn } from '@/config/features';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
@@ -220,6 +222,8 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   if (!sectionShown(s, record.data, record.clocks)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
+  // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
+  if (s.versions) return featureOn('nested_runs') ? <TargetVersions target={record.key} title={s.title} empty={s.empty} /> : null;
   // mold_v0-256: a log, the change history, a code view, a table, a file browser.
   const copy = (t: string, done: string) => void copyWithToast(t, done);
   const fieldLabel = (n: string) => area.fields.find((f) => f.name === n)?.label ?? n;

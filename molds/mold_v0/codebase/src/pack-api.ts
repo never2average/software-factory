@@ -1183,7 +1183,7 @@ export const DetailComputedSchema = z.object({
   where: DetailConditionSchema.optional(),
 }).strict();
 /** The kinds of a section (each in place of fields): mold_v0-254's related and runs, mold_v0-256's log, history, code, table and files. */
-export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files"] as const;
+export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files", "versions"] as const;
 
 /**
  * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
@@ -1210,6 +1210,8 @@ export const DetailSectionSchema = z.object({
   table: DetailTableSchema.optional(),
   /** mold_v0-256: the record's documents and files as a tree with a preview (DetailFilesSchema). */
   files: DetailFilesSchema.optional(),
+  /** mold_v0-292 (flag nested_runs): the program runs that targeted this record, its versions and its current champion. */
+  versions: z.object({}).strict().optional(),
   /**
    * mold_v0-262: shown only while this condition holds on the record (the notices' condition language; an Error section
    * only when its build failed), else not drawn at all. Its tab stays.
@@ -1393,7 +1395,7 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
         if (kinds.length > 1) bad(kinds.length === 2 && kinds.includes("related") && kinds.includes("runs") ? `section ${s.title} is a related list or the record's runs, not both`
           : `section ${s.title} is one kind of section: ${kinds.join(" or ")}, not ${kinds.length === 2 ? "both" : "several"}`, "tabs", ti, "sections", si);
         const what: Record<(typeof DETAIL_SECTION_KINDS)[number], string> = { related: "lists related records", runs: "lists runs", log: "shows a log", history: "lists the record's changes",
-          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files" };
+          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files", versions: "lists the record's runs and versions" };
         for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} ${what[kinds[0]!]}: it has no ${k}`, "tabs", ti, "sections", si, k);
         const at = (...p: (string | number)[]) => ["tabs", ti, "sections", si, ...p];
         const valueOf = (n: string, kind: string, types: readonly string[], ...p: (string | number)[]) => {
@@ -2246,7 +2248,7 @@ export const SPARK_KINDS = ["area", "runs", "reports", "schedules"] as const;
 export const TAB_INSIDE = ["settings"] as const;
 /** The tab kinds that may sit inside Settings (mold_v0-280): the shell's Team page and the person's API keys. */
 export const INSIDE_KINDS = ["team", "keys"] as const;
-export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections", "agent"] as const;
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections", "agent", "agent_runs"] as const;
 // TAB_ICONS: declared above RecordAreaSchema (a record area takes one too, mold_v0-242).
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */

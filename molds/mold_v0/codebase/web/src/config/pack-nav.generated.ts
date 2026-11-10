@@ -160,7 +160,7 @@ export const packCharts: PackChartSpec[] = [];
 export interface PackTabSpec {
   pack: string;
   id: string;
-  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent';
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent' | 'agent_runs';
   label: string;
   description: string | null;
   icon: string;

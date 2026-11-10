@@ -41,12 +41,14 @@ export const CONSOLE_PAGES = {
   keys: "/app/keys",
   // The workspace agent (mold_v0-243; a page only while agent_harness is on): a pack's `agent` tab puts it in the sidebar.
   agent: "/app/agent",
+  // Active runs (mold_v0-292; a page only while nested_runs is on): a pack's `agent_runs` tab puts it in the sidebar.
+  agent_runs: "/app/agent/runs",
 } as const;
 export type ConsolePage = keyof typeof CONSOLE_PAGES;
 
 /** A declared tab's kind -> the shell page it opens (mold_v0-058: a `usage` tab opens the Activity page). */
 export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
-  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys", agent: "agent",
+  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys", agent: "agent", agent_runs: "agent_runs",
 };
 
 /**

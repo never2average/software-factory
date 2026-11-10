@@ -60,7 +60,7 @@ import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 import { sseStart } from "./docs-answers.js";
 import { attachmentMaxBytes, removeDraftFile, storeDraftFile } from "./agent-composer.js";
-import { programAppRoutes } from "./program-routes.js";
+import { programAppRoutes, programDockRoutes } from "./program-routes.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.json(v); }
@@ -157,6 +157,7 @@ export function agentAppRouter(): Router {
     }));
   r.delete("/files/:file", answer(async (req, res) => { await removeDraftFile(S(res).org, H.composerOwner(actor(res)), String(req.params.file)); return { removed: true }; }));
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
+  programDockRoutes(r, (res) => S(res).org); // mold_v0-292: ahead of /:id, which they would otherwise match
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
   r.get("/:id/trace/stream", answer(traceStream((req, res, after) => H.sessionTrace(S(res).org, id(req), actor(res), after))));
   r.get("/:id/trace", answer(async (req, res) => H.sessionTrace(S(res).org, id(req), actor(res), req.query.after)));

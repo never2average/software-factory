@@ -150,6 +150,7 @@
     "test:large-writeback": "tsx scripts/large-writeback-test.ts",
     "usage": "tsx --env-file-if-exists=.env scripts/usage.ts",
     "mcp:check": "tsx scripts/mcp-check.ts",
+    "test:agent-dock": "tsx scripts/agent-dock-test.ts",
     "test:nested-runs-race": "tsx scripts/nested-runs-race.ts",
     "web:build": "npm --prefix web ci && npm --prefix web run build",
     "web:dev": "npm --prefix web run dev",

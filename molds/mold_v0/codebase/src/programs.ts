@@ -145,6 +145,13 @@ export async function setProgramArchived(by: string, id: string, archived: boole
   return readProgram(id);
 }
 
+export type DockProgram = { id: string; name: string; description: string; config: ProgramConfig };
+/** Every active program, for the dock (src/agent-dock.ts). */
+export async function listDockPrograms(): Promise<DockProgram[]> {
+  await syncDeclaredPrograms();
+  return read((q) => q.query<DockProgram>("SELECT p.id, p.name, p.description, v.config FROM harness_programs p JOIN harness_program_versions v ON v.program_id = p.id AND v.version = p.version WHERE p.status = 'active' ORDER BY p.name"));
+}
+
 /** The active programs a session of this agent profile may spawn, each at its latest version. */
 export async function programsForProfile(profile: string | null): Promise<{ id: string; name: string; description: string; version: number; config: ProgramConfig }[]> {
   await syncDeclaredPrograms();
