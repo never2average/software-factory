@@ -396,3 +396,25 @@ candidate becomes the next version of its target (`harness_champions`, per works
 for a recipe, a proposal staff accept in Recipes; a harness policy or a mold ref only records who applied what, this shell
 pushes to no app and no default branch. Limits today: the worst-case hold assumes two bytes per token (a request far below that is not bounded).
 
+## The agent's dock (mold_v0-292, flag `nested_runs`)
+
+Beside a session's conversation, a rail of icons: one per section of the work this workspace is doing, each with its live count.
+Opening a section replaces the rail with its panel, and a breadcrumb is the only way in and out of a detail. Every panel can be
+searched, and can fork a second agent from a point in the conversation (`POST /api/agent/:id/fork`: a session of its own, the
+transcript up to there as its context, only for the person who started it; the conversation it came from never sees it). On a
+phone the rail is one button in the session's bar, opening the same panels as a sheet. The chat bar is in the conversation's own
+column, so nothing opens over it.
+
+- **Sections come from the programs** (`src/agent-dock.ts`). A program's `dock` names its section, its words, its icon and its
+  order, and how it is drawn: `items` lists its typed outputs (`items` the list inside them, `title` and `meta` the fields a row
+  shows), `changes` lists the candidates the guardian judged, `climb` draws each target's measured versions in its objective space
+  (three.js; the program's metric up, its floors across, the region they allow; each point a measured version). `also` adds more
+  sections from one program. A program with no `dock` is a section of its own; while nothing declares them, an acceptance rule
+  brings the built-ins, named Changes and Climb.
+- **Active runs.** A pack's tab of kind `agent_runs` (`/app/agent/runs`) lists every root session with a child still at work; a row
+  opens its run in the panel, and Expand or its own page shows the same view: spend, the tree of children, each machine's step graph
+  live, what was decided, the version timeline and the climb.
+- **A record's page.** A section `{"title": "...", "versions": {}}` on a record lists the program runs that targeted that record (its
+  key), the versions they made and the current champion; staff see across workspaces.
+- **What is read.** Only the workspace's own runs and decisions, only while the flag is on. Programs are the platform's, so
+  another workspace sees the same sections with its own counts.

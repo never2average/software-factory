@@ -660,6 +660,27 @@ async function followOn(orgId: number, was: SessionRow, actor: Actor, message: s
   return { status: "follow_on", phase: next.phase, session_id: next.id };
 }
 
+/**
+ * A second agent from a point in a conversation (mold_v0-292): a session of its own, with this conversation up to that
+ * message as its context. Same person, profile and record; its own budget, as any session they start. What is said there
+ * stays there: the session it came from never sees it. Only the person who started the conversation may fork it.
+ */
+export async function forkSession(orgId: number, id: string, actor: Actor, input: { message_id?: unknown; message?: unknown }, org?: import("./auth.js").Org): Promise<SessionDetail> {
+  needOn();
+  const was = await read((q) => rowOf(q, orgId, id));
+  if (!mineOf(was, actor)) throw new PackError("Only the person who started this session can fork it", 403);
+  const message = text(input.message, "message");
+  const at = Number(input.message_id);
+  if (!Number.isSafeInteger(at) || at < 1) throw new PackError("message_id: the point in the conversation to fork from", 400);
+  const said = await read((q) => q.query<{ role: MessageView["role"]; body: string }>("SELECT role, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND id <= $3 AND role IN ('person', 'agent') ORDER BY id DESC LIMIT 40", [was.org_id, was.id, at]));
+  if (!said.length) throw new PackError("That point is not in this conversation", 404);
+  let room = FOLLOW_ON_CONTEXT_CHARS;
+  const lines: string[] = [];
+  for (const m of said) { if (room <= 0) break; const line = `${m.role === "person" ? "The person" : "You"}: ${maskSecrets(m.body).slice(0, room)}`; lines.unshift(line); room -= line.length; }
+  const context = `This session is a fork of "${was.title}": a second agent, working from the point below. The original conversation carries on without you and never sees what is said here. What had been said, oldest first:\n\n${lines.join("\n\n")}`;
+  return startSession(orgId, actor, { message, title: `Fork: ${was.title}`.slice(0, 80), mode: was.policy?.mode, profile: was.profile_id ?? undefined }, org, { followOn: { from: was.id, context } });
+}
+
 /** Pause: a running wake stops and keeps its session (resume continues it); a queued one is withdrawn. */
 export async function pauseSession(orgId: number | null, id: string, actor: Actor): Promise<SessionView> {
   needOn();

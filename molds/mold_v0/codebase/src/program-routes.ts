@@ -22,6 +22,7 @@ import { log } from "./admin.js";
 import * as P from "./programs.js";
 import * as N from "./nested-runs.js";
 import type { Actor } from "./harness-sessions.js";
+import * as D from "./agent-dock.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.status(status).json(v); }
@@ -39,15 +40,28 @@ export function programAdminRoutes(ob: Router, need: (p: "compute") => RequestHa
   for (const [path, archived] of [["archive", true], ["restore", false]] as const) ob.post(`/programs/:id/${path}`, need("compute"), answer(async (req, res) => { const p = await P.setProgramArchived(who(req, res), id(req), archived); log(who(req, res), `program.${path}`, null, { program: p.id }); return { program: p }; }));
   ob.get("/program-evaluations", answer(async (req) => ({ evaluations: await N.listEvaluations(null, { program: req.query.program ? String(req.query.program) : undefined, target: req.query.target ? String(req.query.target) : undefined }) })));
   ob.post("/program-evaluations/:id/review", need("compute"), answer(async (req, res) => { const e = await N.reviewEvaluation(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.evaluation_review", e.workspace ?? null, { evaluation: e.id, decision: e.review_decision }); return { evaluation: e }; }));
+  ob.get("/program-targets/:id", answer(async (req) => D.targetHistory(null, String(req.params.id))));
   ob.get("/program-champions", answer(async (req) => ({ champions: await N.listChampions(null, { target: req.query.target ? String(req.query.target) : undefined }) })));
   ob.post("/program-champions/:id/rollback", need("compute"), answer(async (req, res) => { const c = await N.rollbackChampion(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.champion_rollback", c.workspace ?? null, { version: c.id, reason: String((req.body ?? {}).reason ?? "").slice(0, 300) }); return { champion: c }; }));
   ob.post("/program-champions/:id/apply", need("compute"), answer(async (req, res) => { const c = await N.applyChampion(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.champion_apply", c.workspace ?? null, { version: c.id, ref: c.applied_ref }); return { champion: c }; }));
+}
+
+/** The dock and the runs (mold_v0-292): whole-workspace paths, mounted ahead of /:id. */
+export function programDockRoutes(r: Router, orgOf: (res: Response) => number) {
+  if (!N.nestedOn()) return;
+  r.get("/dock", answer(async (_req, res) => D.dockSections(orgOf(res))));
+  r.get("/dock/:section", answer(async (req, res) => D.dockSection(orgOf(res), String(req.params.section))));
+  r.get("/runs", answer(async (_req, res) => ({ runs: await D.activeRuns(orgOf(res)) })));
+  r.get("/targets/:id", answer(async (req, res) => D.targetHistory(orgOf(res), String(req.params.id))));
 }
 
 /** The workspace's own tree of a session (src/agent-routes.ts mounts it). */
 export function programAppRoutes(r: Router, orgOf: (res: Response) => number, actorOf: (res: Response) => Actor) {
   if (!N.nestedOn()) return;
   r.get("/:id/tree", answer(async (req, res) => { const { root, children } = await N.readTree(orgOf(res), String(req.params.id), actorOf(res)); return { root: { id: root.id, ref: root.nested?.ref ?? null, phase: root.phase, budget_usd: root.budget_usd, spent_usd: root.spent_usd, remaining_usd: root.remaining_usd }, children }; }));
+  r.get("/:id/run", answer(async (req, res) => ({ run: await D.runDetail(orgOf(res), String(req.params.id), actorOf(res)) })));
+  // A second agent from a point in this conversation: a session of its own, the transcript up to there as its context.
+  r.post("/:id/fork", answer(async (req, res) => { res.status(201); return { session: await (await import("./harness-sessions.js")).forkSession(orgOf(res), String(req.params.id), actorOf(res), req.body ?? {}) }; }));
   r.post("/:id/children/:handle/cancel", answer(async (req, res) => {
     const a = actorOf(res), org = orgOf(res);
     const mine = await (await import("./harness-sessions.js")).readSession(org, String(req.params.id), a);

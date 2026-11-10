@@ -1382,6 +1382,22 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} Freestyle's key vault provider (direct, FREESTYLE_API_KEY imported once); its rollback refused while the runs' sandboxes come from Freestyle or the vault holds its key, then leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // The dock's index (mold_v0-292, agent_dock, found by name): its rollback leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "agent_dock")!.version;
+    const r = await shellAt(kind);
+    assert.equal((await r.query("SELECT 1 FROM pg_indexes WHERE indexname = 'harness_children_program_idx'")).length, 1, "the index is there");
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_agent_dock.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.equal((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_agent_dock")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} the dock's index; its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The workspace recipes (mold_v0-271, workspace_recipes, found by name): three staff tables the tenant role cannot
   // reach; a recipe's id, a version once per recipe, a version from an agent naming its proposal, a proposal's decision
   // and its accepted version checked; its rollback drops them, leaves exactly what the migration before left (the

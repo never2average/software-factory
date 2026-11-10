@@ -169,7 +169,10 @@ export interface Acceptance {
   /** Absent: the outcome is needs_review, and a person decides. */
   test?: AcceptanceTest;
 }
-export interface ProgramDock { section: string; label?: string; sub?: string; items?: string; title?: string; meta?: string[]; group?: string }
+export const DOCK_KINDS = ["items", "changes", "climb"] as const;
+export type DockKind = (typeof DOCK_KINDS)[number];
+/** Where a program's results show in a session's dock (mold_v0-292): a section's id and words, and how it is drawn. */
+export interface ProgramDock { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; items?: string; title?: string; meta?: string[]; group?: string; also?: { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind }[] }
 
 export interface ProgramConfig {
   icon: string;
@@ -339,9 +342,22 @@ export function parseProgram(raw: unknown, hash: (s: string) => string): { confi
   let dock: ProgramDock | undefined;
   if (raw.dock !== undefined) {
     const d = isObject(raw.dock) ? raw.dock : {};
-    if (typeof d.section !== "string" || !/^[a-z][a-z0-9_-]{0,39}$/.test(d.section)) out.push("dock.section: the id of the section its results show under");
-    for (const k of ["label", "sub", "items", "title", "group"]) if (d[k] !== undefined && (typeof d[k] !== "string" || (d[k] as string).length > 80)) out.push(`dock.${k}: words of at most 80 characters`);
+    const SECTION = /^[a-z][a-z0-9_-]{0,39}$/;
+    const sectionProblems = (x: Record<string, unknown>, at: string, keys: string[]) => {
+      for (const k of Object.keys(x)) if (!keys.includes(k)) out.push(`${at}.${k}: not a field of the dock`);
+      if (typeof x.section !== "string" || !SECTION.test(x.section)) out.push(`${at}.section: the id of the section its results show under`);
+      for (const k of ["label", "sub"]) if (x[k] !== undefined && (typeof x[k] !== "string" || (x[k] as string).length > 80)) out.push(`${at}.${k}: words of at most 80 characters`);
+      if (x.icon !== undefined && (typeof x.icon !== "string" || !ICON.test(x.icon))) out.push(`${at}.icon: an icon's name`);
+      if (x.order !== undefined && !(typeof x.order === "number" && Number.isFinite(x.order))) out.push(`${at}.order: a number`);
+      if (x.kind !== undefined && !DOCK_KINDS.includes(x.kind as DockKind)) out.push(`${at}.kind: ${DOCK_KINDS.join(", ")}`);
+    };
+    sectionProblems(d, "dock", ["section", "label", "sub", "icon", "order", "kind", "items", "title", "meta", "group", "also"]);
+    for (const k of ["items", "title", "group"]) if (d[k] !== undefined && (typeof d[k] !== "string" || (d[k] as string).length > 80)) out.push(`dock.${k}: an output's path`);
     if (d.meta !== undefined && !(Array.isArray(d.meta) && d.meta.length <= 6 && d.meta.every((x) => typeof x === "string"))) out.push("dock.meta: at most 6 output paths");
+    if (d.also !== undefined) {
+      if (!Array.isArray(d.also) || d.also.length > 4) out.push("dock.also: at most 4 more sections");
+      else d.also.forEach((x, i) => { if (!isObject(x)) out.push(`dock.also[${i}]: an object`); else sectionProblems(x, `dock.also[${i}]`, ["section", "label", "sub", "icon", "order", "kind"]); });
+    }
     if (!out.some((p) => p.startsWith("dock."))) dock = d as unknown as ProgramDock;
   }
   if (out.length) return { problems: out };

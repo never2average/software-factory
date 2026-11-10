@@ -22,6 +22,8 @@ export type ClockStates = Record<string, { status?: string; overdue?: boolean }>
 export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string }
 export interface DetailGroup { title?: string; fields: string[] }
 export interface DetailSection {
+  /** mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made. */
+  versions?: Record<string, never>;
   title: string; columns?: 1 | 2 | 3; fields?: string[]; groups?: DetailGroup[]; empty?: string; related?: DetailRelated; runs?: DetailRuns;
   /** mold_v0-256: a field's lines in the log viewer. */
   log?: { field: string; live_when?: DetailCondition };

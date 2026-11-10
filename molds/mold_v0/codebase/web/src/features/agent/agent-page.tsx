@@ -16,6 +16,7 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tokens, TraceStream, useTrace } from './session-trace';
 import { AgentComposer } from './composer/agent-composer';
+import { useAgentDock, type DockCheckpoint } from './dock/right-dock';
 import { setBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -419,6 +420,10 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
     return () => ro.disconnect();
   }, [d?.id]);
   const changed = async () => { await load(); await onChange(); };
+  // mold_v0-292 (flag nested_runs): the right dock beside the conversation; the chat bar is in the conversation's own column.
+  const [prefill, setPrefill] = useState<{ text: string; at: number } | null>(null);
+  const checkpoints = useMemo<DockCheckpoint[]>(() => (d?.messages ?? []).filter((m) => m.role !== 'system').map((m) => ({ id: m.id, role: m.role as DockCheckpoint['role'], label: m.body.replace(/\s+/g, ' ').slice(0, 120) })).reverse(), [d?.messages]);
+  const dock = useAgentDock({ enabled: area === 'app' && featureOn('nested_runs'), call, sessionId: id, checkpoints, onAsk: (text) => setPrefill({ text, at: Date.now() }), onOpenSession });
   // mold_v0-290: the session is a level of the top bar's breadcrumb (Account / Agents / AGI-001): that is the way back.
   const ref = d?.ref ?? null;
   useEffect(() => { setBreadcrumbLeaf(ref); return () => setBreadcrumbLeaf(null); }, [ref]);
@@ -428,9 +433,11 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   const lastModel = [...trace.steps].reverse().find((s) => s.kind === 'model' && s.http_status !== undefined);
   const failing = live && lastModel?.status === 'error' ? (lastModel.error ?? 'The last model call failed.') : null;
   return (
-    <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
+    <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem]' data-agent-session-page=''>
+    <div className='flex min-w-0 flex-1 flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
       <div className='flex items-center gap-2 sm:gap-3' data-agent-session-bar=''>
         <h1 className='min-w-0 flex-1 truncate text-base font-medium' title={d.title}>{d.title}</h1>
+        {dock.phoneButton}
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
       </div>
@@ -439,7 +446,7 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
         dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 border-t px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
           <div className='mx-auto flex w-full max-w-4xl flex-col gap-2'>
             {d.pending_request && <RequestBar d={d} r={d.pending_request} call={call} onDone={changed} />}
-            <Composer area={area} d={d} call={call} onSent={changed} onOpenSession={onOpenSession} waitingOn={trace.waitingOn} failing={failing} />
+            <Composer area={area} d={d} call={call} onSent={changed} onOpenSession={onOpenSession} waitingOn={trace.waitingOn} failing={failing} prefill={prefill} />
           </div>
         </div>} />
       <Dialog open={howOpen} onOpenChange={setHowOpen}>
@@ -451,6 +458,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
           <Details d={d} />
         </DialogContent>
       </Dialog>
+    </div>
+    {dock.column}
     </div>
   );
 }
@@ -560,8 +569,10 @@ function RaiseBudget({ d, call, onDone, compact }: { d: Detail; call: Call; onDo
  * steers a working session, wakes a parked one, waits for a pending decision, continues an ended one. Someone else's
  * session and staff keep it visible and disabled, the reason as its placeholder: the agent acts as the person who started it.
  */
-function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing }: { area: Area; d: Detail; call: Call; onSent: () => unknown; onOpenSession: (id: string) => void; waitingOn: string | null; failing: string | null }) {
+function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing, prefill }: { area: Area; d: Detail; call: Call; onSent: () => unknown; onOpenSession: (id: string) => void; waitingOn: string | null; failing: string | null; prefill?: { text: string; at: number } | null }) {
   const [text, setText] = useState('');
+  // mold_v0-292: the dock's Ask about this: it puts words in the chat bar, and the person sends them.
+  useEffect(() => { if (prefill) setText(prefill.text); }, [prefill]);
   const [busy, setBusy] = useState(false);
   const ended = ['stopped', 'failed', 'archived'].includes(d.phase);
   const why = d.can.message ? null
