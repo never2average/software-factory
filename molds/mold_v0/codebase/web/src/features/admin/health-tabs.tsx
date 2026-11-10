@@ -1,18 +1,24 @@
 'use client';
 // Health's tabs beside Errors in a build without the session engine (mold_v0-204; GET /api/admin/onboarding/health/*,
 // src/health-tabs.ts): Runs, Scheduled work, Email Delivery (only when the app sends company email or has a developer
-// surface; emails only), Webhook Delivery (mold_v0-215: only with a developer surface), Status and Sign-in (mold_v0-270,
-// ./sign-in-check.tsx: every sign-in's return address against the front door). The list tabs show
+// surface; emails only), Webhook Delivery (mold_v0-215: only with a developer surface), and Status (mold_v0-293: the Sign-in
+// tab is gone; the factory's deploy-time check keeps its routes). The list tabs show
 // their four cards, then the search and the tab's own picker and filters, then one table (RecordView). Status is a grid
 // of graphs (mold_v0-210).
 // Staff only, read only; nothing here shows an address, a subject or a key.
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { StatStrip } from '@/components/layout/section';
 import { RecordView, type RecordCol, type RecordViewDef } from '@/components/layout/record-view';
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent } from '@/components/ui/popover';
+import { Icons } from '@/components/icons';
+import { downloadCsv, today } from '@/lib/csv';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Box } from '@/components/layout/chart-grid';
@@ -23,7 +29,6 @@ import { num, usd } from '@/lib/display-format';
 import { useAdmin } from './lib';
 import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
-import { SignInTab } from './sign-in-check';
 import { cn } from '@/lib/utils';
 
 /** Email Delivery is a tab only when the app sends mail of a workspace's own or has a developer surface (the server's deliveriesOn). */
@@ -34,7 +39,7 @@ export const webhooksTab = (): boolean => developerConsole.on;
 /** Health's tabs in a build without the session engine, in order (Errors first: the page's default). */
 export const healthTabsShell = (): readonly (readonly [string, string])[] => [
   ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Email Delivery'] as const] : []),
-  ...(webhooksTab() ? [['webhooks', 'Webhook Delivery'] as const] : []), ['status', 'Status'], ['signin', 'Sign-in']
+  ...(webhooksTab() ? [['webhooks', 'Webhook Delivery'] as const] : []), ['status', 'Status']
 ];
 
 const dash = <span className='text-muted-foreground'>—</span>;
@@ -61,7 +66,6 @@ export function HealthTab({ tabs, tab }: { tabs: readonly (readonly [string, str
         {tab === 'deliveries' && <DeliveriesTab />}
         {tab === 'webhooks' && <WebhooksTab />}
         {tab === 'status' && <StatusTab />}
-        {tab === 'signin' && <SignInTab />}
       </div>
     </PageContainer>
   );
@@ -80,7 +84,7 @@ function Picker<V extends string>({ label, value, onChange, options }: { label: 
 
 interface KindRow { pack: string; kind: string; label: string; agent: boolean; total: number; succeeded: number; failed: number; cancelled: number; open: number; accounts: number; usd: number;
   p50_seconds: number | null; p95_seconds: number | null; failures: Record<string, number> }
-interface FailedRun { id: string; pack: string; kind: string; label: string; agent: boolean; error_kind: string | null; error: string | null; attempt: number; max_attempts: number;
+interface FailedRun { id: string; pack: string; kind: string; label: string; agent: boolean; status: string; error_kind: string | null; error: string | null; attempt: number; max_attempts: number;
   created_at: string | null; ended_at: string | null; seconds: number | null; usd: number; account: string; refused_retry: boolean }
 interface RunsData {
   range: { from: string; to: string; days: number };
@@ -88,13 +92,16 @@ interface RunsData {
   by_error_kind: Record<string, number>;
   kinds: KindRow[];
   daily: { day: string; total: number; failed: number; usd: number; p50_seconds: number }[];
+  /** mold_v0-293: the latest runs of every status, newest first. */
+  recent: FailedRun[];
   recent_failed: FailedRun[];
 }
 interface RunEvents { run: { id: string; label: string; status: string; error_kind: string | null; attempt: number; account: string }; events: { id: number; attempt: number; type: string; at: string | null; data: Record<string, string | number | boolean> }[] }
 
 function RunsTab() {
   const [range, setRange] = useState<DateRange>(last30);
-  const [show, setShow] = useState<'failed' | 'kinds'>('failed');
+  // mold_v0-293: every run by default (all statuses, newest first); the failures alone and the kinds stay choices.
+  const [show, setShow] = useState<'all' | 'failed' | 'kinds'>('all');
   const { data, error, isLoading } = useAdmin<RunsData>(`/health/runs?${rangeQuery(range)}`, { keep: true });
   const t = data?.totals;
   const summary = (
@@ -109,15 +116,15 @@ function RunsTab() {
   );
   const filters = (
     <>
-      <Picker label='Show' value={show} onChange={setShow} options={[['failed', `Failed ${W.runs}`], ['kinds', 'By kind']]} />
+      <Picker label='Show' value={show} onChange={setShow} options={[['all', `All ${W.runs}`], ['failed', `Failed ${W.runs}`], ['kinds', 'By kind']]} />
       <DateRangePicker value={range} onChange={setRange} />
     </>
   );
   return (
     <>
       <ErrorBox error={error} />
-      {show === 'failed'
-        ? <FailedRuns rows={data?.recent_failed ?? []} loading={isLoading || !data} summary={summary} filters={filters} />
+      {show !== 'kinds'
+        ? <RunList key={show} failedOnly={show === 'failed'} rows={(show === 'failed' ? data?.recent_failed : data?.recent) ?? []} loading={isLoading || !data} summary={summary} filters={filters} />
         : <KindsTable rows={data?.kinds ?? []} loading={isLoading || !data} summary={summary} filters={filters} />}
     </>
   );
@@ -131,14 +138,21 @@ const FAILED_VIEWS: RecordViewDef<FailedRun>[] = [
   { id: 'refused', label: 'Refused and retried', match: (r) => r.refused_retry }
 ];
 
-function FailedRuns({ rows, loading, summary, filters }: { rows: FailedRun[]; loading: boolean; summary: ReactNode; filters: ReactNode }) {
+const RUN_STATUS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', cancelled: 'Cancelled' };
+const RUN_TONE: Record<string, Tone> = { queued: 'neutral', running: 'info', succeeded: 'ok', failed: 'bad', cancelled: 'neutral' };
+const statusWord = (s: string) => RUN_STATUS[s] ?? s;
+
+/** Every recent run (mold_v0-293; or the failures alone), newest first; a row opens its events in the side panel. */
+function RunList({ rows, loading, summary, filters, failedOnly }: { rows: FailedRun[]; loading: boolean; summary: ReactNode; filters: ReactNode; failedOnly: boolean }) {
   const cols: RecordCol<FailedRun>[] = [
-    { key: 'ended_at', label: 'Ended', type: 'date', className: 'w-32', keep: true, value: (r) => r.ended_at ?? r.created_at, render: (r) => <When d={r.ended_at ?? r.created_at} className='text-muted-foreground text-xs leading-none' /> },
+    { key: 'ended_at', label: failedOnly ? 'Ended' : 'When', type: 'date', className: 'w-32', keep: true, value: (r) => r.ended_at ?? r.created_at, render: (r) => <When d={r.ended_at ?? r.created_at} className='text-muted-foreground text-xs leading-none' /> },
     { key: 'label', label: 'Kind', type: 'text', title: true, keep: true, value: (r) => r.label, render: (r) => (
       <span className='flex items-center gap-1.5'><span className='font-medium'>{r.label}</span>{r.agent && <Chip>agent</Chip>}{r.refused_retry && <Chip tone='warn' title='The model API refused the first attempt before any token was spent: queued once more'>refused, retried</Chip>}</span>
     ) },
-    { key: 'error_kind', label: 'Error kind', type: 'select', className: 'w-36', keep: true, value: (r) => r.error_kind ?? 'unknown',
-      options: Object.entries(ERROR_KIND).map(([value, label]) => ({ value, label })), render: (r) => <StatusBadge tone={r.error_kind === 'infrastructure' ? 'warn' : 'bad'}>{kindWord(r.error_kind)}</StatusBadge> },
+    { key: 'status', label: 'Status', type: 'select', className: 'w-28', keep: true, value: (r) => r.status, options: Object.entries(RUN_STATUS).map(([value, label]) => ({ value, label })),
+      render: (r) => <StatusBadge tone={RUN_TONE[r.status] ?? 'neutral'}>{statusWord(r.status)}</StatusBadge> },
+    { key: 'error_kind', label: 'Error kind', type: 'select', className: 'w-36', keep: failedOnly, hidden: !failedOnly, value: (r) => (r.status === 'failed' ? r.error_kind ?? 'unknown' : null),
+      options: Object.entries(ERROR_KIND).map(([value, label]) => ({ value, label })), render: (r) => (r.status === 'failed' ? <StatusBadge tone={r.error_kind === 'infrastructure' ? 'warn' : 'bad'}>{kindWord(r.error_kind)}</StatusBadge> : dash) },
     { key: 'error', label: 'Error', type: 'text', value: (r) => r.error, render: (r) => (r.error ? <span className='line-clamp-2 max-w-md text-sm whitespace-normal' title={r.error}>{r.error}</span> : dash) },
     { key: 'account', label: 'Account', type: 'text', className: 'w-44', value: (r) => r.account, render: (r) => r.account },
     { key: 'seconds', label: 'Duration', type: 'number', className: 'w-24 text-right', value: (r) => r.seconds, render: (r) => dur(r.seconds) },
@@ -148,10 +162,12 @@ function FailedRuns({ rows, loading, summary, filters }: { rows: FailedRun[]; lo
   ];
   return (
     <RecordView<FailedRun>
-      id='admin-health-failed-runs' noun={`failed ${W.runs}`} exportName='health-failed-runs' views={FAILED_VIEWS} compact defaultSort={[{ key: 'ended_at', dir: 'desc' }]}
+      id={failedOnly ? 'admin-health-failed-runs' : 'admin-health-runs'} noun={failedOnly ? `failed ${W.runs}` : W.runs} exportName={failedOnly ? 'health-failed-runs' : 'health-runs'} views={FAILED_VIEWS} compact
+      defaultSort={failedOnly ? [{ key: 'ended_at', dir: 'desc' }] : []}
       rows={rows} rowKey={(r) => r.id} cols={cols} loading={loading} summary={summary} filters={filters}
-      searchText={(r) => `${r.label} ${r.kind} ${r.account} ${r.error ?? ''} ${kindWord(r.error_kind)} ${r.id}`} searchPlaceholder={`Search failed ${W.runs} by kind, account or error`}
-      empty={`No failed ${W.runs} in this period.`}
+      searchText={(r) => `${r.label} ${r.kind} ${r.account} ${statusWord(r.status)} ${r.error ?? ''} ${r.error_kind ? kindWord(r.error_kind) : ''} ${r.id}`}
+      searchPlaceholder={failedOnly ? `Search failed ${W.runs} by kind, account or error` : `Search ${W.runs} by kind, account, status or error`}
+      empty={failedOnly ? `No failed ${W.runs} in this period.` : `No ${W.runs} in this period.`}
       detailTitle={(r) => r.label}
       detail={(r) => <RunEventsPeek id={r.id} />}
     />
@@ -222,7 +238,13 @@ const every = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.round(s / 6
 
 function ScheduledTab() {
   const { data, error, isLoading } = useAdmin<{ runtime: string; jobs: Job[] }>('/health/scheduled', { refetchInterval: 30_000 });
+  // mold_v0-293: the cards' sparklines, from Status's samples (src/health-samples.ts: the scheduled work's runs, failures
+  // and duration at each sample, 0068) over the last 7 days, in 3-hour buckets.
+  const hist = useAdmin<History>('/health/history?range=7d', { refetchInterval: 60_000, keep: true });
+  const b = hist.data?.buckets ?? [];
+  const spark = (f: (x: HistoryBucket) => number | null) => (b.some((x) => x.samples) ? b.map((x) => f(x) ?? 0) : undefined);
   const jobs = data?.jobs ?? [];
+  const tookNow = jobs.map((j) => j.last_ms).filter((x): x is number => x != null);
   const cols: RecordCol<Job>[] = [
     { key: 'label', label: 'Job', type: 'text', title: true, keep: true, value: (j) => j.label, render: (j) => (<>
       <span className='block font-medium'>{j.label}</span><span className='text-muted-foreground block max-w-md truncate text-xs' title={j.about}>{j.about}</span>
@@ -247,10 +269,14 @@ function ScheduledTab() {
         rows={jobs} rowKey={(j) => j.id} cols={cols} loading={isLoading || !data}
         searchText={(j) => `${j.label} ${j.about} ${j.last_error ?? ''} ${JOB_WORD[j.state]}`} searchPlaceholder='Search scheduled work'
         summary={<StatStrip quad items={[
-          { label: 'Jobs this app runs', value: data ? num(jobs.length) : '—', hint: data ? (data.runtime === 'vercel' ? 'ticked by the cron entry every 5 min' : "this server's own loops") : undefined },
-          { label: 'Failing', value: data ? num(count('failing')) : '—' },
-          { label: 'Late', value: data ? num(count('late')) : '—' },
-          { label: 'Not run yet', value: data ? num(count('never')) : '—' }
+          { label: 'Jobs scheduled', value: data ? num(jobs.length) : '—', spark: spark((x) => x.scheduler_jobs),
+            hint: data ? `${data.runtime === 'vercel' ? 'ticked by the cron entry every 5 min' : "this server's own loops"}${count('late') ? ` · ${num(count('late'))} late` : ''}${count('never') ? ` · ${num(count('never'))} not run yet` : ''}` : undefined },
+          { label: 'Runs, 7 days', value: hist.data ? num(hist.data.totals.scheduler_runs) : '—', spark: spark((x) => x.scheduler_runs),
+            hint: data ? `${num(jobs.reduce((a, j) => a + j.runs, 0))} recorded in all` : undefined },
+          { label: 'Failures, 7 days', value: hist.data ? num(hist.data.totals.scheduler_failures) : '—', spark: spark((x) => x.scheduler_failures),
+            hint: data ? `${num(count('failing'))} failing now` : undefined },
+          { label: 'Average duration', value: data ? (tookNow.length ? `${num(Math.round(tookNow.reduce((a, x) => a + x, 0) / tookNow.length))} ms` : '—') : '—', spark: spark((x) => x.scheduler_ms),
+            hint: 'each job’s last run, averaged' }
         ]} />}
         empty='This app runs no scheduled work of its own.'
         detailTitle={(j) => j.label}
@@ -384,7 +410,9 @@ function WebhooksTab() {
 
 // A grid of graphs (mold_v0-210; GET /health/status, the live checks, and /health/history, the samples the scheduler
 // keeps every few minutes for 35 days, src/health-samples.ts): one per signal, its current state as its headline, one
-// 24 hours / 7 days / 30 days switch for the whole grid; the last deploy and the mold version as a line above it.
+// 24 hours / 7 days / 30 days switch for the whole grid. mold_v0-293: above it the standard search row (the search
+// narrows the graphs, Export the live checks, the ⋯ menu's Deploy details: the last deploy, the commit, the mold, the
+// instance), not a line of deploy facts.
 // Numbers and states only: no address, no key, no person.
 
 interface Check { id: string; label: string; state: 'ok' | 'warn' | 'bad' | 'off'; value: string; detail: string | null }
@@ -403,10 +431,12 @@ export interface HistoryBucket {
   vault_set: number | null; vault_missing: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; scheduler_lag_s: number | null;
   runs_ended: number; runs_failed: number; run_failure_pct: number | null; deliveries_total: number; deliveries_failed: number; delivery_failure_pct: number | null;
   webhooks_total: number; webhooks_failed: number; webhook_failure_pct: number | null;
+  scheduler_jobs: number | null; scheduler_runs: number; scheduler_failures: number; scheduler_ms: number | null;
 }
 interface History {
   range: HistoryRange; bucket_seconds: number; every_seconds: number; retention_days: number; deliveries: boolean; webhooks: boolean; samples: number; latest: Sample | null;
-  totals: { up_pct: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; runs_ended: number; runs_failed: number; deliveries_total: number; deliveries_failed: number; webhooks_total: number; webhooks_failed: number };
+  totals: { up_pct: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; runs_ended: number; runs_failed: number; deliveries_total: number; deliveries_failed: number; webhooks_total: number; webhooks_failed: number;
+    scheduler_runs: number; scheduler_failures: number };
   buckets: HistoryBucket[];
 }
 type HistoryRange = '24h' | '7d' | '30d';
@@ -434,6 +464,10 @@ function StatusTab() {
   const missing = d ? d.providers.length - (set ?? 0) : h?.latest?.vault_missing ?? null;
   const loading = !h || !d;
   const props = { buckets: b, tick, label, loading };
+  const [q, setQ] = useState('');
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const [deploy, setDeploy] = useState(false);
+  const moreRef = useRef<HTMLSpanElement>(null);
   return (
     <div className='flex flex-col gap-3' data-health-status>
       <ErrorBox error={live.error ?? hist.error} />
@@ -448,16 +482,36 @@ function StatusTab() {
           <span className='min-w-0 flex-1'>{d.database_refused.text}</span>
         </div>
       )}
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <ReleaseLine r={d?.release} />
+      <div className='flex flex-wrap items-center gap-2' data-status-search-row=''>
+        <div className='relative min-w-48 flex-1'>
+          <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
+          <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder='Search signals' aria-label='Search signals' className='h-9 pl-8' />
+        </div>
         <ToggleGroup aria-label='Period' variant='outline' size='sm' spacing={0} value={[range]} onValueChange={(v: unknown[]) => { if (v[0]) setRange(v[0] as HistoryRange); }}>
           {RANGES.map(([v, l]) => <ToggleGroupItem key={v} value={v} aria-label={RANGE_WORD[v]} className='px-3'>{l}</ToggleGroupItem>)}
         </ToggleGroup>
+        <Button variant='ghost' size='icon' aria-label='Export CSV' title='Export the live checks (CSV)' disabled={!d} onClick={() => d && downloadCsv(`health-status-${today()}.csv`, ['Signal', 'State', 'Value', 'Detail'], d.checks.map((c) => [c.label, c.state, c.value, c.detail ?? '']))}>
+          <Icons.download />
+        </Button>
+        <span ref={moreRef} className='inline-flex'>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant='ghost' size='icon' aria-label='More' title='More' />}><Icons.dots /></DropdownMenuTrigger>
+            <DropdownMenuContent align='end' className='w-48'>
+              <DropdownMenuItem disabled={!d} onClick={() => setDeploy(true)}><Icons.rocket /> Deploy details</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
+        <Popover open={deploy} onOpenChange={setDeploy}>
+          <PopoverContent anchor={moreRef} align='end' className='w-80'>
+            <DeployDetails r={d?.release} />
+          </PopoverContent>
+        </Popover>
       </div>
       {h && !h.samples && (
         <p className='text-muted-foreground text-sm'>No samples in {RANGE_WORD[range]} yet: the scheduler takes one every {Math.round(h.every_seconds / 60)} minutes and keeps them {h.retention_days} days. The headlines are live.</p>
       )}
-      <div className='grid border-t border-l md:grid-cols-2 xl:grid-cols-3'>
+      <SignalQuery.Provider value={words}>
+      <div className='grid border-t border-l empty:hidden md:grid-cols-2 xl:grid-cols-3' data-signals=''>
         <SignalBox title='Database latency' tone={db ? CHECK_TONE[db.state] : undefined}
           headline={db ? `${db.state === 'bad' ? 'Down' : 'Up'} · ${db.value.replace(/^answered in /, '')}` : '—'} sub={db?.detail}>
           <Lines {...props} series={[{ key: 'db_ms', label: 'Answer time', color: 'var(--chart-2)' }]} format={ms} />
@@ -511,6 +565,8 @@ function StatusTab() {
           </SignalBox>
         )}
       </div>
+      </SignalQuery.Provider>
+      <p className='text-muted-foreground hidden py-8 text-center text-sm [[data-signals]:empty+&]:block'>No signal matches “{q}”.</p>
       {lastAt && <p className='text-muted-foreground text-xs'>Last sample <When d={lastAt} className='inline' />; one every {Math.round((h?.every_seconds ?? 300) / 60)} minutes, kept {h?.retention_days} days.</p>}
     </div>
   );
@@ -518,21 +574,31 @@ function StatusTab() {
 
 const cap = (s: string) => (s === 'ok' ? 'OK' : s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
-/** The last deploy and the mold version: a small line, not a chart. */
-function ReleaseLine({ r }: { r: StatusData['release'] | undefined }) {
-  if (!r) return <Skeleton className='h-4 w-80' />;
+/** The last deploy, the commit, the mold and the instance (mold_v0-293: the search row's ⋯ menu, Deploy details). */
+function DeployDetails({ r }: { r: StatusData['release'] | undefined }) {
+  if (!r) return <Skeleton className='h-24 w-full' />;
+  const row = (k: string, v: ReactNode) => <div className='flex items-baseline justify-between gap-3'><dt className='text-muted-foreground shrink-0'>{k}</dt><dd className='min-w-0 truncate text-right'>{v}</dd></div>;
   return (
-    <p className='text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs' data-release>
-      <span>Last deploy</span>{r.last_migration?.applied_at ? <When d={r.last_migration.applied_at} className='text-foreground inline' /> : <span>—</span>}
-      {r.commit && <><span aria-hidden>·</span><span>commit <Mono>{r.commit}</Mono></span></>}
-      <span aria-hidden>·</span><span>mold <Mono>{r.mold.schema ?? '—'}</Mono>{r.mold.package ? ` (package ${r.mold.package})` : ''}</span>
-      <span aria-hidden>·</span><span>instance up since {new Date(r.instance_started_at).toLocaleString()}</span>
-    </p>
+    <dl className='flex flex-col gap-1.5 text-sm' data-release=''>
+      <p className='font-medium'>Deploy details</p>
+      {row('Last deploy', r.last_migration?.applied_at ? <When d={r.last_migration.applied_at} className='inline' /> : '—')}
+      {row('Commit', r.commit ? <Mono>{r.commit}</Mono> : '—')}
+      {row('Mold', <><Mono>{r.mold.schema ?? '—'}</Mono>{r.mold.package ? ` (package ${r.mold.package})` : ''}</>)}
+      {row('Last migration', r.last_migration ? <Mono>{`${r.last_migration.version} ${r.last_migration.name}`}</Mono> : '—')}
+      {row('Instance up since', new Date(r.instance_started_at).toLocaleString())}
+      {row('Runtime', r.runtime)}
+    </dl>
   );
 }
 
+/** The Status search row's words: a graph shows when every word is in its title, headline or note. */
+const SignalQuery = createContext<string[]>([]);
+
 /** One cell of the grid: the signal's name, its current state as the headline, then its graph. */
 function SignalBox({ title, headline, sub, tone, action, children }: { title: string; headline: ReactNode; sub?: ReactNode; tone?: Tone; action?: ReactNode; children: ReactNode }) {
+  const words = useContext(SignalQuery);
+  const text = [title, headline, sub].filter((x) => typeof x === 'string').join(' ').toLowerCase();
+  if (words.some((w) => !text.includes(w))) return null;
   const dot = tone === 'ok' ? 'bg-emerald-500' : tone === 'warn' ? 'bg-amber-500' : tone === 'bad' ? 'bg-destructive' : 'bg-muted-foreground/40';
   return (
     <Box title={title} action={action} className='gap-2'>

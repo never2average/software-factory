@@ -1,7 +1,5 @@
-// Health › Sign-in's checker (mold_v0-270; src/sign-in-check.ts, web/src/features/admin/sign-in-check.tsx).
+// The sign-in checker (mold_v0-270; src/sign-in-check.ts): the factory's deploy-time check (mold_v0-293: no console tab).
 //   npm run test:sign-in-check            offline: every provider is a stand-in on 127.0.0.1
-//   SIGN_IN_SNAPSHOT_DIR=<dir>            keep screenshots of the tab (light 1440 px, dark 390 px) when the machine has a
-//                                         headless browser (CHROME_BIN, or a Playwright cache)
 //
 // The providers' own addresses (accounts.google.com, github.com, api.clerk.com, the Clerk instance's Frontend API, a
 // pack's OAuth provider) are mapped to stand-in servers that answer as each was measured to: Google 302s to its sign-in
@@ -23,17 +21,14 @@
 // 6. The report: at most an hour old, "check again" at most once a minute, a new front door starts afresh; the staff
 //    answer carries no client id and no secret, the factory's (the cron secret) the public client ids.
 // 7. The two routes: the staff tab's (an admin token) and the factory's (CRON_SECRET only).
-// 8. The tab in a headless browser: a pass, a fail and an unknown card; screenshots with SIGN_IN_SNAPSHOT_DIR.
+// 8. No tab (mold_v0-293): Health draws no Sign-in page.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
-import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
-import { homedir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { cleanup, STAMP, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -348,22 +343,11 @@ try {
       noSecret(st2, "the staff route");
       console.log("✓ the report (an hour, a minute, a new front door; no client id or secret for staff) and its two routes");
 
-      // ---------- 8. the tab, in a browser ----------
-      const chrome = findChrome();
-      if (!chrome) console.log("✓ (no headless browser on this machine: the rendered tab is skipped; set CHROME_BIN)");
-      else {
-        acme.registered.clear();
-        await db.query("DELETE FROM sign_in_checks");
-        const shown = await SIC.signInReport();
-        const kinds = new Set(shown.flows.map((f) => f.result));
-        assert.ok(kinds.has("pass") && kinds.has("fail") && kinds.has("unknown"), `the drawn report has a pass, a fail and an unknown: ${[...kinds]}`);
-        const dom = await drawTab(chrome, path.join(ROOT, "web"), shown);
-        for (const r of ["pass", "fail", "unknown"]) assert.match(dom, new RegExp(`data-result="${r}"`), `a ${r} card is drawn`);
-        assert.match(dom, />Fail</); assert.match(dom, />Unknown</); assert.match(dom, />Pass</);
-        assert.match(dom, /Check again/);
-        assert.ok(dom.includes(`${FRONT}/api/credential-connections/callback`), "the exact address is on the card");
-        console.log(`✓ the tab drawn in a headless browser: a pass, a fail and an unknown card${process.env.SIGN_IN_SNAPSHOT_DIR ? `; screenshots in ${process.env.SIGN_IN_SNAPSHOT_DIR}` : ""}`);
-      }
+      // ---------- 8. no tab (mold_v0-293): the console draws no Sign-in page; the check and its routes stay ----------
+      const consoleSrc = ["web/src/features/admin/analytics.tsx", "web/src/features/admin/health-tabs.tsx"].map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n");
+      assert.ok(!existsSync(path.join(ROOT, "web/src/features/admin/sign-in-check.tsx")), "no Sign-in page in the console");
+      assert.doesNotMatch(consoleSrc, /SignInTab|\['signin', 'Sign-in'\]/, "Health has no Sign-in tab (an old ?section=signin opens Errors)");
+      console.log("✓ no Sign-in tab in Health; the report and its two routes stay for the factory");
     } finally { server.close(); }
   }
 } finally {
@@ -371,69 +355,3 @@ try {
   cleanup();
 }
 process.exit(0);
-
-/** A headless Chrome on this machine: CHROME_BIN, else one a Playwright install left in its cache. */
-function findChrome(): string | null {
-  if (process.env.CHROME_BIN) return existsSync(process.env.CHROME_BIN) ? process.env.CHROME_BIN : null;
-  const cache = path.join(homedir(), ".cache", "ms-playwright");
-  if (!existsSync(cache)) return null;
-  for (const d of readdirSync(cache).filter((x) => x.startsWith("chromium_headless_shell-")).sort().reverse())
-    for (const sub of existsSync(path.join(cache, d)) ? readdirSync(path.join(cache, d)) : []) {
-      const bin = path.join(cache, d, sub, "chrome-headless-shell");
-      if (existsSync(bin)) return bin;
-    }
-  return null;
-}
-
-/**
- * The console's Sign-in tab (SignInTab, bundled with esbuild, its API answered in the page by `report`) under Health's
- * tab strip (no title above it, mold_v0-272), with the console's own compiled CSS (Tailwind over web/src); the DOM back, and with SIGN_IN_SNAPSHOT_DIR the
- * light theme at 1440 px and the dark one at 390 px.
- */
-async function drawTab(chrome: string, web: string, report: unknown): Promise<string> {
-  const { build } = await import("esbuild");
-  const dir = path.join(TMP, "render-sign-in");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(web, "render-sign-in.tsx"), `import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { SignInTab } from '@/features/admin/sign-in-check';
-const qc = new QueryClient();
-createRoot(document.getElementById('root')!).render(<QueryClientProvider client={qc}><div className='flex flex-col gap-3 p-4 md:p-6'>
-  <div role='tablist' className='text-muted-foreground flex gap-4 border-b text-sm'><span>Errors</span><span>Status</span><span className='text-foreground border-foreground border-b-2 pb-2 font-medium'>Sign-in</span></div>
-  <SignInTab /></div></QueryClientProvider>);
-setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
-`);
-  writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
-  writeFileSync(path.join(web, "render-auth.ts"), "export * from './src/lib/auth/builtin-client';\nexport const CLERK = false;\nexport const AUTH_PROVIDER = 'builtin';\n");
-  try {
-    await build({ entryPoints: [path.join(web, "render-sign-in.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: web,
-      tsconfig: path.join(web, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_AUTH_PROVIDER": '"builtin"' },
-      alias: { "next/link": path.join(web, "render-link.tsx") }, logLevel: "error",
-      plugins: [{ name: "auth", setup(b) { b.onResolve({ filter: /^@\/lib\/auth$/ }, () => ({ path: path.join(web, "render-auth.ts") })); } }] });
-  } finally { for (const f of ["render-sign-in.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(web, f), { force: true }); }
-  const req = createRequire(path.join(web, "package.json"));
-  const postcss = req("postcss"), tw = req("@tailwindcss/postcss");
-  const from = path.join(web, "src", "styles", "globals.css");
-  const css = (await postcss([tw({ base: web })]).process(readFileSync(from, "utf8"), { from })).css as string;
-  const html = (dark: boolean) => {
-    const f = path.join(dir, dark ? "dark.html" : "light.html");
-    writeFileSync(f, `<!doctype html><html data-theme="supabase" class="${dark ? "dark" : ""}" style="color-scheme: ${dark ? "dark" : "light"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style></head>
-<body><div id="root"></div><script>const REPORT = ${JSON.stringify(report).replace(/</g, "\\u003c")};
-window.fetch = async (url) => { const p = new URL(String(url), 'http://console.test').pathname;
-  return p === '/api/admin/onboarding/health/sign-in' ? new Response(JSON.stringify(REPORT), { status: 200, headers: { 'content-type': 'application/json' } }) : new Response('{}', { status: 404 }); };</script><script src="bundle.js"></script></body></html>`);
-    return f;
-  };
-  const args = (w: number, h: number) => ["--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--virtual-time-budget=10000", `--window-size=${w},${h}`];
-  const r = spawnSync(chrome, [...args(1440, 1600), "--dump-dom", `file://${html(false)}`], { encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
-  assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 1000)}`);
-  assert.match(r.stdout, /data-ready="1"/, `the tab rendered (${r.stdout.slice(0, 300)})`);
-  assert.match(r.stdout, /data-sign-in/, `the report is on the page (${r.stdout.slice(0, 600)})`);
-  const out = process.env.SIGN_IN_SNAPSHOT_DIR;
-  if (out) {
-    mkdirSync(out, { recursive: true });
-    spawnSync(chrome, [...args(1440, 1700), `--screenshot=${path.join(out, "sign-in-light-1440.png")}`, `file://${html(false)}`], { timeout: 120_000 });
-    spawnSync(chrome, [...args(390, 4200), `--screenshot=${path.join(out, "sign-in-dark-390.png")}`, `file://${html(true)}`], { timeout: 120_000 });
-    writeFileSync(path.join(out, "sign-in-dom.html"), r.stdout);
-  }
-  return r.stdout;
-}

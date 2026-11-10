@@ -2,13 +2,18 @@
 // The platform's GitHub App on /admin/keys (mold_v0-014; src/github-app-routes.ts at /api/admin/onboarding/github-app).
 // mold_v0-288: one row of the Key vault's providers (./keyvault.tsx); its side panel holds what to type into GitHub's
 // "Register new GitHub App" form, the app's settings (sealed in the key vault: secrets are typed once and never shown
-// again, only which are set and the key's fingerprint) and every workspace's installation, with a revoke. There only in
-// a build whose packs declare a credential field that asks for a GitHub App.
+// again, only which are set and the key's fingerprint). mold_v0-293: every workspace's installation, with a revoke, is a
+// modal from the panel's ⋯ menu (Installations), not a list in the panel. There only in a build whose packs declare a
+// credential field that asks for a GitHub App.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { Icons } from '@/components/icons';
+import { downloadCsv, today } from '@/lib/csv';
 import { adminApi, ApiError } from '@/lib/api-client';
 import { useAdminAction } from './lib';
 import { usePanelGuard } from '@/components/layout/detail-panel';
@@ -39,15 +44,14 @@ export function useGithubApp() {
   }).data ?? null;
 }
 
-/** The workspaces with the app connected now (ended installations stay listed in the panel, and are not counted). */
+/** The workspaces with the app connected now (ended installations are listed behind the modal's filter, and are not counted). */
 export const liveInstallations = (data: GithubAppView) => data.installations.filter((i) => !i.removed_at).length;
 
-/** The GitHub App row's side panel: one flat card of numbered steps, then the installations. */
+/** The GitHub App row's side panel: one flat card of numbered steps (the installations: its ⋯ menu's modal). */
 export function GithubAppPanel({ data }: { data: GithubAppView }) {
   const [f, setF] = useState(EMPTY);
   usePanelGuard(Object.values(f).some((v) => v.trim()), 'the GitHub App settings you typed');
   const save = useAdminAction(() => adminApi('PUT', '/github-app', Object.fromEntries(Object.entries(f).filter(([, v]) => v.trim()))), { success: 'GitHub App saved' });
-  const revoke = useAdminAction((org: number) => adminApi('DELETE', `/github-app/installations/${org}`), { success: 'Installation revoked' });
   const a = data.app;
   const set = (k: keyof typeof EMPTY) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value });
   return (
@@ -81,23 +85,62 @@ export function GithubAppPanel({ data }: { data: GithubAppView }) {
           </form>
         </li>
       </ol>
-      <div className='flex min-w-0 flex-col gap-2'>
-        <p className='font-medium'>Installations</p>
-        <p className='text-muted-foreground text-xs'>Every workspace that connected the app, live first. Revoking ends it now: its runs stop getting tokens and the app is uninstalled from that GitHub account.</p>
-        <DataList<Installation> rows={data.installations} noun='installations' minWidth={480} empty='No workspace has connected GitHub yet.' cols={[
-          { label: 'Workspace', render: (i) => <span className='flex flex-col'><span className='font-medium'>{i.workspace.name}</span><Mono>{i.workspace.slug}</Mono></span> },
-          { label: 'GitHub account', render: (i) => <span className='flex flex-col'><span>{i.account}</span><span className='text-muted-foreground text-xs'>installation {i.installation_id}</span><span className='text-muted-foreground text-xs tabular-nums'>{i.repository_selection === 'all' ? `all (${i.repositories})` : i.repositories} repositories{i.narrowed_assets ? ` · ${i.narrowed_assets} narrowed` : ''}</span></span> },
-          { label: 'Status', render: (i) => <span className='flex flex-col items-start gap-0.5'>{i.removed_at
-            ? <StatusBadge tone='neutral' title={i.removed_at}>{(i.removed_reason ?? 'ended').replaceAll('_', ' ')}</StatusBadge>
-            : i.suspended ? <StatusBadge tone='warn'>suspended</StatusBadge> : <StatusBadge tone='ok'>live · {i.live_tokens} tokens</StatusBadge>}
-            <When d={i.connected_at} /><span className='text-muted-foreground text-xs'>{i.connected_by?.replace(/^customer:/, '')}</span></span> },
-          { label: '', className: 'text-right', render: (i) => i.removed_at ? null : (
-            <Gate need='accounts'><ConfirmButton label='Revoke' variant='destructive' title={`Revoke ${i.workspace.name}'s GitHub installation?`} confirmLabel='Revoke'
-              description={`Its runs stop getting tokens at once and the app is uninstalled from ${i.account}. They can connect again.`} onConfirm={() => revoke.mutate(i.workspace.id)} disabled={revoke.isPending} /></Gate>
-          ) }
-        ]} />
-      </div>
     </div>
+  );
+}
+
+type Show = 'active' | 'ended' | 'all';
+const SHOW: readonly (readonly [Show, string])[] = [['active', 'Active'], ['ended', 'Ended'], ['all', 'All']];
+const statusOf = (i: Installation) => (i.removed_at ? (i.removed_reason ?? 'ended').replaceAll('_', ' ') : i.suspended ? 'suspended' : 'live');
+
+/**
+ * Every workspace's installation (mold_v0-293), from the GitHub App panel's ⋯ menu: the standard list (search, the
+ * Show filter, Export, then the table), active ones by default, ended ones behind the filter; Revoke on each live one.
+ */
+export function GithubInstallationsDialog({ data, open, onOpenChange }: { data: GithubAppView; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [q, setQ] = useState('');
+  const [show, setShow] = useState<Show>('active');
+  const revoke = useAdminAction((org: number) => adminApi('DELETE', `/github-app/installations/${org}`), { success: 'Installation revoked' });
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = data.installations
+    .filter((i) => (show === 'all' ? true : show === 'ended' ? !!i.removed_at : !i.removed_at))
+    .filter((i) => { const t = `${i.workspace.name} ${i.workspace.slug} ${i.account} ${i.installation_id} ${statusOf(i)} ${i.connected_by ?? ''}`.toLowerCase(); return words.every((w) => t.includes(w)); });
+  const exportRows = () => downloadCsv(`github-app-installations-${today()}.csv`, ['Workspace', 'Slug', 'GitHub account', 'Installation', 'Repositories', 'Status', 'Connected', 'Connected by'],
+    rows.map((i) => [i.workspace.name, i.workspace.slug, i.account, i.installation_id, i.repository_selection === 'all' ? `all (${i.repositories})` : i.repositories, statusOf(i), i.connected_at, i.connected_by?.replace(/^customer:/, '') ?? '']));
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='flex max-h-[85dvh] flex-col gap-3 sm:max-w-4xl' data-testid='github-installations'>
+        <DialogHeader>
+          <DialogTitle>Installations</DialogTitle>
+          <DialogDescription>Every workspace that connected the GitHub App. Revoking ends it now: its runs stop getting tokens and the app is uninstalled from that GitHub account.</DialogDescription>
+        </DialogHeader>
+        <div className='flex flex-wrap items-center gap-2'>
+          <div className='relative min-w-48 flex-1'>
+            <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
+            <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder='Search workspaces and GitHub accounts' aria-label='Search workspaces and GitHub accounts' className='h-9 pl-8' />
+          </div>
+          <NativeSelect aria-label='Show' value={show} onChange={(e) => setShow(e.target.value as Show)} data-installations-show=''>
+            {SHOW.map(([v, l]) => <NativeSelectOption key={v} value={v}>{l}</NativeSelectOption>)}
+          </NativeSelect>
+          <Button variant='ghost' size='icon' aria-label='Export CSV' title={`Export CSV (${rows.length} rows)`} onClick={exportRows} disabled={!rows.length}><Icons.download /></Button>
+        </div>
+        <div className='min-h-0 overflow-y-auto'>
+          <DataList<Installation> rows={rows} noun='installations' minWidth={640} empty={q || show !== 'active' ? 'No installation matches.' : 'No workspace has GitHub connected now.'} cols={[
+            { label: 'Workspace', render: (i) => <span className='flex flex-col'><span className='font-medium'>{i.workspace.name}</span><Mono>{i.workspace.slug}</Mono></span> },
+            { label: 'GitHub account', render: (i) => <span className='flex flex-col'><span>{i.account}</span><span className='text-muted-foreground text-xs'>installation {i.installation_id}</span></span> },
+            { label: 'Repositories', className: 'text-right', render: (i) => <span className='tabular-nums'>{i.repository_selection === 'all' ? `all (${i.repositories})` : i.repositories}{i.narrowed_assets ? <span className='text-muted-foreground block text-xs'>{i.narrowed_assets} narrowed</span> : null}</span> },
+            { label: 'Connected', render: (i) => <span className='flex flex-col items-start gap-0.5'>{i.removed_at
+              ? <StatusBadge tone='neutral' title={i.removed_at}>{statusOf(i)}</StatusBadge>
+              : i.suspended ? <StatusBadge tone='warn'>suspended</StatusBadge> : <StatusBadge tone='ok'>live · {i.live_tokens} tokens</StatusBadge>}
+              <When d={i.connected_at} /><span className='text-muted-foreground text-xs'>{i.connected_by?.replace(/^customer:/, '')}</span></span> },
+            { label: '', className: 'text-right', render: (i) => i.removed_at ? null : (
+              <Gate need='accounts'><ConfirmButton label='Revoke' variant='destructive' title={`Revoke ${i.workspace.name}'s GitHub installation?`} confirmLabel='Revoke'
+                description={`Its runs stop getting tokens at once and the app is uninstalled from ${i.account}. They can connect again.`} onConfirm={() => revoke.mutate(i.workspace.id)} disabled={revoke.isPending} /></Gate>
+            ) }
+          ]} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

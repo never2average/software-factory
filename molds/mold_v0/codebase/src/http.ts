@@ -800,8 +800,9 @@ export function createApp() {
     res.json(await h.healthWebhooks(req.query as Record<string, unknown>));
   });
   ob.get("/health/status", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthStatus()));
-  // Health › Sign-in (mold_v0-270, src/sign-in-check.ts): every sign-in's return address against the front door, at most an
-  // hour old; ?refresh=1 checks again (at most once a minute). Never a secret or a client id (a fingerprint).
+  // The sign-in report for staff (mold_v0-270, src/sign-in-check.ts; mold_v0-293: no console tab draws it, the factory reads
+  // /api/cron/sign-in-check): every sign-in's return address against the front door, at most an hour old;
+  // ?refresh=1 checks again (at most once a minute). Never a secret or a client id (a fingerprint).
   ob.get("/health/sign-in", async (req, res) => void res.json(await (await import("./sign-in-check.js")).signInReport({ refresh: req.query.refresh === "1" })));
   // Health › Status's graphs (mold_v0-210, src/health-samples.ts): ?range=24h|7d|30d, the samples in buckets.
   ob.get("/health/history", async (req, res) => void res.json(await (await import("./health-samples.js")).healthHistory(req.query as Record<string, unknown>)));

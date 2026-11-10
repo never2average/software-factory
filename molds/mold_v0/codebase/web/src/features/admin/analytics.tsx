@@ -36,7 +36,6 @@ import { UrlTabs } from './compute-common';
 import { ComputeSessions } from './compute-sessions';
 import { sessionEngine } from './engine';
 import { HealthTab, healthTabsShell, NO_COLUMN_LINES } from './health-tabs';
-import { SignInTab } from './sign-in-check';
 import { W } from '@/lib/vocabulary';
 import { NS } from '@/lib/namespace';
 
@@ -432,11 +431,11 @@ export function AdminAnalytics({ view = 'analytics' }: { view?: 'analytics' | 'h
  * Health's tabs: errors (this report), and the session engine's Jobs and Sessions record tables (?section=jobs|sessions),
  * exactly as they were; in a build without it (mold_v0-204, ./health-tabs.tsx), Runs, Scheduled work, Email Delivery (only
  * when the app sends company email or has a developer surface), Webhook Delivery (mold_v0-215: only with a developer
- * surface) and Status after Errors (?section=runs|scheduled|deliveries|webhooks|status); Sign-in in both (mold_v0-270,
- * ?section=signin: every sign-in's return address against the front door).
+ * surface) and Status after Errors (?section=runs|scheduled|deliveries|webhooks|status). mold_v0-293: no Sign-in tab (the
+ * factory's deploy-time check keeps its routes); an old ?section=signin opens the first tab, Errors.
  */
 const ENGINE_HEALTH = sessionEngine();
-const HEALTH_TABS: readonly (readonly [string, string])[] = ENGINE_HEALTH ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions'], ['signin', 'Sign-in']] : healthTabsShell();
+const HEALTH_TABS: readonly (readonly [string, string])[] = ENGINE_HEALTH ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']] : healthTabsShell();
 /**
  * Health's runs tab moved to FinOps (mold_v0-126): its old links go there, in a build with the session engine. Without
  * it, ?section=runs is Health's own Runs tab again (mold_v0-204: failures, durations and events, beside FinOps' spend).
@@ -459,7 +458,7 @@ function Report({ view }: { view: 'analytics' | 'health' }) {
       <PageContainer>
         <div className={cn('flex min-w-0 flex-col gap-3', NO_COLUMN_LINES)}>
           <HealthTabs tab={tab} />
-          {tab === 'jobs' ? <ComputeJobs /> : tab === 'signin' ? <SignInTab /> : <ComputeSessions />}
+          {tab === 'jobs' ? <ComputeJobs /> : <ComputeSessions />}
         </div>
       </PageContainer>
     );

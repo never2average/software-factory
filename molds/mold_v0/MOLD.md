@@ -1165,7 +1165,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     (`POST /api/github-app/webhook`, `X-Hub-Signature-256` checked against the webhook secret before anything is read)
     ends a connection at once on `installation.deleted`, stops minting while suspended, and keeps the repository list
     (and every asset's narrowing) current on `installation_repositories`. Owners disconnect (`DELETE /api/github-app`),
-    staff revoke (`DELETE /api/admin/onboarding/github-app/installations/:org`), and removing a workspace
+    staff revoke (`DELETE /api/admin/onboarding/github-app/installations/:org`; mold_v0-293: from Key vault › GitHub App's
+    panel, ⋯ › Installations, a modal listing the active installations, ended ones behind its Show filter), and removing a workspace
     (`src/tenancy.ts`) does the same: the row ends, its tokens are revoked and the installation is uninstalled on GitHub.
   - **Isolation**: the three tables have no grant for tenant work (`check:rls`, the live probe). `test:github-app`
     proves it against a GitHub stand-in (`scripts/lib/github-standin.ts`): the install's refusals (another workspace's
@@ -1376,16 +1377,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pixel for pixel. Without it (`web/src/features/admin/health-tabs.tsx`, `src/health-tabs.ts`, read-only staff routes
   under `/api/admin/onboarding/health/`): **Errors** as before; **Runs** (in the build's word): four cards (runs, failure
   rate, cost, median duration; the refused-and-retried runs of mold_v0-189 and the top error kinds said under them) and
-  one table, the failed runs (kind, agent or job, error kind with `output_missing`, the error cleaned, account, duration,
-  cost; views for agent, job, output missing and refused-and-retried) or, by the toolbar's picker, the kinds (runs,
-  failures per error kind, median and p95, cost); a failed run's peek lists its events (type, attempt, time and the
+  one table, every recent run of any status, newest first (mold_v0-293: kind, status, account, duration, cost; the last
+  500 of the period), or by the toolbar's picker the failed runs alone (kind, agent or job, error kind with
+  `output_missing`, the error cleaned, account, duration, cost) or the kinds (runs, failures per error kind, median and
+  p95, cost); a run's peek lists its events (type, attempt, time and the
   shell's own figures and words, never who asked or a value); **Scheduled work**: every job the shell runs that this
   build has turned on (schedules and due dates, record clocks, email intake, the event outbox relay, webhook deliveries,
   ledger checkpoints, encrypted-field batches, audit and workspace retention, run charges), each with its state (on time,
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface, emails only
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); its four cards
+  carry sparklines over 7 days (mold_v0-293: jobs scheduled, runs, failures, average duration; each Health sample keeps
+  the scheduled work's counters, `sql/migrations/0068_health_samples_scheduler.sql`, rollback
+  `sql/rollback/0068_health_samples_scheduler.sql`; late, not-run-yet and failing-now said under them); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface, emails only
   (mold_v0-215): four cards (sent, failed with the failure rate, not sent: skipped before sending, and the kinds) and
   the emails by kind and status (never an address, a domain or a subject); **Webhook Delivery** (`?section=webhooks`,
   `GET /api/admin/onboarding/health/webhooks`, mold_v0-215), only when the app has a developer surface (kind
@@ -1408,8 +1413,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate, the email failure rate (only when the app has Email Delivery) and the webhook
   failure rate (mold_v0-215, only with a developer surface: each sample counts the webhook deliveries settled and failed
   apart from the emails, `webhooks_total` and `webhooks_failed`, `sql/migrations/0039_health_samples_webhooks.sql`;
-  rollback: `sql/rollback/0039_health_samples_webhooks.sql`, which drops the two columns); the last deploy and the mold version are a line above it, not a
-  graph. The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
+  rollback: `sql/rollback/0039_health_samples_webhooks.sql`, which drops the two columns). Above it the standard search
+  row (mold_v0-293: the search narrows the graphs, the period switch, Export of the live checks, and a ⋯ menu whose
+  Deploy details shows the last deploy, the commit, the mold version, the last migration and the instance's start in a
+  popover; before, a line of those facts). The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
   work, `src/rls.ts` NO_ACCESS; rollback: `sql/rollback/0038_health_samples.sql`, which drops it with its rows), one
   row every 4 minutes at most across processes (`src/health-samples.ts`): a server's own loop (`startHealthSampler`)
   and, on Vercel, the cron entry, so history exists without the long-running server; each sample is tracked as the
@@ -4001,10 +4008,11 @@ shell checks each one it uses, and the factory does the same from the front door
   the callback routes note, before any session, where the browser came back (an old address: fail; the front door:
   pass) and an error GitHub sent with a state this server signed (`redirect_uri_mismatch`: fail; a forged state is
   ignored). Never the code, the state or the person.
-- **Health › Sign-in** (`/admin/health?section=signin`, staff; `GET /api/admin/onboarding/health/sign-in`): one card per
-  flow, the exact address to register (with Copy), where to click and the steps; at most an hour old, **Check again**
-  at most once a minute (`?refresh=1`). Kept in `sign_in_checks` (`0057_sign_in_checks`, platform bookkeeping, closed to
-  tenant work). No client id on the page (a fingerprint) and never a secret.
+- **The report for staff** (`GET /api/admin/onboarding/health/sign-in`): every flow, the exact address to register,
+  where to click and the steps; at most an hour old, checked again at most once a minute (`?refresh=1`). Kept in
+  `sign_in_checks` (`0057_sign_in_checks`, platform bookkeeping, closed to tenant work). No client id (a fingerprint) and
+  never a secret. mold_v0-293: the console draws no Sign-in tab (Health › Sign-in is gone; an old
+  `/admin/health?section=signin` opens Health's first tab); the factory's check below is where a failing address shows.
 - **The factory** reads the same report with the cron secret (`GET /api/cron/sign-in-check`, the public client ids it
   probes with) and asks the providers itself for the front door it is about to use
   (`.claude/scripts/lib/sign_in_check.py`): in `provision.py <app>` (the check), after every `--deploy`, in

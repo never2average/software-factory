@@ -217,10 +217,11 @@ try {
     assert.match(spend, /id !== 'experiments' \|\| tab === 'experiments' \|\| anyExperiment/, "Experiments only with a pricing experiment, or when a link opens it");
     // mold_v0-204: the session engine's Health keeps exactly its three tabs and its old runs link to FinOps; a build
     // without it has Health's own tabs after Errors (Runs, Scheduled work, Email Delivery only with mail or webhooks, Status).
-    assert.match(health, /ENGINE_HEALTH \? \[\['errors', 'Errors'\], \['jobs', 'Jobs'\], \['sessions', 'Sessions'\], \['signin', 'Sign-in'\]\] : healthTabsShell\(\)/, "the engine's Health: Errors, Jobs, Sessions as before, and Sign-in (mold_v0-270)");
+    assert.match(health, /ENGINE_HEALTH \? \[\['errors', 'Errors'\], \['jobs', 'Jobs'\], \['sessions', 'Sessions'\]\] : healthTabsShell\(\)/, "the engine's Health: Errors, Jobs, Sessions as before (mold_v0-293: no Sign-in tab)");
+    assert.doesNotMatch(health, /SignInTab|'signin'/, "mold_v0-293: no Sign-in tab or page in either Health; an old ?section=signin is not a tab, so Errors opens");
     assert.match(health, /ENGINE_HEALTH \? \{ runs: '\/admin\/finops\?section=runs' \} : \{\}/, "the engine's old runs link still goes to FinOps");
     const tabs = readFileSync(path.join(ROOT, "web/src/features/admin/health-tabs.tsx"), "utf8");
-    assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\),\s*\.\.\.\(webhooksTab\(\) \? \[\['webhooks', 'Webhook Delivery'\] as const\] : \[\]\), \['status', 'Status'\], \['signin', 'Sign-in'\]/, "the shell's Health tabs, in order: Errors, Runs, Scheduled work, Email Delivery, Webhook Delivery, Status, Sign-in");
+    assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\),\s*\.\.\.\(webhooksTab\(\) \? \[\['webhooks', 'Webhook Delivery'\] as const\] : \[\]\), \['status', 'Status'\]\n\];/, "the shell's Health tabs, in order: Errors, Runs, Scheduled work, Email Delivery, Webhook Delivery, Status (mold_v0-293: Sign-in removed)");
     assert.match(tabs, /deliveriesTab = \(\): boolean => settingsPage\.email \|\| developerConsole\.on/, "Email Delivery only with company email or a developer surface");
     assert.match(tabs, /webhooksTab = \(\): boolean => developerConsole\.on;/, "Webhook Delivery only with a developer surface (mold_v0-215)");
     // Email Delivery is emails only: its tab has no webhook card or view; the webhook ones are Webhook Delivery's.
