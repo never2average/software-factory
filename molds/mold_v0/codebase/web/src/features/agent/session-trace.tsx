@@ -180,14 +180,12 @@ function MessageEntry({ s }: { s: TraceStep }) {
   if (s.role === 'system') return <p className='text-muted-foreground px-2 py-1 text-center text-xs' data-trace-message='system'>{s.body} · <When d={s.at} /></p>;
   if (s.role === 'person') return (
     <div className='flex flex-col items-end gap-1 px-1 py-2' data-trace-message='person'>
-      <span className='text-muted-foreground text-xs'>{s.by ?? 'You'} · <When d={s.at} /></span>
       <Bubble variant='default' align='end'><BubbleContent className='text-sm whitespace-pre-wrap'>{s.body}</BubbleContent></Bubble>
-      {s.message_status && <span className='text-muted-foreground text-xs'>{STATUS_WORDS[s.message_status] ?? s.message_status}</span>}
+      {s.message_status === 'pending' && <span className='text-muted-foreground text-xs'>{STATUS_WORDS.pending}</span>}
     </div>
   );
   return (
     <div className='flex flex-col gap-1 px-1.5 py-2' data-trace-message='agent'>
-      <span className='text-muted-foreground text-xs'>Agent · <When d={s.at} /></span>
       <div className='text-sm'><Markdown>{s.body ?? ''}</Markdown></div>
     </div>
   );
@@ -196,9 +194,7 @@ function MessageEntry({ s }: { s: TraceStep }) {
 function Step({ s, retries, call, sessionId, depth = 0 }: { s: TraceStep; retries: Map<string, number>; call: Call; sessionId: string; depth?: number }) {
   const [open, toggle] = useDisclosure(false);
   const p = present(s);
-  const retry = retries.get(s.id);
-  const hasBody = !!(s.members?.length || s.children?.length || s.more || s.error || (s.fields && Object.keys(s.fields).length) || (s.detail && !p.chip) || s.input_tokens !== undefined);
-  const metrics = [s.model && s.input_tokens !== undefined ? `${tokens(s.input_tokens)} in · ${tokens(s.output_tokens ?? 0)} out` : null, s.cost_usd !== undefined && s.cost_usd > 0 ? dollars(s.cost_usd) : null, s.duration_ms !== undefined ? formatDuration(s.duration_ms) : null].filter(Boolean);
+  const hasBody = !!(s.members?.length || s.children?.length || s.more || s.error || (s.fields && Object.keys(s.fields).length) || s.detail || s.input_tokens !== undefined);
   const icon = cn('shrink-0', s.status === 'error' ? 'text-destructive' : s.status === 'waiting' ? 'text-amber-600 dark:text-amber-400' : ACCENT[s.kind]);
   if (s.kind === 'message') return <li><MessageEntry s={s} /></li>;
   return (
@@ -212,16 +208,8 @@ function Step({ s, retries, call, sessionId, depth = 0 }: { s: TraceStep; retrie
           : <span className={cn('mt-1 flex size-6 items-center justify-center', icon)} aria-hidden>{ICONS[s.kind]}</span>}
         <span className='flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5 leading-5'>
           <span className={cn('text-[13px] font-medium', s.status === 'error' && 'text-destructive', s.status === 'running' && 'shimmer')}>{p.title}</span>
-          {p.chip && <span className='bg-muted text-muted-foreground inline-flex h-[18px] max-w-[min(32rem,100%)] items-center rounded px-1.5 font-mono text-[11px]' title={p.chip}><span className='truncate'>{p.chip}</span></span>}
-          {s.http_status !== undefined && s.http_status >= 400 && <Badge variant='outline' className='border-destructive/50 text-destructive font-normal'>{s.http_status}</Badge>}
-          {retry ? <Badge variant='outline' className='font-normal'>Retry {retry}</Badge> : null}
           {s.status === 'waiting' && <span className='text-amber-700 dark:text-amber-300 text-xs'>Waiting</span>}
-          {s.children?.length ? <span className='text-muted-foreground text-xs'>{s.children.length} step{s.children.length === 1 ? '' : 's'}</span> : null}
           {s.error && <span className='text-destructive basis-full text-xs break-words'>{s.error}</span>}
-        </span>
-        <span className='text-muted-foreground ml-auto flex shrink-0 items-center gap-2 pl-2 text-[11px] leading-5 tabular-nums'>
-          {metrics.map((m) => <span key={String(m)}>{m}</span>)}
-          <time className='font-mono'>{new Date(s.at).toLocaleTimeString(undefined, { hour12: false })}</time>
         </span>
       </div>
       {open && hasBody && (s.members?.length
@@ -269,7 +257,7 @@ function StepDetails({ s, call, sessionId }: { s: TraceStep; call: Call; session
       <p className='text-muted-foreground'>{fact}</p>
       {s.kind === 'model' && s.input_tokens !== undefined && <p className='tabular-nums'>{s.input_tokens.toLocaleString('en')} tokens in ({(s.cached_tokens ?? 0).toLocaleString('en')} cached), {(s.output_tokens ?? 0).toLocaleString('en')} out{s.cost_usd !== undefined ? ` · ${dollars(s.cost_usd)}` : ''}</p>}
       {s.error && <pre className='bg-muted/40 text-destructive max-h-60 overflow-auto rounded-md border p-2 font-mono break-all whitespace-pre-wrap'>{s.error}</pre>}
-      {s.detail && !present(s).chip && <p className='break-words'>{s.detail}</p>}
+      {s.detail && <p className='break-words font-mono'>{s.detail}</p>}
       {s.more && !data && !failed && <p className='text-muted-foreground'>Reading its full detail…</p>}
       {failed && <p className='text-destructive'>Its detail could not be read.</p>}
       {data && (call_ ? <Block heading={s.tool === 'Bash' ? 'Command' : 'Arguments'} text={s.tool === 'Bash' && typeof call_.preview === 'string' ? call_.preview : pretty(call_.input)} truncated={call_.truncated} /> : <p className='text-muted-foreground'>This step has no recorded input.</p>)}
@@ -290,30 +278,19 @@ function useFollow(dependency: unknown) {
 }
 
 /** The stream. `dock` (the composer) floats over its bottom edge; the rows carry padding so nothing lives under it for good. */
-export function TraceStream({ sessionId, call, steps, waitingOn, connected, live, pruned, dock, dockHeight }: {
+export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, dockHeight }: {
   sessionId: string; call: Call; steps: TraceStep[]; waitingOn: string | null; connected: boolean; live: boolean; pruned: boolean; dock: ReactNode; dockHeight: number;
 }) {
   const shaped = useMemo(() => shapeSteps(steps), [steps]);
   const retries = useMemo(() => retryNumbers(steps), [steps]);
-  const [expansion, setExpansion] = useState({ gen: 0, open: false });
+  const expansion = useMemo(() => ({ gen: 0, open: false }), []);
   const { box, following, onScroll, toEnd } = useFollow(steps.length + (waitingOn ?? '').length + (steps.at(-1)?.status ?? ''));
   const rows: ReactNode[] = [];
-  let wake: number | null | undefined;
   for (const s of shaped) {
-    // A wake is a section of the stream: a quiet heading, never a box around the conversation.
-    if (s.wake && s.wake !== wake) { wake = s.wake; rows.push(<li key={`wake:${s.wake}`} className='text-muted-foreground mt-3 mb-1 flex items-center gap-2 px-1 text-xs' data-trace-wake={s.wake}><span className='font-medium'>Wake {s.wake}</span><span className='bg-border h-px flex-1' /></li>); }
     rows.push(<Step key={s.id} s={s} retries={retries} call={call} sessionId={sessionId} />);
   }
   return (
     <div className='relative flex min-h-0 flex-1 flex-col' data-agent-trace=''>
-      <div className='flex shrink-0 items-center gap-2 px-1 pb-1.5'>
-        {live && <span className='text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 text-xs font-medium' data-trace-live={connected ? 'stream' : 'reconnecting'}><span className='size-1.5 rounded-full bg-current motion-safe:animate-pulse' aria-hidden />Live</span>}
-        <span className='text-muted-foreground text-xs tabular-nums'>{steps.filter((s) => s.kind !== 'message').length} steps</span>
-        <span className='ml-auto flex gap-1.5'>
-          <Button variant='outline' size='xs' onClick={() => setExpansion((e) => ({ gen: e.gen + 1, open: true }))}>Expand all</Button>
-          <Button variant='outline' size='xs' onClick={() => setExpansion((e) => ({ gen: e.gen + 1, open: false }))}>Collapse all</Button>
-        </span>
-      </div>
       <ExpansionContext.Provider value={expansion}>
         <div ref={box} onScroll={onScroll} className='min-h-0 flex-1 overflow-y-auto overscroll-contain' style={{ paddingBottom: dockHeight + 24 }} role='log' aria-live='polite' aria-label='Trace' data-agent-transcript=''>
           {pruned && <p className='text-muted-foreground p-3 text-sm'>This session&apos;s conversation and trace were removed after their retention period; its spend and budget changes are kept.</p>}
