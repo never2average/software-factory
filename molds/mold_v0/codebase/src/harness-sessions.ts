@@ -388,7 +388,7 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
       `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref, session_number)
        VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget, prof.id, prof.version,
-        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, sessionRef(n!.last_number), n!.last_number]);
+        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, nested ? sessionRef(n!.last_number) : null, n!.last_number]);
     const files = await bindFiles(q, orgId, id, startedByOf(actor)!, fileList);
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name, attachments) VALUES ($1, $2, 'person', $3, 'pending', $4, $5, $6)",
       [id, orgId, message, actor.user, actor.name, JSON.stringify(attachmentsOf(files, repositories))]);
