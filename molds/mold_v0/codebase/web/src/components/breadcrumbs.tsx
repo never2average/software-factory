@@ -22,10 +22,11 @@ export function Breadcrumbs() {
   // separator in one item; the current page is its own item.
   return (
     <Breadcrumb>
-      <BreadcrumbList>
+      {/* mold_v0-290: the kept crumb and the session's number stay on one line in a phone's top bar. */}
+      <BreadcrumbList className={items.some((i) => i.keep) ? 'flex-nowrap whitespace-nowrap' : undefined}>
         {items.map((item, index) =>
           index < items.length - 1 ? (
-            <BreadcrumbItem key={item.link} className='hidden md:inline-flex'>
+            <BreadcrumbItem key={item.link} className={item.keep ? 'inline-flex' : 'hidden md:inline-flex'}>
               <BreadcrumbLink href={item.link}>{item.title}</BreadcrumbLink>
               <BreadcrumbSeparator className='ml-0.5'>
                 <Icons.slash />

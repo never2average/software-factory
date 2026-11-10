@@ -137,6 +137,8 @@ export function runWorkerRouter(): Router {
       try { exec = JSON.parse(decodeURIComponent(String(req.get("x-recipe-executable") ?? "[]"))); } catch { exec = []; }
       return (await h()).wakeRecipeProposal(String(req.params.id), leaseOf(req), String(req.params.recipe), req.body, Array.isArray(exec) ? exec.map(String) : []);
     }));
+    // mold_v0-290: the short-lived read-only token and commits for the repositories its session's messages chose (the runner's alone).
+    r.post("/:id/agent/repositories", answer(async (req) => (await h()).wakeRepositories(String(req.params.id), leaseOf(req), (req.body ?? {}).only)));
     // mold_v0-291 (flag nested_runs): a machine state's candidate, and the acceptance evaluator's own calls (each only with its run's lease).
     const nested = async () => { const { nestedOn } = await import("./nested-runs.js"); if (!nestedOn()) throw new PackError("Nested runs are not on in this app", 404); return import("./nested-runs.js"); };
     r.post("/:id/agent/candidate", express.raw({ type: "application/octet-stream", limit: inlineMaxBytes() }), answer(async (req) => {

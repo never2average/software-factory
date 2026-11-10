@@ -1222,6 +1222,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the packs' runs and the workspace agent's wakes get their sandbox by default (mold_v0-274, src/run-sandboxes.ts):
       // the platform setting APP_RUN_SANDBOX's default (a staff member's choice, then the server's environment, win over it).
       if (k === "run_sandbox") { if (!["auto", "boat", "docker", "freestyle"].includes(v)) fail(rel(PROFILE_FILE), "run_sandbox: auto, boat, docker or freestyle (where each run's sandbox comes from; default auto)"); else profile[k] = v; continue; }
+      // A workspace agent session's short number (mold_v0-290): its prefix, AGI when absent, so the shell carries no product word.
+      if (k === "agent_session_prefix") { if (typeof v !== "string" || !/^[A-Z][A-Z0-9]{0,9}$/.test(v)) fail(rel(PROFILE_FILE), "agent_session_prefix: capital letters and digits, 1 to 10, starting with a letter (a session then reads AGI-001)"); else profile[k] = v; continue; }
       // The capability flags (mold_v0-219, src/features.json): {"<flag>": true|false}, checked with the packs below.
       if (k === "features") {
         const known = FEATURE_REGISTRY.map((f) => f.id);
@@ -1273,7 +1275,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       }
       // mold_v0-262: a workspace's team roles in the app's words (src/teams.ts), over a pack's; only while teams is on (below).
       if (k === "team_roles") { const bad = teamRolesProblem(v); if (bad) fail(rel(PROFILE_FILE), `team_roles: ${bad}`); else profileTeamRoles = v; continue; }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, run_sandbox, audit, features, agent_icon, avatar_palette, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, run_sandbox, agent_session_prefix, audit, features, agent_icon, avatar_palette, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -2112,7 +2114,7 @@ let developerOwner = null, developerFacts = null;
 const SETTINGS_GROUPS = ["access", "connections", "automation", "data_trust"];
 const SETTINGS_TABS = (() => {
   const shell = [
-    { id: "credentials", label: "Credentials", group: "access", kind: "credentials", on: (credentialFields.length > 0 || privateNetworkKindCount > 0) && !HIDDEN.includes("credentials") },
+    { id: "credentials", label: "Credentials", group: "access", kind: "credentials", on: (credentialFields.length > 0 || privateNetworkKindCount > 0 || FEATURE_ON.agent_harness) && !HIDDEN.includes("credentials") },
     { id: "api_keys", label: "API keys", group: "access", kind: "api_keys", on: !!developerFacts },
     { id: "allowed_origins", label: "Allowed origins", group: "access", kind: "allowed_origins", on: !!developerFacts },
     { id: "email", label: "Email", group: "connections", kind: "email", on: FEATURE_ON.company_email },

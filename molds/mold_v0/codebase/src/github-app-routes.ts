@@ -27,6 +27,7 @@ import { adminInstallations, appConfig, beginInstall, completeInstall, configSum
   InstallRefused, setAppConfig, setAssetRepositories, TOKEN_PERMISSIONS, webhookSignatureValid, workspaceView } from "./github-app.js";
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
+import { agentHarnessOn } from "./agent-harness-config.js";
 import { recordAreas } from "./record-areas.js";
 import { browserOrigin } from "./builtin-auth.js";
 import { noteCallback } from "./sign-in-check.js";
@@ -45,7 +46,8 @@ const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req:
 
 export function githubAppRouter(): Router {
   const r = express.Router();
-  if (!githubAppFields().length || !featureOn("customer_key_vault")) return r; // no field asks for it (or the key vault is off, mold_v0-219): nothing is mounted
+  // No field asks for it (or the key vault is off, mold_v0-219), and no workspace agent chooses repositories (mold_v0-290): nothing is mounted.
+  if ((!githubAppFields().length || !featureOn("customer_key_vault")) && !agentHarnessOn()) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
   // The webhook, before any session: GitHub signs the exact bytes it sends.
@@ -130,7 +132,7 @@ type Need = (p: "keys" | "accounts") => express.RequestHandler;
 export function githubAppAdminRoutes(admin: Router, need: Need, actor: (req: Request, res: Response) => string) {
   // mold_v0-283: also when a shared record links a GitHub repository (mold_v0-282, flag record_resources: read with the
   // platform's own GitHub App, set here), now that no private catalog asks for it.
-  if (!githubAppFields().length && !recordRepositoriesNeedApp()) return;
+  if (!githubAppFields().length && !recordRepositoriesNeedApp() && !agentHarnessOn()) return; // mold_v0-290: the workspace agent's repository connector needs it too
   admin.get("/github-app", answerWith(async () => ({
     available: true,
     app: await configSummary(),

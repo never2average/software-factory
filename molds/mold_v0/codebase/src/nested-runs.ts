@@ -97,15 +97,8 @@ export function redactDeep(v: unknown, depth = 0): unknown {
   return v;
 }
 
-// ---------------------------------------------------------------- a root's tools and its number
+// ---------------------------------------------------------------- a root's tools (its number: src/harness-sessions.ts sessionRef)
 
-const REF_PREFIX = "AGI";
-/** The next root number in this workspace (AGI-001): taken under a lock with the insert. */
-export async function nextRootRef(q: Queryable, orgId: number): Promise<string> {
-  await q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`harness-ref:${orgId}`]);
-  const [r] = await q.query<{ n: number }>("/* tenant: within the caller's workspace */ SELECT coalesce(max(substring(ref from '-([0-9]+)$')::int), 0)::int AS n FROM harness_sessions WHERE org_id = $1 AND parent_id IS NULL AND ref IS NOT NULL", [orgId]);
-  return `${REF_PREFIX}-${String((r?.n ?? 0) + 1).padStart(3, "0")}`;
-}
 const toolNames = (canSpawn: boolean, isChild: boolean) => [...(canSpawn ? ["spawn", "collect", "list_children", "cancel_child"] : []), ...(isChild ? ["submit_outputs"] : [])].filter((t) => (NESTED_TOOLS as readonly string[]).includes(t)).map(workspaceToolName);
 
 /** What a new root session is given: its place in a tree, the tools to spawn and collect, and the programs it may spawn. */

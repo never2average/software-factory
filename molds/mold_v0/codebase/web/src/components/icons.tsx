@@ -61,6 +61,7 @@ import {
   IconFileTypeXls,
   IconFileZip,
   IconFolder,
+  IconFolderCode,
   IconGripVertical,
   IconHelpCircle,
   IconInfoCircle,
@@ -108,6 +109,8 @@ import {
   IconVideo,
   IconCrown,
   IconX,
+  IconMicrophone,
+  IconArrowUp,
   IconInbox,
   IconMail,
   IconBuildingSkyscraper,
@@ -202,6 +205,9 @@ export const Icons = {
   video: IconVideo,
   send: IconSend,
   paperclip: IconPaperclip,
+  microphone: IconMicrophone,
+  folderCode: IconFolderCode,
+  arrowUp: IconArrowUp,
 
   // Files
   page: IconFile,

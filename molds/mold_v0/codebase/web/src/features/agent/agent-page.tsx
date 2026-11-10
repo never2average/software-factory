@@ -15,6 +15,8 @@
 // which profile and version it runs with, and the record it was started from.
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tokens, TraceStream, useTrace } from './session-trace';
+import { AgentComposer } from './composer/agent-composer';
+import { setBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { featureOn } from '@/config/features';
@@ -29,7 +31,6 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
 import { adminApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -41,7 +42,7 @@ export type Area = 'app' | 'admin';
 type Phase = 'starting' | 'working' | 'waiting' | 'parked' | 'waking' | 'paused' | 'awaiting_approval' | 'stopped' | 'failed' | 'archived';
 interface Request { id: string; kind: 'web' | 'tool' | 'budget'; subject: string; subject_title: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
 interface Session {
-  id: string; title: string; phase: Phase; reason: string | null; mode: 'conversation' | 'task'; started_by: string | null; mine: boolean;
+  id: string; /** mold_v0-290: its short number in its workspace (AGI-001). */ ref: string; title: string; phase: Phase; reason: string | null; mode: 'conversation' | 'task'; started_by: string | null; mine: boolean;
   workspace?: { id: number; slug: string | null };
   harness: { flavour: string; label: string; model: string; provider: string; steerable: boolean };
   budget_usd: number; spent_usd: number; remaining_usd: number; ceiling_usd: number; reserve_usd: number; wakes: number; crashes: number; web_calls: number;
@@ -134,6 +135,8 @@ function AgentList({ area }: { area: Area }) {
     if (k) u.searchParams.set('session', k); else u.searchParams.delete('session');
     window.history.pushState(null, '', u.toString());
   };
+  // The Agents crumb and a link keep the address's word (mold_v0-290: the breadcrumb is the way back to the list).
+  useEffect(() => { setOpenState(params.get('session')); }, [params]);
   useEffect(() => {
     const h = () => setOpenState(new URLSearchParams(window.location.search).get('session'));
     window.addEventListener('popstate', h);
@@ -143,11 +146,12 @@ function AgentList({ area }: { area: Area }) {
   if (error) return <PageContainer><ErrorState error={error} /></PageContainer>;
   // mold_v0-287: an open session is the whole content area: no list beside it (the operator's exception to the side panel).
   if (open) return (<PageContainer>
-    <SessionFull key={open} area={area} id={open} call={call} onChange={load} onBack={() => setOpen(null)} onOpenSession={setOpen} budget={budget} />
+    <SessionFull key={open} area={area} id={open} call={call} onChange={load} onOpenSession={setOpen} budget={budget} />
     {budget.dialogs}
   </PageContainer>);
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
+    { key: 'ref', label: 'Number', type: 'text', keep: true, value: (s) => s.ref, render: (s) => <span className='font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span> },
     { key: 'title', label: 'Session', title: true, keep: true, type: 'text', className: 'min-w-56', value: (s) => s.title,
       render: (s) => <span className='leading-snug font-medium'>{s.title}</span> },
     { key: 'phase', label: 'Status', type: 'select', keep: true, options: Object.entries(PHASE_WORDS).map(([value, label]) => ({ value, label })), value: (s) => s.phase, render: (s) => <PhaseBadge s={s} /> },
@@ -173,7 +177,7 @@ function AgentList({ area }: { area: Area }) {
           { label: 'Parked or paused', value: n(['parked', 'paused']), said: `${n(['parked', 'paused'])} sessions parked or paused` },
           { label: 'Spent', value: usd(spent), said: `${usd(spent)} spent by these sessions` }
         ]} />}
-        searchText={(s) => `${s.title} ${s.id} ${PHASE_WORDS[s.phase]} ${s.started_by ?? ''} ${s.workspace?.slug ?? ''} ${s.pending_request ? askWords(s.pending_request) : ''}`}
+        searchText={(s) => `${s.ref} ${s.title} ${PHASE_WORDS[s.phase]} ${s.started_by ?? ''} ${s.workspace?.slug ?? ''} ${s.pending_request ? askWords(s.pending_request) : ''}`}
         searchPlaceholder='Search sessions'
         toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='Start a session' icon={<Icons.add />} onClick={() => setStarting(true)} /></div> : undefined}
         empty={<p className='text-muted-foreground text-sm'>{area === 'app' ? (data?.can_start ? 'No sessions yet: Start a session gives the agent its first message.' : 'No sessions yet. A member of this workspace can start one.') : 'No workspace has started a session yet.'}</p>}
@@ -197,6 +201,8 @@ type Call = ReturnType<typeof api>;
  * first message, the model (shown; staff choose it), the budget (this person's range), then Start; the new session then
  * opens as its full card. Focus stays inside while it is open, Esc closes it, and its title names it.
  */
+type ComposerSend = import('./composer/agent-composer').ComposerSend;
+
 function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: {
   open: boolean; offer: Offer; profiles: StartProfile[]; preset: { profile: string | null; message: string | null }; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void;
 }) {
@@ -207,15 +213,15 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (open) { setMessage(preset.message ?? ''); setProfileId(first?.id ?? null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  const submit = async () => {
-    if (!message.trim()) { toast.error('Say what the agent should do'); return; }
+  const submit = async (c: ComposerSend): Promise<boolean> => {
     setBusy(true);
     try {
       // Operator, 2026-11-09: the popup is the task and the message; the rest keep their defaults (the profile's default budget, a
-      // conversation, a title from its first words).
-      const r = await call<{ session: Session }>('POST', '', { message, mode: 'conversation', ...(profile ? { profile: profile.id } : {}) });
+      // conversation, a title from its first words). mold_v0-290: and what the composer carries.
+      const r = await call<{ session: Session }>('POST', '', { message: c.message, mode: 'conversation', files: c.files, repositories: c.repositories, ...(profile ? { profile: profile.id } : {}) });
       toast.success('Started'); onStarted(r.session.id);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+      return true;
+    } catch (e) { fail(e); return false; } finally { setBusy(false); }
   };
   // Tab wraps from the last control to the first (Shift+Tab the other way): focus never leaves the dialog for the page
   // behind it, whatever the library's own focus guards do (measured on the lane: they let it out after the last one).
@@ -231,10 +237,10 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-start-dialog='' onKeyDown={keepTabInside}
         finalFocus={() => document.querySelector<HTMLElement>("[data-toolbar-action][aria-label='Start a session']")}>
-        <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <div className='grid gap-4'>
           <DialogHeader>
             <DialogTitle>Start a session</DialogTitle>
-            <DialogDescription className='sr-only'>Choose the task and say what the agent should do.</DialogDescription>
+            <DialogDescription className='sr-only'>Choose the task and say what the agent should do. The round button starts it.</DialogDescription>
           </DialogHeader>
           {profiles.length > 0 && (
             <FormRow label='Task' htmlFor='agent-start-profile'>
@@ -244,13 +250,10 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
             </FormRow>
           )}
           <FormRow label='What should the agent do?' htmlFor='agent-start-message'>
-            <Textarea id='agent-start-message' rows={5} autoFocus value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Summarise this workspace's records and say what needs attention first." />
+            <AgentComposer id='agent-start-message' label='What should the agent do?' value={message} onChange={setMessage} autoFocus session={null} busy={busy} disabledReason={null} sendLabel='Start'
+              placeholder="Summarise this workspace's records and say what needs attention first." onSend={submit} />
           </FormRow>
-          <DialogFooter>
-            <Button type='button' variant='outline' disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type='submit' disabled={busy || !message.trim()}>{busy ? 'Starting…' : 'Start'}</Button>
-          </DialogFooter>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -391,10 +394,10 @@ function SpendingDialog({ id, title, call, onOpenChange }: { id: string; title: 
 }
 
 /**
- * One session, as the whole content area (mold_v0-287): Back to sessions, its state and spend, then the trace, the session's
+ * One session, as the whole content area (mold_v0-287; mold_v0-290: reached and left by the top bar's breadcrumb): its state and spend, then the trace, the session's
  * primary view (session-trace.tsx: streamed, the conversation in it), and the composer pinned over its bottom edge.
  */
-function SessionFull({ area, id, call, onChange, onBack, onOpenSession, budget }: { area: Area; id: string; call: Call; onChange: () => unknown; onBack: () => void; onOpenSession: (id: string) => void; budget: BudgetDialogs }) {
+function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area: Area; id: string; call: Call; onChange: () => unknown; onOpenSession: (id: string) => void; budget: BudgetDialogs }) {
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [howOpen, setHowOpen] = useState(false);
@@ -416,16 +419,17 @@ function SessionFull({ area, id, call, onChange, onBack, onOpenSession, budget }
     return () => ro.disconnect();
   }, [d?.id]);
   const changed = async () => { await load(); await onChange(); };
-  const back = <Button variant='outline' size='sm' onClick={onBack} aria-label='Back to sessions'><Icons.chevronLeft /><span className='max-sm:sr-only'>Back to sessions</span></Button>;
-  if (error) return <div className='flex flex-col gap-3'><div>{back}</div><ErrorState error={error} /></div>;
-  if (!d) return <div className='flex flex-col gap-3'><div>{back}</div><LoadingCards count={2} /></div>;
+  // mold_v0-290: the session is a level of the top bar's breadcrumb (Account / Agents / AGI-001): that is the way back.
+  const ref = d?.ref ?? null;
+  useEffect(() => { setBreadcrumbLeaf(ref); return () => setBreadcrumbLeaf(null); }, [ref]);
+  if (error) return <ErrorState error={error} />;
+  if (!d) return <LoadingCards count={2} />;
   // The last model call failed and nothing has answered since: say so where the person is looking.
   const lastModel = [...trace.steps].reverse().find((s) => s.kind === 'model' && s.http_status !== undefined);
   const failing = live && lastModel?.status === 'error' ? (lastModel.error ?? 'The last model call failed.') : null;
   return (
     <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
       <div className='flex items-center gap-2 sm:gap-3' data-agent-session-bar=''>
-        {back}
         <h1 className='min-w-0 flex-1 truncate text-base font-medium' title={d.title}>{d.title}</h1>
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
@@ -563,39 +567,31 @@ function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing }: 
   const why = d.can.message ? null
     : area === 'admin' ? 'Staff cannot message a session: the agent acts as the person who started it.'
       : !d.mine ? 'Only the person who started this session can message it.' : 'Your role cannot continue a session that has ended.';
-  const send = async () => {
-    if (!text.trim()) return;
+  const send = async (c: ComposerSend): Promise<boolean> => {
     setBusy(true);
     try {
-      const r = await call<{ status: 'queued' | 'waking' | 'continued' | 'follow_on'; phase: Phase; session_id?: string }>('POST', `/${d.id}/messages`, { message: text });
-      setText('');
-      if (r.status === 'follow_on' && r.session_id) { toast.success('It could not be resumed, so a new session continues from here'); onOpenSession(r.session_id); return; }
+      const r = await call<{ status: 'queued' | 'waking' | 'continued' | 'follow_on'; phase: Phase; session_id?: string }>('POST', `/${d.id}/messages`, { message: c.message, files: c.files, repositories: c.repositories });
+      if (r.status === 'follow_on' && r.session_id) { toast.success('It could not be resumed, so a new session continues from here'); onOpenSession(r.session_id); return true; }
       toast.success(r.status === 'continued' ? 'Sent: this session is continuing' : r.status === 'waking' ? 'Sent: it is waking up to answer'
         : r.phase === 'awaiting_approval' ? 'Queued: it reads this once the decision is made'
           : d.phase === 'working' && d.harness.steerable ? 'Sent: it takes it at its next step' : r.phase === 'working' || r.phase === 'waiting' ? 'Sent' : 'Queued: it reads this when it next runs');
       await onSent();
-    } catch (e) { fail(e); } finally { setBusy(false); }
+      return true;
+    } catch (e) { fail(e); return false; } finally { setBusy(false); }
   };
   const working = d.phase === 'working' || d.phase === 'starting' || d.phase === 'waking';
-  const placeholder = why ?? (d.phase === 'awaiting_approval' ? 'Type a message: it is read once the decision is made'
+  const placeholder = d.phase === 'awaiting_approval' ? 'Type a message: it is read once the decision is made'
     : ended ? 'Send a message to continue this session'
       : d.phase === 'working' ? (d.harness.steerable ? 'Guide the agent while it works' : 'Type a message: it is read at its next run')
-        : d.phase === 'parked' || d.phase === 'paused' ? 'Send a message to wake it' : 'Message the agent');
+        : d.phase === 'parked' || d.phase === 'paused' ? 'Send a message to wake it' : 'Message the agent';
   return (
-    <form className='flex flex-col gap-1.5' onSubmit={(e) => { e.preventDefault(); void send(); }} aria-label='Message the agent' data-agent-composer=''>
-      <label htmlFor={`agent-msg-${d.id}`} className='sr-only'>Message the agent</label>
-      {(working || failing) && (
+    <AgentComposer id={`agent-msg-${d.id}`} label='Message the agent' value={text} onChange={setText} placeholder={placeholder} sendLabel='Send' disabledReason={why} busy={busy} session={d.can.message ? d.id : null} onSend={send}
+      above={(working || failing) && (
         <p className={cn('flex items-center gap-2 px-1 text-xs', failing ? 'text-destructive' : 'text-muted-foreground')} aria-live='polite' data-agent-working=''>
           {!failing && <span className='size-1.5 rounded-full bg-current motion-safe:animate-pulse' aria-hidden />}
           {failing ?? (waitingOn ?? (d.phase === 'working' ? 'The agent is working' : d.phase === 'waking' ? 'Waking up' : 'Starting'))}
         </p>
-      )}
-      <div className={cn('bg-background focus-within:ring-ring/40 flex items-end gap-2 rounded-xl border p-1.5 shadow-sm focus-within:ring-2')}>
-        <Textarea id={`agent-msg-${d.id}`} rows={1} value={text} disabled={!d.can.message || busy} placeholder={placeholder} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} className='max-h-32 min-h-9 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent' data-agent-composer-text='' />
-        <Button type='submit' disabled={!d.can.message || busy || !text.trim()} aria-label='Send' className='h-9 min-w-9 shrink-0'><Icons.send /><span className='hidden sm:inline'>Send</span></Button>
-      </div>
-    </form>
+      )} />
   );
 }
 

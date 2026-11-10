@@ -166,6 +166,38 @@ flag off: no route, page, table row, upload or action of it answers.
   host (a governance policy names its hosts). The rollback puts the earlier config back exactly where nobody changed it
   since, and maps a newer one back.
 
+## The composer and session numbers (mold_v0-290)
+
+One message box (`web/src/features/agent/composer/agent-composer.tsx`) is the session's chat bar and Start a session's box:
+an auto-growing text box over a toolbar with attach, repositories, the microphone and a round send button. Enter sends,
+Shift+Enter is a new line, and nothing is ever sent on its own. Behaviour ported from the reference product's composer;
+its glow is not (it needs a package of its own).
+
+- **Files** (`src/agent-composer.ts`). `POST /api/agent/files` keeps a draft of the person who sent it (`harness_session_files`,
+  migration 0067): the bytes sealed with the workspace's data key at `workspaces/org-<id>/.agent/attachments/<id>.wse`, each
+  a `create` in the data trail. A message carries drafts into its session (`files: [id]`, in the same transaction): each wake
+  fetches them with the run's lease, through the same path as a profile's uploads, writes them to `attachments/<name>` and
+  keeps them out of checkpoints; the delivered message names them. A file a person attached mid-run is in place before its
+  words reach the agent. Up to 10 files a message and 25 MB each (4 MB on Vercel), at most 50 and `AGENT_UPLOAD_MAX_MB` a
+  session; no programs. With no object store the button is hidden and the reason shown. Unsent drafts go after a day; a
+  session's files go at retention with its conversation.
+- **Repositories** (`src/github-app.ts` `sessionRepositoryGrant`). The picker lists the workspace's own installation (
+  `workspace_github_installations`). The GitHub connection is mounted with `agent_harness` too, on Settings › Credentials.
+  A chosen repository is recorded on the message that chose it; each wake's runner asks for a token of `contents: read`
+  for exactly the chosen repositories the installation still allows (`POST .../agent/repositories`, the lease; a row of
+  `run_github_app_tokens`, redacted from what the run writes and revoked when its attempt ends) and copies each at its
+  default branch's head into `repos/<owner>/<name>` with no git history (`fetchPinned`, the credential helper in a directory only
+  the runner opens, gone once the copy is made). The agent's own program never has the token, and the browser and the
+  transcript never see it. A session under a governance policy that does not allow github.com takes no repository; what
+  cannot be given is told to the agent and the trace in words, never a broader token.
+- **Voice.** The browser's own speech service (Web Speech API, `use-voice-input.ts`): hidden where unsupported; denied,
+  no speech and network errors in plain words; partial text shown and merged with what was typed; stops on send, blur
+  or a second press. Nothing audio reaches the platform.
+- **A session's number** (`harness_sessions.session_number`, `harness_session_counters`): AGI-001 onward per workspace, in
+  order of creation, taken under the workspace's counter row in the transaction that inserts the session, never given
+  again. The prefix is `profile.json` `agent_session_prefix` (default `AGI`). It is the top bar's last crumb on an open
+  session (Account / Agents / AGI-001), which replaces Back to sessions, and a column of the sessions list; staff see the same.
+
 ## Governance policy (mold_v0-267): what the reference product calls it, and where it went
 
 The reference has no single object named "governance policy": its governance of an agent run is the set of rules its

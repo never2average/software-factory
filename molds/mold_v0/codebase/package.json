@@ -112,7 +112,7 @@
     "test:record-clocks": "tsx scripts/record-clocks-test.ts",
     "test:features": "tsx scripts/features-test.ts",
     "test:teams": "tsx scripts/teams-test.ts && tsx scripts/teams-262-test.ts",
-    "test:agent-harness": "tsx scripts/agent-harness-test.ts && tsx scripts/agent-credentials-test.ts",
+    "test:agent-harness": "tsx scripts/agent-harness-test.ts && tsx scripts/agent-credentials-test.ts && tsx scripts/agent-composer-test.ts",
     "test:nested-runs": "tsx scripts/nested-runs-test.ts && tsx scripts/nested-runs-review-test.ts",
     "test:agent-icon": "tsx scripts/agent-icon-test.ts",
     "test:checks": "tsx scripts/checks-test.ts",

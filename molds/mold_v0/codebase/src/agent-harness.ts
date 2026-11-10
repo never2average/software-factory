@@ -39,6 +39,8 @@ import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { linkTools, RUN_TOOL_CATALOG, verifyToolSet } from "./run-tools.js";
 import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-users.js";
 import { runIsolation, startRunProxy, type HarnessOptions, type RunnerClient, type RunProxy } from "./run-harness.js";
+import { fetchPinned, type FetchOptions } from "./agent-workspace.js";
+import { gitCredentialFiles } from "./agent-workspace-steps.js";
 
 /** The workspace's MCP server name the CLI gets (src/agent-harness-config.ts WORKSPACE_SERVER: the same word). */
 const WORKSPACE = "app";
@@ -65,6 +67,8 @@ export interface AgentRunnerClient {
   checkpointGet(runId: string, lease: string): Promise<Buffer | null>;
   /** mold_v0-267: one part of a file its profile uploads into the session's workspace. */
   uploadPart(runId: string, lease: string, uploadId: string, part: number): Promise<Buffer>;
+  /** mold_v0-290: a short-lived read-only token and the commits for the repositories its session's messages chose. */
+  repositories?(runId: string, lease: string, only?: string[]): Promise<import("./github-app.js").SessionRepositoryGrant>;
   /** mold_v0-271: the agent's proposed next version of a recipe its session used (a bundle of its proposal's folder). */
   recipeProposal?(runId: string, lease: string, recipe: string, bundle: Buffer, executable: string[]): Promise<{ proposal: string }>;
   /** mold_v0-291: the candidate a machine's state produced (a bundle of its `.candidate/`). */
@@ -266,7 +270,12 @@ export function claudeCommand(bin: string, w: WakeStart, hooksText: { append_sys
 
 /** The stand-in a test gives instead of the pinned CLI (offline tests only). */
 export type AgentCliOverride = { command: string; args: string[] };
-export interface AgentHarnessOptions { agentCli?: AgentCliOverride; clock?: () => number; pollMs?: number; beatMs?: number }
+export interface AgentHarnessOptions { agentCli?: AgentCliOverride; clock?: () => number; pollMs?: number; beatMs?: number;
+  /** Tests only: where a repository's copy is fetched from (a file:// mirror, as the workspace steps' own tests), and the options for it. */
+  repositoryFetch?: { remote: (fullName: string) => string; options: FetchOptions } }
+const REPOSITORIES = "repos";
+/** The most one repository's copy may hold: the size a workspace may be (src/workspace-bundle.ts). */
+const REPOSITORY_MAX_BYTES = () => Number(process.env.APP_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
 
 const STATE = "state", WORK = "work", HOME = "home";
 /** The file in a session's scratch (beside its state, never in a checkpoint) naming the wake that holds it. */
@@ -359,18 +368,22 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // against their sha256 and written into the working directory on every wake (a checkpoint never carries them, so it
     // stays small), executables made so. A path that would leave the working directory is never written.
     const uploaded = new Set<string>();
-    for (const u of w.uploads ?? []) {
-      const dest = path.resolve(work, u.path);
-      if (!dest.startsWith(work + path.sep)) continue;
-      const h = createHash("sha256"), parts: Buffer[] = [];
-      for (let n = 0; n < u.parts; n++) { const b = await agent.uploadPart(run.id, lease, u.id, n); h.update(b); parts.push(b); }
-      if (h.digest("hex") !== u.sha256) throw new Error(`the uploaded file ${u.path} did not arrive as it was uploaded`);
-      mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-      if (isLink(dest)) rmSync(dest, { force: true });
-      writeFileSync(dest, Buffer.concat(parts), { mode: u.executable ? 0o700 : 0o600 });
-      chmodSync(dest, u.executable ? 0o700 : 0o600);
-      uploaded.add(path.relative(state, dest).split(path.sep).join("/"));
-    }
+    const writeUploads = async (list: WakeStart["uploads"]) => {
+      for (const u of list) {
+        const dest = path.resolve(work, u.path);
+        if (!dest.startsWith(work + path.sep)) continue;
+        const h = createHash("sha256"), parts: Buffer[] = [];
+        for (let n = 0; n < u.parts; n++) { const b = await agent.uploadPart(run.id, lease, u.id, n); h.update(b); parts.push(b); }
+        if (h.digest("hex") !== u.sha256) throw new Error(`the uploaded file ${u.path} did not arrive as it was uploaded`);
+        mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+        if (isLink(dest)) rmSync(dest, { force: true });
+        writeFileSync(dest, Buffer.concat(parts), { mode: u.executable ? 0o700 : 0o600 });
+        chmodSync(dest, u.executable ? 0o700 : 0o600);
+        uploaded.add(path.relative(state, dest).split(path.sep).join("/"));
+        if (as) { chownSync(dest, as.uid, as.gid); chownSync(path.dirname(dest), as.uid, as.gid); }
+      }
+    };
+    await writeUploads(w.uploads ?? []);
     // The hooks as resolved at the session's start, written beside the agent: which text it got, from where.
     for (const h of policy.hooks ?? []) {
       mkdirSync(path.join(hooksDir, h.event), { recursive: true });
@@ -455,6 +468,42 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       await client.events(run.id, lease, batch).catch((e) => { if ((e as { status?: number }).status === undefined && trace.length < 500) trace.unshift(...batch); });
     };
     const stage = (name: string) => queueTrace("agent_stage", { stage: name });
+    // mold_v0-290: the repositories its messages chose, copied read-only into repos/<owner>/<name> by this runner: the token
+    // stays here (a helper file in a directory only this runner can open, gone once the copy is made), so the agent's own
+    // program never has one; the copy has no git history and leaves out everything else, and is never in a checkpoint.
+    const copyRepositories = async (only?: string[]): Promise<string> => {
+      if (!agent.repositories) return "";
+      const g = await agent.repositories(run.id, lease, only);
+      if (g.token) secrets.push({ name: "repository access", value: g.token });
+      const failed = [...g.missing];
+      if (g.token && g.repositories.length) {
+        const secretDir = path.join(scratch!, `repo-access-${randomUUID()}`);
+        mkdirSync(secretDir, { mode: 0o700 });
+        const keep = setInterval(() => { client.heartbeat(run.id, lease).catch(() => {}); }, (claim.lease_seconds * 1000) / 3);
+        keep.unref();
+        try {
+          const first = new URL(g.repositories[0]!.clone_url);
+          const cred = gitCredentialFiles(secretDir, [{ protocol: first.protocol.replace(":", "") as "https", host: first.host, username: "x-access-token", value: g.token }], null);
+          for (const r of g.repositories) {
+            const dest = path.resolve(work, REPOSITORIES, ...r.full_name.split("/"));
+            if (!dest.startsWith(path.join(work, REPOSITORIES) + path.sep)) continue;
+            try {
+              rmSync(dest, { recursive: true, force: true });
+              mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+              const remote = opts.repositoryFetch?.remote(r.full_name) ?? r.clone_url;
+              await fetchPinned(remote, r.commit, dest, { ...opts.repositoryFetch?.options, maxTreeBytes: REPOSITORY_MAX_BYTES(), timeoutMs: 300_000, credentialHelper: { scope: cred.scopes[0]!, script: cred.helper } });
+              stage(`It can read ${r.full_name}`);
+            } catch (e) { failed.push({ full_name: r.full_name, why: clean((e as Error).message).slice(0, 300) }); rmSync(dest, { recursive: true, force: true }); }
+          }
+        } finally { clearInterval(keep); rmSync(secretDir, { recursive: true, force: true }); }
+        if (as && existsSync(path.join(work, REPOSITORIES))) chownTree(path.join(work, REPOSITORIES), as.uid, as.gid);
+      }
+      for (const f of failed) queueTrace("agent_error", { subtype: "repository", error: clean(`${f.full_name} could not be given to it: ${f.why}`).slice(0, 600) });
+      return failed.length ? `These repositories could not be made available: ${failed.map((f) => `${f.full_name} (${clean(f.why)})`).join(", ")}.` : "";
+    };
+    const repositoryNote = w.repositories?.length ? await copyRepositories().catch((e) => { queueTrace("agent_error", { subtype: "repository", error: clean((e as Error).message).slice(0, 600) }); return "The repositories chosen for this session could not be made available."; }) : "";
+    const attached = (w.uploads ?? []).filter((u) => u.path.startsWith("attachments/")).length;
+    if (attached) stage(`${attached === 1 ? "The attached file is" : `The ${attached} attached files are`} in its workspace`);
     stage("Starting the agent's program");
 
     const ledger = new SteerLedger();
@@ -489,7 +538,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     const finish = (e: { reason: EndReason; detail?: string }) => { if (!ended) ended = e; closeStdin(); };
 
     // The first turn: the person's messages (one line), after the reason it talks again, or the on_resume hook alone.
-    const opening = [w.preface, ...w.first.map((m) => m.text)].filter(Boolean).join("\n\n") || policy.hooks?.find((h) => h.event === "on_resume")?.text || "Continue.";
+    const opening = [w.preface, repositoryNote, ...w.first.map((m) => m.text)].filter(Boolean).join("\n\n") || policy.hooks?.find((h) => h.event === "on_resume")?.text || "Continue.";
     write(opening, w.first.map((m) => m.id), false);
     if (!holds) closeStdin();
 
@@ -594,6 +643,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // The beat: lease, spend, and the person's messages, pause, end and budget.
     let beatMs = opts.beatMs ?? 3000;
     let lost = false;
+    let steering: Promise<void> = Promise.resolve();
     const beat = async () => {
       await flushTrace();
       const a = await agent.beat(run.id, lease, { in_turn: s.inTurn, total_cost_usd: s.cost, session_id: s.sessionId, web_calls: s.webCalls,
@@ -603,7 +653,20 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       if (a.cancel) { stop({ reason: "stopped", detail: a.reason ?? "cancelled" }); return; }
       if (a.steer.length) {
         if (!holds || s.stdinClosed) discarded.push(...a.steer.map((m) => m.id));
-        else for (const m of a.steer) { if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = null; } write(m.text, [m.id]); s.inTurn = true; s.lastActivity = now(); }
+        else for (const m of a.steer) {
+          if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = null; }
+          s.inTurn = true; s.lastActivity = now();
+          // mold_v0-290: what it carries is in place before its words arrive, so the beat keeps its time while a copy is made.
+          // A file that does not arrive sends the message back to wait for the next wake, which fetches them all again.
+          steering = steering.then(async () => {
+            let note = "";
+            try {
+              if (m.uploads?.length) { await writeUploads(m.uploads); stage(`${m.uploads.length === 1 ? "The attached file is" : `The ${m.uploads.length} attached files are`} in its workspace`); }
+              if (m.repositories?.length) note = await copyRepositories(m.repositories);
+            } catch (e) { queueTrace("agent_error", { subtype: "attachment", error: clean((e as Error).message).slice(0, 600) }); discarded.push(m.id); return; }
+            write(note ? `${m.text}\n\n${note}` : m.text, [m.id]);
+          });
+        }
       }
       if (a.end) finish({ reason: "stopped" });
       else if (a.pause) stop({ reason: "paused" });
@@ -635,7 +698,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     const checkpoint = async () => {
       if (!s.sessionId && !existsSync(path.join(home, ".claude"))) return;
       try {
-        const { bundle } = packBundle(state, (f) => uploaded.has(f));
+        const { bundle } = packBundle(state, (f) => uploaded.has(f) || f.startsWith(`${WORK}/${REPOSITORIES}/`));
         await agent.checkpointPut(run.id, lease, ++s.checkpointSeq, bundle);
       } catch (e) { console.error(`agent ${run.id}: checkpoint: ${(e as Error).message}`); }
     };
@@ -650,6 +713,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     if (buf.trim()) { try { queue.push(onEvent(JSON.parse(buf))); } catch { /* torn */ } }
     await Promise.all(queue);
     await beatLoop.catch(() => {});
+    await steering.catch(() => {});
     if (lost) return null;
     // A last beat (its spend), the last checkpoint, then how it ended (everything it did before the wake closes).
     await beat().catch(() => {});

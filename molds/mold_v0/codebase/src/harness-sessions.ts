@@ -18,6 +18,9 @@
  *              approve grants exactly that and wakes it; decline records the refusal and parks it with that said
  *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, down to what it has spent (mold_v0-287), also
  *              while a wake runs (the gateway and the beat read the budget live; the CLI stops at what it was told and is woken again)
+ *   composer   (mold_v0-290; src/agent-composer.ts) a message carries files, delivered into the session's working directory,
+ *              and repositories of the workspace's own GitHub connection, read-only for that session; a short human number
+ *              per workspace (AGI-001) is taken from harness_session_counters in the transaction that inserts the session
  *   beat       the wake's heartbeat (src/run-routes.ts /agent/beat): the lease, the spend, the steer, pause and end
  *   reach      what it may use of its workspace (src/harness-reach.ts, mold_v0-250): the app's own customer MCP tools as
  *              the person who started it (a token per wake, revoked when the wake ends, a pause or stop is asked, at its
@@ -48,6 +51,9 @@ import { governedEgressHosts, type FrozenGovernance } from "./agent-governance.j
 import { governanceWords, uploadParts } from "./agent-profiles.js";
 import { settingNumber } from "./settings.js";
 import { maskSecrets } from "./run-events.js";
+import { PROFILE } from "./profile.js";
+import { attachmentMaxBytes, attachmentNote, bindFiles, COMPOSER_LIMITS, fileIds, filesAvailable, isSessionFile, repositoryNames, sessionFileBytes, sessionRepositories, sessionUploads, sweepAttachments, type MessageAttachments } from "./agent-composer.js";
+import { domainAllowed, fetchRules } from "./agent-governance.js";
 import { messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
 
 // ---------------------------------------------------------------- types
@@ -68,7 +74,7 @@ export interface SessionRow {
   spent_usd: string | number; reserve_usd: string | number; crash_spent_usd: string | number; wakes: number; crashes: number; web_calls: number;
   current_run_id: string | null; last_activity_at: Date; created_at: Date; updated_at: Date; ended_at: Date | null; archived_at: Date | null;
   retention_until: Date | null; pruned_at: Date | null;
-  profile_id: string | null; profile_version: number | null; record_area: string | null; record_key: string | null;
+  profile_id: string | null; profile_version: number | null; record_area: string | null; record_key: string | null; session_number: number | null;
   /** mold_v0-291 (flag nested_runs): where it sits in its tree, and what is carved out for and spent by its children. */
   parent_id: string | null; root_id: string | null; depth: number; ref: string | null; carved_usd: string | number; children_spent_usd: string | number; program_id: string | null; program_version: number | null;
 }
@@ -76,7 +82,7 @@ export interface Checkpoint { seq: number; key: string; sha256: string; bytes: n
 const COLS = `id, org_id, title, started_by, started_by_name, state, in_turn, state_reason, pause_requested_at, stop_requested_at, flavour, model, provider,
   policy, harness_session, checkpoint, checkpoint_seq, budget_usd, spent_usd, reserve_usd, crash_spent_usd, wakes, crashes, web_calls, current_run_id,
   last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at, profile_id, profile_version, record_area, record_key,
-  parent_id, root_id, depth, ref, carved_usd, children_spent_usd, program_id, program_version`;
+  parent_id, root_id, depth, ref, carved_usd, children_spent_usd, program_id, program_version, session_number`;
 
 export interface RequestView { id: string; kind: RequestKind; subject: string; /** The tool's own title (a workspace tool), else the subject in plain words. */ subject_title: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
 export interface MessageView { id: number; role: "person" | "agent" | "system"; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }
@@ -84,7 +90,7 @@ export interface MessageView { id: number; role: "person" | "agent" | "system"; 
 export interface SessionNested { ref: string | null; parent_id: string | null; root_id: string; depth: number; program: string | null; carved_usd: number; children_spent_usd: number }
 export interface SessionView {
   nested?: SessionNested;
-  id: string; title: string; phase: AgentPhase; state: HarnessState; reason: string | null; mode: AgentPolicy["mode"]; started_by: string | null; mine: boolean;
+  id: string; /** mold_v0-290: its short human number in its workspace (AGI-001), stored and kept forever. */ ref: string; title: string; phase: AgentPhase; state: HarnessState; reason: string | null; mode: AgentPolicy["mode"]; started_by: string | null; mine: boolean;
   workspace?: { id: number; slug: string | null };
   harness: { flavour: string; label: string; model: string; provider: string; steerable: boolean };
   budget_usd: number; spent_usd: number; remaining_usd: number; ceiling_usd: number; reserve_usd: number;
@@ -127,6 +133,11 @@ function reachView(p: AgentPolicy | null): ReachView | null {
     tools: (w.tools ?? []).map((t) => ({ name: t.name, title: t.title, read: t.read, asks: !(p!.tools ?? []).includes(workspaceToolName(t.name)) })),
     context: { max_chars: w.context?.max_chars ?? 0, parts: (w.context?.parts ?? []).map((x) => ({ part: x.part, label: x.label, chars: x.chars, kept: x.kept })) } };
 }
+
+/** The prefix of a session's short number: the app's (profile.json agent_session_prefix), else the neutral default. */
+export const sessionPrefix = () => (PROFILE as { agent_session_prefix?: string }).agent_session_prefix || "AGI";
+/** AGI-001, AGI-002 ... AGI-1000: a stored number, so it never moves with a list's order or a removed row. */
+export const sessionRef = (n: number) => `${sessionPrefix()}-${String(n).padStart(3, "0")}`;
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
 export const num = (v: unknown) => Number(v ?? 0);
@@ -213,7 +224,7 @@ function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: strin
   const f = flavourOf(r.flavour);
   const budget = num(r.budget_usd), spent = num(r.spent_usd), reserve = num(r.reserve_usd);
   return {
-    id: r.id, title: r.title, phase: phaseOf(r), state: r.state, reason: r.state_reason, mode: r.policy?.mode ?? "conversation",
+    id: r.id, ref: r.session_number ? sessionRef(r.session_number) : r.ref ?? r.id, title: r.title, phase: phaseOf(r), state: r.state, reason: r.state_reason, mode: r.policy?.mode ?? "conversation",
     started_by: r.started_by_name, mine: mineOf(r, a),
     ...(a.kind === "staff" ? { workspace: { id: r.org_id, slug: slug ?? null } } : {}),
     harness: { flavour: r.flavour, label: f?.label ?? r.flavour, model: r.model, provider: r.provider, steerable: f?.holds_stdin_open !== false },
@@ -285,7 +296,7 @@ export async function recomputeSpend(q: Queryable, sessionId: string, orgId: num
 
 // ---------------------------------------------------------------- the workspace's side
 
-export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown }
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown; /** mold_v0-290: drafts of this person and repositories of the workspace's GitHub connection. */ files?: unknown; repositories?: unknown }
 
 /**
  * The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a
@@ -361,19 +372,27 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   } catch (e) {
     console.error(`agent session: the workspace's tools could not be listed (${(e as Error).message}): it starts without them`);
   }
+  // mold_v0-290: what the person attached, checked before anything is written.
+  const fileList = fileIds(input.files);
+  const repositories = await checkedRepositories(orgId, policy, repositoryNames(input.repositories), []);
   const id = newId("hss");
   // mold_v0-291: with nested runs on (and the workspace's tools, which carry them), a session may spawn children.
   const nested = (policy.workspace && await nestedModule()) || null;
   if (nested) await nested.prepareRootPolicy(policy, id, prof.id);
   await tx(async (q) => {
-    const ref = nested ? await nested.nextRootRef(q, orgId) : null;
+    // Its short number: the workspace's counter, taken under that row's lock in the transaction that inserts the session.
+    const [n] = await q.query<{ last_number: number }>(
+      `INSERT INTO harness_session_counters (org_id, last_number) VALUES ($1, 1)
+       ON CONFLICT (org_id) DO UPDATE SET last_number = harness_session_counters.last_number + 1 RETURNING last_number`, [orgId]);
     await q.query(
-      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref)
-       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref, session_number)
+       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget, prof.id, prof.version,
-        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, ref]);
-    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
-      [id, orgId, message, actor.user, actor.name]);
+        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, nested ? sessionRef(n!.last_number) : null, n!.last_number]);
+    const files = await bindFiles(q, orgId, id, startedByOf(actor)!, fileList);
+    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name, attachments) VALUES ($1, $2, 'person', $3, 'pending', $4, $5, $6)",
+      [id, orgId, message, actor.user, actor.name, JSON.stringify(attachmentsOf(files, repositories))]);
+    if (repositories.length) await systemMessage(q, { id, org_id: orgId }, `${actor.name ?? "Someone"} gave this session read access to ${repositories.join(", ")}.`);
   });
   try { await queueWake(orgId, id, "start", actor, org); }
   catch (e) {
@@ -382,6 +401,30 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     throw e;
   }
   return readSession(orgId, id, actor);
+}
+
+/** What a message carried, as its row keeps it (empty lists left out, so a plain message's is {}). */
+const attachmentsOf = (files: MessageAttachments["files"], repositories: string[]): MessageAttachments => ({ ...(files?.length ? { files } : {}), ...(repositories.length ? { repositories } : {}) });
+
+/** Governance has the last word on what cloning needs: a session whose policy cannot reach github.com takes no repository. */
+function repositoriesRefused(p: AgentPolicy | null | undefined): string | null {
+  const g = p?.governance;
+  if (!g) return null;
+  return g.web?.enabled && g.web.web_fetch_enabled && domainAllowed("github.com", fetchRules(g)) ? null
+    : "This session's governance policy does not allow github.com, so a repository cannot be connected to it. Platform staff can add github.com to the agent profile's web domains.";
+}
+/**
+ * The repositories a message chose, each as the workspace's connection spells it, refused in words: past the limit, under
+ * a governance policy that does not allow github.com, or not of this workspace's own GitHub connection.
+ */
+async function checkedRepositories(orgId: number, policy: AgentPolicy, names: string[], held: readonly string[]): Promise<string[]> {
+  if (!names.length) return [];
+  const why = repositoriesRefused(policy);
+  if (why) throw new PackError(why, 403);
+  const { canonicalRepositories } = await import("./github-app.js");
+  const canon = [...new Set(await canonicalRepositories(orgId, names))];
+  if (new Set([...held, ...canon]).size > COMPOSER_LIMITS.repositories_per_session) throw new PackError(`A session reads at most ${COMPOSER_LIMITS.repositories_per_session} repositories`, 409);
+  return canon;
 }
 
 /** The nested-runs module, only while its flag is on: with it off, nothing of it loads or runs. */
@@ -521,19 +564,24 @@ export interface MessageAnswer { status: "queued" | "waking" | "continued" | "fo
  * woken on its own harness session, or, when there is nothing to resume or its governance policy ended it, a follow-on
  * session starts with this conversation as its context.
  */
-export async function messageSession(orgId: number, id: string, actor: Actor, body: unknown, org?: import("./auth.js").Org): Promise<MessageAnswer> {
+export async function messageSession(orgId: number, id: string, actor: Actor, body: unknown, org?: import("./auth.js").Org, carried: { files?: unknown; repositories?: unknown } = {}): Promise<MessageAnswer> {
   needOn();
   const message = text(body, "message");
   const first = await read((q) => rowOf(q, orgId, id));
   if (!mineOf(first, actor)) throw new PackError("Only the person who started this session can message it", 403);
+  // mold_v0-290: what it carries travels with it, in every state: into the running wake, or waiting with it for the next.
+  const fileList = fileIds(carried.files);
+  const repositories = await checkedRepositories(orgId, first.policy, repositoryNames(carried.repositories), await read((q) => sessionRepositories(q, orgId, id)));
   // Locked, so two messages racing onto a parked session wake it once: the second finds it waking and waits pending.
   const next = await tx(async (q): Promise<"none" | "wake" | "continued" | "follow_on"> => {
     const x = await rowOf(q, orgId, id, true);
     if (closed(x) && isChild(x)) throw new PackError("This child run has finished: message the session that started it", 409);
     if (closed(x) && !permissions(x, actor).message) throw new PackError("Your role cannot start agent sessions, so it cannot continue one that has ended", 403);
     if (closed(x) && !resumable(x)) return "follow_on";
-    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
-      [x.id, x.org_id, message, actor.user, actor.name]);
+    const files = await bindFiles(q, x.org_id, x.id, startedByOf(actor)!, fileList);
+    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name, attachments) VALUES ($1, $2, 'person', $3, 'pending', $4, $5, $6)",
+      [x.id, x.org_id, message, actor.user, actor.name, JSON.stringify(attachmentsOf(files, repositories))]);
+    if (repositories.length) await systemMessage(q, x, `${actor.name ?? "Someone"} gave this session read access to ${repositories.join(", ")}.`);
     await q.query("UPDATE harness_sessions SET last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
     if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "steer_queued", { length: message.length, by: actor.name });
     if (closed(x)) {
@@ -545,7 +593,7 @@ export async function messageSession(orgId: number, id: string, actor: Actor, bo
     }
     return x.state === "parked" || x.state === "paused" ? "wake" : "none";
   });
-  if (next === "follow_on") return followOn(orgId, first, actor, message, org);
+  if (next === "follow_on") return followOn(orgId, first, actor, message, org, { files: fileList, repositories });
   if (next === "wake" || next === "continued") {
     const run = await queueWake(orgId, id, "message", actor, org);
     // No wake: it has spent its budget, and the message waits behind the request that was just made for more.
@@ -554,11 +602,42 @@ export async function messageSession(orgId: number, id: string, actor: Actor, bo
   return { status: "queued", phase: phaseOf(await read((q) => rowOf(q, orgId, id))) };
 }
 
+/**
+ * Whether this person may attach things: to session `sessionId` only as they may message it; before a session exists,
+ * as they may start one. Staff never (a session acts for the person who started it).
+ */
+export async function mayCompose(orgId: number, actor: Actor, sessionId?: string | null): Promise<void> {
+  needOn();
+  if (actor.kind === "staff" || actor.kind === "system") throw new PackError("Staff cannot message a session: the agent acts as the person who started it", 403);
+  if (sessionId) {
+    const r = await read((q) => rowOf(q, orgId, sessionId));
+    if (!mineOf(r, actor)) throw new PackError("Only the person who started this session can attach files to it", 403);
+    if (!permissions(r, actor).message) throw new PackError("Your role cannot continue a session that has ended", 403);
+    return;
+  }
+  if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions, so it cannot attach files. Ask an account owner to change it on the Team page.", 403);
+}
+/** Who a draft file belongs to: the person, or the account for its key. */
+export const composerOwner = (a: Actor): string => startedByOf(a) ?? "";
+
+/** What the composer offers this person: attaching files and the workspace's repositories, each with its limits or the reason not. Never a token. */
+export async function composerOffer(orgId: number, actor: Actor, sessionId?: string | null) {
+  await mayCompose(orgId, actor, sessionId);
+  const { repositoryChoice } = await import("./github-app.js");
+  const [files, repos, granted, governed] = await Promise.all([filesAvailable(), repositoryChoice(orgId),
+    sessionId ? read((q) => sessionRepositories(q, orgId, sessionId)) : Promise.resolve([] as string[]),
+    sessionId ? read(async (q) => repositoriesRefused((await rowOf(q, orgId, sessionId)).policy)) : Promise.resolve(null)]);
+  return {
+    files: { ...files, max_per_message: COMPOSER_LIMITS.files_per_message, max_file_bytes: attachmentMaxBytes() },
+    repositories: { ...repos, granted, max_per_message: COMPOSER_LIMITS.repositories_per_message, refused: governed, can_connect: actor.kind === "key" || canAccount(actor.role, "manage") },
+  };
+}
+
 /** The most of an ended conversation a follow-on session is told, in characters. */
 const FOLLOW_ON_CONTEXT_CHARS = 6000;
 
 /** A follow-on session: same person, same agent profile and record, this conversation as its opening context. */
-async function followOn(orgId: number, was: SessionRow, actor: Actor, message: string, org?: import("./auth.js").Org): Promise<MessageAnswer> {
+async function followOn(orgId: number, was: SessionRow, actor: Actor, message: string, org?: import("./auth.js").Org, carried: { files?: unknown; repositories?: unknown } = {}): Promise<MessageAnswer> {
   const said = await read((q) => q.query<{ role: MessageView["role"]; body: string }>(
     "SELECT role, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role IN ('person', 'agent') ORDER BY id DESC LIMIT 40", [was.org_id, was.id]));
   let room = FOLLOW_ON_CONTEXT_CHARS;
@@ -570,7 +649,7 @@ async function followOn(orgId: number, was: SessionRow, actor: Actor, message: s
     room -= line.length;
   }
   const context = lines.length ? `This continues an earlier session, "${was.title}", which has ended. What was said there, oldest first:\n\n${lines.join("\n\n")}` : `This continues an earlier session, "${was.title}", which has ended; its conversation is no longer kept.`;
-  const next = await startSession(orgId, actor, { message, title: was.title, mode: was.policy?.mode, profile: was.profile_id ?? undefined }, org,
+  const next = await startSession(orgId, actor, { message, title: was.title, mode: was.policy?.mode, profile: was.profile_id ?? undefined, ...carried }, org,
     { record: was.record_area && was.record_key ? { area: was.record_area, key: was.record_key } : undefined, followOn: { from: was.id, context } });
   await tx(async (q) => {
     await systemMessage(q, was, "Continued in a new session: this one could not be resumed.");
@@ -822,7 +901,7 @@ export async function sessionTrace(orgId: number | null, id: string, actor: Acto
       "SELECT id, run_id, attempt, type, at, data - 'input' - 'result' AS data FROM run_events WHERE org_id = $1 AND run_id = ANY ($2::text[]) AND id > $3 ORDER BY id LIMIT $4",
       [r.org_id, ids, since.events, TRACE_PAGE + 1]) : [];
     const msgs = await q.query<TraceMessageRow>(
-      "SELECT id, role, body, status, by_name, created_at, run_id FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND (id > $3 OR status IN ('pending', 'delivered')) ORDER BY id LIMIT $4",
+      "SELECT id, role, body, status, by_name, created_at, run_id, attachments FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND (id > $3 OR status IN ('pending', 'delivered')) ORDER BY id LIMIT $4",
       [r.org_id, r.id, since.messages, TRACE_PAGE + 1]);
     const more = events.length > TRACE_PAGE || msgs.length > TRACE_PAGE;
     const page = events.slice(0, TRACE_PAGE), msgPage = msgs.slice(0, TRACE_PAGE);
@@ -891,6 +970,8 @@ export interface WakeStart {
   workspace: { server: string; token: string; expires_at: string } | null;
   /** mold_v0-267: the files its profile uploads into the workspace, each in parts the wake fetches with its lease. */
   uploads: { id: string; path: string; bytes: number; sha256: string; executable: boolean; parts: number }[];
+  /** mold_v0-290: the repositories its messages chose, copied read-only into its working directory by its runner. */
+  repositories: string[];
 }
 
 /** The wake started: what it is told (its policy, the session to resume, the first turn), its messages marked delivered. */
@@ -898,8 +979,8 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
   return tx(async (q) => {
     const w = await wakeOf(q, runId, leaseToken, true);
     const s = w.session;
-    const msgs = await q.query<{ id: string; body: string }>(
-      "SELECT id, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') ORDER BY id LIMIT 50", [s.org_id, s.id]);
+    const msgs = await q.query<{ id: string; body: string; attachments: MessageAttachments | null }>(
+      "SELECT id, body, attachments FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') ORDER BY id LIMIT 50", [s.org_id, s.id]);
     // mold_v0-261: a new session's first message is its profile's on_start template around the person's words (the
     // transcript keeps their own words; what the harness was told is in its hooks directory).
     const onStart = !s.harness_session && s.wakes <= 1 ? s.policy.hooks?.find((h) => h.event === "on_start" && h.source !== "unset")?.text ?? null : null;
@@ -907,7 +988,8 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     for (const [i, m] of msgs.entries()) {
       const uuid = randomUUID();
       await q.query("UPDATE harness_session_messages SET status = 'delivered', uuid = $3, run_id = $4, delivered_at = now() WHERE org_id = $1 AND id = $2", [s.org_id, m.id, uuid, w.id]);
-      first.push({ id: Number(m.id), uuid, text: i === 0 && onStart ? applyOnStart(onStart, m.body) : m.body });
+      // mold_v0-290: the person's own words stay as they wrote them in the transcript; the agent is told what came with them.
+      first.push({ id: Number(m.id), uuid, text: `${i === 0 && onStart ? applyOnStart(onStart, m.body) : m.body}${attachmentNote(m.attachments)}` });
     }
     // Why it talks again, when the person did not say (a resume, an approval, a crash): the on_resume hook and the reason.
     const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed|children settled)/.test(s.state_reason) ? `(${s.state_reason})` : null;
@@ -927,7 +1009,7 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     await runEvent(q, w.id, s.org_id, "agent_wake", { session: s.id, resume: !!s.harness_session, messages: first.length, checkpoint: s.checkpoint?.seq ?? null });
     return { session_id: s.id, title: s.title, policy: s.policy, resume: s.harness_session, checkpoint: s.checkpoint ? { seq: s.checkpoint.seq, sha256: s.checkpoint.sha256, bytes: s.checkpoint.bytes } : null,
       charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls, workspace,
-      uploads: (s.policy.uploads ?? []).map((u) => ({ ...u, parts: uploadParts(u.bytes) })) };
+      uploads: [...(s.policy.uploads ?? []).map((u) => ({ ...u, parts: uploadParts(u.bytes) })), ...await sessionUploads(q, s.org_id, s.id)], repositories: await sessionRepositories(q, s.org_id, s.id) };
   });
 }
 
@@ -937,9 +1019,26 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
  */
 export async function wakeUploadPart(runId: string, leaseToken: string, uploadId: string, part: number): Promise<Buffer> {
   const s = await read(async (q) => (await wakeOf(q, runId, leaseToken)).session);
+  // mold_v0-290: a file a message of this session carried (sealed under the workspace's key; one part).
+  if (isSessionFile(uploadId)) { if (part !== 0) throw new PackError("part: 0", 400); return sessionFileBytes(s.org_id, s.id, uploadId); }
   if (!(s.policy.uploads ?? []).some((u) => u.id === uploadId)) throw new PackError("this session was given no such file", 404);
   const { readUploadPart } = await import("./agent-profiles.js");
   return readUploadPart(uploadId, part);
+}
+
+/**
+ * mold_v0-290: for a wake's runner alone (its lease): a short-lived read-only token for exactly the repositories its
+ * session's messages chose (src/github-app.ts sessionRepositoryGrant), and each one's last commit. Never in an answer to a
+ * browser or in the transcript; everything the run writes is redacted of it. `only` narrows it to a steer's repositories.
+ */
+export async function wakeRepositories(runId: string, leaseToken: string, only?: unknown): Promise<import("./github-app.js").SessionRepositoryGrant> {
+  const w = await read((q) => wakeOf(q, runId, leaseToken));
+  const all = await read((q) => sessionRepositories(q, w.org_id, w.session.id));
+  const wanted = Array.isArray(only) ? all.filter((n) => only.includes(n)) : all;
+  const { sessionRepositoryGrant } = await import("./github-app.js");
+  const refused = repositoriesRefused(w.session.policy);
+  if (refused) return { token: null, expires_at: null, repositories: [], missing: wanted.map((full_name) => ({ full_name, why: "its governance policy does not allow github.com" })) };
+  return sessionRepositoryGrant({ runId: w.id, orgId: w.org_id, names: wanted });
 }
 
 /**
@@ -968,7 +1067,7 @@ export interface BeatInput {
   /** Messages the harness was handed but could not write (its stdin was gone): carried to the next wake. */
   discarded?: number[];
 }
-export interface BeatAnswer { cancel: boolean; reason: string | null; steer: { id: number; uuid: string; text: string }[]; pause: boolean; end: boolean; budget: boolean; interval_seconds: number }
+export interface BeatAnswer { cancel: boolean; reason: string | null; steer: { id: number; uuid: string; text: string; /** mold_v0-290: to deliver before it is written. */ uploads?: WakeStart["uploads"]; repositories?: string[] }[]; pause: boolean; end: boolean; budget: boolean; interval_seconds: number }
 
 /** A wake's heartbeat: its lease renewed, its spend accrued, and the person's messages, pause and end handed over. */
 export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput): Promise<BeatAnswer> {
@@ -1002,12 +1101,15 @@ export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput):
     // The person's messages waiting, handed over now (a flavour with no live stdin gets none: they wait for its next wake).
     const steer: BeatAnswer["steer"] = [];
     if (flavourOf(s.flavour)?.holds_stdin_open !== false && !s.pause_requested_at && !s.stop_requested_at) {
-      const msgs = await q.query<{ id: string; body: string }>(
-        "SELECT id, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' ORDER BY id LIMIT 20", [s.org_id, s.id]);
+      const msgs = await q.query<{ id: string; body: string; attachments: MessageAttachments | null }>(
+        "SELECT id, body, attachments FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' ORDER BY id LIMIT 20", [s.org_id, s.id]);
       for (const m of msgs) {
         const uuid = randomUUID();
         await q.query("UPDATE harness_session_messages SET status = 'delivered', uuid = $3, run_id = $4, delivered_at = now() WHERE org_id = $1 AND id = $2", [s.org_id, m.id, uuid, w.id]);
-        steer.push({ id: Number(m.id), uuid, text: m.body });
+        const files = m.attachments?.files ?? [], repositories = m.attachments?.repositories ?? [];
+        steer.push({ id: Number(m.id), uuid, text: `${m.body}${attachmentNote(m.attachments)}`,
+          ...(files.length ? { uploads: files.map((f) => ({ id: f.id, path: f.path, bytes: f.bytes, sha256: f.sha256, executable: false, parts: 1 })) } : {}),
+          ...(repositories.length ? { repositories } : {}) });
       }
       if (steer.length) await runEvent(q, w.id, s.org_id, "steer_delivered", { count: steer.length });
     }
@@ -1305,6 +1407,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
     });
     if (keys.length) await (await import("./storage.js")).objectStore().then((st) => st.remove(keys)).catch((e) => console.error(`agent sessions: checkpoints not removed: ${(e as Error).message}`));
   }
+  // mold_v0-290: the pruned sessions' attached files, and drafts nobody sent within a day.
+  await sweepAttachments(now, due).catch((e) => console.error(`agent sessions: attached files not removed: ${(e as Error).message}`));
   // 5. Tool tokens a day past their expiry, and those of pruned sessions (mold_v0-250).
   await tx((q) => sweepToolTokens(q, now));
   // mold_v0-291: the durable reconcile of every tree (children, machines, evaluations): all of it is in the database.

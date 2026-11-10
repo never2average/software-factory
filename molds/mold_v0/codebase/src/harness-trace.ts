@@ -30,6 +30,8 @@ export interface TraceStep {
   error?: string | null;
   /** A message of the conversation, an entry in the same stream. */
   role?: "person" | "agent" | "system"; body?: string; by?: string | null; message_status?: string | null;
+  /** mold_v0-290: what the person attached to this message (each file's name and size, each repository's name). */
+  attachments?: { files: { name: string; bytes: number }[]; repositories: string[] } | null;
   /** The tool call a sub-agent's step belongs under. */
   parent?: string | null;
   /** Everything else worth showing when the step is opened. */
@@ -42,7 +44,7 @@ export interface TraceEventRow { id: number | string; run_id: string; attempt: n
 export interface TraceWakeRow { id: string; status: string; created_at: Date | string; started_at: Date | string | null; ended_at: Date | string | null; error: string | null; scope: { reason?: unknown } | null }
 export interface TraceSandboxRow { run_id: string; attempt: number; state: string; sandbox_id: string | null; created_at: Date | string; ready_at: Date | string | null; claimed_at: Date | string | null; deleted_at: Date | string | null; launch_step: string | null; launch_error: string | null; reap_reason: string | null }
 export interface TraceRequestRow { id: string; kind: string; subject: string; status: string; decided_by: string | null; decided_at: Date | string | null; reason: string | null; created_at: Date | string; detail: Record<string, unknown> | null }
-export interface TraceMessageRow { id: number | string; role: "person" | "agent" | "system"; body: string; status: string | null; by_name: string | null; created_at: Date | string; run_id: string | null }
+export interface TraceMessageRow { id: number | string; role: "person" | "agent" | "system"; body: string; status: string | null; by_name: string | null; created_at: Date | string; run_id: string | null; attachments?: { files?: { name: string; bytes: number }[]; repositories?: string[] } | null }
 export interface TraceGrantRow { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: Date | string }
 
 /** The run_events a retention sweep removes with the conversation (their arguments, results and error text are its content). */
@@ -123,9 +125,14 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (nam
   }
 }
 
+/** What a message carried, as the trace shows it: names and sizes, masked like the words. */
+const carried = (m: TraceMessageRow): TraceStep["attachments"] => {
+  const files = m.attachments?.files ?? [], repositories = m.attachments?.repositories ?? [];
+  return files.length || repositories.length ? { files: files.map((f) => ({ name: maskSecrets(f.name), bytes: f.bytes })), repositories: repositories.map(maskSecrets) } : null;
+};
 /** One message of the conversation as a step of the stream. */
 export const messageStep = (m: TraceMessageRow, wakes: Map<string, number>): TraceStep =>
-  ({ id: `m${m.id}`, at: iso(m.created_at), kind: "message", status: "ok", title: "", role: m.role, body: maskSecrets(m.body), by: m.by_name, message_status: m.status, run_id: m.run_id, wake: m.run_id ? wakes.get(m.run_id) ?? null : null });
+  ({ id: `m${m.id}`, at: iso(m.created_at), kind: "message", status: "ok", title: "", role: m.role, body: maskSecrets(m.body), by: m.by_name, message_status: m.status, run_id: m.run_id, wake: m.run_id ? wakes.get(m.run_id) ?? null : null, attachments: carried(m) });
 
 /** The events in order, a tool's call and result merged into one step (the same merge the page applies across reads). */
 export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<string, number>, toolTitle: (name: string) => string = (n) => n): TraceStep[] {
