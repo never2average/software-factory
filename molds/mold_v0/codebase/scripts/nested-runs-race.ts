@@ -35,7 +35,7 @@ const claimOf = async (sessionId: string) => {
 const key: import("../src/harness-sessions.js").Actor = { kind: "key", user: null, name: "account key", role: null };
 const model = "claude-sonnet-5-5";
 
-let worstCarved = 0, worstHeld = 0, wonTotal = 0, heldRefused = 0;
+let worstCarved = 0, worstHeld = 0, wonTotal = 0, heldRefused = 0, worstTree = 0;
 for (let round = 0; round < ROUNDS; round++) {
   const { org } = await createOrg(`Nested race ${Date.now().toString(36)} ${round}`);
   const s = await H.startSession(org.orgId, key, { message: "race", budget_usd: 5 });
@@ -69,10 +69,21 @@ for (let round = 0; round < ROUNDS; round++) {
   worstHeld = Math.max(worstHeld, Number(h!.sum));
   heldRefused += held.filter((r) => "refused" in r).length;
 
+  // The tree's cap holds across parents: a root and its child both spawning at once. (The child's wake is the one claimed above.)
+  const childWake = await H.wakeStart(childClaim!.run.id, childClaim!.lease_token);
+  const childCtx = { orgId: org.orgId, sessionId: childWake.session_id, runId: childClaim!.run.id, role: null };
+  await db.query("UPDATE harness_sessions SET budget_usd = 20 WHERE id = $1", [s.id]);
+  await db.query("UPDATE harness_sessions SET budget_usd = 20 WHERE id = $1", [childWake.session_id]);
+  await db.query("DELETE FROM harness_children WHERE org_id = $1 AND status = 'queued'", [org.orgId]);
+  await Promise.allSettled(Array.from({ length: N }, (_, i) => Nested.spawnChild(i % 2 ? ctx : childCtx, { prompt: `cap ${i}`, budget_usd: 0.1 })));
+  const [cap] = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM harness_children WHERE org_id = $1 AND root_id = $2 AND kind IN ('prompt', 'program', 'step')", [org.orgId, s.id]);
+  assert.ok(cap!.n <= 8, `round ${round}: ${cap!.n} children in one tree`);
+  worstTree = Math.max(worstTree, cap!.n);
+
   // Several settlers at once charge once.
   const settled = await Promise.all(Array.from({ length: 6 }, () => H.tx((q) => Nested.settleHandle(q, org.orgId, handle.handle, { status: "cancelled", error: "race" }))));
   assert.equal(settled.filter(Boolean).length, 1, "settled exactly once");
   await db.query("DELETE FROM harness_gateway_holds WHERE run_id = $1", [childClaim!.run.id]);
 }
-console.log(`ok: ${ROUNDS} rounds of ${N} at once: carved at most $${worstCarved.toFixed(2)} of $5 (${wonTotal} spawns won); held at most $${worstHeld.toFixed(4)} of $0.50 (${heldRefused} refused); a child settled by six at once, once`);
+console.log(`ok: ${ROUNDS} rounds of ${N} at once: carved at most $${worstCarved.toFixed(2)} of $5 (${wonTotal} spawns won); held at most $${worstHeld.toFixed(4)} of $0.50 (${heldRefused} refused); a child settled by six at once, once; a tree spawned into from two levels at once reached ${worstTree} children of 8`);
 process.exit(0);

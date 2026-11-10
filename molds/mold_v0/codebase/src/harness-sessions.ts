@@ -1177,7 +1177,7 @@ export async function reconcileWake(runId: string): Promise<void> {
       await endSession(q, s, "failed", said === "policy" ? (w!.end_reason ?? "policy").slice(0, 300) : s.state_reason!);
       return null;
     }
-    if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" ? "done" : "stopped"); return null; }
+    if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" && !(s.parent_id && s.stop_requested_at) ? "done" : "stopped"); return null; }
     // What arrived while the wake was ending wakes it again: a message (a parked session), or a decision made meanwhile.
     const next = async (state: HarnessState) => {
       if (state === "parked") {

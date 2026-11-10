@@ -26,6 +26,7 @@ import { featureOn } from "./features.js";
 import { agentHarnessOn, currentPolicy, flavourOf, resolveHooks, workspaceToolName, workspaceToolOf, ACCEPTANCE_KIND, AGENT_PACK, type AgentPolicy, type NestedPolicy } from "./agent-harness-config.js";
 import { NESTED_TOOLS } from "./agent-governance.js";
 import * as H from "./harness-sessions.js";
+import { canAccount, type AccountRole } from "./account-roles.js";
 import { revokeToolTokens } from "./harness-reach.js";
 import { ChildPolicyRefused, effectiveWeb, intersectChildPolicy, type ProgramSide } from "./nested-policy.js";
 import { atPath, renderPrompt, typedOutputs, validateJson, type FailurePolicy, type JsonSchema, type Machine, type MachineState, type ProgramConfig } from "./program-spec.js";
@@ -54,6 +55,12 @@ export const PARENT_MARGIN_USD = 0.05;
 const COLLECT_MAX_SECONDS = 25;
 const MAX_NAME = 80;
 const HOLD_SECONDS = 900;
+/** A start not finished in this long was lost with its process: the tick takes it up again. */
+const LOST_START_MS = 120_000;
+/** The kinds that take a child session and a sandbox: what the tree's cap counts. A machine is bookkeeping; an acceptance step is the server's. */
+const SANDBOX_KINDS = "('prompt', 'program', 'step')";
+/** Another process started this child first: this one's work is undone. */
+class LostStart extends Error {}
 
 export type ChildStatus = "queued" | "running" | "done" | "error" | "cancelled";
 export interface HandleRow {
@@ -203,6 +210,8 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
   const limits = nestedLimits();
   const before = await read((q) => rowOf(q, ctx.orgId, ctx.sessionId));
   assertLive(before, ctx.runId);
+  // The person's role now (the token's call re-read it): someone moved below launching spawns no more. An account key has no role.
+  if (before.started_by && before.started_by !== "account" && !(ctx.role && canAccount(ctx.role as AccountRole, "launch"))) throw new PackError("The role of the person this session acts for no longer lets it start runs", 403);
   const depth = before.depth + 1;
   if (depth > limits.depth) throw new PackError(`This session is ${before.depth} levels deep: a tree goes at most ${limits.depth} levels`, 403);
   const hasProgram = typeof input.program === "string" && input.program.trim() !== "";
@@ -216,19 +225,22 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
     const bad = validateJson(inputs, config.inputs);
     if (bad.length) throw new PackError(`inputs do not match this program: ${bad.slice(0, 5).join("; ")}`, 400);
   }
-  const name = String(input.name ?? prog?.name ?? String(input.prompt ?? "").replace(/\s+/g, " ").slice(0, 60)).trim().slice(0, MAX_NAME) || "Child run";
+  const name = maskSecrets(String(input.name ?? prog?.name ?? String(input.prompt ?? "").replace(/\s+/g, " ").slice(0, 60))).trim().slice(0, MAX_NAME) || "Child run";
   const ask = input.budget_usd === undefined || input.budget_usd === null ? (config?.budget_usd ?? Math.max(MIN_CHILD_BUDGET, 1)) : Number(input.budget_usd);
   if (!Number.isFinite(ask) || ask < MIN_CHILD_BUDGET) throw new PackError(`budget_usd: at least $${MIN_CHILD_BUDGET.toFixed(2)}`, 400);
   if (config?.limits?.max_budget_usd && ask > config.limits.max_budget_usd) throw new PackError(`budget_usd: this program takes at most $${config.limits.max_budget_usd.toFixed(2)}`, 400);
   const handleId = newId("hch");
-  const prompt = config ? renderPrompt(config.prompt, inputs) : String(input.prompt).trim();
+  const prompt = config ? renderPrompt(config.prompt, inputs) : maskSecrets(String(input.prompt)).trim();
   const isMachine = !!config?.machine;
   const pending = isMachine ? null : await buildChild(before, handleId, { name, prompt, inputs, profile: config?.agent_profile ?? (config ? before.profile_id : null), config, schema: typedOutputs(config?.outputs), depth, role: ctx.role });
+  let cancels: string[] = [];
   const created = await tx(async (q) => {
     const p = await rowOf(q, ctx.orgId, ctx.sessionId, true);
     assertLive(p, ctx.runId);
     const root = p.root_id ?? p.id;
-    const [{ n }] = await q.query<{ n: number }>("/* tenant: the tree's own handles */ SELECT count(*)::int AS n FROM harness_children WHERE org_id = $1 AND root_id = $2 AND step_of IS NULL", [p.org_id, root]);
+    // One count for the whole tree, whichever session starts the next: children, grandchildren and machines' steps alike.
+    await q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`harness-tree:${root}`]);
+    const [{ n }] = await q.query<{ n: number }>(`/* tenant: the tree's own handles */ SELECT count(*)::int AS n FROM harness_children WHERE org_id = $1 AND root_id = $2 AND kind IN ${SANDBOX_KINDS}`, [p.org_id, root]);
     if (n >= limits.children) throw new PackError(`This session's tree has started its ${limits.children} children: no more can start`, 429);
     const left = await spendable(q, p);
     const canGive = left - PARENT_MARGIN_USD;
@@ -246,10 +258,11 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
       const started = machineBegin(config!.machine!, inputs, config!.failure_policy);
       await q.query("UPDATE harness_children SET status = 'running', queue_reason = NULL, machine = $2 WHERE id = $1 AND org_id = $3", [handleId, JSON.stringify({ spec: config!.machine, run: started.run, acceptance: config!.acceptance ? { config: config!.acceptance, candidate_from: "", hypothesis: null } : undefined }), p.org_id]);
       if (started.run.status === "error") await settleHandle(q, p.org_id, handleId, { status: "error", error: started.run.error ?? "the machine could not start" });
-      else await createSteps(q, await lockHandle(q, p.org_id, handleId), config!.machine!, config!, inputs, started.start);
+      else cancels = await createSteps(q, await lockHandle(q, p.org_id, handleId), config!.machine!, config!, inputs, started.start);
     }
     return { id: handleId, parent: p.id, root };
   });
+  for (const id of cancels) await cancelHandle(ctx.orgId, id, "its machine could not go on").catch(() => {});
   await pump(ctx.orgId, created.root).catch((e) => console.error(`nested runs: pump: ${(e as Error).message}`));
   return readHandle(ctx.orgId, handleId);
 }
@@ -378,11 +391,12 @@ export async function pump(orgId: number, rootId: string): Promise<void> {
       await q.query("/* tenant: the tree's own handles */ UPDATE harness_children SET queue_reason = $3 WHERE org_id = $1 AND root_id = $2 AND status = 'queued' AND queue_reason IS DISTINCT FROM $3", [orgId, rootId, `waiting: ${limits.concurrent} children are already running`]);
       return [] as HandleRow[];
     }
-    const rows = await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND root_id = $2 AND status = 'queued' AND kind <> 'machine' ORDER BY created_at, child_no LIMIT $3 FOR UPDATE SKIP LOCKED`, [orgId, rootId, room]);
+    const rows = await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND root_id = $2 AND status = 'queued' AND kind <> 'machine' AND cancel_requested_at IS NULL ORDER BY created_at, child_no LIMIT $3 FOR UPDATE SKIP LOCKED`, [orgId, rootId, room]);
     for (const h of rows) await q.query("UPDATE harness_children SET status = 'running', queue_reason = NULL, updated_at = now() WHERE org_id = $1 AND id = $2", [orgId, h.id]);
     return rows;
   });
   for (const h of taken) await startHandle(orgId, h).catch(async (e: Error) => {
+    if (e instanceof LostStart) return;
     if (e instanceof PackError && e.status === 429) {
       await tx((q) => q.query("UPDATE harness_children SET status = 'queued', queue_reason = $3, updated_at = now() WHERE org_id = $1 AND id = $2 AND settled_at IS NULL", [orgId, h.id, e.message.slice(0, 200)]));
       return;
@@ -404,18 +418,25 @@ async function startHandle(orgId: number, h: HandleRow): Promise<void> {
     const id = newId("hss");
     const ref = `${parentRef}.${h.child_no}`;
     await tx(async (q) => {
+      // Whoever holds this row starts the child. Another start that got here first, or a cancel, ends this one before it writes.
+      const [cur] = await q.query<{ session_id: string | null; settled_at: Date | null; cancel_requested_at: Date | null }>("SELECT session_id, settled_at, cancel_requested_at FROM harness_children WHERE org_id = $1 AND id = $2 FOR UPDATE", [orgId, h.id]);
+      if (!cur || cur.session_id || cur.settled_at || cur.cancel_requested_at) throw new LostStart();
       await q.query(`INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, parent_id, root_id, depth, ref, program_id, program_version)
          VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
         [id, orgId, pending.title, parent.started_by, parent.started_by_name, pending.policy.flavour, pending.policy.model, pending.policy.provider, JSON.stringify({ ...pending.policy, nested: { ...pending.policy.nested!, handle: h.id } }), num(h.budget_usd),
           pending.profile?.id ?? null, pending.profile?.version ?? null, parent.id, h.root_id, parent.depth + 1, ref, h.program_id, h.program_version]);
       await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)", [id, orgId, pending.message, parent.started_by, parent.started_by_name]);
       // A step's outputs are checked against its state's (or its program's) schema, frozen when it starts.
-      await q.query("UPDATE harness_children SET session_id = $3, outputs_schema = coalesce(outputs_schema, $4), machine = coalesce(machine, '{}'::jsonb) - 'pending', updated_at = now() WHERE org_id = $1 AND id = $2", [orgId, h.id, id, pending.schema ? JSON.stringify(pending.schema) : null]);
+      const won = await q.query("UPDATE harness_children SET session_id = $3, outputs_schema = coalesce(outputs_schema, $4), machine = coalesce(machine, '{}'::jsonb) - 'pending', updated_at = now() WHERE org_id = $1 AND id = $2 AND session_id IS NULL AND settled_at IS NULL AND cancel_requested_at IS NULL RETURNING id", [orgId, h.id, id, pending.schema ? JSON.stringify(pending.schema) : null]);
+      if (!won.length) throw new LostStart();
     });
     sessionId = id;
   }
   await queueWake(orgId, sessionId, "start", SYSTEM);
 }
+
+/** Tests only: one start of a child, as two racing processes would each make it. */
+export const startHandleForTest = (orgId: number, h: HandleRow) => startHandle(orgId, h).catch((e: Error) => { if (!(e instanceof LostStart)) throw e; });
 
 async function buildStepPending(parent: H.SessionRow, h: HandleRow): Promise<PendingChild> {
   const m = h.step_of ? await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND id = $2`, [h.org_id, h.step_of]))[0]) : null;
@@ -431,32 +452,62 @@ async function buildStepPending(parent: H.SessionRow, h: HandleRow): Promise<Pen
   const schema = typedOutputs(state.outputs ?? config?.outputs);
   const acceptance = m.machine?.acceptance;
   const candidate = acceptance ? spec!.states.some((s) => s.kind === "acceptance" && s.candidate_from === state.id) : false;
-  const built = await buildChild(parent, h.id, { name: `${m.name}: ${state.id}`, prompt, inputs, profile: config?.agent_profile ?? parent.profile_id, config, schema, depth: parent.depth + 1, role: null, candidate });
+  const built = await buildChild(parent, h.id, { name: `${m.name}: ${state.id}`.slice(0, MAX_NAME), prompt, inputs, profile: config?.agent_profile ?? parent.profile_id, config, schema, depth: parent.depth + 1, role: null, candidate });
   return { ...built, schema };
 }
 
-/** A machine's next steps: their handles, each carved from the machine's own pool. Inside the transaction that moved the machine. */
-async function createSteps(q: Queryable, m: HandleRow, spec: Machine, config: ProgramConfig, inputs: unknown, starts: StepSpec[]): Promise<void> {
+/**
+ * A machine's next steps: their handles, each carved from the machine's own pool, the states' items sharing it evenly. Inside
+ * the transaction that moved the machine. Answers the steps to cancel, once it has committed, if the machine could not go on.
+ */
+async function createSteps(q: Queryable, m: HandleRow, spec: Machine, config: ProgramConfig, inputs: unknown, starts: StepSpec[]): Promise<string[]> {
+  const limits = nestedLimits();
   const limit = spec.max_children ?? spec.max_transitions + 1;
+  await q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`harness-tree:${m.root_id}`]);
   let [{ used }] = await q.query<{ used: number }>("/* tenant: the machine's own steps */ SELECT count(*)::int AS used FROM harness_children WHERE org_id = $1 AND step_of = $2", [m.org_id, m.id]);
-  let pool = num(m.budget_usd) - num(m.pool_used_usd) - num(m.spent_usd);
+  let [{ tree }] = await q.query<{ tree: number }>(`/* tenant: the tree's own handles */ SELECT count(*)::int AS tree FROM harness_children WHERE org_id = $1 AND root_id = $2 AND kind IN ${SANDBOX_KINDS}`, [m.org_id, m.root_id]);
+  let free = num(m.budget_usd) - num(m.pool_used_usd) - num(m.spent_usd);
+  const agentStates = Math.max(1, spec.states.filter((s) => s.kind !== "acceptance").length);
+  let waiting = starts.filter((st) => spec.states.find((s) => s.id === st.state)!.kind !== "acceptance").length;
   for (const st of starts) {
-    if (used >= limit) { await failMachine(q, m, `it would start more than its ${limit} steps`); return; }
+    if (used >= limit) return failMachine(q, m, `it would start more than its ${limit} steps`);
     const state = spec.states.find((s) => s.id === st.state)!;
     const acceptance = state.kind === "acceptance";
-    const each = acceptance ? 0 : money(Math.min(state.budget_usd ?? Math.max(MIN_CHILD_BUDGET, (num(m.budget_usd) - num(m.spent_usd)) / Math.max(1, spec.states.filter((s) => s.kind !== "acceptance").length)), pool));
-    if (!acceptance && each < MIN_CHILD_BUDGET) { await failMachine(q, m, `it has only $${pool.toFixed(2)} left for its next step`); return; }
+    if (!acceptance && tree >= limits.children) return failMachine(q, m, `its tree has started its ${limits.children} children`);
+    const items = Math.max(1, starts.filter((x) => x.state === st.state).length);
+    // A state's own figure is per step; with none, this state's share of what is left, split over its items. Never more than
+    // an even share of what the steps still to start can have, so the last item gets as much as the first.
+    const wanted = state.budget_usd ?? Math.max(MIN_CHILD_BUDGET, (num(m.budget_usd) - num(m.spent_usd)) / agentStates) / items;
+    const each = acceptance ? 0 : money(Math.min(wanted, free / Math.max(1, waiting)));
+    if (!acceptance && each < MIN_CHILD_BUDGET) return failMachine(q, m, `it has only $${free.toFixed(2)} left for ${waiting} step${waiting === 1 ? "" : "s"}`);
     const id = newId("hch");
     const schema = typedOutputs(state.outputs); // a program step's own schema is frozen when it starts (startHandle)
+    const name = `${m.name}: ${st.state}${starts.filter((x) => x.state === st.state).length > 1 ? ` ${st.index + 1}` : ""}`.slice(0, MAX_NAME);
     await q.query(`INSERT INTO harness_children (id, org_id, root_id, parent_id, step_of, state_id, kind, program_id, program_version, name, child_no, inputs, outputs_schema, budget_usd, failure_policy, retries, status, machine, queue_reason)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'queued', $17, 'waiting for a place')`,
-      [id, m.org_id, m.root_id, m.parent_id, m.id, st.state, acceptance ? "acceptance" : "step", m.program_id, m.program_version, `${m.name}: ${st.state}${starts.filter((x) => x.state === st.state).length > 1 ? ` ${st.index + 1}` : ""}`, await nextChildNo(q, { id: m.parent_id, org_id: m.org_id }),
+      [id, m.org_id, m.root_id, m.parent_id, m.id, st.state, acceptance ? "acceptance" : "step", m.program_id, m.program_version, name, await nextChildNo(q, { id: m.parent_id, org_id: m.org_id }),
         JSON.stringify(st.bindings ?? {}), schema ? JSON.stringify(schema) : null, each, config.failure_policy, state.retries ?? config.retries, JSON.stringify({ step: { entry: st.entry, index: st.index, bindings: st.bindings }, ...(acceptance ? { acceptance: { config: config.acceptance!, candidate_from: state.candidate_from!, hypothesis: state.hypothesis ? String(resolveSource(state.hypothesis, { inputs, outputs: (m.machine?.run ?? { outputs: {} }).outputs }) ?? "") : null } } : {}) })]);
     await q.query("UPDATE harness_children SET pool_used_usd = pool_used_usd + $3, updated_at = now() WHERE org_id = $1 AND id = $2", [m.org_id, m.id, each]);
-    pool -= each; used++;
+    free -= each; used++;
+    if (!acceptance) { waiting--; tree++; }
   }
+  return [];
 }
-async function failMachine(q: Queryable, m: HandleRow, why: string) { await settleHandle(q, m.org_id, m.id, { status: "error", error: `The program could not continue: ${why}` }); }
+/**
+ * A machine that cannot go on. It settles only once none of its steps can spend: its budget is carved, and what was given back
+ * could otherwise be spent twice. With a step open it is marked failed, its steps told to stop, and the last one's settling
+ * closes it (advanceMachine).
+ */
+async function failMachine(q: Queryable, m: HandleRow, why: string): Promise<string[]> {
+  const error = `The program could not continue: ${why}`;
+  const fresh = await lockHandle(q, m.org_id, m.id);
+  const machine = fresh.machine?.run ? { ...fresh.machine, run: { ...fresh.machine.run, status: "error" as const, error } } : fresh.machine;
+  await q.query("UPDATE harness_children SET machine = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [m.org_id, m.id, JSON.stringify(machine)]);
+  const open = await q.query<{ id: string }>("/* tenant: within its workspace */ SELECT id FROM harness_children WHERE org_id = $1 AND step_of = $2 AND settled_at IS NULL", [m.org_id, m.id]);
+  if (!open.length) { await settleHandle(q, m.org_id, m.id, { status: "error", error }); return []; }
+  await q.query("/* tenant: within its workspace */ UPDATE harness_children SET cancel_requested_at = coalesce(cancel_requested_at, now()), updated_at = now() WHERE org_id = $1 AND step_of = $2 AND settled_at IS NULL", [m.org_id, m.id]);
+  return open.map((o) => o.id);
+}
 
 // ---------------------------------------------------------------- settling
 
@@ -533,7 +584,7 @@ async function advanceMachine(orgId: number, step: HandleRow): Promise<void> {
     }
     const status = m.cancel_requested_at ? "cancelled" : machine.run?.status ?? "error";
     if (status === "running") {
-      if (starts.length) await createSteps(q, await lockHandle(q, orgId, m.id), spec, config, m.inputs, starts);
+      if (starts.length) cancels.push(...await createSteps(q, await lockHandle(q, orgId, m.id), spec, config, m.inputs, starts));
       return cancels;
     }
     // Over: whatever is still running goes first, and the machine settles once nothing of it spends any more (its pool is carved).
@@ -610,6 +661,8 @@ export async function afterWake(orgId: number, sessionId: string): Promise<void>
     await finishChild(orgId, h, s);
     return;
   }
+  // The retry for missing outputs, its wake lost with its process: asked again, not failed.
+  if (s.state === "parked" && s.state_reason === "outputs missing") { await queueWake(orgId, sessionId, "message", SYSTEM).catch((e: Error) => console.error(`nested runs: retry: ${e.message}`)); return; }
   if (s.state === "awaiting" || s.state === "parked") {
     const why = s.state === "awaiting" ? "it spent its budget" : (s.state_reason?.startsWith("crashed") ? s.state_reason : `it stopped before finishing (${s.state_reason ?? "parked"})`);
     await tx(async (q) => { const x = await rowOf(q, orgId, sessionId, true); if (!closed(x) && !x.current_run_id) { await q.query("UPDATE harness_session_requests SET status = 'expired', decided_at = now(), reason = 'a child has no one to ask' WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [orgId, sessionId]); await endSession(q, x as never, "failed", why); } });
@@ -618,6 +671,8 @@ export async function afterWake(orgId: number, sessionId: string): Promise<void>
 }
 
 async function finishChild(orgId: number, h: HandleRow, s: H.SessionRow): Promise<void> {
+  // Ended without saying it was done: someone stopped it. Their stop stands; a retry for missing outputs would undo it.
+  if (s.state_reason !== "done") { if (await tx((q) => settleHandle(q, orgId, h.id, { status: "cancelled", error: "it was stopped" }))) await afterSettleOf(orgId, h.id); return; }
   const fresh = await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND id = $2`, [orgId, h.id]))[0]!);
   const needs = !!fresh.outputs_schema;
   const have = fresh.outputs !== null && fresh.outputs !== undefined;
@@ -660,7 +715,12 @@ async function cancelHandle(orgId: number, id: string, why: string): Promise<voi
     if (!still.length && await tx((q) => settleHandle(q, orgId, id, { status: "cancelled", error: why }))) await afterSettleOf(orgId, id);
     return;
   }
-  if (h.kind === "acceptance") { if (await tx((q) => settleHandle(q, orgId, id, { status: "cancelled", error: why }))) await afterSettleOf(orgId, id); return; }
+  if (h.kind === "acceptance") {
+    const settled = await tx((q) => settleHandle(q, orgId, id, { status: "cancelled", error: why }));
+    await refuseOpenEvaluation(orgId, id, why);
+    if (settled) await afterSettleOf(orgId, id);
+    return;
+  }
   if (!h.session_id) {
     if (await tx((q) => settleHandle(q, orgId, id, { status: "cancelled", error: why }))) await afterSettleOf(orgId, id);
     return;
@@ -681,6 +741,14 @@ async function cancelHandle(orgId: number, id: string, why: string): Promise<voi
   await afterWake(orgId, s.id);
 }
 
+/** The step of an acceptance was cancelled: its evaluation is refused and its run told to stop. Whatever it would have measured counts for nothing. */
+async function refuseOpenEvaluation(orgId: number, handleId: string, why: string): Promise<void> {
+  const [ev] = await read((q) => q.query<{ id: string; run_id: string | null }>("SELECT id, run_id FROM harness_evaluations WHERE org_id = $1 AND handle_id = $2 AND status <> 'decided'", [orgId, handleId]));
+  if (!ev) return;
+  await decide(orgId, ev.id, { outcome: "refused", reasons: [`it was cancelled: ${why}`.slice(0, 300)], metrics: empty(0) }, null);
+  if (ev.run_id) { const { cancelRun } = await import("./runs.js"); await cancelRun(orgId, ev.run_id, "nested runs").catch(() => {}); }
+}
+
 /** Every open child of a session is cancelled (a machine's steps with it). */
 export async function cancelChildrenOf(orgId: number, sessionId: string, why: string): Promise<number> {
   if (!nestedOn()) return 0;
@@ -696,13 +764,17 @@ export function requestBound(price: { inputPerToken: number; outputPerToken: num
   return Math.ceil(bytes / 2) * price.inputPerToken + maxTokens * price.outputPerToken;
 }
 
-const requestJson = (body: Buffer): { max_tokens?: unknown; thinking?: { budget_tokens?: unknown } } | null => { try { const v = JSON.parse(body.toString("utf8")) as unknown; return v && typeof v === "object" ? (v as { max_tokens?: unknown }) : null; } catch { return null; } };
+const requestJson = (body: Buffer): { max_tokens?: unknown; max_completion_tokens?: unknown; n?: unknown; thinking?: { budget_tokens?: unknown } } | null => { try { const v = JSON.parse(body.toString("utf8")) as unknown; return v && typeof v === "object" ? (v as { max_tokens?: unknown }) : null; } catch { return null; } };
 /** The body to send (with its limit lowered if the budget needs it) and the hold on what it may cost, or why it is refused. */
 export async function admitTreeRequest(run: { id: string; org_id: number; budget_usd: number }, body: Buffer | null, model: string): Promise<{ refused: string } | { hold: string | null; body: Buffer | null; rewritten: boolean }> {
   if (!body || !model) return { hold: null, body, rewritten: false };
   const { costOf } = await import("./usage.js");
   const parsed = requestJson(body);
-  const asked = typeof parsed?.max_tokens === "number" && parsed.max_tokens > 0 ? Math.floor(parsed.max_tokens) : null;
+  const limitKey = typeof parsed?.max_tokens === "number" ? "max_tokens" : typeof parsed?.max_completion_tokens === "number" ? "max_completion_tokens" : null;
+  const limitValue = limitKey ? (parsed as Record<string, unknown>)[limitKey] as number : 0;
+  const asked = limitKey && limitValue > 0 ? Math.floor(limitValue) : null;
+  // OpenAI's n: that many completions, each up to the limit.
+  const choices = typeof parsed?.n === "number" && parsed.n > 1 ? Math.floor(parsed.n) : 1;
   // Worst case per token: an input token written to the long cache, an output token at the output price.
   // Priced above any long-context threshold, so the bound is that premium's too (a request's own size decides which it pays).
   const SAMPLE = 2_000_000;
@@ -722,16 +794,16 @@ export async function admitTreeRequest(run: { id: string; org_id: number; budget
     let want = asked;
     // A request that does not say its limit cannot be bounded: it may use all that is left, and no other runs beside it.
     if (want === null) { const hold = remaining; const id = newId("hgh"); await q.query("INSERT INTO harness_gateway_holds (id, run_id, org_id, usd, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))", [id, run.id, run.org_id, hold, HOLD_SECONDS]); return { hold: id, body, rewritten: false }; }
-    let hold = inputBound + want * price.outputPerToken;
+    let hold = inputBound + want * choices * price.outputPerToken;
     let rewritten = false;
     let out = body;
     if (hold > remaining) {
-      const room = Math.floor((remaining - inputBound) / price.outputPerToken);
+      const room = Math.floor((remaining - inputBound) / (price.outputPerToken * choices));
       const least = typeof parsed?.thinking?.budget_tokens === "number" ? (parsed.thinking.budget_tokens as number) + 1 : 256;
       if (room < Math.max(256, least)) return { refused: `This run's budget has $${remaining.toFixed(2)} left, too little for this request` };
       want = room;
-      hold = inputBound + want * price.outputPerToken;
-      const edited = { ...(parsed as unknown as Record<string, unknown>), max_tokens: want };
+      hold = inputBound + want * choices * price.outputPerToken;
+      const edited = { ...(parsed as unknown as Record<string, unknown>), [limitKey!]: want };
       out = Buffer.from(JSON.stringify(edited));
       rewritten = true;
     }
@@ -792,10 +864,17 @@ async function startAcceptance(orgId: number, h: HandleRow): Promise<void> {
 }
 const empty = (n: number): Decision["metrics"] => ({ n, baseline_mean: null, candidate_mean: null, lift: null, ci_low: null, ci_high: null, floors: {} });
 
-async function decide(orgId: number, id: string, d: Decision, cases: MeasuredCase[] | null): Promise<void> {
+async function decide(orgId: number, id: string, d0: Decision, cases: MeasuredCase[] | null): Promise<Decision["outcome"]> {
+  let d = d0;
   const out = await tx(async (q) => {
     const [ev] = await q.query<EvaluationRow>(`SELECT ${E_COLS} FROM harness_evaluations WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, id]);
-    if (!ev || ev.status === "decided") return null;
+    if (!ev) return null;
+    if (ev.status === "decided") { d = { ...d, outcome: (ev.outcome ?? "refused") as Decision["outcome"] }; return null; }
+    // Whoever asked has gone: a step cancelled or settled meanwhile cannot have its result promote anything.
+    if (ev.handle_id && d.outcome !== "refused") {
+      const [h] = await q.query<{ settled_at: Date | null; cancel_requested_at: Date | null }>("SELECT settled_at, cancel_requested_at FROM harness_children WHERE org_id = $1 AND id = $2 FOR UPDATE", [orgId, ev.handle_id]);
+      if (h?.settled_at || h?.cancel_requested_at) d = { outcome: "refused", reasons: ["its step had been cancelled or settled before the result came in"], metrics: d.metrics };
+    }
     let promoted: string | null = null, version: number | null = null;
     if (d.outcome === "accepted") ({ promoted, version } = await promote(q, ev, d, "the guardian"));
     await q.query("UPDATE harness_evaluations SET status = 'decided', outcome = $3, reasons = $4, metrics = $5, cases = $6, promoted_id = $7, decided_by = 'the guardian', decided_at = now() WHERE org_id = $1 AND id = $2",
@@ -804,6 +883,7 @@ async function decide(orgId: number, id: string, d: Decision, cases: MeasuredCas
     return { handle: ev.handle_id, version };
   });
   if (out?.handle) await settleAcceptance(orgId, out.handle, { decision: d.outcome, version: out.version, reasons: d.reasons, metrics: d.metrics });
+  return d.outcome;
 }
 async function settleAcceptance(orgId: number, handleId: string, outputs: { decision: string; version: number | null; reasons: string[]; metrics: unknown }): Promise<void> {
   if (await tx((q) => settleHandle(q, orgId, handleId, { status: "done", outputs }))) await afterSettleOf(orgId, handleId);
@@ -862,8 +942,7 @@ export async function evaluationResult(runId: string, lease: string, r: Evaluati
   const cases: MeasuredCase[] = Array.isArray(r.cases) ? r.cases.map((c) => ({ id: String(c.id), baseline: typeof c.baseline === "number" ? c.baseline : null, candidate: typeof c.candidate === "number" ? c.candidate : null, floors: c.floors ?? {} })) : [];
   const d = r.error && !r.tampered && !cases.length ? { outcome: "refused" as const, reasons: [r.error.slice(0, 500)], metrics: empty(0) }
     : decideAcceptance(ev.acceptance, { measured: { cases, tampered: r.tampered ?? null }, offSurfacePaths: off, hasBest: !!ev.champion_id, seed: seedOf(ev.id) });
-  await decide(ev.org_id, ev.id, d, cases);
-  return { outcome: d.outcome };
+  return { outcome: await decide(ev.org_id, ev.id, d, cases) };
 }
 
 // ---------------------------------------------------------------- staff: review, rollback, apply
@@ -974,24 +1053,61 @@ export async function nestedTick(now = new Date()): Promise<NestedSweep> {
   const out: NestedSweep = { settled: 0, reaped: 0, pumped: 0, requeued: 0, evaluations: 0, holds: 0 };
   // Holds past their time (a request whose process died): they free the budget they held.
   out.holds = await asPlatform(async () => (await (await getDb()).query("/* tenant: platform sweep across workspaces */ DELETE FROM harness_gateway_holds WHERE expires_at < $1 RETURNING id", [now])).length);
-  // Children whose wake ended and nothing settled them, or whose parent ended.
-  const open = await read((q) => q.query<HandleRow & { s_closed: boolean; p_closed: boolean }>(
-    `/* tenant: platform sweep across workspaces */ SELECT h.${H_COLS.split(", ").join(", h.")}, (s.state IN ('stopped', 'failed') AND s.current_run_id IS NULL) AS s_closed, (p.state IN ('stopped', 'failed') OR p.archived_at IS NOT NULL) AS p_closed
+  type Open = HandleRow & { updated_at: Date; p_closed: boolean; s_state: string | null; s_run: string | null; s_updated: Date | null; s_wakes: number | null };
+  const open = await read((q) => q.query<Open>(
+    `/* tenant: platform sweep across workspaces */ SELECT h.${H_COLS.split(", ").join(", h.")}, h.updated_at, (p.state IN ('stopped', 'failed') OR p.archived_at IS NOT NULL) AS p_closed,
+            s.state AS s_state, s.current_run_id AS s_run, s.updated_at AS s_updated, s.wakes AS s_wakes
        FROM harness_children h JOIN harness_sessions p ON p.id = h.parent_id AND p.org_id = h.org_id LEFT JOIN harness_sessions s ON s.id = h.session_id AND s.org_id = h.org_id
       WHERE h.settled_at IS NULL ORDER BY h.updated_at LIMIT 500`));
+  const lost = (d: Date | null) => !!d && now.getTime() - new Date(d).getTime() > LOST_START_MS;
+  const requeue = (h: Open) => tx((q) => q.query("/* tenant: the sweep's own row */ UPDATE harness_children SET status = 'queued', queue_reason = 'waiting for a place', updated_at = now() WHERE org_id = $1 AND id = $2 AND status = 'running' AND session_id IS NULL AND settled_at IS NULL", [h.org_id, h.id]));
   const roots = new Set<string>();
   for (const h of open) {
     roots.add(`${h.org_id}:${h.root_id}`);
     if (h.p_closed) { await cancelHandle(h.org_id, h.id, "its parent session ended").catch(() => {}); out.reaped++; continue; }
-    if (h.kind === "step" && h.session_id === null && h.status === "running" && now.getTime() - new Date(h.created_at).getTime() > 120_000) {
-      await tx((q) => q.query("UPDATE harness_children SET status = 'queued', updated_at = now() WHERE org_id = $1 AND id = $2 AND session_id IS NULL AND settled_at IS NULL", [h.org_id, h.id])); out.requeued++;
-    }
     if (h.cancel_requested_at) { await cancelHandle(h.org_id, h.id, h.error ?? "cancelled").catch(() => {}); out.reaped++; continue; }
-    if (h.session_id) { await afterWake(h.org_id, h.session_id).catch(() => {}); out.settled++; }
+    if (h.kind === "machine") { await reconcileMachine(h.org_id, h).catch((e: Error) => console.error(`nested runs: ${h.id}: ${e.message}`)); continue; }
+    if (h.kind === "acceptance") {
+      if (h.status !== "running") continue;
+      const [ev] = await read((q) => q.query<{ status: string; outcome: string | null; reasons: string[]; metrics: unknown; promoted_id: string | null }>("SELECT status, outcome, reasons, metrics, promoted_id FROM harness_evaluations WHERE org_id = $1 AND handle_id = $2 ORDER BY created_at DESC LIMIT 1", [h.org_id, h.id]));
+      if (ev?.status === "decided") {
+        // Decided, and the settling lost with its process.
+        const [c] = ev.promoted_id ? await read((q) => q.query<{ version: number }>("SELECT version FROM harness_champions WHERE org_id = $1 AND id = $2", [h.org_id, ev.promoted_id])) : [];
+        await settleAcceptance(h.org_id, h.id, { decision: ev.outcome ?? "refused", version: c?.version ?? null, reasons: ev.reasons, metrics: ev.metrics }).catch(() => {});
+        out.settled++;
+      } else if (!ev && lost(h.updated_at)) { await requeue(h); out.requeued++; }
+      continue;
+    }
+    if (!h.session_id) { if (h.status === "running" && lost(h.updated_at)) { await requeue(h); out.requeued++; } continue; }
+    // A session made and its wake never queued, or lost half way.
+    if (!h.s_run && (h.s_state === "starting" || h.s_state === "waking") && lost(h.s_updated)) {
+      await tx((q) => q.query("/* tenant: the sweep's own row */ UPDATE harness_sessions SET state = CASE WHEN wakes = 0 THEN 'starting' ELSE 'parked' END, updated_at = now() WHERE id = $1 AND org_id = $2 AND current_run_id IS NULL AND state IN ('starting', 'waking')", [h.session_id, h.org_id]));
+      await queueWake(h.org_id, h.session_id, (h.s_wakes ?? 0) > 0 ? "message" : "start", SYSTEM).catch((e: Error) => console.error(`nested runs: ${h.id}: ${e.message}`));
+      out.requeued++;
+      continue;
+    }
+    await afterWake(h.org_id, h.session_id).catch(() => {});
+    out.settled++;
   }
-  // Evaluations whose run ended without a result: refused, never waved through.
-  const stuck = await read((q) => q.query<{ id: string; org_id: number }>(`/* tenant: platform sweep across workspaces */ SELECT e.id, e.org_id FROM harness_evaluations e JOIN runs r ON r.id = e.run_id AND r.org_id = e.org_id WHERE e.status = 'running' AND r.status IN ('succeeded', 'failed', 'cancelled') LIMIT 100`));
-  for (const s of stuck) { await decide(s.org_id, s.id, { outcome: "refused", reasons: ["the evaluation run ended without measurements"], metrics: empty(0) }, null).catch(() => {}); out.evaluations++; }
+  // Evaluations whose run ended without a result, or never started: refused, never waved through.
+  const stuck = await read((q) => q.query<{ id: string; org_id: number }>(`/* tenant: platform sweep across workspaces */ SELECT e.id, e.org_id FROM harness_evaluations e LEFT JOIN runs r ON r.id = e.run_id AND r.org_id = e.org_id
+     WHERE e.status <> 'decided' AND ((e.run_id IS NOT NULL AND r.status IN ('succeeded', 'failed', 'cancelled')) OR (e.run_id IS NULL AND e.created_at < $1::timestamptz - make_interval(secs => $2))) LIMIT 100`, [now, LOST_START_MS / 1000]));
+  for (const s of stuck) { await decide(s.org_id, s.id, { outcome: "refused", reasons: ["the evaluation ended without measurements"], metrics: empty(0) }, null).catch(() => {}); out.evaluations++; }
   for (const key of roots) { const [org, root] = [Number(key.split(":")[0]), key.split(":").slice(1).join(":")]; await pump(org, root).catch(() => {}); out.pumped++; }
   return out;
+}
+
+/** A machine whose advance was lost with its process: each settled step its state has not taken in is taken in now (stepping one twice changes nothing). */
+async function reconcileMachine(orgId: number, m: HandleRow): Promise<void> {
+  const run = m.machine?.run;
+  if (!run) return;
+  const steps = await read((q) => q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND step_of = $2 ORDER BY settled_at NULLS LAST, created_at`, [orgId, m.id]));
+  const settled = steps.filter((s) => s.settled_at);
+  const unseen = run.status === "running" ? settled.filter((s) => {
+    const e = run.running.find((x) => x.state === s.state_id && x.entry === (s.machine?.step?.entry ?? 1));
+    return !!e && !e.results.some((r) => r.index === (s.machine?.step?.index ?? 0));
+  }) : [];
+  for (const s of unseen) await advanceMachine(orgId, s);
+  // Finished, and nothing of it still open: closed by the step that settled last.
+  if (!unseen.length && run.status !== "running" && settled.length === steps.length && settled.length) await advanceMachine(orgId, settled.at(-1)!);
 }

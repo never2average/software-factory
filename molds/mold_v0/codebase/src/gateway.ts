@@ -401,6 +401,8 @@ export async function gatewayHandler(req: Request, res: Response) {
   }
   const asked = hasBody ? requestedModel(json, req.path) : "";
   if (hasBody && asked && !isCountTokens && !(await hasPrice(asked))) return refuse(400, "invalid_request_error", unpricedModel(asked), asked);
+  // mold_v0-291: a body the gateway cannot read cannot be held against the budget: in a tree it is not sent.
+  if (treeRun && hasBody && !isCountTokens && json === null) return refuse(415, "invalid_request_error", "A session in a tree sends JSON model requests only: anything else could not be held against its budget", asked);
   if (treeRun && hasBody && asked && !isCountTokens) {
     const { admitTreeRequest } = await import("./nested-runs.js");
     const a = await admitTreeRequest(treeRun, json, asked);

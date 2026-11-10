@@ -330,8 +330,8 @@ or page exists.
 - **The tree.** `harness_sessions` gains `parent_id`, `root_id`, `depth`, a number (`AGI-001`, its first child `AGI-001.1`),
   `carved_usd` and `children_spent_usd`. A depth of 2, 8 children to a root's tree and 4 at once are the shell's ceilings;
   an app's `nested_runs` block in `profile.json` (`max_depth`, `max_children`, `max_concurrent`) can only lower them. What
-  waits says why. A machine's steps do not count against the 8 (each machine has its own bound, `max_children`, default
-  `max_transitions + 1`), and every step counts against the 4.
+  waits says why. Every session in the tree counts against the 8, a machine's steps included; a machine also has its own bound
+  (`max_children`, default `max_transitions + 1`), and every step counts against the 4.
 - **Budgets.** A child's budget is carved under the parent's row lock from what it has left (`spawnable = budget − spent −
   reserve − carved − children_spent`, its in-flight requests held out too), taken off the parent's running wake at once, and
   what it did not use is returned when it settles. A child cannot be raised; a person raises the root, and a root's floor includes what it carved. The gateway
@@ -356,7 +356,7 @@ or invalid output gets one retry, then the failure policy.
 **Acceptance** (`src/program-acceptance.ts`) is server-owned, per program, and carried out by an `acceptance` state: no tool can
 write a decision. A candidate (`.candidate/` from a machine's step, sealed with the workspace's key) runs against the frozen
 test in a clean sandbox with trusted code (`src/program-evaluator.ts`: its own run kind `_agent/acceptance`, no model, no
-credentials; the candidate as a run user of its own, scored by the test's own code, the test's files hashed before and after). It
+credentials; the candidate, the current best and the scorer each a run user of its own reading root-owned, read-only trees, each with a fresh HOME and environment built by the runner; the test's and the current best's files hashed before and after). It
 needs at least 5 cases, must beat the current best by `min_lift` (default 5%), with the 95% confidence interval's lower bound
 above zero, on every floor. Tampering, changes outside the declared `surface`, a missing metric or an evaluation that does
 not finish are refusals. With no test, or no current best yet, the outcome is `needs_review` and a person decides. An accepted
