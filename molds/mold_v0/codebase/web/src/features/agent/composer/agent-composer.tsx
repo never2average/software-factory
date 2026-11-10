@@ -218,7 +218,6 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
           {dragging && <div className='bg-background/90 pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm' data-composer-drop=''>{filesOffer ? `Drop to attach. ${limitWords(filesOffer)}` : 'Drop to attach'}</div>}
         </div>
         {voiceWords && <p className={cn('px-2 text-xs', voice.error ? 'text-destructive' : 'text-muted-foreground')} role='status' data-composer-voice=''>{voiceWords}</p>}
-        {filesOffer && !filesOffer.available && !disabled && <p className='text-muted-foreground px-2 text-xs' data-composer-files-why=''>{filesOffer.why}</p>}
       </form>
     </TooltipProvider>
   );

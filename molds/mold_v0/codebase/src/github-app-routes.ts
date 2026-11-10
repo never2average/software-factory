@@ -140,7 +140,7 @@ export function githubAppAdminRoutes(admin: Router, need: Need, actor: (req: Req
     setup: {
       homepage_url: consoleUrl(),
       callback_url: `${consoleUrl()}/api/github-app/callback`,
-      webhook_url: `${publicUrl()}/api/github-app/webhook`,
+      webhook_url: `${consoleUrl()}/api/github-app/webhook`, // the console's own address forwards /api here
       request_user_authorization: true,
       permissions: { ...TOKEN_PERMISSIONS, metadata: "read" },
       events: ["installation", "installation_repositories"],

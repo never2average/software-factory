@@ -260,7 +260,10 @@ try {
     assert.deepEqual([cb.result, cb.redirect_uri, cb.where], ["unknown", `${FRONT}/api/github-app/callback`, "GitHub → Settings → Developer settings → GitHub Apps → the app → Callback URL"], "the callback: unknown before anyone came back");
     assert.ok(cb.steps.includes(`    ${FRONT}/api/github-app/callback`) && cb.steps.some((s) => /Request user authorization \(OAuth\) during installation/.test(s)));
     assert.equal(byId(fl, "github_app.setup").result, "unknown");
-    assert.equal(byId(fl, "github_app.webhook").result, "pass", "the webhook GitHub holds is the API's");
+    assert.equal(byId(fl, "github_app.webhook").result, "pass", "the webhook GitHub holds is the API's (still works)");
+    assert.equal(byId(fl, "github_app.webhook").redirect_uri, `${FRONT}/api/github-app/webhook`, "the address it asks for is the app's own");
+    github.hook = `${FRONT}/api/github-app/webhook`;
+    assert.equal(byId(await SIC.checkSignIn(), "github_app.webhook").result, "pass", "the app's own address: pass");
     github.hook = "https://old-api.example.net/api/github-app/webhook";
     assert.match(byId(await SIC.checkSignIn(), "github_app.webhook").detail, /old-api\.example\.net/, "another webhook address: fail, naming it");
     github.hook = `${API}/api/github-app/webhook`;
