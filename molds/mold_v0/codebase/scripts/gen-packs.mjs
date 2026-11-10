@@ -170,7 +170,7 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // a host pack's engine settings (mold_v0-137: engine.config, read by its own code through src/pack-host.ts engineConfig)
   "engine",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
-  "record_areas", "job_kinds", "credentials", "oauth_providers", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
+  "record_areas", "job_kinds", "credentials", "oauth_providers", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts", "programs",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
@@ -2670,6 +2670,9 @@ const recordAdminItems = (() => {
       : !FEATURE_SETTING.workspace_recipes ? "features.workspace_recipes is false" : "the workspace agent is off (features.agent_harness = true turns it on; recipes are its profiles' workspaces)",
     "agent-profiles": FEATURE_ON.agent_harness ? { title: "Agent profiles", url: "/admin/agent-profiles", icon: "userPen" } : "the workspace agent is off (features.agent_harness)",
     repositories: workspaceFilesRepositories.length ? { title: "Data repositories", url: "/admin/repositories", icon: "book" } : "no pack declares a workspace_files repository",
+    // mold_v0-291: the Programs page (flag nested_runs with agent_harness).
+    programs: FEATURE_ON.nested_runs && FEATURE_ON.agent_harness ? { title: "Programs", url: "/admin/programs", icon: "sparkles" }
+      : !FEATURE_SETTING.nested_runs ? "features.nested_runs is false" : "the workspace agent is off (features.agent_harness = true turns it on; programs are what its sessions spawn)",
   };
   /** One list the group names (a plain entry, or an in-page tab of one that holds several): its entry, or null (refused). */
   const listItem = (e, w) => {

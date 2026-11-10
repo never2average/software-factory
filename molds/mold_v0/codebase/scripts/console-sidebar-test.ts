@@ -328,7 +328,8 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     // Pages a build has only with a feature it lacks here (a mailbox, the developer surface, a workspace store, the
     // account context, a data repository, an audit trail): each is not found in such a build; with the feature it has its own entry.
     // mold_v0-271: Recipes (and a recipe's page) is a page only with workspace_recipes on.
-    const ABSENT = /^\/app\/(settings|settings\/\[group\]|files|context)$|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\])$/;
+    // mold_v0-291: Programs likewise, only with nested_runs on (its entry is proved in d. below).
+    const ABSENT = /^\/app\/(settings|settings\/\[group\]|files|context)$|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\]|programs)$/;
     expect("tabs", walk(copy), {
       "/app": "/app/overview", "/app?journey=first-audit": "/app/overview", "/app/journeys": "/app/overview",
       "/app/workbench?tab=fixes": "/app/workbench", "/app/workbench?tab=applications": "/app/workbench",
@@ -347,7 +348,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
       "/app/settings/access": "/app/settings/access", "/app/settings/access?tab=api_keys": "/app/settings/access",
       "/app/settings/connections?tab=webhooks": "/app/settings/connections", "/app/settings/automation": "/app/settings/automation",
       "/app/settings/data-trust": "/app/settings/data-trust",
-    }, /^\/app\/(files|context|schedules|vulnerabilities)(\?|$)|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\])$/); // pages this fixture lacks; the staff access log has no sidebar entry (as on main)
+    }, /^\/app\/(files|context|schedules|vulnerabilities)(\?|$)|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\]|programs)$/); // pages this fixture lacks; the staff access log has no sidebar entry (as on main)
     // How it is lit (mold_v0-216): the brand's tint behind it and its words in the brand's colour, light and dark, the
     // phone's sheet the same component; no bar at its edge.
     const side = readFileSync(path.join(ROOT, "web", "src", "components", "layout", "app-sidebar.tsx"), "utf8");
@@ -508,11 +509,15 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     assert.deepEqual(group(rec, "Records"), ["Recipes /admin/recipes", "Pipelines /admin/journeys", "Controls /admin/records/controls"]);
     assert.equal(rec.features.workspace_recipes, true, "listed, with the workspace agent on: workspace_recipes is on");
     assert.equal(rec.lit.recipes, "/admin/recipes");
+    // mold_v0-291: the Programs page, with nested_runs on.
+    const prog = navProbe(built("records-programs", PACKS, declare(["programs", "controls"]), { features: { agent_harness: true, nested_runs: true } }));
+    assert.deepEqual(group(prog, "Records"), ["Programs /admin/programs", "Controls /admin/records/controls"]);
 
     // e. Refused, each with its reason.
     const refused: [string, unknown[], RegExp, unknown?][] = [
       ["unknown", ["journeys", "nothing_here"], /no shared record area is named nothing_here/],
       ["recipes-no-agent", ["recipes"], /the workspace agent is off/],
+      ["programs-no-flag", ["programs"], /features\.nested_runs is false/],
       ["twice", ["controls", "controls"], /listed twice/],
       ["profiles-no-agent", ["agent-profiles"], /workspace agent is off/],
       ["bad-label", [{ id: "controls", label: "{x}" }], /label|Invalid/],

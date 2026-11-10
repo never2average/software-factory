@@ -149,6 +149,16 @@ export interface AgentPolicy {
   recipes?: { id: string; name: string; version: number }[];
   /** mold_v0-267: its profile's governance policy, frozen (src/agent-governance.ts), with what was approved since. */
   governance?: FrozenGovernance;
+  /** mold_v0-291 (flag nested_runs): where it sits in its tree. A child (`is_child`) never asks for anything and ends on what it is not allowed. */
+  nested?: NestedPolicy;
+}
+
+export interface NestedPolicy {
+  root_id: string; parent_id: string | null; depth: number; can_spawn: boolean; is_child: boolean;
+  /** A child's own handle, whose program's outputs it submits. */
+  handle?: string;
+  /** Whether it may send a candidate (a machine's state): the wake sends `.candidate/` when it ends. */
+  candidate?: boolean;
 }
 
 /**
@@ -239,16 +249,26 @@ export function agentKind(policy?: AgentPolicy): JobKind {
     // The wake's own cap, plus the turn running when it is reached, plus its checkpoint.
     token_lifetime_seconds: p.wake_max_seconds + 900,
     budget_usd: p.budget_ceiling_usd,
-    concurrency_per_workspace: settingNumber("AGENT_SESSIONS_PER_WORKSPACE"),
+    // mold_v0-291: a child waits only for its tree's own limit (src/nested-runs.ts) and the platform's; a root still waits for the setting.
+    concurrency_per_workspace: p.nested?.is_child ? Math.max(settingNumber("AGENT_SESSIONS_PER_WORKSPACE"), 8) : settingNumber("AGENT_SESSIONS_PER_WORKSPACE"),
     month_budget_usd: settingNumber("AGENT_MONTH_BUDGET_USD"),
     // mold_v0-262: the credentials its profile gave the session (a workspace owner's), as "<pack>/<field>".
     workspace: false, args: {}, credentials: [...(p.credentials ?? [])],
     // mold_v0-267: its profile's platform keys (delivered with the credentials) and its primary provider's key label.
     ...(p.vault_keys?.length ? { vault_keys: p.vault_keys.map((k) => ({ ...k })) } : {}),
     ...(p.inference_key ? { provider_key: { provider: p.provider, label: p.inference_key } } : {}),
+    // mold_v0-291: a run in a tree: the gateway holds each request's worst cost from its budget (src/nested-runs.ts admitTreeRequest).
+    ...(p.nested ? { nested: true } : {}),
   } as unknown as JobKind;
 }
 
 /** The kinds the engine claims and launches sandboxes for besides the packs' (src/runs.ts runnableKinds): the agent's, when on. */
-export const builtInKinds = (): JobKind[] => (agentHarnessOn() ? [agentKind()] : []);
+export const builtInKinds = (): JobKind[] => (agentHarnessOn() ? [agentKind(), ...(featureSetting("nested_runs") ? [acceptanceKind()] : [])] : []);
+
+/** mold_v0-291: the acceptance evaluator's run: a clean sandbox, no model and no credentials (src/program-evaluator.ts). */
+export const ACCEPTANCE_KIND = "acceptance";
+export function acceptanceKind(): JobKind {
+  return { pack: AGENT_PACK, name: ACCEPTANCE_KIND, label: "Acceptance test", runner: "program-evaluation", providers: [], egress: [], max_attempts: 1, lease_seconds: 60, token_lifetime_seconds: 4200,
+    budget_usd: 0.01, concurrency_per_workspace: 2, month_budget_usd: 1, workspace: false, args: {}, credentials: [] } as unknown as JobKind;
+}
 export const isAgentRun = (r: { pack: string; kind?: string }) => r.pack === AGENT_PACK;

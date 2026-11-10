@@ -8,6 +8,7 @@ import { registerPackTools } from "./packs.js";
 import { registerMemoryTools } from "./account-context-tools.js";
 import { registerAuditTools } from "./audit-trail.js";
 import { registerAgentTools } from "./agent-tools.js";
+import { registerNestedTools } from "./nested-tools.js";
 import { registerUsageTools } from "./usage-tool.js";
 import { registerLedgerTools } from "./ledger.js";
 import { generatedInstructions, packInstructions } from "./mcp-tools.js";
@@ -135,6 +136,7 @@ export function createServer(org: Org, context = ""): McpServer {
   registerAuditTools(server, org);
   registerLedgerTools(server, org); // mold_v0-195: verify_audit_trail, with audit.sign on
   registerAgentTools(server, org); // mold_v0-243: the workspace agent's sessions, with agent_harness on
+  registerNestedTools(server, org); // mold_v0-291: spawn and collect, for a live session with nested_runs on
   registerUsageTools(server, org); // mold_v0-260: get_usage, with usage_tool on (off by default)
   // mold_v0-261: a workspace agent session's token never lists the tools its agent profile hides (the server refuses them too).
   for (const name of org.agentSession?.hidden ?? []) (server as unknown as { _registeredTools: Record<string, { remove(): void } | undefined> })._registeredTools[name]?.remove();

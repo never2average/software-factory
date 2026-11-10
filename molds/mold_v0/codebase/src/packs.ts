@@ -4,6 +4,8 @@
  * server (src/pack-routes.ts) and the migration runner (src/migrate.ts reads src/pack-migrations.generated.ts, which
  * imports no pack code). With zero packs every list here is empty and the shell is exactly what it was.
  */
+import { parseProgram } from "./program-spec.js";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -161,6 +163,9 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const areasForChecks = out.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ name: a.name, scope: a.scope, fields: a.fields, sealed: a.sealed === true || a.role === "asset",
     live: !!a.repository && (p.definition.repositories?.[a.repository] as { kind?: string } | undefined)?.kind === "http_api" })));
   problems.push(...checksProblems(out.map((p) => ({ id: p.id, checks: (p.definition.checks ?? []) as unknown[] })), areasForChecks));
+  // mold_v0-291: a pack's programs, checked by the same rules a staff save is (src/program-spec.ts).
+  for (const p of out) for (const [i, d] of (p.definition.programs ?? []).entries())
+    for (const x of parseProgram(d.config, (t) => createHash("sha256").update(t).digest("hex")).problems) problems.push(`pack ${p.id}: programs[${i}] ${d.id}: ${x}`);
   for (const p of out) for (const c of p.definition.checks ?? []) {
     const t = checkToolName(String((c as { name?: unknown }).name));
     if (toolOwner.has(t) || generated.has(t)) problems.push(`pack ${p.id}: check ${String((c as { name?: unknown }).name)}'s tool ${t} is already ${toolOwner.get(t) === "the shell" ? "a shell tool" : toolOwner.has(t) ? `pack ${toolOwner.get(t)}'s` : "a generated tool"}`);

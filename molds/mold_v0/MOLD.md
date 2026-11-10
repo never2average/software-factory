@@ -3859,6 +3859,7 @@ self-tests.
   related lists read the shared areas only, from `GET /api/admin/records/_page/<area>/<key>[?tab=]`
   (`src/record-page-routes.ts` `staffPageData`); a fact or list over a workspace area is hidden and its section not drawn
   (staff read no workspace's records there); runs and history sections stay a workspace's. `npm run test:shared-records`.
+- **Nested runs and Programs** (flag `nested_runs`, default off, needs `agent_harness`; mold_v0-291; `sql/migrations/0066_nested_runs.sql` with its rollback; docs/agent-harness.md): a running agent session spawns children in sandboxes of their own (depth, child and concurrency limits, budgets carved from the parent's and enforced at the gateway, every policy the intersection with the parent's), typed versioned Programs (staff at `/admin/programs`, shell page id `programs`, or a pack.json's `programs`), and a server-owned acceptance rule that fails closed and promotes versions a person can roll back. Proof: `npm run test:nested-runs`.
 - **Workspace recipes** (flag `workspace_recipes`, default on, asked for when the staff Records group lists `recipes`,
   needs `agent_harness`; `src/recipes.ts`, `src/recipe-routes.ts`, `web/src/features/agent/recipes-page.tsx`,
   `sql/migrations/0060_workspace_recipes.sql` with its rollback): reusable bundles of files and runtime binaries an agent
