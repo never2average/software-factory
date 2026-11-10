@@ -430,17 +430,15 @@ function SessionFull({ area, id, call, onChange, onBack, budget }: { area: Area;
       <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
         {back}
         <h1 className='order-last min-w-0 basis-full truncate text-base font-medium sm:order-none sm:basis-0 sm:flex-1' title={d.title}>{d.title}</h1>
-        <PhaseBadge s={d} />
-        <span className='text-muted-foreground text-sm tabular-nums'>{usd(d.spent_usd)} of {usd(d.budget_usd)}</span>
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
       </div>
       {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['paused', 'withdrawn', 'budget'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
       {d.pending_request && <div className='max-h-[45%] shrink-0 overflow-y-auto'><RequestCard d={d} r={d.pending_request} call={call} onDone={changed} /></div>}
       <TraceStream sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
-        dock={area === 'app' ? <div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 border-t px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
+        dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 border-t px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
           <div className='mx-auto w-full max-w-4xl'><Composer d={d} call={call} onSent={changed} waitingOn={trace.waitingOn} failing={failing} /></div>
-        </div> : null} />
+        </div>} />
       <Dialog open={howOpen} onOpenChange={setHowOpen}>
         <DialogContent className='max-h-[85dvh] overflow-y-auto sm:max-w-2xl' data-agent-how=''>
           <DialogHeader>
@@ -562,7 +560,7 @@ function Composer({ d, call, onSent, waitingOn, failing }: { d: Detail; call: Ca
           {failing ?? (waitingOn ?? (d.phase === 'working' ? 'The agent is working' : d.phase === 'waking' ? 'Waking up' : 'Starting'))}
         </p>
       )}
-      <div className={cn('bg-background focus-within:ring-ring/40 flex items-end gap-2 rounded-xl border p-1.5 shadow-sm focus-within:ring-2', working && !failing && 'motion-safe:shadow-[0_0_12px_-2px_var(--color-primary)]')}>
+      <div className={cn('bg-background focus-within:ring-ring/40 flex items-end gap-2 rounded-xl border p-1.5 shadow-sm focus-within:ring-2')}>
         <Textarea id={`agent-msg-${d.id}`} rows={1} value={text} disabled={!d.can.message || busy} placeholder={why ? undefined : placeholder} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} className='max-h-32 min-h-9 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent' />
         <Button type='submit' disabled={!d.can.message || busy || !text.trim()} aria-label='Send' className='h-9 min-w-9 shrink-0'><Icons.send /><span className='hidden sm:inline'>Send</span></Button>
