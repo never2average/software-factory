@@ -125,7 +125,7 @@ try {
   const http = await startHttp();
   const tokenO = await http.signInAs(org, "owner"), tokenV = await http.signInAs(org, "viewer");
   const auth = (t: string) => ({ authorization: `Bearer ${t}` });
-  const put = (t: string, name: string, body: Buffer | string, qs = "") => fetch(`${http.base}/api/agent/files${qs}`, { method: "POST", headers: { ...auth(t), "content-type": "application/octet-stream", "x-pack-request": "1", "x-file-name": encodeURIComponent(name), "x-file-type": "text/plain" }, body });
+  const put = (t: string, name: string, body: Buffer | string, qs = "") => fetch(`${http.base}/api/agent/files${qs}`, { method: "POST", headers: { ...auth(t), "content-type": "application/octet-stream", "x-pack-request": "1", "x-file-name": encodeURIComponent(name), "x-file-type": "text/plain" }, body: body as BodyInit });
   const ownerActor = H.actorOf({ user: tokenO.userId, email: "owner@example.org", accountRole: "owner" } as never);
   {
     const offer = (await (await http.req("GET", "/api/agent/composer", auth(tokenO.token))).json() as { offer: { files: { available: boolean; max_per_message: number; max_file_bytes: number }; repositories: { state: string } } }).offer;
