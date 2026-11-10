@@ -441,9 +441,9 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
       </div>
-      {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['paused', 'withdrawn', 'budget', 'continued'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
+      {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['idle', 'paused', 'withdrawn', 'budget', 'continued'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
       <TraceStream sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
-        dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 border-t px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
+        dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
           <div className='mx-auto flex w-full max-w-4xl flex-col gap-2'>
             {d.pending_request && <RequestBar d={d} r={d.pending_request} call={call} onDone={changed} />}
             <Composer area={area} d={d} call={call} onSent={changed} onOpenSession={onOpenSession} waitingOn={trace.waitingOn} failing={failing} prefill={prefill} />
