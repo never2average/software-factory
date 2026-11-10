@@ -1205,7 +1205,7 @@ async function suite(kind: "pglite" | "postgres") {
     await assert.rejects(d.query("INSERT INTO agent_profiles (id, name, created_by, updated_by) VALUES ('Bad id', 'X', 's', 's')"), /check constraint/, "an id that is no address refused");
     await assert.rejects(d.query("INSERT INTO agent_profile_changes (profile_id, version, action, changed_by, after) VALUES ('builder', 1, 'renamed', 's', '{}')"), /check constraint/, "an unknown action refused");
     const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Profiles', 'profiles-migration') RETURNING id");
-    await assert.rejects(d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, profile_id, session_number) VALUES ('hss_a', $1, 't', 'starting', 'f', 'm', 'p', '{}', 1, 'builder', 1)", [org]), /check constraint|profile_both/, "a profile without its version refused");
+    await assert.rejects(d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, profile_id) VALUES ('hss_a', $1, 't', 'starting', 'f', 'm', 'p', '{}', 1, 'builder')", [org]), /check constraint|profile_both/, "a profile without its version refused");
     for (const t of ["agent_profiles", "agent_profile_versions", "agent_profile_changes"]) {
       const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t]);
       assert.equal(grants.length, 0, `${t}: the tenant role has no grant on it`);
@@ -1413,6 +1413,46 @@ async function suite(kind: "pglite" | "postgres") {
     assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_workspace_recipes")).length, 1, "and it applies again");
     await r.drop(); await prior.drop();
     log(`  ✓ ${kind}: ${v} the workspace recipes (three staff tables the tenant role cannot read; ids, a version once, an agent's version naming its proposal, a decided proposal checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
+  // Nested runs and Programs (mold_v0-291, nested_runs, found by name): a handle's settled time follows its status, one
+  // champion per target, the tenant role only reads a workspace's own tree, staff's tables and holds are out of its reach;
+  // its rollback is refused while a child is unsettled, then leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "nested_runs")!.version;
+    const d = await shellAt(kind, v);
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('nested', 'Nested') RETURNING id");
+    await d.query("INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, root_id) VALUES ('hss_rootroot1', $1, 't', 'claude-code', 'm', 'anthropic', 5, 'hss_rootroot1')", [org]);
+    await assert.rejects(d.query("UPDATE harness_sessions SET depth = -1 WHERE id = 'hss_rootroot1'"), /check constraint/, "a depth is never negative");
+    await assert.rejects(d.query("UPDATE harness_sessions SET carved_usd = -1 WHERE id = 'hss_rootroot1'"), /check constraint/, "what is carved is never negative");
+    await d.query("INSERT INTO harness_children (id, org_id, root_id, parent_id, kind, name, child_no, budget_usd) VALUES ('hch_aaaaaaaa1', $1, 'hss_rootroot1', 'hss_rootroot1', 'prompt', 'a', 1, 1)", [org]);
+    await assert.rejects(d.query("INSERT INTO harness_children (id, org_id, root_id, parent_id, kind, name, child_no, budget_usd, status) VALUES ('hch_aaaaaaaa2', $1, 'hss_rootroot1', 'hss_rootroot1', 'prompt', 'a', 2, 1, 'done')", [org]), /check constraint/, "a settled handle has its time");
+    await assert.rejects(d.query("INSERT INTO harness_children (id, org_id, root_id, parent_id, kind, name, child_no, budget_usd) VALUES ('nope', $1, 'hss_rootroot1', 'hss_rootroot1', 'prompt', 'a', 2, 1)", [org]), /check constraint/, "a handle's id is its shape");
+    await d.query("INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, candidate, created_by) VALUES ('hcv_aaaaaaaa1', $1, 'recipe', 'kit', 1, 'champion', '{}', 's')", [org]);
+    await assert.rejects(d.query("INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, candidate, created_by) VALUES ('hcv_aaaaaaaa2', $1, 'recipe', 'kit', 2, 'champion', '{}', 's')", [org]), /duplicate key|unique/, "one champion per target");
+    await assert.rejects(d.query("INSERT INTO harness_programs (id, name, created_by, updated_by) VALUES ('Bad Id', 'x', 's', 's')"), /check constraint/, "a program's id is its shape");
+    await assert.rejects(d.query("INSERT INTO harness_evaluations (id, org_id, program_id, program_version, root_id, target_kind, target_id, candidate, acceptance, status) VALUES ('hev_aaaaaaaa1', $1, 'p', 1, 'r', 'recipe', 'k', '{}', '{}', 'decided')", [org]), /check constraint/, "a decided evaluation has its outcome");
+    const grants = async (t: string) => (await d.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t])).map((g) => g.privilege_type).sort();
+    for (const t of ["harness_children", "harness_evaluations", "harness_champions"]) assert.deepEqual(await grants(t), ["SELECT"], `${t}: the tenant role only reads it`);
+    for (const t of ["harness_programs", "harness_program_versions", "harness_gateway_holds"]) assert.deepEqual(await grants(t), [], `${t}: the tenant role has no grant on it`);
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_nested_runs.sql`), "utf8");
+    const [{ id: o2 }] = await r.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('nested2', 'Nested') RETURNING id");
+    await r.query("INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, root_id) VALUES ('hss_rootroot2', $1, 't', 'claude-code', 'm', 'anthropic', 5, 'hss_rootroot2')", [o2]);
+    await r.query("INSERT INTO harness_children (id, org_id, root_id, parent_id, kind, name, child_no, budget_usd) VALUES ('hch_bbbbbbbb1', $1, 'hss_rootroot2', 'hss_rootroot2', 'prompt', 'a', 1, 1)", [o2]);
+    await assert.rejects(r.exec(rb), /have not settled/, "refused while a child is unsettled");
+    await r.query("UPDATE harness_children SET status = 'cancelled', settled_at = now() WHERE id = 'hch_bbbbbbbb1'");
+    await r.exec(rb);
+    await r.query("DELETE FROM harness_sessions WHERE id = 'hss_rootroot2'");
+    await r.query("DELETE FROM organizations WHERE slug = 'nested2'");
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_nested_runs")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} nested runs and Programs (a handle's settling and shape, one champion per target, the tenant role reads its own tree only); its rollback refused while a child is unsettled, then leaves exactly what ${v - 1} left, and it applies again`);
   }
 
   // Record-owned resources (mold_v0-282, record_resources, found by name): the shared records' databases (one per record

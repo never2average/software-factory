@@ -113,6 +113,13 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (nam
     case "waiting": return { ...base, id, kind: "sandbox", status: "waiting", title: `Waiting: ${cap(d.reason, 400) ?? "for a place to run"}` };
     case "failed": return { ...base, id, kind: "wake", status: "error", title: "It failed", error: cap(d.error, 2000), fields: clean(d) as Record<string, unknown> };
     case "agent_request": return null; // what it asked for has its own row (a mark)
+    // mold_v0-291: its children, in plain words (the handle and the numbers stay in the step's fields).
+    case "child_spawned": return { ...base, id, kind: "note", status: "ok", title: `Started ${str(d.name) ?? "a child run"}`, fields: clean(d) as Record<string, unknown> };
+    case "child_settled": return { ...base, id, kind: "note", status: d.status === "error" ? "error" : "ok", title: d.status === "done" ? "A child run finished" : d.status === "cancelled" ? "A child run was cancelled" : "A child run failed", fields: clean(d) as Record<string, unknown> };
+    case "child_outputs": return { ...base, id, kind: "note", status: "ok", title: "Handed in its result" };
+    case "child_outputs_refused": return { ...base, id, kind: "note", status: "error", title: "Its result did not match what was asked for", fields: clean(d) as Record<string, unknown> };
+    case "candidate_recorded": return { ...base, id, kind: "note", status: "ok", title: "Sent a candidate", fields: clean(d) as Record<string, unknown> };
+    case "evaluation_decided": return { ...base, id, kind: "note", status: d.outcome === "refused" ? "error" : "ok", title: d.outcome === "accepted" ? "The candidate was accepted" : d.outcome === "refused" ? "The candidate was refused" : "The candidate needs a person's decision", fields: clean(d) as Record<string, unknown> };
     default:
       return { ...base, id, kind: "note", status: "ok", title: words(e.type), fields: clean(d) as Record<string, unknown> };
   }

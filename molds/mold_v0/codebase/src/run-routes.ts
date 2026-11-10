@@ -139,6 +139,28 @@ export function runWorkerRouter(): Router {
     }));
     // mold_v0-290: the short-lived read-only token and commits for the repositories its session's messages chose (the runner's alone).
     r.post("/:id/agent/repositories", answer(async (req) => (await h()).wakeRepositories(String(req.params.id), leaseOf(req), (req.body ?? {}).only)));
+    // mold_v0-291 (flag nested_runs): a machine state's candidate, and the acceptance evaluator's own calls (each only with its run's lease).
+    const nested = async () => { const { nestedOn } = await import("./nested-runs.js"); if (!nestedOn()) throw new PackError("Nested runs are not on in this app", 404); return import("./nested-runs.js"); };
+    r.post("/:id/agent/candidate", express.raw({ type: "application/octet-stream", limit: inlineMaxBytes() }), answer(async (req) => {
+      if (!Buffer.isBuffer(req.body)) throw new PackError("send the candidate as application/octet-stream", 400);
+      return (await nested()).wakeCandidate(String(req.params.id), leaseOf(req), req.body);
+    }));
+    r.post("/:id/evaluation/start", answer(async (req) => (await nested()).evaluationStart(String(req.params.id), leaseOf(req))));
+    r.get("/:id/evaluation/bundle/:which", answer(async (req, res) => {
+      const which = String(req.params.which) === "champion" ? "champion" as const : "candidate" as const;
+      const body = await (await nested()).evaluationBundle(String(req.params.id), leaseOf(req), which);
+      if (!body) { res.status(204).end(); return null; }
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.end(body);
+      return null;
+    }));
+    r.get("/:id/evaluation/files/:n", answer(async (req, res) => {
+      const body = await (await nested()).evaluationFile(String(req.params.id), leaseOf(req), Number(req.params.n));
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.end(body);
+      return null;
+    }));
+    r.post("/:id/evaluation/result", answer(async (req) => (await nested()).evaluationResult(String(req.params.id), leaseOf(req), req.body ?? {})));
     // mold_v0-267: a part of a file the session's profile uploads into its workspace (only one its frozen policy names).
     r.get("/:id/agent/uploads/:upload/:part", answer(async (req, res) => {
       const body = await (await h()).wakeUploadPart(String(req.params.id), leaseOf(req), String(req.params.upload), Number(req.params.part));

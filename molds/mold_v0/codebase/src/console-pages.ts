@@ -112,7 +112,7 @@ export function shownSections(blocks: unknown[]): ShowableSection[] {
  * page, /admin/records/<area>/<key>, stays where it is). A member is named once in the whole group (never twice, never
  * in two entries); the entry's id names no shared area and no staff page.
  */
-export const ADMIN_RECORDS_PAGES = ["journeys", "recipes", "agent-profiles", "repositories"] as const;
+export const ADMIN_RECORDS_PAGES = ["journeys", "recipes", "agent-profiles", "repositories", "programs"] as const;
 export type AdminRecordsPage = (typeof ADMIN_RECORDS_PAGES)[number];
 export interface AdminRecordsMember { id: string; label?: string }
 export interface AdminRecordsEntry { id: string; label?: string; tabs?: AdminRecordsMember[] }

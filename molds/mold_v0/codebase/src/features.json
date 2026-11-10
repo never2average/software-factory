@@ -308,6 +308,21 @@
       "off": "No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out."
     },
     {
+      "id": "nested_runs",
+      "short": "nested",
+      "label": "Nested agent runs and programs",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it; the staff page shows once console.admin_records lists programs)",
+      "requires": [
+        "agent_harness"
+      ],
+      "since": "mold_v0-291",
+      "about": "A running agent session spawns child sessions (each a full session in its own sandbox, depth-limited, with budgets carved out of the parent's and enforced at the gateway on every request) and collects their typed results; Programs are versioned, staff-managed or pack-declared definitions of such a child (prompt, typed inputs and outputs, failure policy, an optional machine of states and transitions, an optional server-owned acceptance rule with a frozen test). /api/admin/onboarding/programs and the workspace's /api/agent/:id/children.",
+      "off": "No tool, route, page or sidebar entry; no session is given a child or a program; the tables stay empty; the generated files leave the flag out."
+    },
+    {
       "id": "record_resources",
       "short": "resources",
       "label": "Record resources",

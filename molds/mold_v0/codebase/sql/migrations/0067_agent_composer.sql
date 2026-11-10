@@ -1,8 +1,8 @@
 -- The agent composer and session numbers (mold_v0-290; src/agent-composer.ts, src/harness-sessions.ts; molds/mold_v0/docs/agent-harness.md).
 --
---   harness_sessions.session_number  a short human number per workspace, in order of creation, kept forever. The console
---                             shows it with the app's prefix (AGI-001; profile.json agent_session_prefix). Backfilled
---                             here by created_at, then id.
+--   harness_sessions.session_number  a root session's short human number in its workspace, in order of creation, kept
+--                             forever. The console shows it with the app's prefix (AGI-001; profile.json
+--                             agent_session_prefix). Backfilled here by created_at, then id.
 --   harness_session_counters  the last number given in each workspace. Taken with one row lock in the transaction that
 --                             inserts the session, so two sessions started at once can never get the same number. A number
 --                             whose session failed to queue is not given again.
@@ -17,11 +17,16 @@
 -- Every table carries the workspace (org_id) under row-level security: the tenant role may only read its own rows.
 
 ALTER TABLE harness_sessions ADD COLUMN IF NOT EXISTS session_number INT;
-UPDATE harness_sessions s SET session_number = n.n
-  FROM (SELECT id, row_number() OVER (PARTITION BY org_id ORDER BY created_at, id) AS n FROM harness_sessions) n
- WHERE s.id = n.id AND s.session_number IS NULL;
-ALTER TABLE harness_sessions ALTER COLUMN session_number SET NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS harness_sessions_number_idx ON harness_sessions (org_id, session_number);
+-- A root session a nested run already numbered keeps that number; the rest follow it, in order of creation. A child has no
+-- number of its own: its ref (AGI-001.2) reads from its parent's.
+UPDATE harness_sessions SET session_number = substring(ref from '-([0-9]+)$')::int
+ WHERE parent_id IS NULL AND ref ~ '^[A-Z][A-Z0-9]*-[0-9]+$';
+UPDATE harness_sessions s SET session_number = n.base + n.rn
+  FROM (SELECT h.id, row_number() OVER (PARTITION BY h.org_id ORDER BY h.created_at, h.id) AS rn,
+               (SELECT coalesce(max(x.session_number), 0) FROM harness_sessions x WHERE x.org_id = h.org_id) AS base
+          FROM harness_sessions h WHERE h.parent_id IS NULL AND h.session_number IS NULL) n
+ WHERE s.id = n.id;
+CREATE UNIQUE INDEX IF NOT EXISTS harness_sessions_number_idx ON harness_sessions (org_id, session_number) WHERE session_number IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS harness_session_counters (
   org_id       INT PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,

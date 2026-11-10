@@ -91,14 +91,15 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
   // beside Connect and, below it, the rail, which stretches to the steps' height so the grid closes square.
   const cell = 'min-w-0 border-r border-b';
   return (
-    <PageContainer>
-      <div className='grid w-full border-t border-l lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_auto_1fr] xl:grid-cols-[minmax(0,1fr)_24rem]' data-home-grid>
+    <PageContainer compact>
+      {/* On a wide screen the page fits the window and only the journey (the steps cell) scrolls (operator, 2026-11-10). */}
+      <div className='grid w-full border-t border-l lg:h-[calc(100svh-4.5rem)] lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_auto_minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_24rem]' data-home-grid>
         {/* A home tab's headline row (mold_v0-203), across both columns: it loads on its own, at a fixed height. Its
             cards keep their own dividing lines; the strip's top and bottom lines are the grid's. Nothing to show: no cell. */}
         {top && <div className={cn(cell, 'empty:hidden lg:col-span-2 [&_dl]:border-y-0 [&_dl>div]:p-4!')}>{top}</div>}
         {error ? <div className={cn(cell, 'p-4 lg:col-span-2')}><ErrorState error={error} /></div> : !s || !pack.settled ? <div className={cn(cell, 'p-4 lg:col-span-2')}><LoadingCards count={4} /></div> : (<>
           <ConnectionBox s={s} onConnected={reload} className={cn(cell, 'lg:col-start-2 lg:row-start-2')} />
-          <div className={cn(cell, 'flex flex-col gap-8 p-4 lg:col-start-1 lg:row-span-2 lg:row-start-2')}>
+          <div className={cn(cell, 'flex flex-col gap-8 p-4 lg:col-start-1 lg:row-span-2 lg:row-start-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain')} data-home-journey>
             {selected === 'setup' || !journey ? (<>
               <Checklist steps={steps} title={heading} anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
@@ -107,7 +108,7 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
           </div>
           {/* The rail: Due soon and a home tab's cards, one cell each, a line between them (a card with nothing to show
               draws nothing). On a wide screen it fills down to the steps' end, so it is drawn even when empty there. */}
-          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3')} data-home-rail>
+          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3 lg:min-h-0 lg:overflow-hidden')} data-home-rail>
             {rail === undefined ? due : rail.map((x) => (x === 'journeys' ? due : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
         </>)}

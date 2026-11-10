@@ -31,7 +31,7 @@ export interface Org {
    * person who started it (userId, role). `allowed`: the tools it may call without asking (src/http.ts refuses the rest).
    * The agent's own session tools are not offered to it (src/agent-tools.ts).
    */
-  agentSession?: { session: string; allowed: string[]; hidden?: string[] };
+  agentSession?: { session: string; allowed: string[]; hidden?: string[]; run?: string; nested?: { spawn: boolean; child: boolean } };
 }
 
 const KEY_PREFIX = "oct_";

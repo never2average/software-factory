@@ -4,6 +4,7 @@
 // below it the selected member's own staff list, exactly as its own page draws it: a shared area's list
 // (/admin/records/<area>) or a shell staff page's body (Journeys, Recipes, Agent profiles, Data repositories). Each
 // member's own address of before leads here (next.config redirects); a record's own page stays where it is.
+import { ProgramsPage } from '@/features/agent/programs-page';
 import PageContainer from '@/components/layout/page-container';
 import { InPageTabs } from '@/features/tabs/in-page-tabs';
 import { AdminJourneys } from '@/features/journeys/admin';
@@ -25,6 +26,7 @@ function MemberBody({ tab }: { tab: Member }) {
     case 'recipes': return <RecipesPage key={tab.id} bare />;
     case 'agent-profiles': return <AgentProfilesPage key={tab.id} bare />;
     case 'repositories': return <AdminRepositories key={tab.id} bare />;
+    case 'programs': return <ProgramsPage key={tab.id} bare />;
     default: return null;
   }
 }

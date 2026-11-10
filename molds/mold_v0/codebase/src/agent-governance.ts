@@ -22,6 +22,10 @@
  *   retention    a shorter period than the platform's for the session's conversation (never longer).
  */
 
+/** mold_v0-291: the app tools a session in a tree uses to spawn and collect children; a child's also says it is done. Never a governance allowlist's to hide. */
+export const NESTED_TOOLS = ["spawn", "collect", "list_children", "cancel_child", "submit_outputs"] as const;
+export const isNestedTool = (t: string, appServer = "app") => NESTED_TOOLS.some((n) => t === `mcp__${appServer}__${n}`);
+
 /** The one allowlist entry that is not a domain: every public host (never an address or an internal name). */
 export const ALLOW_ALL_DOMAINS = "*";
 export const GOVERNANCE_LIMITS = { domains: 100, max_calls: 100, tools: 200, tool_calls: 1000, exceptions: 50, exception_days: 90, reason: 500, retention_days: 3650 } as const;

@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils';
 import React from 'react';
 import type { InfobarContent } from '@/components/ui/infobar';
 
@@ -29,6 +30,8 @@ export interface PageContainerProps {
   pageDescription?: string;
   infoContent?: InfobarContent;
   pageHeaderAction?: React.ReactNode;
+  /** Smaller outer margins (a page that fills the screen, as the Overview). */
+  compact?: boolean;
 }
 
 /**
@@ -47,7 +50,8 @@ export default function PageContainer({
   pageTitle,
   pageDescription,
   infoContent,
-  pageHeaderAction
+  pageHeaderAction,
+  compact
 }: PageContainerProps) {
   if (!access) {
     return (
@@ -66,7 +70,7 @@ export default function PageContainer({
   // No visible title or description above a page (operator rule, mold_v0-272): the page's name stays for screen
   // readers and the breadcrumb says where you are; actions keep their own row.
   return (
-    <div className='flex min-w-0 w-full flex-1 flex-col px-4 pt-2 pb-4 md:px-6 md:pt-4'>
+    <div className={cn('flex min-w-0 w-full flex-1 flex-col', compact ? 'px-2 pt-1 pb-2 md:px-3 md:pt-2' : 'px-4 pt-2 pb-4 md:px-6 md:pt-4')}>
       {pageTitle && <h1 className='sr-only'>{pageTitle}</h1>}
       {pageHeaderAction && <div className='mb-4 flex min-w-0 justify-end [&>div]:flex-wrap'>{pageHeaderAction}</div>}
       {content}

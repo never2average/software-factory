@@ -17,6 +17,8 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   "harness_sessions", "harness_session_messages", "harness_session_requests", "harness_budget_grants", "harness_wake_spend",
   // mold_v0-250 its tool tokens (src/harness-reach.ts, their only writer)
   "harness_session_tokens",
+  // mold_v0-291 nested runs (src/nested-runs.ts, their only writer)
+  "harness_children", "harness_evaluations", "harness_champions", "harness_gateway_holds",
   // mold_v0-047 record areas, mold_v0-041 runs, mold_v0-033 workspace store
   "workspace_records", "runs", "run_events", "run_results", "workspace_snapshots", "workspace_leases",
   // mold_v0-034 the workspace credential vault
