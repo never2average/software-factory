@@ -503,6 +503,17 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     const seats = row("seats"); // the row's key comes from its name as it is typed
     await seats.locator("select").selectOption("number");
     await seats.getByRole("checkbox").click();
+    // A choice field's options: added one by one (Enter, the Add button, a pasted list), each removable.
+    await p.getByRole("button", { name: "Add field" }).click();
+    await p.locator("[data-form-field^='new-']").locator("input").first().fill("Plan");
+    const plan = row("plan");
+    await plan.locator("select").selectOption("select");
+    await plan.getByRole("button", { name: "Remove option Option 1" }).click();
+    const optBox = plan.getByPlaceholder("Add option");
+    await optBox.fill("Free"); await optBox.press("Enter");
+    await optBox.fill("Team"); await plan.getByRole("button", { name: "Add", exact: true }).click();
+    await optBox.fill("Scale, Enterprise, team");
+    await plan.getByRole("button", { name: "Remove option Scale" }).click();
     await p.getByRole("button", { name: "Save" }).click();
     await p.waitForFunction(() => document.body.innerText.includes("Saved as version") || !document.querySelector("[data-testid='access-page-problems']"), null, { timeout: 15000 });
     await wait(1500);
@@ -510,6 +521,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     const saved = (await w.call("GET", "/api/access-pages")).body.request_form;
     assert.equal(saved.fields.find((f: any) => f.key === "company").label, "Organisation");
     assert.deepEqual(saved.fields.find((f: any) => f.key === "seats"), { key: "seats", label: "Seats", type: "number", required: true });
+    assert.deepEqual(saved.fields.find((f: any) => f.key === "plan").options.map((o: any) => o.label), ["Free", "Team", "Enterprise"], "options added by Enter, Add and a pasted list; a duplicate ignored; one removed");
     const [ch] = await w.db.query("SELECT action, changed_by FROM access_page_changes WHERE page_id = 'request_form' ORDER BY id DESC LIMIT 1");
     assert.deepEqual([ch.action, ch.changed_by], ["edited", w.staffEmail], "audited under the signed-in person");
     ok("the editor: one table on its own tab: edited in place, email locked, Add field keyed from the name, Save");
