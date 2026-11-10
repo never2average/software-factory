@@ -342,12 +342,13 @@ async function githubAppFlows(front: string, since: string, seen: (k: string) =>
       : last?.authorized === false ? { result: "fail" as const, detail: "the last install came back without the person's authorization: \"Request user authorization (OAuth) during installation\" is off, so connecting fails" }
       : { result: "unknown" as const, detail: "no install has come back since the address was last changed" }) }));
   const hook = await appHookUrl();
-  const want = `${publicUrl()}/api/github-app/webhook`;
+  const want = `${consoleUrl()}/api/github-app/webhook`; // the console's own address (it forwards /api to the API)
   out.push(flow({ id: "github_app.webhook", label: "GitHub App: webhook", provider: "github", redirect_uri: want, path: null,
     where: "GitHub → Settings → Developer settings → GitHub Apps → the app → Webhook URL",
     steps: ["Open https://github.com/settings/apps and click \"Edit\" next to the app this platform uses.", "Under \"Webhook\", keep \"Active\" ticked and set \"Webhook URL\" to exactly:", `    ${want}`, "Click \"Save changes\"."],
     ...(!hook || hook.url === null ? { result: "unknown" as const, detail: `GitHub did not say which webhook address it holds (HTTP ${hook?.status ?? 0})` }
       : hook.url.replace(/\/$/, "") === want ? { result: "pass" as const, detail: "GitHub sends the app's events to this address" }
+      : hook.url.replace(/\/$/, "") === `${publicUrl()}/api/github-app/webhook` ? { result: "pass" as const, detail: `GitHub sends the app's events to the API's own address (${hook.url}), which works; the app's own address above is the one to keep` }
       : { result: "fail" as const, detail: `GitHub sends the app's events to ${hook.url}, not here: uninstalls and repository changes are missed` }) }));
   return out;
 }

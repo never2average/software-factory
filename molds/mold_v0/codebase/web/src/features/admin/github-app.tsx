@@ -31,6 +31,12 @@ export interface GithubAppView {
 const EMPTY = { app_id: '', slug: '', client_id: '', client_secret: '', webhook_secret: '', private_key: '' };
 
 /** The app's settings and installations; null while it loads and in a build where it is not mounted (no pack asks for a GitHub App). */
+/** The settings still missing, in the form's own words. */
+const missingOf = (a: { app_id: string | null; slug: string | null; client_id: string | null; set: Record<string, boolean> }) => [
+  !a.app_id && 'App ID', !a.slug && 'URL name', !a.client_id && 'Client ID', !a.set.client_secret && 'Client secret',
+  !a.set.webhook_secret && 'Webhook secret', !a.set.private_key && 'Private key',
+].filter((x): x is string => !!x);
+
 export function useGithubApp() {
   return useQuery<GithubAppView | null>({
     queryKey: ['admin', '/github-app'],
@@ -54,7 +60,7 @@ export function GithubAppPanel({ data }: { data: GithubAppView }) {
     <div className='flex min-w-0 flex-col gap-6 text-sm'>
       <p className='text-muted-foreground'>
         Workspaces connect their GitHub organization to it instead of pasting tokens{data.fields.length ? ` (${data.fields.map((x) => x.label).join(', ')})` : ''}. Each run gets a short-lived installation token that can only read the repositories the workspace chose. The private key and secrets never leave the server.
-        {!a.configured && ' Not set up: workspaces use pasted tokens until every setting below is saved.'}
+        {!a.configured && ` Not set up yet. Still missing: ${missingOf(a).join(', ')}. The rest is saved; fill in only these and Save.`}
       </p>
       <ol className='flex list-decimal flex-col gap-6 pl-5'>
         <li className='pl-1'>
