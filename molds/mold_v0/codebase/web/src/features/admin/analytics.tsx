@@ -910,7 +910,7 @@ function HealthBody({ a: _a, base, match, kind }: { a: Analytics; base: string; 
                 {!rows.length && (
                   <TableRow><TableCell colSpan={cols.length} className='text-muted-foreground py-10'>
                     {/* mold_v0-289: centred on the visible part of the table, however wide it scrolls. */}
-                    <span className='sticky left-1/2 inline-block -translate-x-1/2'>{!fresh ? 'Loading…' : total ? 'Nothing on this page matches the search.' : 'No failures in this period.'}</span>
+                    <span className='sticky left-0 block w-[calc(100vw-2rem)] text-center whitespace-normal md:static md:w-full'>{!fresh ? 'Loading…' : total ? 'Nothing on this page matches the search.' : 'No failures in this period.'}</span>
                   </TableCell></TableRow>
                 )}
                 {rows.map((r, i) => (

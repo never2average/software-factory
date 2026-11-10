@@ -266,14 +266,16 @@ export function RecordView<T>({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [moreRight, setMoreRight] = useState(false);
   const [frameW, setFrameW] = useState(0);
-  const measureScroll = useCallback(() => { const el = scrollRef.current; setMoreRight(!!el && el.scrollWidth - el.clientWidth - el.scrollLeft > 2); setFrameW(el?.clientWidth ?? 0); }, []);
+  // The table's own wrapper (components/ui/table.tsx) is what scrolls sideways, inside the frame.
+  const measureScroll = useCallback(() => { const el = scrollRef.current; const c = el?.querySelector<HTMLElement>("[data-slot='table-container']") ?? el; setMoreRight(!!c && c.scrollWidth - c.clientWidth - c.scrollLeft > 2); setFrameW(el?.clientWidth ?? 0); }, []);
   useLayoutEffect(() => {
     measureScroll();
     const el = scrollRef.current;
     if (!el) return;
     const ro = new ResizeObserver(measureScroll);
     ro.observe(el);
-    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    const c = el.querySelector("[data-slot='table-container']");
+    if (c) { ro.observe(c); if (c.firstElementChild) ro.observe(c.firstElementChild); }
     return () => ro.disconnect();
   }, [measureScroll, rows.length, showRecord, side]);
 
@@ -394,7 +396,7 @@ export function RecordView<T>({
           <div className='relative flex min-h-0 flex-1 flex-col'>
           {/* mold_v0-289: a soft edge at the right says the table has more columns that way. */}
           {moreRight && <span aria-hidden className='from-background pointer-events-none absolute inset-y-0 right-0 z-[2] w-10 bg-gradient-to-l to-transparent' data-scroll-cue='' />}
-          <div ref={scrollRef} onScroll={measureScroll} className='flex min-h-0 flex-1 flex-col overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
+          <div ref={scrollRef} onScrollCapture={measureScroll} className='flex min-h-0 flex-1 flex-col overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
             <Table className={wide ? WIDE_TABLE : undefined}>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
                 <TableRow>
