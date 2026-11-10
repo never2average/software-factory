@@ -11,6 +11,7 @@
 //   POST   /app/installations/:id/access_tokens       (the app's JWT) {repository_ids?, permissions} -> an installation token
 //   GET    /installation/repositories                 (a token) the repositories it reaches
 //   DELETE /installation/token                        (a token) revokes it
+//   GET    /repos/:owner/:name[/commits/:branch]      (a token that reaches it) its default branch and last commit (mold_v0-290)
 //   GET    /repos/:owner/:name/contents               (a token) 200 when the token is live and reaches that repository
 import { createPublicKey, verify, randomBytes, type KeyObject } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -29,7 +30,7 @@ export async function startGithubStandin(opts: { appId: number; clientId: string
   const userTokens = new Map<string, { installations: number[]; revoked: boolean }>();
   const minted: MintedRecord[] = [];
   const calls: { method: string; path: string; auth: string; body: string }[] = [];
-  const state = { ttlMs: 60 * 60_000, overgrant: false as false | Record<string, string> };
+  const state = { ttlMs: 60 * 60_000, overgrant: false as false | Record<string, string>, heads: {} as Record<string, string> };
 
   const send = (res: ServerResponse, status: number, body?: unknown) => {
     res.writeHead(status, { "content-type": "application/json" });
@@ -118,6 +119,14 @@ export async function startGithubStandin(opts: { appId: number; clientId: string
       if (!t) return send(res, 401, { message: "Bad credentials" });
       t.revoked = true;
       return send(res, 204);
+    }
+    // mold_v0-290: a repository's default branch and its last commit, for a token that reaches it.
+    if (req.method === "GET" && (m = /^\/repos\/([^/]+)\/([^/]+)(\/commits\/([^/]+))?$/.exec(p))) {
+      const t = tokenOf(auth), full = `${m[1]}/${m[2]}`;
+      if (!t || !reposOf(t).some((r) => r.full_name === full)) return send(res, 404, { message: "Not Found" });
+      const sha = state.heads[full];
+      if (!sha) return send(res, m[3] ? 409 : 200, m[3] ? { message: "Git Repository is empty." } : { full_name: full, default_branch: "main", private: true });
+      return send(res, 200, m[3] ? { sha } : { full_name: full, default_branch: "main", private: true });
     }
     if (req.method === "GET" && (m = /^\/repos\/([^/]+)\/([^/]+)\/contents$/.exec(p))) {
       const t = tokenOf(auth);

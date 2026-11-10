@@ -25,7 +25,7 @@ export function Breadcrumbs() {
       <BreadcrumbList>
         {items.map((item, index) =>
           index < items.length - 1 ? (
-            <BreadcrumbItem key={item.link} className='hidden md:inline-flex'>
+            <BreadcrumbItem key={item.link} className={item.keep ? 'inline-flex' : 'hidden md:inline-flex'}>
               <BreadcrumbLink href={item.link}>{item.title}</BreadcrumbLink>
               <BreadcrumbSeparator className='ml-0.5'>
                 <Icons.slash />

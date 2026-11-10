@@ -4,17 +4,20 @@ import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
 import { settingsGroups, settingsTabUrl } from '@/config/settings';
+import { useBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
 
 type BreadcrumbItem = {
   title: string;
   link: string;
+  /** Shown on a phone too, where only the last crumb is otherwise (mold_v0-290: it is the way back from an open session). */
+  keep?: boolean;
 };
 
 // Readable names for path segments; anything else is capitalised (a host pack's own pages: its words).
 const TITLES: Record<string, string> = {
   admin: 'Admin', app: 'Account', requests: 'Access requests', keys: 'Key vault', agents: 'Harness mix', configuration: 'Agent configuration', 'agent-profiles': 'Agent profiles', accounts: 'Accounts',
   analytics: 'Analytics', health: 'Health', usage: 'Usage', context: 'Context', limits: 'Limits', team: 'Team', billing: 'Billing', profile: 'Profile', company: 'Company', users: 'Users', adoption: 'Adoption', products: 'Products', docs: 'Docs',
-  'connected-apps': 'Connected apps', settings: 'Settings', 'run-analytics': 'Run analytics'
+  'connected-apps': 'Connected apps', agent: 'Agents', settings: 'Settings', 'run-analytics': 'Run analytics'
 };
 const routeMapping: Record<string, BreadcrumbItem[]> = {};
 
@@ -35,8 +38,11 @@ const PACK_TITLES = new Map<string, string>([
 const RECORDS = /^\/(admin|app)\/records$/;
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 
+const AGENT_PAGE = /^\/(app|admin)\/agent$/;
+
 export function useBreadcrumbs() {
   const pathname = useConsolePathname();
+  const leaf = useBreadcrumbLeaf();
 
   const breadcrumbs = useMemo(() => {
     // Check if we have a custom mapping for this exact path
@@ -46,7 +52,7 @@ export function useBreadcrumbs() {
 
     // If no exact match, fall back to generating breadcrumbs from the path
     const segments = pathname.split('/').filter(Boolean);
-    return segments.flatMap((segment, index) => {
+    const crumbs = segments.flatMap((segment, index): BreadcrumbItem[] => {
       const path = `/${segments.slice(0, index + 1).join('/')}`;
       if (RECORDS.test(path)) return [];
       // mold_v0-259: a team's page (/app/settings/teams/<id>): Teams is Settings' tab (no page of its own), the team by its id.
@@ -61,7 +67,10 @@ export function useBreadcrumbs() {
         link: path
       }];
     });
-  }, [pathname]);
+    // mold_v0-290: an open session is the trail's last level, its short number; the page before it links back to the list.
+    if (leaf && AGENT_PAGE.test(pathname) && crumbs.length) return [...crumbs.slice(0, -1), { ...crumbs.at(-1)!, keep: true }, { title: leaf, link: `${pathname}#${leaf}` }];
+    return crumbs;
+  }, [pathname, leaf]);
 
   return breadcrumbs;
 }

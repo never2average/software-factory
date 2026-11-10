@@ -7,7 +7,11 @@
  *     POST   /                      {message, title?, mode?: conversation | task, budget_usd?} start one (a member or more;
  *                                    a budget up to the setting's, or the ceiling for a billing manager or owner)
  *     GET    /:id                   one session: its transcript, requests, budget raises and wakes
- *     POST   /:id/messages          {message} the person who started it: guidance mid-run, or a wake
+ *     POST   /:id/messages          {message, files?, repositories?} the person who started it: guidance mid-run, or a wake
+ *     GET    /composer?session=     what the composer offers (mold_v0-290; src/agent-composer.ts): attaching files and the
+ *                                    workspace's repositories, with limits or the reason not; never a token
+ *     POST   /files?session=        one file's bytes (application/octet-stream; X-File-Name, X-File-Type): a draft of this person
+ *     DELETE /files/:file           a draft, before it is sent
  *     POST   /:id/pause | /resume | /stop
  *     POST   /:id/requests/:rid     {decision: approve | decline, reason?}
  *     POST   /:id/budget            {to_usd | by_usd, reason} a billing manager or owner: raises to the ceiling or lowers to
@@ -55,6 +59,7 @@ import * as P from "./agent-profiles.js";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 import { sseStart } from "./docs-answers.js";
+import { attachmentMaxBytes, removeDraftFile, storeDraftFile } from "./agent-composer.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.json(v); }
@@ -138,12 +143,24 @@ export function agentAppRouter(): Router {
   const staffOnly = (_req: Request, res: Response) => void res.status(403).json({ error: "The agent icon is set by the platform's staff, on the account's page." });
   r.put("/icon", staffOnly);
   r.delete("/icon", staffOnly);
+  // mold_v0-290: what the composer offers, and the files a person attaches before sending (ahead of /:id).
+  r.get("/composer", answer(async (req, res) => ({ offer: await H.composerOffer(S(res).org, actor(res), typeof req.query.session === "string" ? req.query.session : null) })));
+  r.post("/files", (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the file's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: attachmentMaxBytes() }),
+    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
+      (err ? void res.status(err.type === "entity.too.large" ? 413 : err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? `A file may be at most ${Math.round(attachmentMaxBytes() / 1048576)} MB` : "The file could not be read" }) : next()),
+    answer(async (req, res) => {
+      await H.mayCompose(S(res).org, actor(res), typeof req.query.session === "string" ? req.query.session : null);
+      res.status(201);
+      return { file: await storeDraftFile(S(res).org, H.composerOwner(actor(res)), { name: req.get("x-file-name"), content_type: req.get("x-file-type"), data: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) }) };
+    }));
+  r.delete("/files/:file", answer(async (req, res) => { await removeDraftFile(S(res).org, H.composerOwner(actor(res)), String(req.params.file)); return { removed: true }; }));
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
   r.get("/:id/trace/stream", answer(traceStream((req, res, after) => H.sessionTrace(S(res).org, id(req), actor(res), after))));
   r.get("/:id/trace", answer(async (req, res) => H.sessionTrace(S(res).org, id(req), actor(res), req.query.after)));
   r.get("/:id/trace/:step", answer(async (req, res) => H.sessionTraceStep(S(res).org, id(req), actor(res), String(req.params.step))));
-  r.post("/:id/messages", answer(async (req, res) => H.messageSession(S(res).org, id(req), actor(res), (req.body ?? {}).message, org(res))));
+  r.post("/:id/messages", answer(async (req, res) => H.messageSession(S(res).org, id(req), actor(res), (req.body ?? {}).message, org(res), { files: (req.body ?? {}).files, repositories: (req.body ?? {}).repositories })));
   r.post("/:id/pause", answer(async (req, res) => ({ session: await H.pauseSession(S(res).org, id(req), actor(res)) })));
   r.post("/:id/resume", answer(async (req, res) => ({ session: await H.resumeSession(S(res).org, id(req), actor(res), org(res)) })));
   r.post("/:id/stop", answer(async (req, res) => ({ session: await H.stopSession(S(res).org, id(req), actor(res)) })));

@@ -137,6 +137,8 @@ export function runWorkerRouter(): Router {
       try { exec = JSON.parse(decodeURIComponent(String(req.get("x-recipe-executable") ?? "[]"))); } catch { exec = []; }
       return (await h()).wakeRecipeProposal(String(req.params.id), leaseOf(req), String(req.params.recipe), req.body, Array.isArray(exec) ? exec.map(String) : []);
     }));
+    // mold_v0-290: the short-lived read-only token and commits for the repositories its session's messages chose (the runner's alone).
+    r.post("/:id/agent/repositories", answer(async (req) => (await h()).wakeRepositories(String(req.params.id), leaseOf(req), (req.body ?? {}).only)));
     // mold_v0-267: a part of a file the session's profile uploads into its workspace (only one its frozen policy names).
     r.get("/:id/agent/uploads/:upload/:part", answer(async (req, res) => {
       const body = await (await h()).wakeUploadPart(String(req.params.id), leaseOf(req), String(req.params.upload), Number(req.params.part));

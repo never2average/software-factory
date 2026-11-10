@@ -116,6 +116,7 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
       checkpointPut: async (id, lease, seq, body) => (await import("./harness-sessions.js")).wakeCheckpoint(id, lease, seq, body, sha256Hex(body)),
       checkpointGet: async (id, lease) => (await (await import("./harness-sessions.js")).wakeCheckpointBody(id, lease))?.body ?? null,
       uploadPart: async (id, lease, upload, n) => (await import("./harness-sessions.js")).wakeUploadPart(id, lease, upload, n),
+      repositories: async (id, lease, only) => (await import("./harness-sessions.js")).wakeRepositories(id, lease, only),
       recipeProposal: async (id, lease, recipe, bundle, executable) => (await import("./harness-sessions.js")).wakeRecipeProposal(id, lease, recipe, bundle, executable),
     },
   };
@@ -251,6 +252,7 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
         if (!res.ok) throw Object.assign(new Error(`GET agent checkpoint: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
         return Buffer.from(await res.arrayBuffer());
       },
+      repositories: (id, lease, only) => call("POST", runPath(id, "/agent/repositories"), lease, only ? { only } : {}),
       // mold_v0-267: a part of an uploaded file (each at most 4 MiB, under the API's one-request size).
       uploadPart: async (id, lease, upload, n) => {
         const res = await fetch(url(runPath(id, `/agent/uploads/${encodeURIComponent(upload)}/${Math.trunc(n)}`)), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });

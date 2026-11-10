@@ -105,6 +105,8 @@ export interface Profile {
   onprem_runners?: boolean;
   /** Where runs get their sandbox by default (mold_v0-274): the platform setting APP_RUN_SANDBOX's default. */
   run_sandbox?: "auto" | "boat" | "docker" | "freestyle";
+  /** mold_v0-290: the prefix of a workspace agent session's short number (AGI-001): capital letters and digits, default AGI. */
+  agent_session_prefix?: string;
   /** The capability flags (mold_v0-219, src/features.json): {"<id>": true|false}. */
   features?: Readonly<Record<string, boolean>>;
   /** mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's team_roles; src/teams.ts), while teams is on. */

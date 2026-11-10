@@ -487,6 +487,11 @@ export async function installationTokenForRun(req: RunTokenRequest): Promise<Run
   const repos = narrowed ? i.repositories.filter((r) => narrowed.some((n) => n.toLowerCase() === r.full_name.toLowerCase())) : i.repositories;
   if (!repos.length) return { missing: "the GitHub App's installation has no repository for this run" };
   if (repos.length > MAX_REPOS) return { missing: `the installation has more than ${MAX_REPOS} repositories: narrow this asset's` };
+  return tokenForRepositories(c, i, req, scopeKey, repos);
+}
+
+/** A run's token for one field and scope: its own while it has time left, else a new one for exactly `repos`, read-only. */
+async function tokenForRepositories(c: GithubAppConfig, i: InstallationRow, req: Pick<RunTokenRequest, "runId" | "orgId" | "name">, scopeKey: string, repos: Repo[]): Promise<RunTokenAnswer> {
   const db = await getDb();
   // The run's own token for this field and scope, while it has time left.
   const [cached] = await asPlatform(() => db.query<{ sealed: string; repositories: Repo[]; expires_at: Date | string }>(
@@ -507,6 +512,74 @@ export async function installationTokenForRun(req: RunTokenRequest): Promise<Run
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`,
     [req.runId, req.orgId, i.installation_id, req.name, scopeKey, sealed, JSON.stringify(scoped), JSON.stringify(t.permissions), new Date(t.expires_at)]));
   return { value: t.token, repositories: scoped.map((r) => r.full_name), expires_at: t.expires_at };
+}
+
+// ---------- repositories a person chose for a session (mold_v0-290) ----------
+
+export const SESSION_REPOSITORY_NAME = "session_repositories";
+const FULL_NAME = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+export interface RepositoryChoice { state: "ready" | "no_app" | "not_connected" | "suspended" | "no_repositories"; account: string | null; repositories: string[] }
+/** What the composer's repository connector may offer a workspace. Never a token; a GitHub that cannot be read is not an error here. */
+export async function repositoryChoice(orgId: number): Promise<RepositoryChoice> {
+  const c = await appConfig().catch(() => null);
+  if (!c) return { state: "no_app", account: null, repositories: [] };
+  const i = await liveInstallation(orgId);
+  if (!i) return { state: "not_connected", account: null, repositories: [] };
+  if (i.suspended_at) return { state: "suspended", account: i.account_login, repositories: [] };
+  if (!i.repositories.length) return { state: "no_repositories", account: i.account_login, repositories: [] };
+  return { state: "ready", account: i.account_login, repositories: i.repositories.map((r) => r.full_name).sort((a, b) => a.localeCompare(b)) };
+}
+/** Each name as the installation spells it; a name the workspace's own installation does not allow is refused, in words. */
+export async function canonicalRepositories(orgId: number, names: readonly string[]): Promise<string[]> {
+  const choice = await repositoryChoice(orgId);
+  if (choice.state === "no_app") throw new PackError("The platform's GitHub App is not set up, so a repository cannot be connected here", 409);
+  if (choice.state === "not_connected") throw new PackError("This workspace has not connected GitHub yet", 409);
+  if (choice.state === "suspended") throw new PackError("This workspace's GitHub connection is suspended on GitHub", 409);
+  return names.map((n) => {
+    const hit = typeof n === "string" && FULL_NAME.test(n) ? choice.repositories.find((r) => r.toLowerCase() === n.toLowerCase()) : undefined;
+    if (!hit) throw new PackError(`${String(n).slice(0, 140)} is not one of the repositories this workspace's GitHub connection allows`, 403);
+    return hit;
+  });
+}
+
+export interface SessionRepository { full_name: string; branch: string; commit: string; clone_url: string }
+export interface SessionRepositoryGrant { token: string | null; expires_at: string | null; repositories: SessionRepository[]; missing: { full_name: string; why: string }[] }
+/**
+ * The token and the commits for the repositories one wake's session was given (mold_v0-290), for its runner alone: read
+ * contents only, for exactly those of `names` the installation still allows, per run (run_github_app_tokens: sealed, redacted
+ * from what the run writes, revoked when its attempt ends). What cannot be given is named and why, never a broader token.
+ */
+export async function sessionRepositoryGrant(req: { runId: string; orgId: number; names: readonly string[] }): Promise<SessionRepositoryGrant> {
+  const none = (why: string, names: readonly string[] = req.names): SessionRepositoryGrant => ({ token: null, expires_at: null, repositories: [], missing: names.map((full_name) => ({ full_name, why })) });
+  if (!req.names.length) return none("");
+  const c = await appConfig();
+  if (!c) return none("the platform's GitHub App is not set up");
+  const i = await liveInstallation(req.orgId);
+  if (!i) return none("this workspace's GitHub connection has ended");
+  if (i.suspended_at) return none("this workspace's GitHub connection is suspended");
+  const repos = i.repositories.filter((r) => req.names.some((n) => n.toLowerCase() === r.full_name.toLowerCase()));
+  const gone = req.names.filter((n) => !repos.some((r) => r.full_name.toLowerCase() === n.toLowerCase()));
+  const missing = gone.map((full_name) => ({ full_name, why: "the workspace's GitHub connection no longer allows it" }));
+  if (!repos.length) return { ...none("", []), missing };
+  const scopeKey = `repos:${createHash("sha256").update(repos.map((r) => r.id).sort((a, b) => a - b).join(",")).digest("hex").slice(0, 32)}`;
+  const t = await tokenForRepositories(c, i, { runId: req.runId, orgId: req.orgId, name: SESSION_REPOSITORY_NAME }, scopeKey, repos);
+  if (!t || "missing" in t) return { ...none("", []), missing: [...missing, ...repos.map((r) => ({ full_name: r.full_name, why: t ? t.missing : "GitHub refused the access" }))] };
+  const out: SessionRepository[] = [];
+  for (const r of repos) {
+    try {
+      const base = `${endpoints.api}/repos/${r.full_name.split("/").map(encodeURIComponent).join("/")}`;
+      const info = await gh<{ default_branch?: string }>("GET", base, `token ${t.value}`);
+      ok(info, `repository ${r.full_name}`);
+      const branch = typeof info.json?.default_branch === "string" ? info.json.default_branch : "";
+      if (!branch) throw new GithubError(`${r.full_name} has no default branch`, 502);
+      const head = await gh<{ sha?: string }>("GET", `${base}/commits/${encodeURIComponent(branch)}`, `token ${t.value}`);
+      if (head.status === 409) { missing.push({ full_name: r.full_name, why: "it is empty" }); continue; }
+      ok(head, `the last commit of ${r.full_name}`);
+      if (typeof head.json?.sha !== "string") throw new GithubError(`GitHub's answer for ${r.full_name} has no commit`, 502);
+      out.push({ full_name: r.full_name, branch, commit: head.json.sha, clone_url: `${endpoints.web}/${r.full_name}.git` });
+    } catch (e) { missing.push({ full_name: r.full_name, why: e instanceof PackError ? e.message : "GitHub could not be read" }); }
+  }
+  return { token: t.value, expires_at: t.expires_at, repositories: out, missing };
 }
 
 /** Every token minted for run `runId` (revoked or not), for redacting what it writes. Throws while they cannot be opened. */

@@ -1059,6 +1059,28 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} a run's record (area and key, both or neither; earlier runs none); its rollback keeps the runs and leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // The agent composer's session numbers (mold_v0-290, agent_composer): existing sessions numbered per workspace in order of
+  // creation; the counter carries on from there; the rollback takes it all back and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "agent_composer")!.version;
+    const d = await shellAt(kind, v - 1);
+    const orgs = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Numbers A', 'numbers-a'), ('Numbers B', 'numbers-b') RETURNING id");
+    const [a, b] = orgs.map((o) => o.id);
+    const add = (id: string, org: number, at: string) => d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, created_at) VALUES ($1, $2, 't', 'stopped', 'f', 'm', 'p', '{}', 1, $3)", [id, org, at]);
+    await add("hss_later", a!, "2026-02-01T00:00:00Z"); await add("hss_first", a!, "2026-01-01T00:00:00Z"); await add("hss_other", b!, "2026-03-01T00:00:00Z");
+    await runMigrations(d, { packDirs: [] });
+    const rows = await d.query<{ id: string; session_number: number }>("SELECT id, session_number FROM harness_sessions ORDER BY id");
+    assert.deepEqual(rows.map((r) => [r.id, r.session_number]), [["hss_first", 1], ["hss_later", 2], ["hss_other", 1]], "numbered per workspace, in order of creation");
+    assert.deepEqual((await d.query<{ last_number: number }>("SELECT last_number FROM harness_session_counters WHERE org_id = $1", [a!])).map((x) => x.last_number), [2], "the counter carries on from the last");
+    await assert.rejects(d.query("UPDATE harness_sessions SET session_number = 1 WHERE id = 'hss_later'"), /unique|duplicate/i, "a number is its workspace's alone");
+    for (const t of ["harness_session_counters", "harness_session_files"]) assert.equal((await d.query<{ rls: boolean }>("SELECT relrowsecurity AS rls FROM pg_class WHERE relname = $1", [t]))[0]!.rls, true, `${t} under row-level security`);
+    await rollBackAfter(d, v - 1);
+    assert.equal((await d.query("SELECT 1 FROM information_schema.columns WHERE table_name = 'harness_sessions' AND column_name = 'session_number'")).length, 0, "dropped by its rollback");
+    assert.equal((await d.query("SELECT 1 FROM pg_class WHERE relname = 'harness_session_files'")).length, 0);
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_agent_composer")).length, 1, "and it applies again");
+    await d.drop();
+  }
+
   // The workspace agent's tool tokens (mold_v0-250, harness_session_tokens): closed to tenant work; the rollback drops it,
   // and it applies again.
   {
@@ -1183,7 +1205,7 @@ async function suite(kind: "pglite" | "postgres") {
     await assert.rejects(d.query("INSERT INTO agent_profiles (id, name, created_by, updated_by) VALUES ('Bad id', 'X', 's', 's')"), /check constraint/, "an id that is no address refused");
     await assert.rejects(d.query("INSERT INTO agent_profile_changes (profile_id, version, action, changed_by, after) VALUES ('builder', 1, 'renamed', 's', '{}')"), /check constraint/, "an unknown action refused");
     const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Profiles', 'profiles-migration') RETURNING id");
-    await assert.rejects(d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, profile_id) VALUES ('hss_a', $1, 't', 'starting', 'f', 'm', 'p', '{}', 1, 'builder')", [org]), /check constraint|profile_both/, "a profile without its version refused");
+    await assert.rejects(d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, profile_id, session_number) VALUES ('hss_a', $1, 't', 'starting', 'f', 'm', 'p', '{}', 1, 'builder', 1)", [org]), /check constraint|profile_both/, "a profile without its version refused");
     for (const t of ["agent_profiles", "agent_profile_versions", "agent_profile_changes"]) {
       const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t]);
       assert.equal(grants.length, 0, `${t}: the tenant role has no grant on it`);

@@ -8,12 +8,12 @@
 // live edge, and lets go the moment they scroll up.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { Markdown } from '@/components/markdown';
 import { cn } from '@/lib/utils';
 import { When } from '@/features/portal/shared';
+import { sizeWords } from './composer/use-attachments';
 
 export type TraceKind = 'sandbox' | 'wake' | 'model' | 'tool' | 'command' | 'approval' | 'budget' | 'note' | 'message';
 export interface TraceStep {
@@ -22,6 +22,8 @@ export interface TraceStep {
   model?: string; input_tokens?: number; cached_tokens?: number; output_tokens?: number; cost_usd?: number; http_status?: number;
   tool?: string; preview?: string | null; result_preview?: string | null; duration_ms?: number;
   role?: 'person' | 'agent' | 'system'; body?: string; by?: string | null; message_status?: string | null; parent?: string | null;
+  /** mold_v0-290: what the person attached to this message. */
+  attachments?: { files: { name: string; bytes: number }[]; repositories: string[] } | null;
   error?: string | null; fields?: Record<string, unknown>; more?: boolean;
   /** A condensed run of the same tool: its members, so the condensing hides nothing. */
   members?: TraceStep[];
@@ -178,9 +180,16 @@ const STATUS_WORDS: Record<string, string> = { pending: 'Waiting to be delivered
 
 function MessageEntry({ s }: { s: TraceStep }) {
   if (s.role === 'system') return <p className='text-muted-foreground px-2 py-1 text-center text-xs' data-trace-message='system'>{s.body} · <When d={s.at} /></p>;
+  // mold_v0-290: left aligned and plain like the agent's words, told apart by weight alone; what it carried beneath it.
   if (s.role === 'person') return (
-    <div className='flex flex-col items-end gap-1 px-1 py-2' data-trace-message='person'>
-      <Bubble variant='default' align='end'><BubbleContent className='text-sm whitespace-pre-wrap'>{s.body}</BubbleContent></Bubble>
+    <div className='flex flex-col gap-1 px-1.5 py-2' data-trace-message='person'>
+      <p className='text-sm font-semibold whitespace-pre-wrap'>{s.body}</p>
+      {!!s.attachments && (
+        <ul className='flex flex-wrap gap-1.5' data-trace-attachments=''>
+          {s.attachments.files.map((f, i) => <li key={`${f.name}-${i}`} className='text-muted-foreground flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs' data-trace-attachment='file'><Icons.paperclip className='size-3 shrink-0' aria-hidden /><span className='truncate'>{f.name}</span><span>({sizeWords(f.bytes)})</span></li>)}
+          {s.attachments.repositories.map((r) => <li key={r} className='text-muted-foreground flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs' data-trace-attachment='repository'><Icons.github className='size-3 shrink-0' aria-hidden /><span className='truncate'>{r}</span></li>)}
+        </ul>
+      )}
       {s.message_status === 'pending' && <span className='text-muted-foreground text-xs'>{STATUS_WORDS.pending}</span>}
     </div>
   );
@@ -199,14 +208,14 @@ function Step({ s, retries, call, sessionId, depth = 0 }: { s: TraceStep; retrie
   if (s.kind === 'message') return <li><MessageEntry s={s} /></li>;
   return (
     <li className='min-w-0' data-trace-step={s.kind} data-trace-status={s.status}>
-      <div className='group/row flex min-w-0 items-start gap-2 rounded-md px-1 py-1'>
+      <div className='group/row flex min-w-0 items-center gap-2 rounded-md px-1 py-1' data-trace-row=''>
         {hasBody
-          ? <Button variant='ghost' size='icon-xs' onClick={toggle} aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'}: ${p.title}`} className='mt-px'>
+          ? <Button variant='ghost' size='icon-xs' onClick={toggle} aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'}: ${p.title}`} className='shrink-0' data-trace-icon=''>
             <span className={cn('group-hover/row:hidden group-focus-within/row:hidden', icon, open && 'hidden')} aria-hidden>{ICONS[s.kind]}</span>
             <Icons.chevronDown aria-hidden className={cn('text-muted-foreground size-3.5 hidden group-hover/row:block group-focus-within/row:block', open ? 'block' : '-rotate-90')} />
           </Button>
-          : <span className={cn('mt-1 flex size-6 items-center justify-center', icon)} aria-hidden>{ICONS[s.kind]}</span>}
-        <span className='flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5 leading-5'>
+          : <span className={cn('flex size-6 items-center justify-center', icon)} aria-hidden data-trace-icon=''>{ICONS[s.kind]}</span>}
+        <span className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5' data-trace-text=''>
           <span className={cn('text-[13px] font-medium', s.status === 'error' && 'text-destructive', s.status === 'running' && 'shimmer')}>{p.title}</span>
           {s.status === 'waiting' && <span className='text-amber-700 dark:text-amber-300 text-xs'>Waiting</span>}
           {s.error && <span className='text-destructive basis-full text-xs break-words'>{s.error}</span>}
