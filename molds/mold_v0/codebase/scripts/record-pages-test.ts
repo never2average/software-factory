@@ -1009,5 +1009,15 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   for (const k of ["client_secret", "webhook_secret", "private_key"]) { assert.ok(gh.includes(`a.set.${k} &&`), `${k}: only whether it is set`); assert.doesNotMatch(gh, new RegExp(`a\\.${k}\\b`), `${k} is never read back`); }
   assert.match(gh, /adminApi\('PUT', '\/github-app'/, "saved through the same route");
   assert.match(gh, /adminApi\('DELETE', `\/github-app\/installations\/\$\{org\}`\)/, "revoked through the same route");
-  ok("Key vault: the GitHub App is one row (status, installations, no switch), only where its route is mounted, and only it opens a panel: numbered steps, the form (secrets write-only), the installations with Revoke");
+  // mold_v0-293: the installations are a modal from the panel's ⋯ menu (Installations, with the live count), not a list in the panel.
+  const panelFn = gh.slice(gh.indexOf("export function GithubAppPanel"), gh.indexOf("type Show = "));
+  assert.ok(panelFn.length > 0 && !/DataList|Revoke|installations\b/.test(panelFn), "the panel lists no installations");
+  assert.match(kv, /panelActions=\{\(p\) => \(p\.slug === GITHUB_APP && github \? \[\{ label: `Installations \(\$\{liveInstallations\(github\)\}\)`/, "the panel's ⋯ menu: Installations (live count)");
+  assert.match(kv, /<GithubInstallationsDialog data=\{github\} open=\{installs\}/, "opening the modal");
+  const dlg = gh.slice(gh.indexOf("export function GithubInstallationsDialog"));
+  assert.match(dlg, /<DialogContent [\s\S]*?type='search'[\s\S]*?aria-label='Show'[\s\S]*?Export CSV[\s\S]*?<DataList<Installation>/, "the standard list in a modal: search, the Show filter, Export, then the table");
+  assert.match(dlg, /useState<Show>\('active'\)/, "active installations by default; ended behind the filter");
+  for (const c of ["Workspace", "GitHub account", "Repositories", "Connected"]) assert.ok(dlg.includes(`label: '${c}'`), `the modal's ${c} column`);
+  assert.match(dlg, /<ConfirmButton label='Revoke' variant='destructive'/, "Revoke on each live row, confirmed");
+  ok("Key vault: the GitHub App is one row (status, installations, no switch), only where its route is mounted, and only it opens a panel: numbered steps, the form (secrets write-only); the installations a modal from its ⋯ menu with Revoke");
 }

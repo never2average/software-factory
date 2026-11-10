@@ -7,7 +7,7 @@
 //      job's own result and error are handed back unchanged; a success is written at most every 30 s per process
 //   3. Scheduled work lists only the jobs this build runs (zero packs: none), with last run, success, lag and error
 //   4. Runs: by kind (agent or not), failures by error kind (output_missing included), the refused-and-retried runs
-//      (mold_v0-189) and how they ended, durations, cost, the recent failed runs (no address in an error) and one run's
+//      (mold_v0-189) and how they ended, durations, cost, every recent run of any status, newest first (mold_v0-293), the recent failed runs (no address in an error) and one run's
 //      events (figures only: who asked is never shown)
 //   5. Email Delivery (?section=deliveries): emails only (mold_v0-215), by kind and status, with the cards' totals (never an
 //      address or a subject); Webhook Delivery (?section=webhooks, mold_v0-215): only with a developer surface, webhook
@@ -102,6 +102,10 @@ try {
   assert.deepEqual(audit.failures, { output_missing: 1, run: 1 });
   assert.equal(audit.p50_seconds, 240); assert.ok(audit.p95_seconds! > 500);
   assert.equal(runs.recent_failed.length, 3);
+  // mold_v0-293: every run, every status, newest first (the tab's default list); the failures still apart.
+  assert.deepEqual(runs.recent.map((r) => r.id), ["run_b2", "run_a3", "run_a2", "run_a1", "run_b1"], "every run, newest first");
+  assert.deepEqual(runs.recent.map((r) => r.status), ["failed", "failed", "failed", "succeeded", "succeeded"], "with each run's status");
+  assert.ok(runs.recent_failed.every((r) => r.status === "failed"), "the failures: failed");
   assert.ok(!JSON.stringify(runs).includes("example.org"), "no address anywhere in the Runs answer");
   assert.equal(runs.recent_failed.find((r) => r.id === "run_a3")!.refused_retry, true);
   assert.equal(runs.daily.length, 30); assert.equal(runs.daily.reduce((a, d) => a + d.total, 0), 5);
@@ -110,7 +114,7 @@ try {
   assert.ok(!JSON.stringify(ev).includes("example.org") && !("requested_by" in ev.events[0]!.data), "who asked is never shown");
   assert.equal(ev.events[1]!.data.requests, 1);
   await assert.rejects(h.healthRunEvents("run_nope"), /not found/);
-  ok("Runs: kinds (agent or not), failures by error kind with output_missing, refused-and-retried and how they ended, durations, cost, recent failures, events without people");
+  ok("Runs: kinds (agent or not), failures by error kind with output_missing, refused-and-retried and how they ended, durations, cost, every recent run (any status, newest first) and the recent failures, events without people");
 
   // ---------- 5. Email Delivery ----------
   await db.query(`INSERT INTO email_log (kind, to_hash, to_domain, subject, status, idempotency_key, error) VALUES
@@ -186,6 +190,11 @@ try {
     assert.equal(Number(row!.runs_ended), 2); assert.equal(Number(row!.runs_failed), 1); assert.equal(Number(row!.claude_refusals), 3, "the three refused-and-retried events of the window (two from the Runs check)");
     assert.equal(Number(row!.claude_requests_day), 40); assert.equal(Number(row!.claude_errors_day), 3);
     assert.equal(Number(row!.api_requests), 5); assert.equal(Number(row!.api_p50_ms), 30); assert.equal(Number(row!.api_p95_ms), 1000);
+    // mold_v0-293 (0068): the scheduled work so far, for Scheduled work's sparklines: the jobs run, their runs and failures, their average last duration.
+    const schedNow = (await h.healthScheduled()).jobs;
+    assert.equal(Number(row!.scheduler_jobs), schedNow.length, "the jobs this build runs");
+    assert.equal(Number(row!.scheduler_runs), schedNow.reduce((a, j) => a + j.runs, 0), "every job's runs so far (a counter)");
+    assert.equal(Number(row!.scheduler_failures), schedNow.reduce((a, j) => a + j.failures, 0), "and failures");
     assert.ok(["ok", "failed", "error", "not run"].includes(String(row!.rls)) && ["env", "vault", "dir", "none"].includes(String(row!.storage)));
     // Only numbers and states: every column a number, a boolean, a time or one of the two enumerated states.
     const cols = await db.query<{ column_name: string; data_type: string }>("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'health_samples'");
@@ -220,6 +229,9 @@ try {
     await put(at(12), true, 10, 1, 0); await put(at(7), false, 15, 1, 2); await put(at(2), true, 25, 4, 1);
     // Emails and webhooks apart, each its own graph (mold_v0-215).
     await db.query("UPDATE health_samples SET deliveries_total = 4, deliveries_failed = 1, webhooks_total = 10, webhooks_failed = 3");
+    // The scheduled work's counters (mold_v0-293): 100, 103, 110 runs and 1, 1, 2 failures: 10 runs and 1 failure in the period.
+    await db.query(`UPDATE health_samples SET scheduler_jobs = 4, scheduler_runs = CASE WHEN runs_failed = 0 THEN 100 WHEN runs_failed = 2 THEN 103 ELSE 110 END,
+                    scheduler_failures = CASE WHEN runs_failed = 1 THEN 2 ELSE 1 END, scheduler_ms = CASE WHEN runs_failed = 0 THEN 20 ELSE 40 END`);
     const day = await hs.healthHistory({ range: "24h" }, now);
     assert.equal(day.range, "24h"); assert.equal(day.buckets.length, 48); assert.equal(day.samples, 3);
     assert.equal(day.totals.up_pct, 66.7, "one of three samples down");
@@ -232,6 +244,9 @@ try {
     assert.equal(day.totals.webhooks_total, 30); assert.equal(day.totals.webhooks_failed, 9, "the webhook graph: webhooks only");
     assert.ok(day.buckets.filter((b) => b.samples).every((b) => b.webhook_failure_pct === 30 && b.delivery_failure_pct === 25), "each graph its own failure rate");
     assert.equal(day.webhooks, false, "zero packs: no webhook graph");
+    assert.equal(day.totals.scheduler_runs, 10, "scheduled runs: the counters' differences"); assert.equal(day.totals.scheduler_failures, 1, "and failures");
+    const busy = day.buckets.filter((b) => b.samples);
+    assert.ok(busy.every((b) => b.scheduler_jobs === 4) && busy.some((b) => b.scheduler_ms != null), "each bucket: the jobs run and their average duration");
     assert.equal((await hs.healthHistory({ range: "7d" }, now)).buckets.length, 56);
     assert.equal((await hs.healthHistory({ range: "30d" }, now)).buckets.length, 60);
     assert.equal((await hs.healthHistory({ range: "drop table" }, now)).range, "24h", "an unknown range is 24h");
@@ -240,7 +255,7 @@ try {
     await assert.rejects(withTenant(org.orgId, async () => (await getDb()).query("SELECT count(*) FROM health_samples")), /permission denied|refused/i, "a tenant query cannot read it");
     const http = readFileSync(new URL("../src/http.ts", import.meta.url), "utf8");
     assert.match(http, /ob\.get\("\/health\/history"/, "the history route is on the staff router");
-    ok(`Status history: sample (runs, refusals, Claude errors, API latency), every 4 minutes at most, 35-day retention, 24h/7d/30d buckets, numbers and states only, staff only`);
+    ok(`Status history: sample (runs, refusals, Claude errors, API latency, the scheduled work's runs, failures and duration), every 4 minutes at most, 35-day retention, 24h/7d/30d buckets, numbers and states only, staff only`);
   }
 } catch (e) {
   failures++;

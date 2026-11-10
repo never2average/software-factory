@@ -52,7 +52,10 @@ export const ERROR_KINDS = ["infrastructure", "run", "validation", "timeout", "c
 /** The run event fields a staff reader may see: figures and words of the shell's own, never a person, a path or a value. */
 const EVENT_FIELDS = ["error_kind", "reason", "cost_usd", "requests", "refused", "version", "files", "location", "outcome"] as const;
 
-/** Runs over the period (?from&to, Health's range; else the last 30 days): by kind, failures by error kind, the refused-and-retried, recent failures. */
+/**
+ * Runs over the period (?from&to, Health's range; else the last 30 days): by kind, failures by error kind, the
+ * refused-and-retried, the latest runs of every status (mold_v0-293: the tab lists them all, newest first) and the latest failures.
+ */
 export async function healthRuns(q: Record<string, unknown>) {
   const range = reportRange(q);
   const p = [range.start, range.end];
@@ -61,7 +64,7 @@ export async function healthRuns(q: Record<string, unknown>) {
   const labelOf = (pack: string, kind: string) => kinds.find((k) => k.pack === pack && k.name === kind)?.label ?? kind;
   // An agent run: its kind runs a coding agent on the workspace (pack.json agentJobKinds, runner agent-workspace).
   const agentOf = (pack: string, kind: string, stored: boolean) => { const k = kinds.find((x) => x.pack === pack && x.name === kind); return k ? "runner" in k : stored; };
-  const [byKind, failures, daily, refused, recent] = await Promise.all([
+  const [byKind, failures, daily, refused, recent, latest] = await Promise.all([
     db.query<Record<string, unknown>>(
       `/* tenant: internal: admin Health (staff), every account's runs, by kind */
        SELECT r.pack, r.kind, bool_or(coalesce(r.spec->>'runner', '') = 'agent-workspace') AS agent, count(*) AS total,
@@ -93,6 +96,13 @@ export async function healthRuns(q: Record<string, unknown>) {
               EXISTS (SELECT 1 FROM run_events e WHERE e.run_id = r.id AND e.type = $3) AS refused_retry
          FROM runs r JOIN organizations o ON o.id = r.org_id
         WHERE r.status = 'failed' AND r.created_at >= $1 AND r.created_at < $2 ORDER BY coalesce(r.ended_at, r.created_at) DESC LIMIT 200`, [...p, REFUSED_RETRY_EVENT]),
+    db.query<Record<string, unknown>>(
+      `/* tenant: internal: admin Health (staff), every account's latest runs, every status */
+       SELECT (SELECT /* tenant: the run's own session */ h.title FROM harness_sessions h WHERE h.id = r.harness_session_id AND h.org_id = r.org_id) AS title, r.id, r.pack, r.kind, r.status, coalesce(r.spec->>'runner', '') = 'agent-workspace' AS agent, r.error_kind, r.error, r.attempt, r.max_attempts,
+              r.created_at, r.ended_at, extract(epoch FROM r.ended_at - r.started_at) AS seconds, ${RUN_USD} AS usd, o.name AS account,
+              EXISTS (SELECT 1 FROM run_events e WHERE e.run_id = r.id AND e.type = $3) AS refused_retry
+         FROM runs r JOIN organizations o ON o.id = r.org_id
+        WHERE r.created_at >= $1 AND r.created_at < $2 ORDER BY r.created_at DESC, r.id DESC LIMIT 500`, [...p, REFUSED_RETRY_EVENT]),
   ]);
   const kindRows = byKind.map((r) => {
     const pack = String(r.pack), kind = String(r.kind);
@@ -124,10 +134,14 @@ export async function healthRuns(q: Record<string, unknown>) {
     by_error_kind: byErrorKind,
     kinds: kindRows.sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)),
     daily: series,
-    recent_failed: recent.map((r) => ({ id: String(r.id), pack: String(r.pack), kind: String(r.kind), label: (r.title as string | null) ?? labelOf(String(r.pack), String(r.kind)), agent: Boolean(r.agent),
-      error_kind: (r.error_kind as string | null) ?? null, error: r.error ? safeError(r.error) : null, attempt: n(r.attempt), max_attempts: n(r.max_attempts),
-      created_at: iso(r.created_at), ended_at: iso(r.ended_at), seconds: secs(r.seconds), usd: usd(n(r.usd)), account: String(r.account ?? ""), refused_retry: Boolean(r.refused_retry) })),
+    recent: latest.map(runRow),
+    recent_failed: recent.map((r) => runRow({ ...r, status: "failed" })),
   };
+  function runRow(r: Record<string, unknown>) {
+    return { id: String(r.id), pack: String(r.pack), kind: String(r.kind), label: (r.title as string | null) ?? labelOf(String(r.pack), String(r.kind)), agent: Boolean(r.agent), status: String(r.status),
+      error_kind: (r.error_kind as string | null) ?? null, error: r.error ? safeError(r.error) : null, attempt: n(r.attempt), max_attempts: n(r.max_attempts),
+      created_at: iso(r.created_at), ended_at: iso(r.ended_at), seconds: secs(r.seconds), usd: usd(n(r.usd)), account: String(r.account ?? ""), refused_retry: Boolean(r.refused_retry) };
+  }
 }
 
 /** One run's events for staff: type, attempt, time and the shell's own figures and words (EVENT_FIELDS), errors cleaned. */
