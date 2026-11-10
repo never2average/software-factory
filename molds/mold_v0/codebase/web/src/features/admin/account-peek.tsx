@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ActionsMenu, Field, type RowAction } from '@/components/layout/record-view';
 import { PanelMenu } from '@/components/layout/detail-panel';
+import { OverflowTabs } from '@/components/layout/overflow-tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -313,13 +314,13 @@ function useConfirm() {
 
 /** Flat list: muted header, no borders between columns; one muted line, or nothing, when empty. */
 /** A section of the panel: an outlined table, paged (10 a page) with the item count, empty ones keep their outline. */
-export function List<T>({ title, rows, cols, empty, actions, rowClassName }: {
-  title: string; rows: T[]; cols: [string, (r: T) => ReactNode, string?][]; empty?: string; actions?: (r: T) => RowAction[]; rowClassName?: (r: T) => string | undefined;
+export function List<T>({ title, noun, rows, cols, empty, actions, rowClassName }: {
+  title?: string; noun?: string; rows: T[]; cols: [string, (r: T) => ReactNode, string?][]; empty?: string; actions?: (r: T) => RowAction[]; rowClassName?: (r: T) => string | undefined;
 }) {
   const p = usePaged(rows, 10);
   return (
     <div className='grid gap-2'>
-      <p className='text-sm leading-none font-medium'>{title}</p>
+      {title && <p className='text-sm leading-none font-medium'>{title}</p>}
       <div className='overflow-x-auto border'>
         <Table>
           <TableHeader>
@@ -343,7 +344,7 @@ export function List<T>({ title, rows, cols, empty, actions, rowClassName }: {
           </TableBody>
         </Table>
       </div>
-      <TablePager p={p} noun={title.toLowerCase()} className='py-0' />
+      <TablePager p={p} noun={(noun ?? title ?? 'rows').toLowerCase()} className='py-0' />
     </div>
   );
 }
@@ -509,106 +510,90 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
       {!d ? (!error &&
         <div className='grid gap-3'><Skeleton className='h-8' /><Skeleton className='h-40' /></div>
       ) : (
-        // One scroll, no tabs: people, then usage, then billing and milestones; empty lists stay out of the way.
-        <div className='grid gap-8'>
-
-          <section id='peek-people' className='grid scroll-mt-4 gap-6'>
-            {org.clerk_org_id && (<>
-              <List title='Members' rows={d.members} empty='Nobody has joined yet.' actions={member} cols={[
+        // Tabs, three shown and the rest behind » as a browser's developer tools (operator, 2026-11-10).
+        <OverflowTabs tabs={[
+          ...(org.clerk_org_id ? [
+            { id: 'members', label: 'Members', content: <List noun='Members' rows={d.members} empty='Nobody has joined yet.' actions={member} cols={[
                 ['Person', (m) => <IdentityName id={m.user_id} name={m.name} email={m.email}>{m.email || m.user_id}{m.name && <span className='text-muted-foreground ml-2'>{m.name}</span>}</IdentityName>],
                 ['Role', (m) => accountRoleLabel(m)],
                 ['Status', (m) => (m.status === 'inactive' ? word('bad', 'suspended') : word(m.status === 'active' || m.status === 'pending' ? 'ok' : 'info', m.status))],
                 ['Joined', (m) => <When d={m.created_at} />]
-              ]} />
-              <List title='Invitations' rows={d.invitations} actions={invitation} cols={[
+              ]} /> },
+            { id: 'invitations', label: 'Invitations', content: <List noun='Invitations' rows={d.invitations} actions={invitation} cols={[
                 ['Email', (x) => x.email],
                 ['Role', (x) => accountRoleLabel(x)],
                 ['State', (x) => word(x.state === 'expired' ? 'warn' : x.state === 'pending' ? 'ok' : 'info', x.state)],
                 ['Expires', (x) => (x.state === 'pending' && x.expires_at ? <When d={x.expires_at} /> : dash)]
-              ]} />
-            </>)}
-            {(!org.clerk_org_id || d.keys.length > 0) && (
-              <List title='Keys' rows={keys} empty='No keys.' actions={key} rowClassName={(k) => (k.revoked_at ? 'text-muted-foreground' : undefined)} cols={[
+              ]} /> },
+          ] : []),
+          ...(!org.clerk_org_id || d.keys.length > 0 ? [{ id: 'keys', label: 'Keys', content: <List noun='Keys' rows={keys} empty='No keys.' actions={key} rowClassName={(k) => (k.revoked_at ? 'text-muted-foreground' : undefined)} cols={[
                 ['Label', (k) => k.label],
                 ['Key', (k) => <span className='tabular-nums'>{k.key_prefix}…</span>],
                 ['Last used', (k) => (k.revoked_at ? <>revoked <When d={k.revoked_at} /></> : <When d={k.last_used_at} />)],
                 ['Created', (k) => <When d={k.created_at} />]
-              ]} />
-            )}
-          </section>
-
-          <section id='peek-usage' className='grid scroll-mt-4 gap-6'>
-            <List title='Tools' rows={d.tools} empty='No tool calls yet.' cols={[
+              ]} /> }] : []),
+          { id: 'tools', label: 'Tools', content: <List noun='Tools' rows={d.tools} empty='No tool calls yet.' cols={[
               ['Tool', (t) => t.name],
               ['Calls', (t) => count(t.calls), 'text-right tabular-nums'],
               ['Errors', (t) => (Number(t.errors) ? <span className='text-destructive'>{t.errors}</span> : count(0)), 'text-right tabular-nums'],
               ['Avg', (t) => (t.avg_ms != null ? `${t.avg_ms} ms` : dash), 'text-right tabular-nums'],
               ['Last', (t) => <When d={t.last} />]
-            ]} />
-            <List title='Recent errors' rows={d.errors} cols={[
+            ]} /> },
+          { id: 'errors', label: 'Recent errors', content: <List noun='Recent errors' rows={d.errors} cols={[
               ['When', (e) => <When d={e.at} />],
               ['Call', (e) => e.name || e.method],
               ['Error', (e) => e.error, 'whitespace-normal leading-snug']
-            ]} />
-            <List title='Clients' rows={d.clients} cols={[
+            ]} /> },
+          { id: 'clients', label: 'Clients', content: <List noun='Clients' rows={d.clients} cols={[
               ['Client', (c) => c.client],
               ['Calls', (c) => count(c.n), 'text-right tabular-nums'],
               ['Last', (c) => <When d={c.last} />]
-            ]} />
-            {engine && (<>
-            <List title='Products' rows={d.products} empty='No product yet.' cols={[
+            ]} /> },
+          ...(engine ? [
+            { id: 'products', label: 'Products', content: <List noun='Products' rows={d.products} empty='No product yet.' cols={[
               ['Product', (x) => x.name],
               ['Website', (x) => (x.website_url ? <a href={x.website_url} target='_blank' rel='noopener noreferrer' className='text-muted-foreground hover:text-foreground'>{host(x.website_url)}</a> : dash)],
               ['Added', (x) => <When d={x.created_at} />]
-            ]} />
-            <List title='Onboarding research' rows={d.research} cols={[
+            ]} /> },
+            { id: 'research', label: 'Onboarding research', content: <List noun='Onboarding research' rows={d.research} cols={[
               ['Product', (r) => r.product],
               ['Status', (r) => <>{word(runTone(r.status), r.status)}{r.stage && r.status === 'running' && <span className='text-muted-foreground ml-1.5'>{r.stage}</span>}</>],
               ['Started', (r) => <When d={r.created_at} />],
               ...(d.research.some((r) => r.error) ? [['Detail', (r: OrgDetail['research'][number]) => (r.error ? <span className='text-destructive'>{r.error}</span> : null), 'whitespace-normal leading-snug'] as [string, (r: OrgDetail['research'][number]) => ReactNode, string]] : [])
-            ]} />
-            <List title={W.Runs} rows={d.simulations} empty={`No ${W.runs} yet.`} cols={[
+            ]} /> },
+            { id: 'runs', label: W.Runs, content: <List noun={W.Runs} rows={d.simulations} empty={`No ${W.runs} yet.`} cols={[
               [W.Run, (x) => x.name],
               ['Status', (x) => word(runTone(x.status), x.status)],
               ['Sessions', (x) => `${x.completed} / ${x.sessions}`, 'text-right tabular-nums'],
               ['Started', (x) => <When d={x.created_at} />]
-            ]} />
-            </>)}
-            {!engine && d.runs && (<>
-              <List title={`${d.runs.word.many} by kind`} rows={d.runs.by_kind} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
+            ]} /> },
+          ] : []),
+          ...(!engine && d.runs ? [
+            { id: 'by-kind', label: `${d.runs.word.many} by kind`, content: <List noun={`${d.runs.word.many} by kind`} rows={d.runs.by_kind} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
                 ['Kind', (k) => k.label],
                 [d.runs.word.many, (k) => count(k.total), 'text-right tabular-nums'],
                 ['Failed', (k) => (k.failed ? <span className='text-destructive'>{k.failed}</span> : count(0)), 'text-right tabular-nums'],
                 ['Last', (k) => <When d={k.last_at} />]
-              ]} />
-              <List title={`Latest ${d.runs.word.many.toLowerCase()}`} rows={d.runs.recent} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
+              ]} /> },
+            { id: 'latest', label: `Latest ${d.runs.word.many.toLowerCase()}`, content: <List noun={`Latest ${d.runs.word.many.toLowerCase()}`} rows={d.runs.recent} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
                 [d.runs.word.one, (r) => r.label],
                 ['Status', (r) => word(runTone(r.status), r.status)],
                 ['Started', (r) => <When d={r.created_at} />],
                 ...(d.runs.recent.some((r) => r.error) ? [['Detail', (r: AccountRuns['recent'][number]) => (r.error ? <span className='text-destructive'>{r.error}</span> : null), 'whitespace-normal leading-snug'] as [string, (r: AccountRuns['recent'][number]) => ReactNode, string]] : [])
-              ]} />
-            </>)}
-          </section>
-
-          <section id='peek-billing' className='grid scroll-mt-4 gap-6'>
-            {d.integrations.stripe && (<>
-              <List title='Invoices' rows={d.invoices} cols={[
+              ]} /> },
+          ] : []),
+          ...(d.integrations.stripe ? [{ id: 'invoices', label: 'Invoices', content: <List noun='Invoices' rows={d.invoices} cols={[
                 ['Invoice', (x) => x.number || x.id],
                 ['Status', (x) => word(x.status === 'paid' ? 'ok' : x.status === 'open' ? 'warn' : x.status === 'uncollectible' ? 'bad' : 'neutral', x.status)],
                 ['Total', (x) => money(x.total, x.currency), 'text-right tabular-nums'],
                 ['Date', (x) => <When d={typeof x.created === 'number' ? new Date(x.created * 1000) : x.created} />],
                 ['', (x) => (x.url ? <a href={x.url} target='_blank' rel='noopener noreferrer' aria-label='Open invoice' className='text-muted-foreground hover:text-foreground'><Icons.externalLink className='size-3.5' /></a> : null), 'w-8 text-right']
-              ]} />
-            </>)}
-          </section>
-
-          <section id='peek-onboarding' className='grid scroll-mt-4 gap-6'>
-            <List title='Milestones' empty='No milestone reached yet.' rows={stages.filter((k) => org.reached?.[k]).map((k) => ({ k, at: org.reached[k] }))} cols={[
+              ]} /> }] : []),
+          { id: 'milestones', label: 'Milestones', content: <List noun='Milestones' empty='No milestone reached yet.' rows={stages.filter((k) => org.reached?.[k]).map((k) => ({ k, at: org.reached[k] }))} cols={[
               ['Milestone', (m) => labelOf(m.k)],
               ['Reached', (m) => <When d={m.at} />]
-            ]} />
-          </section>
-        </div>
+            ]} /> },
+        ]} />
       )}
 
       {confirm.dialog}

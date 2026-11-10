@@ -58,10 +58,41 @@ const isChoice = (t: FieldKind) => t === 'select' || t === 'multi_select';
 
 type Row = FormField & { row: number; keyTyped?: boolean };
 
-/** Options as typed ("Small, Medium, Large"): a label kept keeps its stored value. */
-function optionsOf(text: string, before: FormField['options']) {
-  const labels = text.split(',').map((x) => x.trim()).filter(Boolean);
-  return labels.length ? labels.map((label) => before?.find((o) => o.label === label) ?? { value: label, label }) : undefined;
+type Option = NonNullable<FormField['options']>[number];
+
+/** A choice field's options: one removable chip each, and a box that adds more (Enter, a comma or Add; a pasted list is split). */
+function OptionsCell({ n, options, onChange }: { n: number; options: Option[]; onChange: (o: Option[]) => void }) {
+  const [draft, setDraft] = useState('');
+  const add = (text: string) => {
+    const seen = new Set(options.map((o) => o.label.toLowerCase())), fresh: string[] = [];
+    for (const raw of text.split(',')) {
+      const label = raw.trim();
+      if (label && !seen.has(label.toLowerCase())) { seen.add(label.toLowerCase()); fresh.push(label); }
+    }
+    if (fresh.length) onChange([...options, ...fresh.map((label) => ({ value: label, label }))]);
+    setDraft('');
+  };
+  return (
+    <div className='flex min-w-56 flex-col gap-1.5' data-form-options=''>
+      {options.length > 0 && (
+        <ul className='flex flex-wrap gap-1'>
+          {options.map((o) => (
+            <li key={o.value} className='inline-flex h-6 max-w-full items-center gap-1 rounded-md border pr-0.5 pl-2 text-xs'>
+              <span className='truncate'>{o.label}</span>
+              <Button type='button' variant='outline' size='icon-xs' className='size-4 [&_svg]:size-3' aria-label={`Remove option ${o.label}`} onClick={() => onChange(options.filter((x) => x.value !== o.value))}><Icons.close /></Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className='flex gap-1'>
+        <Input aria-label={`Add option, row ${n}`} placeholder='Add option' value={draft} className='h-8'
+          onChange={(e) => { if (e.target.value.includes(',')) add(e.target.value); else setDraft(e.target.value); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(draft); } }}
+          onBlur={() => { if (draft.trim()) add(draft); }} />
+        <Button type='button' variant='outline' size='sm' className='h-8' disabled={!draft.trim()} onClick={() => add(draft)}>Add</Button>
+      </div>
+    </div>
+  );
 }
 
 /** The form's fields as one table (the side panel's body): edit in place, Add field, Save. */
@@ -132,7 +163,7 @@ function Editor({ page, changes }: { page: Page; changes: Change[] }) {
           <thead>
             <tr className='border-b text-left text-xs'>
               <th className='p-2 font-medium'>Field name</th><th className='p-2 font-medium'>Key</th><th className='p-2 font-medium'>Data type</th>
-              <th className='p-2 font-medium'>Required</th><th className='p-2 font-medium'>Options</th><th className='p-2 font-medium'>Order</th><th className='p-2' aria-label='Remove' />
+              <th className='p-2 font-medium'>Required</th><th className='min-w-60 p-2 font-medium'>Options</th><th className='p-2 font-medium'>Order</th><th className='p-2' aria-label='Remove' />
             </tr>
           </thead>
           <tbody>
@@ -150,8 +181,7 @@ function Editor({ page, changes }: { page: Page; changes: Change[] }) {
                   </td>
                   <td className='p-1.5 text-center'><Checkbox aria-label={`Required, row ${i + 1}`} checked={!!r.required} disabled={email} onCheckedChange={(v) => patch(r.row, { required: v ? true : undefined })} /></td>
                   <td className='p-1.5'>{isChoice(r.type)
-                    ? <Input aria-label={`Options, row ${i + 1}, separated by commas`} placeholder='Small, Medium, Large' defaultValue={(r.options ?? []).map((o) => o.label).join(', ')} className='h-8'
-                        onChange={(e) => patch(r.row, { options: optionsOf(e.target.value, r.options) })} />
+                    ? <OptionsCell n={i + 1} options={r.options ?? []} onChange={(options) => patch(r.row, { options: options.length ? options : undefined })} />
                     : <span className='text-muted-foreground'>—</span>}</td>
                   <td className='p-1.5 whitespace-nowrap'>
                     <Button type='button' variant='outline' size='icon-xs' aria-label={`Move row ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}><Icons.chevronUp /></Button>{' '}

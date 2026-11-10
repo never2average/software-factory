@@ -38,7 +38,7 @@ export function AdminConnect() {
     <PageContainer>
       <ErrorBox error={error} />
       {isLoading || !data ? <LoadingCards count={2} /> : (
-        <div className='flex max-w-3xl flex-col gap-8'>
+        <div className='mx-auto flex w-full max-w-3xl flex-col gap-8'>
           <Section title='Connect' action={
             <div className='flex gap-1' role='tablist' aria-label='Your AI client'>
               {list.map((x) => (
