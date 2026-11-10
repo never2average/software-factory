@@ -97,6 +97,8 @@ export function resolveHooks(f: AgentFlavour, own: Partial<Record<HookEvent, str
 
 export type WebTools = "off" | "fetch" | "search";
 export interface AgentPolicy {
+  /** mold_v0-289: a follow-on session: the ended session it continues and what its first wake is told of it. */
+  follow_on?: { from: string; context: string };
   flavour: string;
   model: string;
   provider: string;

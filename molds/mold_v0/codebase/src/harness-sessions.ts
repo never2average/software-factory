@@ -6,11 +6,14 @@
  *   start      a person (or an account key) starts a session with its first message: the policy in force is frozen into
  *              it (harness, model, provider, limits, web tools, hooks) and its budget (the setting, at most the ceiling);
  *              its first wake is queued as a run whose budget is what the session has left
- *   message    the person who started it sends more: delivered on the running wake's next beat (steer), or, when the
- *              session is parked or paused, it wakes it (a new run, the same harness session)
+ *   message    the person who started it sends more, whatever state it is in: delivered on the running wake's next beat
+ *              (steer); on a parked or paused session it wakes it (a new run, the same harness session); while a decision is
+ *              pending it waits and is delivered by the wake the decision causes; on an ended session it continues it (a new
+ *              wake on the same harness session) or, when nothing can be resumed, starts a follow-on session from its
+ *              conversation (mold_v0-289). Nobody but the person who started it can send one
  *   pause      the starter, an owner or staff: a running wake is asked to stop and keep its session (SIGTERM, so the
  *              harness flushes it), a queued one is withdrawn; resume (the starter) wakes it on the same session
- *   stop       the starter, an owner or staff: ends it for good (a turn in progress finishes); read only afterwards
+ *   stop       the starter, an owner or staff: ends it (a turn in progress finishes); only its starter's next message reopens it
  *   requests   what the agent asked for that its policy does not allow (a web host, a tool) and a stop on its budget:
  *              approve grants exactly that and wakes it; decline records the refusal and parks it with that said
  *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, down to what it has spent (mold_v0-287), also
@@ -72,7 +75,7 @@ const COLS = `id, org_id, title, started_by, started_by_name, state, in_turn, st
   policy, harness_session, checkpoint, checkpoint_seq, budget_usd, spent_usd, reserve_usd, crash_spent_usd, wakes, crashes, web_calls, current_run_id,
   last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at, profile_id, profile_version, record_area, record_key`;
 
-export interface RequestView { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
+export interface RequestView { id: string; kind: RequestKind; subject: string; /** The tool's own title (a workspace tool), else the subject in plain words. */ subject_title: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
 export interface MessageView { id: number; role: "person" | "agent" | "system"; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }
 export interface SessionView {
   id: string; title: string; phase: AgentPhase; state: HarnessState; reason: string | null; mode: AgentPolicy["mode"]; started_by: string | null; mine: boolean;
@@ -166,13 +169,16 @@ const phaseOf = (r: SessionRow): AgentPhase => r.archived_at ? "archived"
 const mineOf = (r: SessionRow, a: Actor) => a.kind !== "staff" && a.kind !== "system" && (r.started_by ?? null) === startedByOf(a);
 const startedByOf = (a: Actor) => (a.kind === "person" ? a.user : a.kind === "key" ? "account" : null);
 const closed = (r: SessionRow) => r.state === "stopped" || r.state === "failed" || !!r.archived_at;
+/** Whether an ended session can be continued on its own harness session: nothing was pruned, it has something to resume, and it did not end by its governance policy. */
+const resumable = (r: SessionRow) => !r.pruned_at && !!(r.harness_session || r.checkpoint) && !/^(policy|egress_approval_denied|approval_timeout)/.test(r.state_reason ?? "");
 
 function permissions(r: SessionRow, a: Actor) {
   const mine = mineOf(r, a), staff = a.kind === "staff", owner = a.kind === "key" || canAccount(a.role, "manage");
-  const steerable = flavourOf(r.flavour)?.holds_stdin_open !== false;
   const open = !closed(r);
   return {
-    message: open && mine && r.state !== "awaiting" && (r.state !== "live" || steerable),
+    // The person who started it can always send one (mold_v0-289): held for a pending decision or a working wake, and on an
+    // ended session it continues it, which spends as a start does, so an ended one also needs a role that may start sessions.
+    message: mine && (open || a.kind === "key" || canAccount(a.role, "launch")),
     pause: open && (mine || owner || staff) && ["starting", "live", "waking", "parked"].includes(r.state) && !r.pause_requested_at,
     resume: open && mine && (r.state === "paused" || r.state === "parked"),
     stop: open && (mine || owner || staff),
@@ -181,8 +187,14 @@ function permissions(r: SessionRow, a: Actor) {
   };
 }
 
-function requestView(q: { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: Date | null; reason: string | null; created_at: Date }, windowHours: number): RequestView {
-  return { id: q.id, kind: q.kind, subject: q.subject, detail: q.detail ?? {}, status: q.status, decided_by: q.decided_by, decided_at: iso(q.decided_at), reason: q.reason,
+/** A workspace tool's own title as the session froze it, else its name in words (mold_v0-289: never mcp__app__x or x_y). */
+function toolWords(policy: AgentPolicy | null | undefined, name: string): string {
+  const own = workspaceToolOf(name) ?? name;
+  return policy?.workspace?.tools?.find((t) => t.name === own)?.title?.trim() || (workspaceToolOf(name) ? own.replaceAll("_", " ") : name);
+}
+
+function requestView(q: { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: Date | null; reason: string | null; created_at: Date }, windowHours: number, policy?: AgentPolicy | null): RequestView {
+  return { id: q.id, kind: q.kind, subject: q.subject, subject_title: q.kind === "tool" ? toolWords(policy, q.subject) : q.subject, detail: q.detail ?? {}, status: q.status, decided_by: q.decided_by, decided_at: iso(q.decided_at), reason: q.reason,
     created_at: iso(q.created_at)!, expires_at: q.status === "pending" ? new Date(new Date(q.created_at).getTime() + windowHours * 3600_000).toISOString() : null };
 }
 
@@ -234,7 +246,7 @@ async function pendingOf(q: Queryable, r: SessionRow): Promise<RequestView | nul
   const [p] = await q.query<Parameters<typeof requestView>[0]>(
     "SELECT id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND status = 'pending'",
     [r.org_id, r.id]);
-  return p ? requestView(p, r.policy?.approval_window_hours ?? 24) : null;
+  return p ? requestView(p, r.policy?.approval_window_hours ?? 24, r.policy) : null;
 }
 
 async function systemMessage(q: Queryable, r: { id: string; org_id: number }, body: string, runId: string | null = null) {
@@ -281,7 +293,7 @@ export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ def
  * start it, its instructions, model, budget, ceiling, turns, web, tools and files. `opts.record` (the server's own, from a
  * record page's start_agent action; never from a request's body) links it to that record.
  */
-export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string } } = {}): Promise<SessionDetail> {
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string } } = {}): Promise<SessionDetail> {
   needOn();
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
@@ -308,6 +320,7 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     // mold_v0-262: its profile's workspace credentials, for a session a workspace owner starts (anyone else's: none).
     ...(workspaceKeys.length && actor.kind === "person" && actor.role === "owner" ? { credentials: workspaceKeys } : {}),
     ...(vaultKeys.length ? { vault_keys: vaultKeys } : {}),
+    ...(opts.followOn ? { follow_on: opts.followOn } : {}),
   });
   if (eff.governance) {
     // Its governance policy, frozen as the reference freezes a run's (later edits apply to new sessions only); the web
@@ -419,7 +432,7 @@ export async function listSessions(orgId: number | null, actor: Actor, opts: { l
       `/* tenant: the sessions just listed, by id */ SELECT session_id, id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests
         WHERE session_id = ANY ($1::text[]) AND status = 'pending'`, [rows.map((r) => r.id)]) : [];
     const byS = new Map(pend.map((p) => [p.session_id, p]));
-    return rows.map((r) => { const p = byS.get(r.id); return view(r, actor, p ? requestView(p, r.policy?.approval_window_hours ?? 24) : null, r.slug); });
+    return rows.map((r) => { const p = byS.get(r.id); return view(r, actor, p ? requestView(p, r.policy?.approval_window_hours ?? 24, r.policy) : null, r.slug); });
   });
 }
 
@@ -456,7 +469,7 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
          FROM runs r LEFT JOIN harness_wake_spend w ON w.run_id = r.id AND w.org_id = r.org_id
         WHERE r.org_id = $1 AND r.harness_session_id = $2 ORDER BY r.created_at`, [r.org_id, r.id]);
     const win = r.policy?.approval_window_hours ?? 24;
-    const requests = reqs.map((x) => requestView(x, win));
+    const requests = reqs.map((x) => requestView(x, win, r.policy));
     const p = r.policy;
     return {
       ...view(r, actor, requests.find((x) => x.status === "pending") ?? null, o?.slug ?? null),
@@ -476,30 +489,73 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
   });
 }
 
-/** The person who started it sends guidance: steer a running wake, or wake a parked or paused session with it. */
-export async function messageSession(orgId: number, id: string, actor: Actor, body: unknown, org?: import("./auth.js").Org): Promise<{ status: "queued" | "waking"; phase: AgentPhase }> {
+/** What became of a message: in the running wake or waiting ("queued"), a parked session woken ("waking"), an ended one continued ("continued"), or a new session started from it ("follow_on", with its id). */
+export interface MessageAnswer { status: "queued" | "waking" | "continued" | "follow_on"; phase: AgentPhase; session_id?: string }
+
+/**
+ * The person who started it sends a message (and nobody else: the agent acts as them), in any state (mold_v0-289). A
+ * running wake takes it at its next beat; a parked or paused session wakes; while a decision is pending it waits and the
+ * wake the decision causes delivers it (a decline or an expiry wakes it for that message); an ended session is reopened and
+ * woken on its own harness session, or, when there is nothing to resume or its governance policy ended it, a follow-on
+ * session starts with this conversation as its context.
+ */
+export async function messageSession(orgId: number, id: string, actor: Actor, body: unknown, org?: import("./auth.js").Org): Promise<MessageAnswer> {
   needOn();
   const message = text(body, "message");
-  const r = await read((q) => rowOf(q, orgId, id));
-  if (!mineOf(r, actor)) throw new PackError("Only the person who started this session can message it", 403);
-  if (closed(r)) throw new PackError(r.archived_at ? "This session is archived" : r.state === "failed" ? "This session failed and takes no more messages: start a new one" : "This session was stopped: start a new one", 409);
-  if (r.state === "awaiting") throw new PackError("This session is waiting for a decision on what it asked for: approve or decline it first", 409);
-  if (r.state === "live" && flavourOf(r.flavour)?.holds_stdin_open === false)
-    throw new PackError(`${flavourOf(r.flavour)?.label ?? r.flavour} reads its instructions once: it cannot be steered while it works`, 409);
+  const first = await read((q) => rowOf(q, orgId, id));
+  if (!mineOf(first, actor)) throw new PackError("Only the person who started this session can message it", 403);
   // Locked, so two messages racing onto a parked session wake it once: the second finds it waking and waits pending.
-  const wake = await tx(async (q) => {
+  const next = await tx(async (q): Promise<"none" | "wake" | "continued" | "follow_on"> => {
     const x = await rowOf(q, orgId, id, true);
+    if (closed(x) && !permissions(x, actor).message) throw new PackError("Your role cannot start agent sessions, so it cannot continue one that has ended", 403);
+    if (closed(x) && !resumable(x)) return "follow_on";
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
       [x.id, x.org_id, message, actor.user, actor.name]);
     await q.query("UPDATE harness_sessions SET last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
     if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "steer_queued", { length: message.length, by: actor.name });
-    return x.state === "parked" || x.state === "paused" ? x.state : null;
+    if (closed(x)) {
+      // Open again: what ended it no longer applies, and its retention starts over when it ends next.
+      await q.query(`UPDATE harness_sessions SET state = 'parked', state_reason = 'continued', archived_at = NULL, ended_at = NULL, retention_until = NULL, crashes = 0,
+                            pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now() WHERE id = $1 AND org_id = $2`, [x.id, x.org_id]);
+      await systemMessage(q, x, `Continued by ${actor.name ?? "someone"}.`);
+      return "continued";
+    }
+    return x.state === "parked" || x.state === "paused" ? "wake" : "none";
   });
-  if (wake) {
-    await queueWake(orgId, id, "message", actor, org);
-    return { status: "waking", phase: "waking" };
+  if (next === "follow_on") return followOn(orgId, first, actor, message, org);
+  if (next === "wake" || next === "continued") {
+    const run = await queueWake(orgId, id, "message", actor, org);
+    // No wake: it has spent its budget, and the message waits behind the request that was just made for more.
+    if (run) return { status: next === "continued" ? "continued" : "waking", phase: "waking" };
   }
   return { status: "queued", phase: phaseOf(await read((q) => rowOf(q, orgId, id))) };
+}
+
+/** The most of an ended conversation a follow-on session is told, in characters. */
+const FOLLOW_ON_CONTEXT_CHARS = 6000;
+
+/** A follow-on session: same person, same agent profile and record, this conversation as its opening context. */
+async function followOn(orgId: number, was: SessionRow, actor: Actor, message: string, org?: import("./auth.js").Org): Promise<MessageAnswer> {
+  const said = await read((q) => q.query<{ role: MessageView["role"]; body: string }>(
+    "SELECT role, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role IN ('person', 'agent') ORDER BY id DESC LIMIT 40", [was.org_id, was.id]));
+  let room = FOLLOW_ON_CONTEXT_CHARS;
+  const lines: string[] = [];
+  for (const m of said) {
+    if (room <= 0) break;
+    const line = `${m.role === "person" ? "The person" : "You"}: ${maskSecrets(m.body).slice(0, room)}`;
+    lines.unshift(line);
+    room -= line.length;
+  }
+  const context = lines.length ? `This continues an earlier session, "${was.title}", which has ended. What was said there, oldest first:\n\n${lines.join("\n\n")}` : `This continues an earlier session, "${was.title}", which has ended; its conversation is no longer kept.`;
+  const next = await startSession(orgId, actor, { message, title: was.title, mode: was.policy?.mode, profile: was.profile_id ?? undefined }, org,
+    { record: was.record_area && was.record_key ? { area: was.record_area, key: was.record_key } : undefined, followOn: { from: was.id, context } });
+  await tx(async (q) => {
+    await systemMessage(q, was, "Continued in a new session: this one could not be resumed.");
+    await systemMessage(q, { id: next.id, org_id: was.org_id }, `Continues "${was.title}".`);
+    // Told to the follow-on as part of its context: nothing of this session is left waiting to be delivered.
+    await q.query("UPDATE harness_session_messages SET status = 'delivered' WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded')", [was.org_id, was.id]);
+  });
+  return { status: "follow_on", phase: next.phase, session_id: next.id };
 }
 
 /** Pause: a running wake stops and keeps its session (resume continues it); a queued one is withdrawn. */
@@ -572,6 +628,8 @@ async function endSession(q: Queryable, x: { id: string; org_id: number; policy?
             retention_until = coalesce(retention_until, now() + make_interval(days => $5)), pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now()
       WHERE id = $1 AND org_id = $2`, [x.id, x.org_id, state, reason.slice(0, 500), days]);
   await q.query("UPDATE harness_session_requests SET status = 'expired', decided_at = now(), reason = 'the session ended' WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [x.org_id, x.id]);
+  const undelivered = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' LIMIT 1", [x.org_id, x.id]);
+  if (undelivered.length) await systemMessage(q, x, "It ended before reading your last message. Send another and it continues with both.");
   await revokeToolTokens(q, x.org_id, x.id, `the session ${state === "failed" ? "failed" : "ended"}`);
 }
 
@@ -597,7 +655,7 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
   // needs the workspace's owner (who governs it), not only the person who started the session (who runs it).
   const governed = !!r.policy?.governance;
   const why = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
-  const wake = await tx(async (q) => {
+  const wake = await tx(async (q): Promise<false | "approval" | "message"> => {
     const x = await rowOf(q, orgId, sessionId, true);
     const [req] = await q.query<{ id: string; kind: RequestKind; subject: string; status: string; created_at: Date }>(
       "SELECT id, kind, subject, status, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND id = $3 FOR UPDATE", [x.org_id, x.id, String(requestId)]);
@@ -610,18 +668,19 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     if (governed && req.kind === "web" && decision === "decline") {
       // The reference's Deny: the session ends with the refused host as its reason, never offered a resume back into it.
       await q.query("UPDATE harness_session_requests SET status = 'declined', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
-      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject)}${why ? `: ${why}` : ""}. The session ended (egress_approval_denied).`);
+      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject, x.policy)}${why ? `: ${why}` : ""}. The session ended (egress_approval_denied).`);
       if (!x.current_run_id) await endSession(q, x, "failed", `egress_approval_denied: ${req.subject}`);
       else await q.query("UPDATE harness_sessions SET stop_requested_at = coalesce(stop_requested_at, now()), state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, `egress_approval_denied: ${req.subject}`]);
       return false;
     }
     if (decision === "decline") {
       await q.query("UPDATE harness_session_requests SET status = 'declined', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
-      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject)}${why ? `: ${why}` : ""}.`);
+      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject, x.policy)}${why ? `: ${why}` : ""}.`);
       // Its next wake (the person's next message) is told why the request went unanswered.
       await q.query("UPDATE harness_sessions SET state = CASE WHEN state = 'awaiting' THEN 'parked' ELSE state END, state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2",
-        [x.id, x.org_id, `declined: ${requestWords(req.kind, req.subject)}`]);
-      return false;
+        [x.id, x.org_id, `declined: ${requestWords(req.kind, req.subject, x.policy)}`]);
+      // A message queued while it waited (mold_v0-289) is delivered now; the wake still ending, if any, wakes it (reconcileWake).
+      return !x.current_run_id && x.state === "awaiting" && await hasWaitingMessage(q, x) ? "message" : false;
     }
     const hiddenTool = req.kind === "tool" ? workspaceToolOf(req.subject) : null;
     if (hiddenTool && (x.policy.workspace?.hidden ?? []).includes(hiddenTool)) throw new PackError(`This session's agent profile does not give it ${hiddenTool}: it cannot be approved`, 403);
@@ -640,14 +699,15 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     } else if (req.kind === "web" && !hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
     if (req.kind === "tool" && !p.tools.includes(req.subject)) p.tools.push(req.subject);
     await q.query("UPDATE harness_session_requests SET status = 'approved', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
-    await q.query("UPDATE harness_sessions SET policy = $3, state_reason = $4, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, JSON.stringify(p), `approved: ${requestWords(req.kind, req.subject)}`]);
-    await systemMessage(q, x, `${actor.name ?? "Someone"} approved ${requestWords(req.kind, req.subject)}.`);
-    return x.state === "awaiting" || x.state === "parked";
+    await q.query("UPDATE harness_sessions SET policy = $3, state_reason = $4, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, JSON.stringify(p), `approved: ${requestWords(req.kind, req.subject, x.policy)}`]);
+    await systemMessage(q, x, `${actor.name ?? "Someone"} approved ${requestWords(req.kind, req.subject, x.policy)}.`);
+    return x.state === "awaiting" || x.state === "parked" ? "approval" : false;
   });
-  if (wake) await queueWake(r.org_id, sessionId, "approval", actor, org);
+  if (wake) await queueWake(r.org_id, sessionId, wake, actor, org);
   return readSession(orgId, sessionId, actor);
 }
-const requestWords = (kind: RequestKind, subject: string) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${workspaceToolOf(subject) ? `the workspace tool ${workspaceToolOf(subject)}` : subject}` : `more budget (at ${subject})`;
+const requestWords = (kind: RequestKind, subject: string, policy?: AgentPolicy | null) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${toolWords(policy, subject)}` : `more budget (at ${subject})`;
+const hasWaitingMessage = async (q: Queryable, r: { id: string; org_id: number }) => (await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') LIMIT 1", [r.org_id, r.id])).length > 0;
 
 /**
  * Change a session's budget, with a reason (mold_v0-287: raise, or lower it to no less than it has spent; while it works
@@ -745,14 +805,15 @@ export async function sessionTrace(orgId: number | null, id: string, actor: Acto
       "SELECT id, kind, subject, status, decided_by, decided_at, reason, created_at, detail FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
     const grants = await q.query<{ id: string; from_usd: string; to_usd: string; reason: string; granted_by: string; created_at: Date }>(
       "SELECT id, from_usd, to_usd, reason, granted_by, created_at FROM harness_budget_grants WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
-    const marks = traceMarks({ wakes, sandboxes, requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: g.created_at })), wakeIndex });
+    const toolTitle = (name: string) => toolWords(r.policy, name);
+    const marks = traceMarks({ wakes, sandboxes, requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: g.created_at })), wakeIndex, toolTitle });
     const current = wakes.find((w) => w.id === r.current_run_id) ?? null;
     const sandbox = current ? [...sandboxes].reverse().find((s) => s.run_id === current.id) ?? null : null;
     const [waited] = current ? await q.query<{ reason: string | null }>("SELECT data->>'reason' AS reason FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'waiting' ORDER BY id DESC LIMIT 1", [r.org_id, current.id]) : [];
     const [startedEv] = current ? await q.query("SELECT 1 FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'agent_wake' LIMIT 1", [r.org_id, current.id]) : [];
     const nextEvent = page.length ? Number(page.at(-1)!.id) : since.events;
     const nextMsg = Math.max(since.messages, ...msgPage.map((m) => Number(m.id)));
-    return { steps: [...traceSteps(page, wakeIndex), ...msgPage.map((m) => messageStep(m, wakeIndex))], marks, cursor: `${nextEvent}:${nextMsg}`, more,
+    return { steps: [...traceSteps(page, wakeIndex, toolTitle), ...msgPage.map((m) => messageStep(m, wakeIndex))], marks, cursor: `${nextEvent}:${nextMsg}`, more,
       waiting_on: waitingOn({ phase: phaseOf(r), run: current, sandbox, waiting: waited?.reason ?? null, started: !!startedEv }), ...facts };
   });
 }
@@ -824,7 +885,8 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     // Why it talks again, when the person did not say (a resume, an approval, a crash): the on_resume hook and the reason.
     const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed)/.test(s.state_reason) ? `(${s.state_reason})` : null;
     const resumeHook = s.policy.hooks?.find((h) => h.event === "on_resume")?.text ?? null;
-    const preface = s.wakes > 1 ? [why, first.length ? null : resumeHook].filter(Boolean).join(" ") || null : null;
+    // mold_v0-289: a follow-on session is told the conversation it continues, ahead of its first message.
+    const preface = s.wakes > 1 ? [why, first.length ? null : resumeHook].filter(Boolean).join(" ") || null : s.policy.follow_on?.context ?? null;
     const [charged] = await q.query<{ c: string }>("SELECT coalesce(sum(charged_usd), 0) AS c FROM harness_wake_spend WHERE org_id = $1 AND session_id = $2 AND run_id <> $3", [s.org_id, s.id, w.id]);
     const [run] = await q.query<{ budget_usd: string; deadline_at: Date | null }>("SELECT budget_usd, deadline_at FROM runs WHERE id = $1 AND org_id = $2", [w.id, s.org_id]);
     // This wake's token for the workspace's tools: good until its run's deadline, revoked when the wake ends.
@@ -967,7 +1029,7 @@ export async function wakeRequest(runId: string, leaseToken: string, r: { kind?:
     const id = newId("hsr");
     await q.query("INSERT INTO harness_session_requests (id, session_id, org_id, run_id, kind, subject, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [id, s.id, s.org_id, w.id, kind, kind === "tool" ? String(r.subject).trim() : subject, JSON.stringify(detail)]);
-    await systemMessage(q, s, `The agent asks to ${kind === "web" ? `reach ${subject}` : `use ${workspaceToolOf(String(r.subject).trim()) ? `the workspace tool ${workspaceToolOf(String(r.subject).trim())}` : String(r.subject).trim()}`}.`, w.id);
+    await systemMessage(q, s, `The agent asks to ${kind === "web" ? `reach ${subject}` : `use ${toolWords(s.policy, String(r.subject).trim())}`}.`, w.id);
     await runEvent(q, w.id, s.org_id, "agent_request", { kind, subject: kind === "tool" ? String(r.subject).trim() : subject });
     return { id };
   });
@@ -1086,8 +1148,7 @@ export async function reconcileWake(runId: string): Promise<void> {
     // What arrived while the wake was ending wakes it again: a message (a parked session), or a decision made meanwhile.
     const next = async (state: HarnessState) => {
       if (state === "parked") {
-        const waiting = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') LIMIT 1", [s.org_id, s.id]);
-        if (waiting.length) return { org: s.org_id, id: s.id, reason: "message" as const };
+        if (await hasWaitingMessage(q, s)) return { org: s.org_id, id: s.id, reason: "message" as const };
         if (/^(approved|budget raised)/.test(s.state_reason ?? "") && !(await pendingOf(q, s))) return { org: s.org_id, id: s.id, reason: "approval" as const };
       }
       return null;
@@ -1157,6 +1218,7 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
       WHERE r.status IN ('succeeded', 'failed', 'cancelled') LIMIT 200`));
   for (const l of loose) { await reconcileWake(l.current_run_id); out.settled++; }
   // 2. Requests nobody answered within the session's window: expired, the session parked with that said.
+  const toWake: { org: number; id: string }[] = [];
   out.expired = await tx(async (q) => {
     const rows = await q.query<{ id: string; session_id: string; org_id: number; kind: RequestKind; subject: string }>(
       `/* tenant: platform sweep across workspaces */ UPDATE harness_session_requests x SET status = 'expired', decided_at = $1, reason = 'nobody answered in time'
@@ -1168,15 +1230,19 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
       const [gs] = await q.query<SessionRow>(`SELECT ${COLS} FROM harness_sessions WHERE id = $1 AND org_id = $2`, [r.session_id, r.org_id]);
       if (gs?.policy?.governance && r.kind === "web" && gs.state === "awaiting" && !gs.current_run_id) {
         await endSession(q, gs, "failed", `approval_timeout: ${r.subject}`);
-        await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject)} in time: the session ended (approval_timeout).`);
+        await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject, gs.policy)} in time: the session ended (approval_timeout).`);
         continue;
       }
       await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2 AND state = 'awaiting'",
-        [r.session_id, r.org_id, `expired: ${requestWords(r.kind, r.subject)}`]);
-      await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject)} in time: it expired.`);
+        [r.session_id, r.org_id, `expired: ${requestWords(r.kind, r.subject, gs?.policy)}`]);
+      await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject, gs?.policy)} in time: it expired.`);
+      // A message queued while it waited (mold_v0-289) is delivered now.
+      if (gs?.state === "awaiting" && !gs.current_run_id && await hasWaitingMessage(q, { id: r.session_id, org_id: r.org_id })) toWake.push({ org: r.org_id, id: r.session_id });
     }
     return rows.length;
   });
+  for (const w of toWake) await queueWake(w.org, w.id, "message", { kind: "system", user: null, name: "the platform", role: null }).catch((e) =>
+    console.error(`agent session ${w.id}: wake refused: ${(e as Error).message}`));
   // 3. Sessions quiet for AGENT_ARCHIVE_AFTER_DAYS: archived (read only), retention counted from now.
   out.archived = await tx(async (q) => (await q.query(
     `/* tenant: platform sweep across workspaces */ UPDATE harness_sessions SET archived_at = $1, retention_until = coalesce(retention_until, $1::timestamptz + make_interval(days => LEAST($3, coalesce(NULLIF((policy->'governance'->>'retention_days')::int, 0), $3)))), updated_at = now()

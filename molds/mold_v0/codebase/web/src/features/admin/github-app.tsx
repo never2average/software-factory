@@ -53,7 +53,7 @@ export function GithubAppPanel({ data }: { data: GithubAppView }) {
   return (
     <div className='flex min-w-0 flex-col gap-6 text-sm'>
       <p className='text-muted-foreground'>
-        Workspaces connect their GitHub organization to it instead of pasting tokens ({data.fields.map((x) => x.label).join(', ')}). Each run gets a short-lived installation token that can only read the repositories the workspace chose. The private key and secrets never leave the server.
+        Workspaces connect their GitHub organization to it instead of pasting tokens{data.fields.length ? ` (${data.fields.map((x) => x.label).join(', ')})` : ''}. Each run gets a short-lived installation token that can only read the repositories the workspace chose. The private key and secrets never leave the server.
         {!a.configured && ' Not set up: workspaces use pasted tokens until every setting below is saved.'}
       </p>
       <ol className='flex list-decimal flex-col gap-6 pl-5'>

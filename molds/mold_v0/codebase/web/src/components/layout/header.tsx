@@ -6,6 +6,7 @@ import SearchInput from '../search-input';
 import { DocsButton, McpButton } from './docs-button';
 import { ThemeSwitcher } from './theme-switcher';
 import { AgentButton } from './agent-button';
+import { TopBarMore } from './top-bar-more';
 
 export default function Header() {
   return (
@@ -20,9 +21,13 @@ export default function Header() {
       <div className='flex shrink-0 items-center gap-2 px-4'>
         {/* One height for all of them (top-bar.ts): the search box's, a 44px icon on a phone (mold_v0-177). */}
         <SearchInput />
-        <McpButton />
-        <DocsButton />
-        <ThemeSwitcher />
+        {/* mold_v0-289: on a phone these three are one menu, so the page's name keeps its room. */}
+        <div className='hidden items-center gap-2 md:flex'>
+          <McpButton />
+          <DocsButton />
+          <ThemeSwitcher />
+        </div>
+        <TopBarMore />
         {/* The workspace agent (mold_v0-243): the last item, at the top bar's right edge; only with its flag on. */}
         <AgentButton />
       </div>

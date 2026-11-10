@@ -1672,11 +1672,12 @@ const SHOWN_SECTIONS = shownSections([...packs.map((p) => p.json?.console), prof
  * The access-request form's own fields (mold_v0-102, src/access-request.ts): the packs' pack.json `access_request` in pack
  * order (a key once in a build), or the app's profile.json `access_request` in their place. [] asks the shell's own only.
  */
-const ACCESS_FIELDS = (() => {
+const ACCESS_JOINED = (() => {
   const r = joinAccessFields(packs.map((p) => ({ id: p.id, spec: p.json?.access_request })), profileAccess);
   for (const pr of r.problems) { const i = pr.indexOf(": "); fail(pr.slice(0, i), pr.slice(i + 2)); }
-  return r.fields;
+  return r;
 })();
+const ACCESS_FIELDS = ACCESS_JOINED.fields;
 const workspaceItems = [
   // Credentials (mold_v0-034) is Settings › Credentials since mold_v0-218: the Settings entry below Overview (settingsPage).
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
@@ -2750,7 +2751,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
-  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n" +
+  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n  /** mold_v0-289: the unit a number reads with (usd, s, min, %). */\n  unit?: string;\n  /** mold_v0-289: a chips field's values in plain words. */\n  chip_words?: boolean;\n" +
   (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
   (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") +
   (FEATURE_ON.record_resources ? "  /** mold_v0-285: a database field's provider: core, a schema of its own in the app's database. */\n  provider?: 'core';\n" : "") + "}\n\n" +
@@ -2825,13 +2826,17 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
 // The access-request form's own fields (mold_v0-102, src/access-request.ts), checked above; []: the shell's own fields only.
 files.set(path.join(OUT, "src", "access-request.generated.ts"), HEADER +
-  "import type { AccessField } from \"./access-request.js\";\n\n" +
+  "import type { AccessField, AccessFormConfig } from \"./access-request.js\";\n\n" +
   "/** The access-request form's own fields (mold_v0-102): the packs' pack.json access_request, or profile.json's; [] without. */\n" +
-  `export const GENERATED_ACCESS_FIELDS: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+  `export const GENERATED_ACCESS_FIELDS: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n` +
+  "/** A whole form declared in access_request (mold_v0-289), null when only the fields are. */\n" +
+  `export const GENERATED_ACCESS_FORM: AccessFormConfig | null = ${json(ACCESS_JOINED.form)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "access-request.generated.ts"), HEADER +
-  "import type { AccessField } from '@/lib/access-request.generated';\n\n" +
+  "import type { AccessField, AccessFormConfig } from '@/lib/access-request.generated';\n\n" +
   "/** The access-request form's own fields (mold_v0-102, src/access-request.ts): the request form asks them, /admin/requests labels them. */\n" +
-  `export const accessFields: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+  `export const accessFields: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n` +
+  "/** A whole form declared in access_request (mold_v0-289), null when only the fields are. */\n" +
+  `export const accessForm: AccessFormConfig | null = ${json(ACCESS_JOINED.form)};\n`);
 files.set(path.join(OUT, "web", "src", "lib", "access-request.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/access-request.ts (a copy, so the console runs the server's rules)") + readFileSync(ACCESS_REQUEST, "utf8"));
 // The client skill (mold_v0-144, src/client-skill-config.ts): at most one pack's pack.json `client_skill`, the app's

@@ -68,6 +68,10 @@ export interface RecordFieldSpec {
   searchable?: 'equality';
   /** A URL whose document the record's card previews (mold_v0-220). */
   preview?: 'document';
+  /** mold_v0-289: the unit a number reads with (usd, s, min, %). */
+  unit?: string;
+  /** mold_v0-289: a chips field's values in plain words. */
+  chip_words?: boolean;
 }
 
 export const recordAreas: RecordAreaSpec[] = [];

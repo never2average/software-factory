@@ -5,6 +5,7 @@
 // Views split the two kinds; every action sits in a row's ⋯ menu, the bulk bar or the peek. Journeys are not ordered.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PageFrame } from '@/components/layout/page-container';
+import { StatStrip } from '@/components/layout/section';
 import { Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
@@ -175,6 +176,12 @@ export function AdminJourneys({ bare = false }: { bare?: boolean } = {}) {
       <ErrorBox error={error} />
       <RecordView<Row>
         id='admin-journeys-v2' noun='items' exportName='journeys' views={VIEWS()} defaultSort={[{ key: 'name', dir: 'asc' }]}
+        summary={<StatStrip quad items={[
+          { label: jw('{Guides}'), value: rows.filter((r) => r.kind === 'journey').length, said: 'journeys' },
+          { label: 'Tips', value: rows.filter((r) => r.kind === 'tip').length, said: 'tips' },
+          { label: 'Stages', value: rows.reduce((n, r) => n + (r.kind === 'journey' ? r.p.stages.length : 0), 0), said: 'stages' },
+          { label: 'Accounts with tips', value: new Set(rows.flatMap((r) => (r.kind === 'tip' ? [r.t.org_slug] : []))).size, said: 'accounts with tips' },
+        ]} />}
         rows={rows} rowKey={(r) => r.key} cols={cols()} actions={actions} bulk={bulk} loading={isLoading}
         searchText={(r) => r.kind === 'journey' ? `journey ${r.p.name} ${r.p.id} ${r.p.outcome} ${r.p.who} ${r.p.stages.map((s) => s.title).join(' ')}` : `tip ${r.t.message} ${r.t.org_name} ${r.t.org_slug} ${r.t.email ?? ''} ${r.t.journey} ${r.t.step}`}
         searchPlaceholder={journeysOn() && tipsOn() ? jw('Search {guides} and tips') : journeysOn() ? jw('Search {guides}') : 'Search tips'}
@@ -264,7 +271,7 @@ function JourneyBody({ p, nj }: { p: Playbook; nj?: Nudges }) {
                   {s.expect && <><span>You&apos;ll see <span className='text-foreground'>{s.expect}</span></span><Dot /></>}
                   {s.manual || !s.tools.length
                     ? <span>Marked by the customer</span>
-                    : <span>Done by {s.tools.map((t, i) => <span key={t}>{i > 0 && ', '}<Mono>{t}</Mono></span>)}</span>}
+                    : <span>Done by {s.tools.map((t) => t.replace(/_/g, ' ')).join(', ')}</span>}
                 </div>
               </li>
             );

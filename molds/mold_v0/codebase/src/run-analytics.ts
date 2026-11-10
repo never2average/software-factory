@@ -202,14 +202,23 @@ export async function usageSummary(org: { orgId: number; role: string | null; us
 
 // ---------- the home page's cards (flag overview_cards) ----------
 
+/** The session title of each run that is a wake of an agent session (mold_v0-289: its own words, not "Agent session"). */
+export async function sessionTitles(orgId: number, runIds: string[]): Promise<Map<string, string>> {
+  if (!runIds.length) return new Map();
+  const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; title: string }>(
+    "/* tenant: org_id = $1 is the session's workspace */ SELECT r.id, s.title FROM runs r JOIN harness_sessions s ON s.id = r.harness_session_id AND s.org_id = r.org_id WHERE r.org_id = $1 AND r.id = ANY ($2::text[])", [orgId, runIds]));
+  return new Map(rows.map((r) => [r.id, r.title]));
+}
+
 /** The workspace's latest runs, of the packs whose runs list is not withheld: kind, status, when, cost and who. */
 export async function recentRuns(orgId: number, who: (id: string | null) => string, limit = 6) {
   const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; pack: string; kind: string; status: string; created_at: Date; ended_at: Date | null; requested_by: string | null; cost: number; record_area: string | null; record_key: string | null }>(
     `/* tenant: org_id = $1 is the session's workspace */ SELECT r.id, r.pack, r.kind, r.status, r.created_at, r.ended_at, r.requested_by, r.record_area, r.record_key, ${RUN_USD}::float AS cost
        FROM runs r WHERE r.org_id = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 50`, [orgId]));
+  const titles = await sessionTitles(orgId, rows.map((x) => x.id));
   const { findKind } = await import("./runs.js");
   return rows.filter((x) => !packOpWithheld(x.pack, "list_runs")).slice(0, limit).map((x) => ({
-    id: x.id, pack: x.pack, kind: x.kind, label: (findKind(x.pack, x.kind) as { label?: string } | null)?.label ?? x.kind, status: x.status,
+    id: x.id, pack: x.pack, kind: x.kind, label: titles.get(x.id) ?? (findKind(x.pack, x.kind) as { label?: string } | null)?.label ?? x.kind, status: x.status,
     created_at: new Date(x.created_at).toISOString(), ended_at: x.ended_at ? new Date(x.ended_at).toISOString() : null, cost_usd: r6(Number(x.cost)), by: who(x.requested_by),
   }));
 }

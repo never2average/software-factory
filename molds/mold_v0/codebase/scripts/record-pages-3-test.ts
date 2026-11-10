@@ -330,7 +330,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.match(picker, /\/api\/records\/_page\/_pick\/\$\{encodeURIComponent\(f\.to!\)\}\?q=/, "its choices from the server, as the person");
   assert.match(picker, /role='option' aria-selected=\{i === active\}/, "options");
   assert.match(ta, /\(f\.type === 'reference' \|\| \(f\.type === 'link' && f\.to\)\) && f\.to && featureOn\('record_pages'\) \?\s*\(\s*<RecordPicker/, "a reference field's input, with the flag");
-  assert.match(ta, /if \(area\.key_from_title && !keyTyped\) setKey\(keyFromTitle\(e\.target\.value\)\)/, "the Key follows the Title until typed");
+  assert.match(ta, /if \(!keyTyped\) setKey\(keyFromTitle\(e\.target\.value\)\)/, "mold_v0-289: the Key comes from the Name in every create form until typed");
   // Controls: the shared outlined Button everywhere, nothing that acts as a button without one.
   for (const [name, t] of [["log-viewer", lv], ["code-view", cv], ["history-section", hs], ["file-browser", fb], ["run-page", rp]] as const) {
     assert.doesNotMatch(t, /<button\b/, `${name}: no raw button`);

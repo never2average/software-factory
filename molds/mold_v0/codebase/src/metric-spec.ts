@@ -766,7 +766,8 @@ export function sparkPlan(t: SpecTab, b: Pick<BuildViews, "areas" | "metrics">, 
       if (ck) { const od = synth(a.name, "_overdue", "Overdue", { where, clock: { name: ck.name, is: ["overdue"] } }); cards.push({ id: "_overdue", label: "Overdue", value: od, series: weekly(od, "created"), mode: "total" }); }
       cards.push({ id: "_new_7d", label: "New in 7 days", value: synth(a.name, "_new_7d", "New in 7 days", { where: [...where, { field: "created", op: "gte", value: "now-7" }] }), series: weekly(all, "created"), mode: "weekly" });
     }
-    const own = b.metrics.filter((m) => m.pack === t.pack && m.over === a.name && !sparkProblem(m, a) && o.readable(m)).slice(0, 2).map(sparkCardOf);
+    // mold_v0-289: never a whole-area count beside the tab's own (the same number twice, or the unfiltered total on a filtered tab).
+    const own = b.metrics.filter((m) => m.pack === t.pack && m.over === a.name && !(m.measure === "count" && !m.where?.length && !m.group_by && !m.by_time) && !sparkProblem(m, a) && o.readable(m)).slice(0, 2).map(sparkCardOf);
     cards.push(...own);
     if (ok("updated")) cards.push({ id: "_changed_7d", label: "Changed in 7 days", value: synth(a.name, "_changed_7d", "Changed in 7 days", { where: [...where, { field: "updated", op: "gte", value: "now-7" }] }), series: weekly(all, "updated"), mode: "weekly" });
     const single = (n: string | undefined) => { const f = n ? a.fields.find((x) => x.name === n) : undefined; return f && f.type === "enum" && !f.multiple ? f : undefined; };

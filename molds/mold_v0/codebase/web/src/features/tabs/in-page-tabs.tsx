@@ -16,16 +16,12 @@ export function InPageTabs<T extends InPageTab>({ tabs, children }: { tabs: read
   const wide = tabs.length > 6;
   const triggers = tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>);
   return (
-    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className={wide ? 'w-full min-w-0 gap-6' : 'gap-6'}>
-      {wide ? (
-        // mold_v0-260: 7 or 8 in-page tabs: the strip scrolls sideways on its own when it is wider than the page (a phone).
-        <div className='-mx-1 w-full min-w-0 max-w-full overflow-x-auto px-1 pb-1' data-wide-strip=''>
-          <TabsList variant='line' className='w-max gap-6 p-0'>{triggers}</TabsList>
-        </div>
-      ) : (
-        <TabsList variant='line' className='gap-6 p-0'>{triggers}</TabsList>
-      )}
-      <TabsContent value={current.id} className={wide ? 'min-w-0' : undefined}>{children(current)}</TabsContent>
+    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className='w-full min-w-0 gap-6'>
+      {/* mold_v0-289: the strip always scrolls sideways on its own when wider than the page: it never widens the page (a phone). */}
+      <div className='-mx-1 w-full min-w-0 max-w-full overflow-x-auto px-1 pb-1' data-wide-strip={wide ? '' : undefined}>
+        <TabsList variant='line' className='w-max gap-6 p-0'>{triggers}</TabsList>
+      </div>
+      <TabsContent value={current.id} className='min-w-0'>{children(current)}</TabsContent>
     </Tabs>
   );
 }

@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 // Operations › FinOps (/admin/finops; /admin/spend redirects here; src/revenue.ts, src/spend.ts and src/spend-usage.ts).
 // Six tabs in ?section= (seven when the app bills runs: Run charges, GET /spend/run-charges, mold_v0-019): Revenue (the default; GET /spend/revenue, Stripe subscriptions and invoices against metered model
 // spend, by account), Plans (the same read by Stripe price: New plan, Experiment, Archive plan), Experiments (pricing A/B
@@ -274,11 +275,14 @@ function SpendPage() {
 }
 
 /** Group by: one two-option segmented control, the chosen option filled (not on Revenue or Plans). */
+/** An agent's name in words: the workspace agent's built-in kind is not shown raw (mold_v0-289). */
+const agentWords = (a: string) => (a === '_agent/session' ? 'Workspace agent' : a.replace(/[_/-]/g, ' ').replace(/^./, (c) => c.toUpperCase()));
+
 function GroupBy({ value, onChange, second }: { value: Group; onChange: (g: Group) => void; second: string }) {
   return (
     <ButtonGroup aria-label='Group by'>
       {(['account', 'provider'] as const).map((g) => (
-        <Button key={g} variant={value === g ? 'default' : 'outline'} aria-pressed={value === g} onClick={() => onChange(g)}>
+        <Button key={g} variant='outline' className={value === g ? 'bg-muted' : undefined} aria-pressed={value === g} onClick={() => onChange(g)}>
           {g === 'account' ? 'Account' : second}
         </Button>
       ))}
@@ -386,7 +390,7 @@ function RevenueTab({ data, loading, bar, group }: TabProps<Revenue>) {
       { label: 'Gross margin', spark: dailyMargin, value: ok && collected > 0 ? pct((collected - cost) / collected) : '—' }
     ]} />
   );
-  const stripeEmpty = data && !data.stripe.configured ? 'Stripe is not configured (STRIPE_SECRET_KEY in the server environment on Vercel), so there is no revenue to show.'
+  const stripeEmpty = data && !data.stripe.configured ? <>Billing isn&apos;t connected, so there is no revenue to show. <Link className='underline underline-offset-4' href='/admin/keys'>Connect it in the key vault</Link>.</>
     : data?.stripe.error ? `Could not read Stripe: ${data.stripe.error}` : null;
   const mixed = (data?.currencies.length ?? 0) > 1 ? <span className={cn('text-sm', AMBER)}>Invoices in {data!.currencies.join(', ').toUpperCase()}: amounts are summed as they are.</span> : null;
   // New plan and Archive plan are on the Plans tab. Without a Stripe key New plan still shows, disabled, saying where the key goes.
@@ -588,7 +592,7 @@ function ExperimentsTab({ data, loading, bar }: TabProps<Experiments>) {
     { key: 'margin', label: 'Margin', hidden: true, className: 'text-right', type: 'number', value: (v) => v.margin_usd, render: (v) => num(cents(v.margin_usd)) },
     { key: 'churned', label: 'Churned', hidden: true, className: 'text-right', type: 'number', value: (v) => v.churned, render: (v) => num(v.churned.toLocaleString()) }
   ];
-  const empty = data && !data.stripe.configured ? 'Stripe is not configured (STRIPE_SECRET_KEY in the server environment on Vercel).'
+  const empty = data && !data.stripe.configured ? <>Billing isn&apos;t connected. <Link className='underline underline-offset-4' href='/admin/keys'>Connect it in the key vault</Link>.</>
     : data?.stripe.error ? `Could not read Stripe: ${data.stripe.error}`
     : 'No experiments yet. On Plans, create two plans with the same experiment name (or ⋯ › Add to experiment on existing ones).';
   return (
@@ -1079,7 +1083,7 @@ function AccountPeek({ a, days, range }: { a: AccountRow; days: string[]; range:
           </PeekSection>
           {data.by_agent.length > 0 && (
             <PeekSection title='By agent'>
-              <MiniTable head={['Agent', 'Sessions', '$']} rows={data.by_agent.map((x) => [<Mono key='a'>{x.agent}</Mono>, x.sessions, cents(x.usd)])} />
+              <MiniTable head={['Agent', 'Sessions', '$']} rows={data.by_agent.map((x) => [<span key='a'>{agentWords(x.agent)}</span>, x.sessions, cents(x.usd)])} />
             </PeekSection>
           )}
           {data.by_product.length > 0 && (
@@ -1321,7 +1325,7 @@ function StorageTab({ data, loading, bar, group }: TabProps<Storage>) {
           </PeekSection>
           <PeekSection title='By table'>
             {a.by_table.length ? <MiniTable head={['Table', 'Rows', 'New in range']} rows={a.by_table.map((x) => [
-              <span key='t' className='flex flex-col'><span>{x.label}</span><Mono>{x.name}</Mono></span>, x.rows.toLocaleString(), x.new_rows.toLocaleString()])} /> : none('No rows.')}
+              <span key='t'>{x.label}</span>, x.rows.toLocaleString(), x.new_rows.toLocaleString()])} /> : none('No rows.')}
           </PeekSection>
           <PeekSection title='Gateway data by provider'>
             {a.gateway_by_provider.length ? <MiniTable head={['Provider', 'Data']} rows={a.gateway_by_provider.map((x) => [<Mono key='p'>{x.provider}</Mono>, bytes(x.bytes)])} /> : none('No gateway traffic in this range.')}

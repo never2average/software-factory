@@ -37,6 +37,7 @@ import { formatValue } from '@/features/tabs/charts';
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
+import { useInRecordPanel } from '@/components/layout/detail-panel';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
@@ -338,7 +339,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
         : !data ? <ListLoading />
         : !rows.length ? <ListEmpty text={s.empty ?? `No ${target.label.toLowerCase()} point to this record yet.`} />
         : (<>
-          <div className='hidden overflow-x-auto md:block'>
+          <div className='relative hidden overflow-x-auto md:block'>
             <table className='w-full caption-bottom text-sm' data-related-table=''>
               <thead className='[&_tr]:border-b'>
                 <tr><th scope='col' className={TH}>{singularLabel(target.label)}</th>{cols.map((f) => <th key={f.name} scope='col' className={cn(TH, f.type === 'number' && 'text-right')}>{f.label}</th>)}<th scope='col' className={cn(TH, 'w-10')}><span className='sr-only'>Actions</span></th></tr>
@@ -591,15 +592,17 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
   const sectionId = (i: number) => `detail-${tabId(tab.label)}-${i}`;
+  // mold_v0-289: in a list's side panel the title is the panel's own (not repeated here) and the actions take their own row.
+  const inRecordPanel = useInRecordPanel();
 
   return (
     <div className='flex w-full flex-col gap-4 md:gap-6' data-record-layout=''>
       <Card className='w-full gap-0 py-0' data-record-header=''>
         <CardContent className='flex flex-col gap-5 py-5'>
-          <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
+          <div className={cn('flex flex-col gap-4', !inRecordPanel && 'sm:flex-row sm:items-start sm:justify-between')}>
             <div className='flex min-w-0 flex-1 flex-col gap-2'>
               <p className='text-muted-foreground text-xs'>{area.label} · {where}</p>
-              <h1 className='text-xl leading-tight font-semibold tracking-tight break-words md:text-2xl'>{title}</h1>
+              {!inRecordPanel && <h1 className='text-xl leading-tight font-semibold tracking-tight break-words md:text-2xl'>{title}</h1>}
               {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
                 <p className='text-muted-foreground max-w-prose text-sm leading-relaxed break-words' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
               )}
@@ -627,7 +630,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             )}
           </div>
           {!!facts.length && (
-            <dl className='grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-4' data-record-facts=''>
+            <dl className={cn('grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5', !inRecordPanel && 'sm:grid-cols-3 lg:grid-cols-4')} data-record-facts=''>
               {facts.map((x) => x.computed ? (
                 <FieldCell key={`computed-${x.i}`} label={x.label ?? ''}>
                   <span className='font-medium' data-computed-fact={x.i}><ComputedValue fact={x} answer={page.data?.facts?.[String(x.i)]} loading={!page.data && !page.error} base={base} recordKey={record.key} /></span>

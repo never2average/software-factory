@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { profile } from '@/config/profile.generated';
 import { authPost } from '@/lib/auth/builtin-client';
-import type { AuthWords } from '@/lib/access-request.generated';
 
 /** A path on this site, else /app (the server checks again: src/builtin-auth.ts safeRedirect). */
 const safePath = (v: string | null) => (v && v.startsWith('/') && !v.startsWith('//') && !/[\\\u0000-\u001f]/.test(v) ? v : '/app');
@@ -26,10 +25,7 @@ const ERRORS: Record<string, string> = {
   not_invited: `That Google account's address has no ${profile.name} invitation. Ask your account admin to invite it, or sign in with the address they invited.`
 };
 
-/** The words staff saved for this page (mold_v0-266): each one left out is the shell's. */
-interface Props { words?: AuthWords; socialButton?: string; hidden?: readonly string[] }
-
-function Form({ words = {}, socialButton, hidden = [] }: Props) {
+function Form() {
   const params = useSearchParams();
   const redirect = safePath(params.get('redirect_url'));
   const [config, setConfig] = useState<{ email_code?: boolean; google?: boolean } | null>(null);
@@ -65,8 +61,8 @@ function Form({ words = {}, socialButton, hidden = [] }: Props) {
   return (
     <Card className='w-full max-w-sm'>
       <CardHeader>
-        <CardTitle>{words.title ?? `Sign in to ${profile.name}`}</CardTitle>
-        <CardDescription>{step === 'email' ? (words.subtitle ?? 'We will email you an eight-digit code.') : `Enter the code we sent to ${email}.`}</CardDescription>
+        <CardTitle>{`Sign in to ${profile.name}`}</CardTitle>
+        <CardDescription>{step === 'email' ? 'We will email you an eight-digit code.' : `Enter the code we sent to ${email}.`}</CardDescription>
       </CardHeader>
       <CardContent className='flex flex-col gap-4'>
         {error && <p role='alert' className='text-destructive text-sm'>{error}</p>}
@@ -74,7 +70,7 @@ function Form({ words = {}, socialButton, hidden = [] }: Props) {
           <form onSubmit={ask} className='flex flex-col gap-3'>
             <Label htmlFor='email'>Email address</Label>
             <Input id='email' type='email' autoComplete='email' required value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
-            <Button type='submit' disabled={busy || !email || config?.email_code === false}>{busy ? 'Sending…' : (words.button ?? 'Email me a code')}</Button>
+            <Button type='submit' disabled={busy || !email || config?.email_code === false}>{busy ? 'Sending…' : 'Email me a code'}</Button>
             {config?.email_code === false && <p className='text-muted-foreground text-xs'>Email sign-in is not set up on this server yet.</p>}
           </form>
         ) : (
@@ -88,10 +84,10 @@ function Form({ words = {}, socialButton, hidden = [] }: Props) {
             <Button type='button' variant='ghost' size='sm' disabled={busy} onClick={() => void ask()}>Send a new code</Button>
           </form>
         )}
-        {config?.google && !hidden.includes('google') && (
+        {config?.google && (
           <>
             <div className='text-muted-foreground text-center text-xs'>or</div>
-            <Button variant='outline' render={<a href={`/api/auth/google/start?redirect_url=${encodeURIComponent(redirect)}`} />}>{socialButton ? socialButton.replace(/\{provider\}/g, 'Google') : 'Continue with Google'}</Button>
+            <Button variant='outline' render={<a href={`/api/auth/google/start?redirect_url=${encodeURIComponent(redirect)}`} />}>Continue with Google</Button>
           </>
         )}
       </CardContent>
@@ -99,6 +95,6 @@ function Form({ words = {}, socialButton, hidden = [] }: Props) {
   );
 }
 
-export function BuiltinSignIn(props: Props = {}) {
-  return <Suspense fallback={null}><Form {...props} /></Suspense>;
+export function BuiltinSignIn() {
+  return <Suspense fallback={null}><Form /></Suspense>;
 }

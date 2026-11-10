@@ -1994,6 +1994,14 @@
                         ]
                       }
                     },
+                    "unit": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 12
+                    },
+                    "chip_words": {
+                      "type": "boolean"
+                    },
                     "searchable": {
                       "type": "string",
                       "enum": [
@@ -5788,6 +5796,14 @@
                             ]
                           }
                         },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        },
+                        "chip_words": {
+                          "type": "boolean"
+                        },
                         "searchable": {
                           "type": "string",
                           "enum": [
@@ -6365,6 +6381,14 @@
                               "owner"
                             ]
                           }
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        },
+                        "chip_words": {
+                          "type": "boolean"
                         },
                         "searchable": {
                           "type": "string",
@@ -15052,7 +15076,7 @@
             },
             "fields": {
               "minItems": 1,
-              "maxItems": 20,
+              "maxItems": 40,
               "type": "array",
               "items": {
                 "type": "object",
@@ -15071,10 +15095,13 @@
                     "enum": [
                       "text",
                       "long_text",
-                      "url",
                       "email",
+                      "number",
                       "select",
-                      "multi_select"
+                      "multi_select",
+                      "url",
+                      "date",
+                      "boolean"
                     ]
                   },
                   "required": {
@@ -15122,6 +15149,9 @@
                   },
                   "person": {
                     "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -15131,6 +15161,36 @@
                 ],
                 "additionalProperties": false
               }
+            },
+            "submit": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60
+            },
+            "thanks": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "lines": {
+                  "minItems": 1,
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  }
+                }
+              },
+              "required": [
+                "title",
+                "lines"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [

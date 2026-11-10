@@ -1,18 +1,21 @@
 'use client';
-// /app/keys (mold_v0-007; src/member-keys.ts): a person's own MCP keys for clients that send a header instead of
+// Settings > API tokens (/app/keys; mold_v0-007; src/member-keys.ts): a person's own MCP keys for clients that send a header instead of
 // signing in. Each is named, expires, is shown once (with each client's exact setup, the key in a header, never in an
 // address) and can be revoked at any time. A key acts with its person's role. Owners also see and revoke every key of
 // the workspace, the older ones included.
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { Section } from '@/components/layout/section';
+import { StatStrip } from '@/components/layout/section';
+import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
+import { ToolbarAction } from '@/features/tabs/tab-action';
+import { Icons } from '@/components/icons';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { CopyButton, ErrorState, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 
 interface Key {
@@ -38,59 +41,88 @@ async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
 const KIND: Record<Key['kind'], string> = { member: 'Personal key', person: 'Older personal key', account: 'Workspace key' };
 
 export function KeysPage() {
-  return (
-    <PageContainer pageTitle='API keys' pageDescription='Keys for AI clients that send a key instead of signing in. A key acts as you, with your role, and works only in a header.'>
-      <KeysPanel />
-    </PageContainer>
-  );
+  return <PageContainer><KeysPanel /></PageContainer>;
 }
 
-/** The page's body (mold_v0-280): also Settings' tab when a pack puts the person's API keys inside Settings. */
+const STATE_WORD: Record<Key['state'], string> = { active: 'Active', expired: 'Expired', revoked: 'Revoked' };
+
+/** The API tokens page's body (mold_v0-280, mold_v0-289: the standard list): four cards, the search row with New API token, one table; a row opens its panel. */
 export function KeysPanel() {
   const { data, error, reload } = useOrgLoad(() => call<Keys>('GET'));
-  const [created, setCreated] = useState<Created | null>(null);
+  const [making, setMaking] = useState(false);
+  if (error) return <ErrorState error={error} />;
+  // An owner's list is the whole workspace's (their own among it); anyone else's is their own.
+  const rows = data ? (data.can_manage_all && data.all ? data.all : data.keys) : [];
+  const owners = !!data?.can_manage_all;
+  const active = rows.filter((k) => k.state === 'active');
+  const revoke = (k: Key) => call('POST', `/${k.id}/revoke`, {}).then(() => { toast.success(`Revoked ${k.name}`); return reload(); }).catch(fail);
+  const cols: RecordCol<Key>[] = [
+    { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-48', value: (k) => k.name, render: (k) => <span className='font-medium'>{k.name}</span> },
+    ...(owners ? [{ key: 'owner', label: 'Belongs to', type: 'text' as const, value: (k: Key) => k.owner_label ?? '', render: (k: Key) => k.owner_label ?? '' }] : []),
+    { key: 'kind', label: 'Kind', type: 'text', value: (k) => KIND[k.kind], render: (k) => KIND[k.kind] },
+    { key: 'state', label: 'State', type: 'select', keep: true, options: Object.entries(STATE_WORD).map(([value, label]) => ({ value, label })), value: (k) => k.state, render: (k) => <Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{STATE_WORD[k.state]}</Badge> },
+    { key: 'last', label: 'Last used', type: 'date', value: (k) => k.last_used_at, render: (k) => (k.last_used_at ? <When d={k.last_used_at} /> : 'Never') },
+    { key: 'expires', label: 'Expires', type: 'date', value: (k) => k.expires_at, render: (k) => (k.expires_at ? <When d={k.expires_at} /> : 'Never') },
+  ];
+  const n = (s: Key['state']) => rows.filter((k) => k.state === s).length;
   return (
-    <>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
-        <div className='flex flex-col gap-10'>
-          <NewKey days={data.expiry_days} onCreated={(c) => { setCreated(c); void reload(); }} />
-          {created && <Setup created={created} onDone={() => setCreated(null)} />}
-          <Section title='Your keys' description='Revoke a key you no longer use: it stops working on its next call.'>
-            <KeyTable keys={data.keys} canRevoke={() => true} onChanged={reload} />
-          </Section>
-          {data.can_manage_all && data.all && (
-            <Section title='Every key in this workspace' description='As an owner you see every key and can revoke any of them, the older ones included.'>
-              <KeyTable keys={data.all} showOwner canRevoke={() => true} onChanged={reload} />
-            </Section>
-          )}
-        </div>
+    <RecordView<Key>
+      id='settings-api-tokens' compact noun={rows.length === 1 ? 'API token' : 'API tokens'} loading={!data} rows={rows} rowKey={(k) => String(k.id)} cols={cols}
+      summary={<StatStrip quad items={[
+        { label: 'Active', value: active.length, said: `${active.length} active API tokens` },
+        { label: 'Expired', value: n('expired'), said: `${n('expired')} expired` },
+        { label: 'Revoked', value: n('revoked'), said: `${n('revoked')} revoked` },
+        { label: 'Used in the last 30 days', value: rows.filter((k) => k.last_used_at && Date.now() - new Date(k.last_used_at).getTime() < 30 * 86_400_000).length, said: 'tokens used in the last 30 days' },
+      ]} />}
+      searchText={(k) => `${k.name} ${k.owner_label ?? ''} ${KIND[k.kind]} ${STATE_WORD[k.state]}`} searchPlaceholder='Search API tokens'
+      toolbarAction={data ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='New API token' icon={<Icons.add />} onClick={() => setMaking(true)} /></div> : undefined}
+      empty={<p className='text-muted-foreground text-sm'>No API tokens yet.</p>}
+      detailTitle={(k) => k.name}
+      detail={(k) => (
+        <dl className='flex flex-col text-sm' data-api-token-panel=''>
+          {owners && <Field label='Belongs to'>{k.owner_label ?? ''}</Field>}
+          <Field label='Kind'>{KIND[k.kind]}</Field>
+          <Field label='Starts with'><span className='font-mono text-xs'>{k.key_prefix}…</span></Field>
+          <Field label='State'>{STATE_WORD[k.state]}</Field>
+          <Field label='Created'><When d={k.created_at} /></Field>
+          <Field label='Last used'>{k.last_used_at ? <When d={k.last_used_at} /> : 'Never'}</Field>
+          <Field label='Expires'>{k.expires_at ? <When d={k.expires_at} /> : 'Never'}</Field>
+        </dl>
       )}
-    </>
+      actions={(k) => (k.state === 'active' ? [{ label: 'Revoke', icon: <Icons.trash />, destructive: true, onSelect: () => void revoke(k) }] : [])}
+      sidePanel={making && data ? { key: 'new-api-token', title: 'New API token', onClose: () => setMaking(false), body: <NewKey days={data.expiry_days} onChanged={() => void reload()} onClose={() => setMaking(false)} /> } : null}
+    />
   );
 }
 
-function NewKey({ days, onCreated }: { days: number[]; onCreated: (c: Created) => void }) {
+/** New API token, in the side panel: its name and expiry; once made, the token and each client's setup. */
+function NewKey({ days, onChanged, onClose }: { days: number[]; onChanged: () => void; onClose: () => void }) {
   const [name, setName] = useState('');
   const [expires, setExpires] = useState(String(days.includes(90) ? 90 : days[0]));
   const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<Created | null>(null);
   const make = async () => {
     setBusy(true);
     try {
-      const c = await call<Created>('POST', '', { name, expires_in_days: Number(expires) });
-      setName('');
-      onCreated(c);
+      setCreated(await call<Created>('POST', '', { name, expires_in_days: Number(expires) }));
+      onChanged();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  if (created) return <Setup created={created} onDone={onClose} />;
   return (
-    <Section title='New key' description='Name it after the client and the machine it is for. You see the key once, right after you make it.'>
-      <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void make(); }}>
-        <Input className='w-72' maxLength={80} placeholder='e.g. Cursor on my laptop' value={name} onChange={(e) => setName(e.target.value)} aria-label='Key name' />
-        <NativeSelect value={expires} onChange={(e) => setExpires(e.target.value)} aria-label='Expires after'>
-          {days.map((d) => <NativeSelectOption key={d} value={String(d)}>{d === 365 ? 'Expires in a year' : `Expires in ${d} days`}</NativeSelectOption>)}
+    <form className='flex flex-col gap-3' onSubmit={(e) => { e.preventDefault(); void make(); }}>
+      <div className='flex flex-col gap-1.5'>
+        <Label htmlFor='api-token-name'>Name</Label>
+        <Input id='api-token-name' maxLength={80} placeholder='For example, Cursor on my laptop' value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className='flex flex-col gap-1.5'>
+        <Label htmlFor='api-token-expires'>Expires</Label>
+        <NativeSelect id='api-token-expires' className='w-full' value={expires} onChange={(e) => setExpires(e.target.value)}>
+          {days.map((d) => <NativeSelectOption key={d} value={String(d)}>{d === 365 ? 'In a year' : `In ${d} days`}</NativeSelectOption>)}
         </NativeSelect>
-        <Button type='submit' size='sm' disabled={busy || !name.trim()}>Make key</Button>
-      </form>
-    </Section>
+      </div>
+      <div><Button type='submit' size='sm' disabled={busy || !name.trim()}>Make token</Button></div>
+    </form>
   );
 }
 
@@ -99,25 +131,24 @@ function Setup({ created, onDone }: { created: Created; onDone: () => void }) {
   const [client, setClient] = useState(token[0]?.id ?? '');
   const c = created.setup.clients.find((x) => x.id === client);
   return (
-    <Section title={`Your key: ${created.name}`} description='Copy it now: it is not shown again. It goes in a header (never in an address); the snippets below have it in place.'>
+    <div className='flex flex-col gap-3 text-sm'>
+      <p className='text-muted-foreground'>Copy it now: it is not shown again. It goes in a header, never in an address; the snippets below have it in place.</p>
       <div className='flex flex-wrap items-center gap-2'>
         <code className='bg-muted rounded px-2 py-1 font-mono text-sm break-all'>{created.key}</code>
-        <CopyButton text={created.key} label='Copy key' />
+        <CopyButton text={created.key} label='Copy' />
       </div>
-      <div className='flex flex-wrap items-end gap-2'>
-        <NativeSelect value={client} onChange={(e) => setClient(e.target.value)} aria-label='Client'>
-          {created.setup.clients.map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.client}{x.auth === 'oauth' ? ' (signs in instead)' : ''}</NativeSelectOption>)}
-        </NativeSelect>
-      </div>
+      <NativeSelect value={client} onChange={(e) => setClient(e.target.value)} aria-label='Client' className='w-full'>
+        {created.setup.clients.map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.client}{x.auth === 'oauth' ? ' (signs in instead)' : ''}</NativeSelectOption>)}
+      </NativeSelect>
       {c && (
         <div className='flex flex-col gap-2'>
-          <p className='text-sm'><Badge variant='secondary' className='mr-2'>{c.auth === 'token' ? 'Uses this key' : 'Signs in (OAuth)'}</Badge>{c.steps}</p>
+          <p>{c.auth === 'token' ? 'Uses this token. ' : 'Signs in instead. '}{c.steps}</p>
           {c.command && <Snippet text={c.command} />}
           {c.snippet && <>{c.file && <p className='text-muted-foreground text-xs'>{c.file}</p>}<Snippet text={c.snippet} /></>}
         </div>
       )}
-      <div><Button variant='outline' size='sm' onClick={() => { toast.success('Key hidden'); onDone(); }}>I have copied it</Button></div>
-    </Section>
+      <div><Button variant='outline' size='sm' onClick={() => { toast.success('Hidden'); onDone(); }}>I have copied it</Button></div>
+    </div>
   );
 }
 
@@ -127,40 +158,5 @@ function Snippet({ text }: { text: string }) {
       <pre className='bg-muted max-w-full flex-1 overflow-x-auto rounded p-3 font-mono text-xs whitespace-pre-wrap break-all'>{text}</pre>
       <CopyButton text={text} />
     </div>
-  );
-}
-
-function KeyTable({ keys, showOwner, canRevoke, onChanged }: { keys: Key[]; showOwner?: boolean; canRevoke: (k: Key) => boolean; onChanged: () => unknown }) {
-  const revoke = (k: Key) => call('POST', `/${k.id}/revoke`, {}).then(() => { toast.success(`Revoked ${k.name}`); return onChanged(); }).catch(fail);
-  if (!keys.length) return <p className='text-muted-foreground text-sm'>No keys yet.</p>;
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          {showOwner && <TableHead>Belongs to</TableHead>}
-          <TableHead>Kind</TableHead>
-          <TableHead>Key</TableHead>
-          <TableHead>Last used</TableHead>
-          <TableHead>Expires</TableHead>
-          <TableHead>State</TableHead>
-          <TableHead />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {keys.map((k) => (
-          <TableRow key={k.id}>
-            <TableCell>{k.name}</TableCell>
-            {showOwner && <TableCell>{k.owner_label ?? ''}</TableCell>}
-            <TableCell>{KIND[k.kind]}</TableCell>
-            <TableCell className='font-mono text-sm'>{k.key_prefix}…</TableCell>
-            <TableCell>{k.last_used_at ? <When d={k.last_used_at} /> : 'Never'}</TableCell>
-            <TableCell>{k.expires_at ? <When d={k.expires_at} /> : 'Never'}</TableCell>
-            <TableCell><Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{k.state}</Badge></TableCell>
-            <TableCell className='text-right'>{k.state === 'active' && canRevoke(k) && <Button variant='ghost' size='sm' onClick={() => void revoke(k)}>Revoke</Button>}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }

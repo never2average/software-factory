@@ -22,7 +22,7 @@
 import { CONSOLE_COMPONENTS, CONSOLE_PAGES, SHOWABLE_SECTIONS } from "./console-pages.js";
 import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./account-context-words.js";
 import { JOURNEY_TABLES, JOURNEY_WEB_WORDS, JOURNEY_WORDS, MAX_STAGES, TIP_TABLES, TIP_WEB_WORDS, TIP_WORDS } from "./journeys-words.js";
-import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
+import { ACCESS_FIELD_TYPES, MAX_FORM_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { CLIENT_SKILL_WORDS, MAX_TEXT as MAX_SKILL_TEXT, type ClientSkillWord } from "./client-skill-config.js";
 import { GuideSchema } from "./pack-guide.js";
@@ -288,12 +288,17 @@ const AccessFieldSchema = z.object({
   placeholder: z.string().trim().min(1).max(120).optional(),
   /** The answer says who the requester is (mold_v0-171): shown beside their name on /admin/requests; a text or select field. */
   person: z.boolean().optional(),
+  /** Not asked (the field and its older answers' label stay); only in a whole form (mold_v0-289). */
+  hidden: z.boolean().optional(),
 }).strict();
 /** A link of the connect guide (mold_v0-171): its words and a path on this site, an #anchor or an https address. */
 const ConnectLinkSchema = z.object({ label: z.string().max(60), href: z.string().max(300) }).strict();
+/** mold_v0-289: `fields` as a whole form (one including email) may carry its submit button's words and its thank-you words. */
 const AccessRequestSchema = z.object({
   $comment: z.string().max(2000).optional(),
-  fields: z.array(AccessFieldSchema).min(1).max(MAX_ACCESS_FIELDS),
+  fields: z.array(AccessFieldSchema).min(1).max(MAX_FORM_FIELDS),
+  submit: z.string().trim().min(1).max(60).optional(),
+  thanks: z.object({ title: z.string().trim().min(1).max(80), lines: z.array(z.string().min(1).max(300)).min(1).max(6) }).strict().optional(),
 }).strict();
 
 /** A job kind in pack.json: a program of the pack's (runner "workspace-harness", entry) or the agent-workspace runner's. */

@@ -447,7 +447,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
   return (
     <div className='flex flex-col gap-3'>
       {t.error && <Alert variant='destructive'><AlertDescription>{t.error}</AlertDescription></Alert>}
-      <RecordView compact id='billing-people' rows={rows} rowKey={(r) => r.key} cols={cols} noun='people'
+      <RecordView compact id='billing-people' rows={rows} rowKey={(r) => r.key} cols={cols} noun='people' properties detail={() => null}
         searchText={(r) => (r.kind === 'invite' ? r.x.email : `${r.m.name ?? ''} ${r.m.email ?? ''} ${teamName(r.lim?.team_id) ?? ''}`)}
         searchPlaceholder='Search people by name, email or team'
         filters={<>

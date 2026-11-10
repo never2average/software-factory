@@ -56,11 +56,11 @@ const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 const clean = (v: unknown): unknown => { const s = maskSecrets(JSON.stringify(v)); try { return JSON.parse(s); } catch { return s; } };
 
 const WAKE_REASON: Record<string, string> = { start: "its first message", message: "a new message", resume: "resumed", approval: "an approval", auto_resume: "continued by itself after a crash", raise: "its budget raised" };
-const END_WORDS: Record<string, string> = { parked: "it went quiet and parked", paused: "paused", awaiting: "it needs a decision", budget: "it reached its budget", stopped: "stopped", done: "it finished its work", web_limit: "it used its web calls", policy: "its governance policy refused a call", failed: "it failed" };
+const END_WORDS: Record<string, string> = { parked: "It went quiet and parked", paused: "It was paused", awaiting: "It needs a decision", budget: "It reached its budget", stopped: "It was stopped", done: "It finished its work", web_limit: "It used up its web calls", policy: "Its governance policy refused a call", failed: "It failed" };
 const words = (t: string) => t.replaceAll("_", " ");
 
 /** One run event as a step, or null for one with nothing to show of its own (a request's own row says it). */
-function eventStep(e: TraceEventRow, wakes: Map<string, number>): TraceStep | null {
+function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (name: string) => string): TraceStep | null {
   const d = (e.data ?? {}) as Record<string, unknown>;
   // The moment it happened where that was recorded (a tool's call in the harness, a model call's start in the gateway), so
   // a step sent a beat later is not listed after what followed it; a time far from the event's own is not trusted.
@@ -78,38 +78,38 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>): TraceStep | nu
     }
     case "agent_tool_call": {
       const name = str(d.name) ?? "tool";
-      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: "running", title: name, tool: name, preview: cap(d.preview, 300), parent: str(d.parent) ?? null, more: true };
+      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: "running", title: toolTitle(name), tool: name, preview: cap(d.preview, 300), parent: str(d.parent) ?? null, more: true };
     }
     case "agent_tool_result": {
       const name = str(d.name) ?? "tool";
-      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: d.is_error ? "error" : "ok", title: name, tool: name, result_preview: cap(d.preview, 300),
+      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: d.is_error ? "error" : "ok", title: toolTitle(name), tool: name, result_preview: cap(d.preview, 300),
         duration_ms: num(d.duration_ms), error: d.is_error ? cap(d.preview, 600) : null, more: true };
     }
     case "agent_retry":
       return { ...base, id, kind: "model", status: "error", title: `It retries after a temporary model error (attempt ${num(d.retry) ?? "?"})`, error: cap(d.error, 2000) };
     case "agent_error":
-      return { ...base, id, kind: "model", status: "error", title: "The turn ended with an error", error: cap(d.error, 2000) };
+      return { ...base, id, kind: "model", status: "error", title: "That step ended with an error", error: cap(d.error, 2000) };
     case "agent_stage":
-      return { ...base, id, kind: "sandbox", status: "ok", title: str(d.stage) ?? "Preparing the wake" };
+      return { ...base, id, kind: "sandbox", status: "ok", title: str(d.stage) ?? "Getting ready" };
     case "agent_wake":
-      return { ...base, id, kind: "wake", status: "ok", title: d.resume ? "The wake started, resuming the session" : "The wake started", detail: num(d.checkpoint) != null ? `From checkpoint ${d.checkpoint}` : null, fields: clean(d) as Record<string, unknown> };
+      return { ...base, id, kind: "wake", status: "ok", title: d.resume ? "It picked up where it left off" : "It started working", detail: num(d.checkpoint) != null ? `From checkpoint ${d.checkpoint}` : null, fields: clean(d) as Record<string, unknown> };
     case "agent_end": {
       const reason = str(d.reason) ?? "";
-      return { ...base, id, kind: "wake", status: reason === "failed" || reason === "policy" ? "error" : "ok", title: `The wake ended: ${END_WORDS[reason] ?? reason}`, detail: str(d.detail) ? cap(d.detail, 400) : null, fields: clean(d) as Record<string, unknown> };
+      return { ...base, id, kind: "wake", status: reason === "failed" || reason === "policy" ? "error" : "ok", title: END_WORDS[reason] ?? (reason ? `It stopped: ${words(reason)}` : "It stopped"), detail: str(d.detail) ? cap(d.detail, 400) : null, fields: clean(d) as Record<string, unknown> };
     }
     case "agent_crashed":
-      return { ...base, id, kind: "wake", status: "error", title: "The wake stopped unexpectedly", fields: clean(d) as Record<string, unknown> };
+      return { ...base, id, kind: "wake", status: "error", title: "It stopped unexpectedly", fields: clean(d) as Record<string, unknown> };
     case "agent_checkpoint":
-      return { ...base, id, kind: "note", status: "ok", title: "Checkpoint saved", detail: num(d.bytes) != null ? `${Math.round(Number(d.bytes) / 1024)} KB` : null };
+      return { ...base, id, kind: "note", status: "ok", title: "Its progress was saved", detail: num(d.bytes) != null ? `${Math.round(Number(d.bytes) / 1024)} KB` : null };
     case "steer_queued": return { ...base, id, kind: "note", status: "ok", title: "A message waits for its next step" };
     case "steer_delivered": return { ...base, id, kind: "note", status: "ok", title: "A message reached it" };
     case "pause_requested": return { ...base, id, kind: "note", status: "ok", title: `Pause asked by ${str(d.by) ?? "someone"}` };
     case "stop_requested": return { ...base, id, kind: "note", status: "ok", title: `Stop asked by ${str(d.by) ?? "someone"}` };
-    case "cancel_requested": return { ...base, id, kind: "note", status: "ok", title: "The wake was asked to stop" };
-    case "claimed": return { ...base, id, kind: "sandbox", status: "ok", title: "A runner picked up this wake" };
+    case "cancel_requested": return { ...base, id, kind: "note", status: "ok", title: "It was asked to stop" };
+    case "claimed": return { ...base, id, kind: "sandbox", status: "ok", title: "It was picked up to run" };
     case "queued": return null; // the wake's own mark says it
     case "waiting": return { ...base, id, kind: "sandbox", status: "waiting", title: `Waiting: ${cap(d.reason, 400) ?? "for a place to run"}` };
-    case "failed": return { ...base, id, kind: "wake", status: "error", title: "The wake failed", error: cap(d.error, 2000), fields: clean(d) as Record<string, unknown> };
+    case "failed": return { ...base, id, kind: "wake", status: "error", title: "It failed", error: cap(d.error, 2000), fields: clean(d) as Record<string, unknown> };
     case "agent_request": return null; // what it asked for has its own row (a mark)
     default:
       return { ...base, id, kind: "note", status: "ok", title: words(e.type), fields: clean(d) as Record<string, unknown> };
@@ -121,10 +121,10 @@ export const messageStep = (m: TraceMessageRow, wakes: Map<string, number>): Tra
   ({ id: `m${m.id}`, at: iso(m.created_at), kind: "message", status: "ok", title: "", role: m.role, body: maskSecrets(m.body), by: m.by_name, message_status: m.status, run_id: m.run_id, wake: m.run_id ? wakes.get(m.run_id) ?? null : null });
 
 /** The events in order, a tool's call and result merged into one step (the same merge the page applies across reads). */
-export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<string, number>): TraceStep[] {
+export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<string, number>, toolTitle: (name: string) => string = (n) => n): TraceStep[] {
   const out = new Map<string, TraceStep>();
   for (const e of events) {
-    const s = eventStep(e, wakeIndex);
+    const s = eventStep(e, wakeIndex, toolTitle);
     if (!s) continue;
     const had = out.get(s.id);
     out.set(s.id, had ? { ...had, ...s, at: had.at, preview: had.preview ?? s.preview } : s);
@@ -132,33 +132,34 @@ export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<stri
   return [...out.values()];
 }
 
-const requestAsk = (r: TraceRequestRow): string => {
+const requestAsk = (r: TraceRequestRow, toolTitle: (name: string) => string): string => {
   if (r.kind === "web") return `It asks to read ${r.subject}`;
   if (r.kind === "budget") return `It asks for more budget (at ${r.subject})`;
-  return `It asks to use ${r.subject.startsWith("mcp__app__") ? r.subject.slice("mcp__app__".length) : r.subject}`;
+  return `It asks to use ${toolTitle(r.subject)}`;
 };
 
 /** The marks of a session, oldest first: its wakes queued, sandboxes, requests and budget changes. */
-export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: readonly TraceSandboxRow[]; requests: readonly TraceRequestRow[]; grants: readonly TraceGrantRow[]; wakeIndex: Map<string, number> }): TraceStep[] {
+export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: readonly TraceSandboxRow[]; requests: readonly TraceRequestRow[]; grants: readonly TraceGrantRow[]; wakeIndex: Map<string, number>; toolTitle?: (name: string) => string }): TraceStep[] {
+  const toolTitle = x.toolTitle ?? ((n: string) => (n.startsWith("mcp__app__") ? n.slice("mcp__app__".length) : n));
   const out: TraceStep[] = [];
   for (const [i, w] of x.wakes.entries()) {
     const reason = typeof w.scope?.reason === "string" ? w.scope.reason : "";
-    out.push({ id: `q:${w.id}`, at: iso(w.created_at), kind: "wake", status: w.status === "queued" ? "waiting" : "ok", title: `Wake ${i + 1} queued${WAKE_REASON[reason] ? ` (${WAKE_REASON[reason]})` : ""}`, run_id: w.id, wake: i + 1 });
-    if (w.error) out.push({ id: `x:${w.id}`, at: iso(w.ended_at ?? w.created_at), kind: "wake", status: "error", title: `Wake ${i + 1} failed`, error: maskSecrets(w.error).slice(0, 2000), run_id: w.id, wake: i + 1 });
+    out.push({ id: `q:${w.id}`, at: iso(w.created_at), kind: "wake", status: w.status === "queued" ? "waiting" : "ok", title: `${i === 0 ? "Queued to start" : "Queued to continue"}${WAKE_REASON[reason] ? ` (${WAKE_REASON[reason]})` : ""}`, run_id: w.id, wake: i + 1 });
+    if (w.error) out.push({ id: `x:${w.id}`, at: iso(w.ended_at ?? w.created_at), kind: "wake", status: "error", title: "It failed", error: maskSecrets(w.error).slice(0, 2000), run_id: w.id, wake: i + 1 });
   }
   for (const s of x.sandboxes) {
     const wake = x.wakeIndex.get(s.run_id) ?? null, base = { run_id: s.run_id, wake, kind: "sandbox" as const };
-    out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:0`, at: iso(s.created_at), status: "ok", title: s.sandbox_id ? "Sandbox created" : "Sandbox requested" });
-    if (s.ready_at) out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:1`, at: iso(s.ready_at), status: "ok", title: "Set-up running in the sandbox" });
-    if (s.claimed_at) out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:2`, at: iso(s.claimed_at), status: "ok", title: "The sandbox's runner claimed this wake" });
+    out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:0`, at: iso(s.created_at), status: "ok", title: s.sandbox_id ? "Its workspace was created" : "Asked for a workspace to run in" });
+    if (s.ready_at) out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:1`, at: iso(s.ready_at), status: "ok", title: "Setting up its workspace" });
+    if (s.claimed_at) out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:2`, at: iso(s.claimed_at), status: "ok", title: "Its workspace is ready" });
     if (s.deleted_at) {
       const failed = !!s.launch_error;
-      out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:3`, at: iso(s.deleted_at), status: failed ? "error" : "ok", title: failed ? `The sandbox did not start (${s.launch_step ?? "launch"})` : "Sandbox closed",
+      out.push({ ...base, id: `sb:${s.run_id}:${s.attempt}:3`, at: iso(s.deleted_at), status: failed ? "error" : "ok", title: failed ? `Its workspace did not start (${s.launch_step ?? "launch"})` : "Its workspace closed",
         error: failed ? maskSecrets(s.launch_error!).slice(0, 2000) : null, detail: failed ? null : s.reap_reason ? maskSecrets(s.reap_reason).slice(0, 400) : null });
     }
   }
   for (const r of x.requests) {
-    out.push({ id: `rq:${r.id}:0`, at: iso(r.created_at), kind: "approval", status: r.status === "pending" ? "waiting" : "ok", title: requestAsk(r), fields: clean(r.detail ?? {}) as Record<string, unknown> });
+    out.push({ id: `rq:${r.id}:0`, at: iso(r.created_at), kind: "approval", status: r.status === "pending" ? "waiting" : "ok", title: requestAsk(r, toolTitle), fields: clean(r.detail ?? {}) as Record<string, unknown> });
     if (r.decided_at && r.status !== "pending") out.push({ id: `rq:${r.id}:1`, at: iso(r.decided_at), kind: "approval", status: r.status === "declined" || r.status === "expired" ? "error" : "ok",
       title: `${r.status === "approved" ? "Approved" : r.status === "declined" ? "Declined" : "It expired unanswered"}${r.decided_by ? ` by ${r.decided_by}` : ""}`, detail: r.reason ? maskSecrets(r.reason).slice(0, 400) : null });
   }
@@ -173,12 +174,12 @@ export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: reado
 export function waitingOn(x: { phase: string; run: Pick<TraceWakeRow, "status" | "created_at"> | null; sandbox: TraceSandboxRow | null; waiting: string | null; started: boolean; now?: number }): string | null {
   if (x.phase !== "starting" && x.phase !== "waking") return null;
   const r = x.run, sb = x.sandbox;
-  if (!r) return "It has no wake queued yet.";
-  if (r.status === "running" || x.started) return "A runner has it and is preparing its workspace and the agent's program.";
-  if (r.status !== "queued") return "Its wake has ended: the session is settling.";
+  if (!r) return "Nothing is queued to run yet.";
+  if (r.status === "running" || x.started) return "It is preparing its workspace and the agent's program.";
+  if (r.status !== "queued") return "It has stopped running and is settling.";
   if (sb) {
     if (sb.launch_error) return `The sandbox could not start (${sb.launch_step ?? "launch"}: ${maskSecrets(sb.launch_error).slice(0, 240)}). The platform tries again; nothing runs until one starts.`;
-    if (sb.claimed_at) return "A runner has it and is preparing its workspace and the agent's program.";
+    if (sb.claimed_at) return "It is preparing its workspace and the agent's program.";
     if (sb.ready_at) return "The sandbox is up and running its set-up; it picks this up as soon as that finishes.";
     if (sb.sandbox_id) return "A sandbox was created for it and is starting up.";
     return "Asking for a sandbox to run it in.";

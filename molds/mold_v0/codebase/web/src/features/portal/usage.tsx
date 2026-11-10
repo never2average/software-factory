@@ -148,7 +148,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
               </ChartContainer>
             ) : <Empty>No tool calls in this period.</Empty>}
           </Box>
-          <Box title='Active people per day' description='People who made at least one tool call that day.'>
+          <Box title='Active people per day'>
             {calls ? (
               <ChartContainer config={peopleConfig} className='aspect-auto h-[240px] w-full'>
                 <BarChart data={series} margin={{ left: 0, right: 8, top: 8 }}>
@@ -167,7 +167,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
           <Box title='Calls by tool' description={`The ten most called ${profile.name} tools.`}>
             <RankBars data={top(u.tools, (t) => Number(t.calls)).map((t) => ({ name: t.name, value: Number(t.calls) }))} label='Tool calls' color='var(--chart-1)' format={num} mono empty='No tool calls in this period.' />
           </Box>
-          <Box title='Calls by person' description='Tool calls by each person on your team, busiest first.'>
+          <Box title='Calls by person'>
             <RankBars data={top(people, (p) => Number(p.calls)).map((p) => ({ name: p.me ? 'You' : p.email, value: Number(p.calls) }))} label='Tool calls' color='var(--chart-2)' format={num} empty='Nobody made a tool call in this period.' />
           </Box>
         </div>
@@ -197,7 +197,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
               </ChartContainer>
             ) : <Empty>{fill('No {runs} in this period.')}</Empty>}
           </Box>
-          <Box title='Agent sessions by harness' description='Which coding agents worked your tasks in this period.'>
+          <Box title='Agent sessions by harness'>
             <RankBars data={top(c?.harnesses ?? [], (h) => h.sessions).map((h) => ({ name: h.harness, value: h.sessions }))} label='Sessions' color='var(--chart-2)' format={num} mono empty='No agent sessions in this period.' />
           </Box>
         </div>
@@ -219,7 +219,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
             ) : <Empty>No model spend this month.</Empty>}
           </Box>
           {c?.spend_by.kind === 'person' ? (
-            <Box title='Spend by person' description='Model spend this month on the runs each person launched.'>
+            <Box title='Spend by person'>
               <RankBars data={c.spend_by.rows.map((r) => ({ name: r.name, value: r.usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No model spend this month.' />
             </Box>
           ) : (
@@ -247,11 +247,11 @@ function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
         <Box title='Runs by kind' description={`${num(r.runs)} runs in this period: ${usd(r.cost_usd)} of model spend, ${num(r.tool_calls)} tool calls, ${num(r.requests)} model requests.`}>
           <RankBars data={r.by_kind.map((k) => ({ name: k.kind, value: k.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} mono empty='No run spend in this period.' />
         </Box>
-        <Box title='Runs by person' description='Model spend on the runs each person started in this period.'>
+        <Box title='Runs by person'>
           <RankBars data={r.by_person.map((p) => ({ name: p.label, value: p.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No run spend in this period.' />
         </Box>
       </div>
-      <Box title='Recent runs' description='The latest runs in this period, with their tool calls and model spend.'>
+      <Box title={fill('Recent {runs}')}>
         <RunTable rows={r.recent} />
       </Box>
     </>
@@ -259,7 +259,7 @@ function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
 }
 
 /** The latest runs, one row each (shared with the neutral Activity page). */
-export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
+export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: string; title?: string | null; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
   if (!rows.length) return <Empty>No runs in this period.</Empty>;
   return (
     <Table>
@@ -268,7 +268,7 @@ export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: stri
       <TableBody>
         {rows.map((x) => (
           <TableRow key={x.id}>
-            <TableCell className='font-mono text-xs'>{x.kind}<div className='text-muted-foreground'>{shortDay(x.created_at.slice(0, 10))}</div></TableCell>
+            <TableCell className='text-sm'>{x.title || x.kind}<div className='text-muted-foreground text-xs'>{shortDay(x.created_at.slice(0, 10))}</div></TableCell>
             <TableCell>{x.status}</TableCell><TableCell>{x.by}</TableCell>
             <TableCell className='text-right tabular-nums'>{num(x.tool_calls)}</TableCell><TableCell className='text-right tabular-nums'>{num(x.requests)}</TableCell>
             <TableCell className='text-right tabular-nums'>{usd(x.cost_usd)}</TableCell>

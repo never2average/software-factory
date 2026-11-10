@@ -29,12 +29,12 @@
  * refused (400, naming the field's label).
  */
 
-export const ACCESS_FIELD_TYPES = ["text", "long_text", "url", "email", "select", "multi_select"] as const;
+/** Every data type of a form's field (mold_v0-289: one list for a pack's, a spec's and the staff table's). */
+export const ACCESS_FIELD_TYPES = ["text", "long_text", "email", "number", "select", "multi_select", "url", "date", "boolean"] as const;
 export type AccessFieldType = (typeof ACCESS_FIELD_TYPES)[number];
 
 export interface AccessFieldOption { value: string; label: string }
-/** A field's kind: a pack's (ACCESS_FIELD_TYPES), or `number`, which only the staff console's form editor offers (mold_v0-266). */
-export type FieldKind = AccessFieldType | "number";
+export type FieldKind = AccessFieldType;
 export interface AccessField {
   key: string;
   label: string;
@@ -56,8 +56,8 @@ export const SHELL_REQUEST_FIELDS = ["email", "name", "company", "message", "sou
 export const MAX_ACCESS_FIELDS = 20;
 const MAX_OPTIONS = 30;
 const KEY = /^[a-z][a-z0-9_]{0,39}$/;
-const DEFAULT_MAX: Record<FieldKind, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80, number: 40 };
-const MAX_LENGTH: Record<FieldKind, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80, number: 40 };
+const DEFAULT_MAX: Record<FieldKind, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80, number: 40, date: 10, boolean: 5 };
+const MAX_LENGTH: Record<FieldKind, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80, number: 40, date: 10, boolean: 5 };
 const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder", "person"];
 
 /** Characters a plain-text line may not hold (src/landing.ts NOT_PLAIN, src/legal.ts). */
@@ -76,7 +76,9 @@ const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v =
 export function accessRequestProblems(spec: unknown): string[] {
   const out: string[] = [];
   if (!isObject(spec)) return ["access_request: an object with fields"];
-  for (const k of Object.keys(spec)) if (k !== "fields" && k !== "$comment") out.push(`access_request.${k}: unknown key (known: fields)`);
+  // mold_v0-289: a whole form (its fields include email): the same JSON the staff table saves, its words optional.
+  if (isWholeForm(spec)) { const { $comment: _c, ...rest } = spec; return accessFormProblems(wholeForm(rest as Partial<AccessFormConfig>)).map((p) => `access_request.${p}`); }
+  for (const k of Object.keys(spec)) if (k !== "fields" && k !== "$comment") out.push(`access_request.${k}: ${k === "submit" || k === "thanks" ? "only in a whole form (one whose fields include email)" : "unknown key (known: fields)"}`);
   if (spec.$comment !== undefined && (typeof spec.$comment !== "string" || spec.$comment.length > 2000)) out.push("access_request.$comment: text of up to 2000 characters");
   const fields = spec.fields;
   if (!Array.isArray(fields) || !fields.length) return [...out, "access_request.fields: a list of 1 to 20 fields"];
@@ -140,11 +142,21 @@ export function fieldsOf(spec: AccessRequestSpec): AccessField[] {
  * The build's fields: the packs' blocks in pack order, joined (a key declared by two packs is refused), unless the app's
  * profile.json declares its own, which replaces them. -> the fields, or the problems.
  */
-export function joinAccessFields(packs: { id: string; spec: unknown }[], profile: unknown): { fields: AccessField[]; problems: string[] } {
+export function joinAccessFields(packs: { id: string; spec: unknown }[], profile: unknown): { fields: AccessField[]; form: AccessFormConfig | null; problems: string[] } {
   const problems: string[] = [];
   if (profile !== undefined) {
     const bad = accessRequestProblems(profile);
-    return bad.length ? { fields: [], problems: bad.map((b) => `profile.json: ${b}`) } : { fields: fieldsOf(profile as AccessRequestSpec), problems };
+    if (bad.length) return { fields: [], form: null, problems: bad.map((b) => `profile.json: ${b}`) };
+    if (isWholeForm(profile)) { const form = formOf(wholeForm(profile as unknown as Partial<AccessFormConfig>)); return { fields: ownFields(form), form, problems }; }
+    return { fields: fieldsOf(profile as AccessRequestSpec), form: null, problems };
+  }
+  const whole = packs.filter((p) => p.spec !== undefined && isWholeForm(p.spec));
+  if (whole.length > 1) return { fields: [], form: null, problems: [`packs/${whole[1]!.id}: access_request: pack ${whole[0]!.id} already declares the whole form (one pack, or the app's profile.json)`] };
+  if (whole.length === 1) {
+    const bad = accessRequestProblems(whole[0]!.spec);
+    if (bad.length) return { fields: [], form: null, problems: bad.map((b) => `packs/${whole[0]!.id}: ${b}`) };
+    const form = formOf(wholeForm(whole[0]!.spec as unknown as Partial<AccessFormConfig>));
+    return { fields: ownFields(form), form, problems };
   }
   const fields: AccessField[] = [];
   const owner = new Map<string, string>();
@@ -158,7 +170,7 @@ export function joinAccessFields(packs: { id: string; spec: unknown }[], profile
     }
   }
   if (fields.length > MAX_ACCESS_FIELDS) problems.push(`access_request: the packs declare ${fields.length} fields together, at most ${MAX_ACCESS_FIELDS}`);
-  return { fields, problems };
+  return { fields, form: null, problems };
 }
 
 export const maxLengthOf = (f: AccessField) => f.max_length ?? DEFAULT_MAX[f.type];
@@ -174,6 +186,8 @@ export function normalizeUrl(v: string): string | null {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** A number as a person types it: digits, an optional minus and decimal part (12, -3, 4.5). */
 const NUMBER = /^-?\d{1,15}(\.\d{1,6})?$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const validDate = (v: string) => DATE.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
 
 /**
  * The answers a request carries, checked against the build's fields: `body.answers[key]`, else `body[key]` (a host pack's
@@ -197,6 +211,12 @@ export function answersOf(body: unknown, fields: readonly AccessField[]): { answ
       answers[f.key] = chosen;
       continue;
     }
+    if (f.type === "boolean") {
+      const yes = raw === true || (typeof raw === "string" && /^(yes|true)$/i.test(raw.trim())), no = raw === false || (typeof raw === "string" && /^(no|false)$/i.test(raw.trim()));
+      if (yes || no) { answers[f.key] = yes ? "yes" : "no"; continue; }
+      if (raw === undefined || raw === null || raw === "") { if (f.required) return { answers: {}, problem: `${f.label} is required.` }; continue; }
+      return { answers: {}, problem: `${f.label}: answer yes or no.` };
+    }
     if (raw !== undefined && raw !== null && typeof raw !== "string") return { answers: {}, problem: `${f.label}: send text.` };
     const v = typeof raw === "string" ? raw.trim() : "";
     if (!v) { if (f.required) return { answers: {}, problem: `${f.label} is required.` }; continue; }
@@ -215,6 +235,9 @@ export function answersOf(body: unknown, fields: readonly AccessField[]): { answ
     } else if (f.type === "number") {
       if (!NUMBER.test(v)) return { answers: {}, problem: `${f.label}: enter a number, such as 12 or 4.5.` };
       answers[f.key] = v;
+    } else if (f.type === "date") {
+      if (!validDate(v)) return { answers: {}, problem: `${f.label}: enter a date, such as 2026-11-10.` };
+      answers[f.key] = v;
     } else answers[f.key] = v;
   }
   return { answers, problem: null };
@@ -223,6 +246,7 @@ export function answersOf(body: unknown, fields: readonly AccessField[]): { answ
 /** An answer as a person reads it: an option's label for a select, the labels joined for a multi_select. */
 export function answerText(f: AccessField | undefined, v: AccessAnswer | null | undefined): string {
   if (v === null || v === undefined) return "";
+  if (f?.type === "boolean" && typeof v === "string" && /^(yes|no)$/i.test(v)) return /^yes$/i.test(v) ? "Yes" : "No";
   const label = (x: string) => f?.options?.find((o) => o.value === x)?.label ?? x;
   return Array.isArray(v) ? v.map((x) => label(String(x))).join(", ") : label(String(v));
 }
@@ -253,13 +277,16 @@ export function labelledAnswers(fields: readonly AccessField[], answers: Record<
   return out;
 }
 
-// ---------- the form and sign-in editor (mold_v0-266) ----------
+// ---------- the form as one JSON config (mold_v0-266, mold_v0-289) ----------
 //
-// Platform staff edit the early-access form and the sign-in and sign-up pages' words in the staff console (Admin › Access
-// requests, its Request form and Sign-in page tabs; src/access-pages.ts keeps them, versioned and audited). Nothing saved:
-// every form and page is exactly what the build declares (the shell's fields, the packs' or profile.json's access_request,
-// the landing's request_page), drawn by the same code as before. Saved: the whole form, as staff left it, every field the
-// shell's own included:
+// One JSON shape, the access-request form, end to end: the packs' or profile.json's `access_request` may declare the
+// whole of it (a block whose fields include email; its words are optional), it is what Admin › Access requests › Edit
+// early access form reads and writes (a table of its fields), and it drives the public form (rendering and validation by
+// data type), the stored request, the Access requests list columns and side panel, the CSV and the notification email,
+// with no per-field code. Staff's saved copy (src/access-pages.ts, versioned and audited) wins over the declared one.
+// Nothing saved and nothing declared: every form is exactly what the build declares (the shell's fields, the packs' or
+// profile.json's fields, the landing's request_page), drawn by the same code as before. Saved: the whole form, as staff
+// left it, every field the shell's own included:
 //
 //   { "fields": [{ "key": "email", "label": "Work email", "type": "email", "required": true },
 //                { "key": "company", "label": "Organisation", "type": "text", "required": false },
@@ -271,8 +298,8 @@ export function labelledAnswers(fields: readonly AccessField[], answers: Record<
 // optional, required or retyped (not to several choices: each is one column). A hidden field is not asked and an answer
 // sent for it is dropped. The defaults the editor starts from are what the build shows today (defaultRequestForm).
 
-/** Every kind the editor offers: a line, a box, an address, one choice, several choices, a number, a web address. */
-export const FORM_FIELD_TYPES = ["text", "long_text", "email", "select", "multi_select", "number", "url"] as const satisfies readonly FieldKind[];
+/** Every data type the table offers: text, long text, email, number, choice, multi-choice, web address, date, yes or no. */
+export const FORM_FIELD_TYPES = ACCESS_FIELD_TYPES;
 /** The shell's own fields, in the request's own columns: their keys are fixed, and email is always asked. */
 export const SHELL_FORM_KEYS = ["email", "name", "company", "message"] as const;
 export type ShellFormKey = (typeof SHELL_FORM_KEYS)[number];
@@ -299,6 +326,17 @@ export const isShellFormKey = isShell;
 /** Text that may hold the named {tokens} and nothing else in braces. */
 const tokenProblem = (v: unknown, max: number, tokens: readonly string[]) =>
   typeof v !== "string" ? "text is required" : plainProblem(tokens.reduce((t, k) => t.split(`{${k}}`).join(k), v), max + 20 * tokens.length) ?? (v.length > max ? `at most ${max} characters` : null);
+
+/** Whether an access_request block is a whole form (its fields include email; mold_v0-289). */
+function isWholeForm(spec: unknown): boolean {
+  return isObject(spec) && Array.isArray(spec.fields) && spec.fields.some((f) => isObject(f) && f.key === "email");
+}
+/** A declared whole form with its words filled in when it leaves them out. */
+function wholeForm(spec: Partial<AccessFormConfig>): AccessFormConfig {
+  return { fields: spec.fields ?? [], submit: spec.submit ?? "Request access", thanks: spec.thanks ?? { title: "Request sent", lines: ["We will email {email} once it is approved."] } };
+}
+/** A form's own questions (not the shell's columns). */
+const ownFields = (form: AccessFormConfig): AccessField[] => form.fields.filter((f) => !isShell(f.key));
 
 /** Every problem with a saved form (AccessFormConfig), as "fields[i].x: ...". */
 export function accessFormProblems(cfg: unknown): string[] {
@@ -483,61 +521,4 @@ export function defaultRequestForm(declared: readonly AccessField[], words: Form
     submit: page.submit ?? "Request access",
     thanks: { title: page.done?.title ?? "Request sent", lines: page.done?.steps ?? [words.first_step, "Once it is approved, an invitation goes to {email}."] },
   };
-}
-
-// ---------- the sign-in and sign-up pages' words (mold_v0-266) ----------
-
-/** One page's words; each one left out is the page's own (the shell's, or Clerk's). */
-export interface AuthWords { title?: string; subtitle?: string; button?: string }
-export interface SignInConfig {
-  sign_in?: AuthWords;
-  sign_up?: AuthWords;
-  /** A sign-in provider's button, {provider} its name: "Continue with {provider}". */
-  social_button?: string;
-  /** A line under the form: {terms} and {privacy} become links to the build's Terms and Privacy (or the addresses given). */
-  legal?: { text: string; terms_url?: string; privacy_url?: string };
-  /** The sign-in methods not shown (src/access-pages.ts signInMethods: the ones that may be hidden). */
-  hidden_methods?: string[];
-}
-const AUTH_WORD_MAX = { title: 80, subtitle: 200, button: 40 } as const;
-const METHOD = /^[a-z][a-z0-9_]{0,59}$/;
-/** A link's address: a path of this site or an https:// address, with nothing a link should not hold. */
-export const legalHref = (v: unknown): v is string => typeof v === "string" && v.length <= 500 && /^[!-~]+$/.test(v) && !/["'<>\\`]/.test(v) && (/^\/(?!\/)/.test(v) || /^https:\/\/[^/]/.test(v));
-
-/** Every problem with saved sign-in words (SignInConfig). */
-export function signInProblems(cfg: unknown): string[] {
-  const out: string[] = [];
-  if (!isObject(cfg)) return ["the sign-in words: an object"];
-  const known = ["sign_in", "sign_up", "social_button", "legal", "hidden_methods"];
-  for (const k of Object.keys(cfg)) if (!known.includes(k)) out.push(`${k}: unknown key (known: ${known.join(", ")})`);
-  for (const page of ["sign_in", "sign_up"] as const) {
-    const w = cfg[page];
-    if (w === undefined) continue;
-    if (!isObject(w)) { out.push(`${page}: an object with title, subtitle and button`); continue; }
-    for (const k of Object.keys(w)) {
-      if (!(k in AUTH_WORD_MAX)) { out.push(`${page}.${k}: unknown key (known: title, subtitle, button)`); continue; }
-      const p = plainProblem(w[k], AUTH_WORD_MAX[k as keyof typeof AUTH_WORD_MAX]);
-      if (p) out.push(`${page}.${k}: ${p}`);
-    }
-  }
-  if (cfg.social_button !== undefined) { const p = tokenProblem(cfg.social_button, 60, ["provider"]); if (p) out.push(`social_button: ${p} ({provider} is the only word in braces)`); }
-  const l = cfg.legal;
-  if (l !== undefined) {
-    if (!isObject(l)) out.push("legal: an object with text");
-    else {
-      for (const k of Object.keys(l)) if (!["text", "terms_url", "privacy_url"].includes(k)) out.push(`legal.${k}: unknown key (known: text, terms_url, privacy_url)`);
-      const p = tokenProblem(l.text, 300, ["terms", "privacy"]);
-      if (p) out.push(`legal.text: ${p} ({terms} and {privacy} are the only words in braces)`);
-      for (const k of ["terms_url", "privacy_url"] as const) if (l[k] !== undefined && !legalHref(l[k])) out.push(`legal.${k}: a path of this site (/terms) or an https:// address`);
-    }
-  }
-  const h = cfg.hidden_methods;
-  if (h !== undefined && (!Array.isArray(h) || h.length > 30 || h.some((x) => typeof x !== "string" || !METHOD.test(x)) || new Set(h).size !== h.length))
-    out.push("hidden_methods: a list of up to 30 method ids, each once");
-  return out;
-}
-
-/** The legal line in parts: text, and the {terms} and {privacy} links in their places. */
-export function legalLineParts(text: string): ({ text: string } | { link: "terms" | "privacy" })[] {
-  return text.split(/(\{terms\}|\{privacy\})/).filter(Boolean).map((x) => (x === "{terms}" ? { link: "terms" as const } : x === "{privacy}" ? { link: "privacy" as const } : { text: x }));
 }

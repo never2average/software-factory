@@ -428,6 +428,9 @@ export const RecordFieldSchema = z.object({
   encrypted: z.boolean().optional(),
   /** Who may reveal an encrypted field (default: the roles that may update the area's records). */
   reveal_roles: z.array(role).min(1).max(4).optional(),
+  /** mold_v0-289: the unit a number reads with in lists (usd, s, min, %); a chips field's values in plain words. */
+  unit: z.string().trim().min(1).max(12).optional(),
+  chip_words: z.boolean().optional(),
   /**
    * "equality": a keyed blind index (HMAC-SHA256 under a key derived from the workspace's data key) is kept beside the
    * value, so a filter `{field: value}` (eq) finds it; no other operator, no sort.

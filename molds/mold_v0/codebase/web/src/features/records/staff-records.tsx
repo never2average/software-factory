@@ -163,8 +163,7 @@ export function StaffRecordListPage({ area, bare = false }: { area: RecordAreaSp
   // mold_v0-256: New and Edit open in a panel beside the list with side_panel_forms on (FormHost); Import stays a full card.
   const card = form?.create && creating ? (
         <ActionCard open onOpenChange={setCreating} title={`New ${noun}`} description={`A new ${noun} in ${area.label}, added to the list at once as a staff row.`}>
-          <ResourcesNote form={form} noun={noun} />
-          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }} uploadMax={form.upload_max ?? null} filesBase='/api/admin/records'
+          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }} note={<ResourcesNote form={form} noun={noun} />} uploadMax={form.upload_max ?? null} filesBase='/api/admin/records'
             post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
         </ActionCard>
       ) : form?.import && importing ? (

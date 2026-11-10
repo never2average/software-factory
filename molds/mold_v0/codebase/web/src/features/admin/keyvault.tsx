@@ -14,6 +14,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
+import { StatStrip } from '@/components/layout/section';
 import { adminApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
@@ -127,13 +128,20 @@ export function AdminKeyVault() {
       {data && !data.unlocked && <Notice>The key vault is locked: set <Mono>APP_VAULT_KEY</Mono> on the server to add keys.</Notice>}
       <RecordView id='key-vault' rows={rows} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
         searchText={(p) => `${p.slug} ${nameOf(p.slug)} ${typeOf(p.slug)} ${keysOf(p).map((c) => `${c.label} ${c.hint} ${c.project_id ?? ''}`).join(' ')}`}
-        searchPlaceholder='Search providers and keys · encrypted at rest; agents get scoped gateway tokens, never these keys'
+        searchPlaceholder='Search providers and keys'
         // The first four kinds this build has a provider of (a build without the session engine has no sandbox or search).
         views={[{ id: 'all', label: 'All' }, ...TYPES.filter((t) => providers.some((p) => typeOf(p.slug) === t)).slice(0, 4).map((t) => ({ id: t, label: t, match: (p: Provider) => typeOf(p.slug) === t }))]}
         defaultSort={[{ key: 'type', dir: 'asc' }]}
         primary={<Gate need='keys'><Button onClick={() => setAdding(providers.find((p) => p.slug !== OBJECT_STORAGE)?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
         primaryMenu={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
-        detail={(p) => (p.slug === GITHUB_APP && github ? <GithubAppPanel data={github} /> : null)} detailTitle={(p) => nameOf(p.slug)} panelKind='editor' canOpen={(p) => p.slug === GITHUB_APP}
+        summary={<StatStrip quad items={[
+          { label: 'Providers', value: rows.length, said: `${rows.length} providers` },
+          { label: 'Keys', value: rows.reduce((n, p) => n + keysOf(p).length, 0), said: 'keys' },
+          { label: 'Without a key', value: rows.filter((p) => p.slug !== GITHUB_APP && !keysOf(p).length).length, said: 'providers without a key' },
+          { label: 'Uses', value: rows.reduce((n, p) => n + keysOf(p).reduce((t, c) => t + c.uses, 0), 0).toLocaleString(), said: 'uses of these keys' },
+        ]} />}
+        // mold_v0-289: every provider's row opens its keys in the side panel; the GitHub App its own setup.
+        detail={(p) => (p.slug === GITHUB_APP ? (github ? <GithubAppPanel data={github} /> : null) : <ProviderKeys keys={keysOf(p)} />)} detailTitle={(p) => nameOf(p.slug)} panelKind='editor'
         actions={(p) => p.slug === GITHUB_APP ? [] : [
           ...(p.slug === OBJECT_STORAGE
             ? [{ label: keysOf(p).length ? 'Edit…' : 'Set up…', icon: keysOf(p).length ? <Icons.edit /> : <Icons.add />, disabled: data?.unlocked === false, onSelect: () => setStoring(true) },
@@ -162,6 +170,22 @@ export function AdminKeyVault() {
       </AlertDialog>
       <AdminOAuthProviders />
     </PageContainer>
+  );
+}
+
+/** A provider's keys, in its side panel: each key's label, its last characters, when it was last used and how often. */
+function ProviderKeys({ keys }: { keys: { id: number; label: string; hint: string; enabled: boolean; uses: number; last_used_at?: string | null }[] }) {
+  if (!keys.length) return <p className='text-muted-foreground text-sm'>No key yet: Add a key in the ⋯ menu.</p>;
+  return (
+    <ul className='flex flex-col gap-3 text-sm' data-provider-keys=''>
+      {keys.map((c) => (
+        <li key={c.id} className='flex flex-col gap-0.5 rounded-md border p-3'>
+          <span className='font-medium'>{c.label}{c.enabled ? '' : ' (off)'}</span>
+          <span className='text-muted-foreground font-mono text-xs'>{c.hint}</span>
+          <span className='text-muted-foreground text-xs'>{c.uses.toLocaleString()} {c.uses === 1 ? 'use' : 'uses'}{c.last_used_at ? <>, last <When d={c.last_used_at} /></> : ''}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -57,7 +57,7 @@ async function outer() {
   const fields = FIELDS as F[];
   assert.deepEqual(accessRequestProblems({ fields }), [], "the fixture's fields are valid");
   const refused: [string, unknown, RegExp][] = [
-    ["a shell field's key", { fields: [{ key: "email", label: "Email", type: "email" }] }, /email is the shell's own field/],
+    ["a shell field's key", { fields: [{ key: "name", label: "Name", type: "text" }] }, /name is the shell's own field/],
     ["a key twice", { fields: [{ key: "a", label: "A", type: "text" }, { key: "a", label: "B", type: "text" }] }, /a is declared twice/],
     ["options on a text field", { fields: [{ key: "a", label: "A", type: "text", options: [{ value: "x", label: "X" }] }] }, /options: only for a select/],
     ["a select without options", { fields: [{ key: "a", label: "A", type: "select" }] }, /options: a list of 1 to 30/],
