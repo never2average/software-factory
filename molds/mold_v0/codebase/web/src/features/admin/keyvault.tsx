@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, StatusBadge, When } from './ui';
-import { GithubAppPanel, liveInstallations, useGithubApp } from './github-app';
+import { GithubAppPanel, GithubInstallationsDialog, liveInstallations, useGithubApp } from './github-app';
 import { AdminOAuthProviders } from './oauth-providers';
 
 // ---------- key vault ----------
@@ -86,6 +86,7 @@ export function AdminKeyVault() {
   // (mold_v0-288), there exactly when its staff route is mounted, opening a panel where every other row has none.
   const providers = (data?.providers ?? []).filter((p) => p.slug !== GITHUB_APP);
   const github = useGithubApp();
+  const [installs, setInstalls] = useState(false);
   const rows: Provider[] = github ? [...providers, { slug: GITHUB_APP, mode: 'direct', backend: 'direct', enabled: true, keys: 0, enabled_keys: 0, last_used_at: data?.providers.find((p) => p.slug === GITHUB_APP)?.last_used_at ?? null }] : providers;
   const keysOf = (p: Provider) => (p.slug === GITHUB_APP ? [] : creds.filter((c) => c.provider === p.slug));
   const cols: RecordCol<Provider>[] = [
@@ -142,6 +143,8 @@ export function AdminKeyVault() {
         ]} />}
         // mold_v0-289: every provider's row opens its keys in the side panel; the GitHub App its own setup.
         detail={(p) => (p.slug === GITHUB_APP ? (github ? <GithubAppPanel data={github} /> : null) : <ProviderKeys keys={keysOf(p)} />)} detailTitle={(p) => nameOf(p.slug)} panelKind='editor'
+        // mold_v0-293: the GitHub App panel's ⋯ menu opens every workspace's installation in a modal (live count in the label).
+        panelActions={(p) => (p.slug === GITHUB_APP && github ? [{ label: `Installations (${liveInstallations(github)})`, icon: <Icons.github />, onSelect: () => setInstalls(true) }] : [])}
         actions={(p) => p.slug === GITHUB_APP ? [] : [
           ...(p.slug === OBJECT_STORAGE
             ? [{ label: keysOf(p).length ? 'Edit…' : 'Set up…', icon: keysOf(p).length ? <Icons.edit /> : <Icons.add />, disabled: data?.unlocked === false, onSelect: () => setStoring(true) },
@@ -153,6 +156,7 @@ export function AdminKeyVault() {
           ])
         ].map((a) => lock(a, 'keys'))}
         exportName='key-vault-providers' empty='No providers.' />
+      {github && <GithubInstallationsDialog data={github} open={installs} onOpenChange={setInstalls} />}
       {importing && <ImportKeys providers={providers} onClose={() => setImporting(false)} />}
       {adding && <AddKey providers={providers} initial={adding} onClose={() => setAdding(null)} onObjectStorage={() => { setAdding(null); setStoring(true); }} declared={data?.pack_credentials} />}
       {storing && <ObjectStorageForm onClose={() => setStoring(false)} onSaved={(test) => { setStoring(false); if (test) store.mutate(); }} />}

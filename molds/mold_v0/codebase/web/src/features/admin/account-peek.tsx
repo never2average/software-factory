@@ -510,7 +510,8 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
       {!d ? (!error &&
         <div className='grid gap-3'><Skeleton className='h-8' /><Skeleton className='h-40' /></div>
       ) : (
-        // Tabs, three shown and the rest behind » as a browser's developer tools (operator, 2026-11-10).
+        // Tabs, three shown and the rest behind » as a browser's developer tools (operator, 2026-11-10); every tab once the
+        // panel is expanded (mold_v0-293, OverflowTabs reads the panel's state).
         <OverflowTabs tabs={[
           ...(org.clerk_org_id ? [
             { id: 'members', label: 'Members', content: <List noun='Members' rows={d.members} empty='Nobody has joined yet.' actions={member} cols={[

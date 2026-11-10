@@ -58,9 +58,15 @@ export interface Sample {
   deliveries_total: number | null; deliveries_failed: number | null;
   /** Webhook deliveries settled (succeeded or failed) and failed in the window; null without a developer surface (0039). */
   webhooks_total: number | null; webhooks_failed: number | null;
+  /**
+   * mold_v0-293 (0068): the scheduled work so far: the jobs this build runs, every job's runs and failures (counters, the
+   * history takes differences) and their average last duration; null in a sample taken before.
+   */
+  scheduler_jobs: number | null; scheduler_runs: number | null; scheduler_failures: number | null; scheduler_ms: number | null;
 }
 const COLUMNS = ["window_seconds", "up", "db_ms", "api_p50_ms", "api_p95_ms", "api_requests", "rls", "storage", "vault_set", "vault_missing",
-  "claude_requests_day", "claude_errors_day", "claude_refusals", "scheduler_lag_s", "runs_ended", "runs_failed", "deliveries_total", "deliveries_failed", "webhooks_total", "webhooks_failed"] as const;
+  "claude_requests_day", "claude_errors_day", "claude_refusals", "scheduler_lag_s", "runs_ended", "runs_failed", "deliveries_total", "deliveries_failed", "webhooks_total", "webhooks_failed",
+  "scheduler_jobs", "scheduler_runs", "scheduler_failures", "scheduler_ms"] as const;
 const n = (v: unknown) => Number(v ?? 0) || 0;
 const int = (v: number | null) => (v == null ? null : Math.max(0, Math.min(2_147_483_647, Math.round(v))));
 
@@ -99,11 +105,12 @@ export async function measure(now = new Date(), since?: Date): Promise<Omit<Samp
   const refusals = await safe(async () => n((await asPlatform(async () => db.query<Record<string, unknown>>(
     `/* tenant: internal: admin Health samples (staff), every account's refused-and-retried run events, counted */
      SELECT count(*) AS n FROM run_events WHERE type = $3 AND at >= $1 AND at < $2`, [...p, REFUSED_RETRY_EVENT])))[0]?.n), 0);
-  const lag = await safe(async () => {
-    const jobs = (await h.healthScheduled()).jobs.filter((j) => j.id !== "health_samples");
-    const lags = jobs.map((j) => j.lag_seconds).filter((x): x is number => x != null);
+  const scheduled = await safe(async () => (await h.healthScheduled()).jobs, null);
+  const lag = (() => {
+    const lags = (scheduled ?? []).filter((j) => j.id !== "health_samples").map((j) => j.lag_seconds).filter((x): x is number => x != null);
     return lags.length ? Math.max(...lags) : null;
-  }, null);
+  })();
+  const took = (scheduled ?? []).map((j) => j.last_ms).filter((x): x is number => x != null);
   const runs = await safe(async () => {
     const [r] = await asPlatform(async () => db.query<Record<string, unknown>>(
       `/* tenant: internal: admin Health samples (staff), every account's runs that ended, counted */
@@ -131,6 +138,9 @@ export async function measure(now = new Date(), since?: Date): Promise<Omit<Samp
     claude_requests_day: claude.requests, claude_errors_day: claude.errors, claude_refusals: refusals, scheduler_lag_s: int(lag),
     runs_ended: runs.ended, runs_failed: runs.failed, deliveries_total: deliveries?.total ?? null, deliveries_failed: deliveries?.failed ?? null,
     webhooks_total: webhooks?.total ?? null, webhooks_failed: webhooks?.failed ?? null,
+    scheduler_jobs: scheduled ? scheduled.length : null, scheduler_runs: scheduled ? scheduled.reduce((a, j) => a + j.runs, 0) : null,
+    scheduler_failures: scheduled ? scheduled.reduce((a, j) => a + j.failures, 0) : null,
+    scheduler_ms: took.length ? int(took.reduce((a, x) => a + x, 0) / took.length) : null,
   };
 }
 
@@ -195,6 +205,8 @@ export interface Bucket {
   runs_ended: number; runs_failed: number; run_failure_pct: number | null;
   deliveries_total: number; deliveries_failed: number; delivery_failure_pct: number | null;
   webhooks_total: number; webhooks_failed: number; webhook_failure_pct: number | null;
+  /** mold_v0-293: the scheduled work in the bucket: the jobs run (the last sample's), their runs and failures, their average duration. */
+  scheduler_jobs: number | null; scheduler_runs: number; scheduler_failures: number; scheduler_ms: number | null;
 }
 
 const rows2samples = (rows: Record<string, unknown>[]): Sample[] => rows.map((r) => ({
@@ -206,6 +218,8 @@ const rows2samples = (rows: Record<string, unknown>[]): Sample[] => rows.map((r)
   runs_ended: n(r.runs_ended), runs_failed: n(r.runs_failed),
   deliveries_total: r.deliveries_total == null ? null : n(r.deliveries_total), deliveries_failed: r.deliveries_failed == null ? null : n(r.deliveries_failed),
   webhooks_total: r.webhooks_total == null ? null : n(r.webhooks_total), webhooks_failed: r.webhooks_failed == null ? null : n(r.webhooks_failed),
+  scheduler_jobs: r.scheduler_jobs == null ? null : n(r.scheduler_jobs), scheduler_runs: r.scheduler_runs == null ? null : n(r.scheduler_runs),
+  scheduler_failures: r.scheduler_failures == null ? null : n(r.scheduler_failures), scheduler_ms: r.scheduler_ms == null ? null : n(r.scheduler_ms),
 }));
 
 /** The samples of a period, in buckets (24h: 30 minutes; 7d: 3 hours; 30d: 12 hours), and the latest sample. */
@@ -229,13 +243,20 @@ export async function healthHistory(q: Record<string, unknown>, now = new Date()
     const d = (cur: number, before: number) => (sameDay ? (cur >= before ? cur - before : cur) : cur);
     return { requests: d(s.claude_requests_day, prev.claude_requests_day), errors: d(s.claude_errors_day, prev.claude_errors_day) };
   });
+  // The scheduled work's counters (mold_v0-293) likewise: each sample's share is the difference from the sample before (a
+  // counter that went down, its table emptied: its own count); none before, or a sample from before 0068: nothing.
+  const schedDelta = samples.map((s, i) => {
+    const prev = samples[i - 1];
+    const d = (cur: number | null, before: number | null | undefined) => (cur == null || before == null ? 0 : cur >= before ? cur - before : cur);
+    return { runs: d(s.scheduler_runs, prev?.scheduler_runs), failures: d(s.scheduler_failures, prev?.scheduler_failures) };
+  });
   const out: Bucket[] = Array.from({ length: buckets }, (_, i) => ({
     at: new Date(start + i * size).toISOString(), samples: 0, up_pct: null, db_ms: null, api_p50_ms: null, api_p95_ms: null, rls_ok: null, storage_ok: null,
     vault_set: null, vault_missing: null, claude_errors: 0, claude_refusals: 0, claude_requests: 0, scheduler_lag_s: null,
     runs_ended: 0, runs_failed: 0, run_failure_pct: null, deliveries_total: 0, deliveries_failed: 0, delivery_failure_pct: null,
-    webhooks_total: 0, webhooks_failed: 0, webhook_failure_pct: null,
+    webhooks_total: 0, webhooks_failed: 0, webhook_failure_pct: null, scheduler_jobs: null, scheduler_runs: 0, scheduler_failures: 0, scheduler_ms: null,
   }));
-  const acc = out.map(() => ({ up: 0, db: [] as number[], p50: [] as number[], p95: [] as number[], rls: 0, store: 0 }));
+  const acc = out.map(() => ({ up: 0, db: [] as number[], p50: [] as number[], p95: [] as number[], rls: 0, store: 0, took: [] as number[] }));
   samples.forEach((s, i) => {
     const t = new Date(s.at).getTime();
     if (t < start) return;
@@ -254,6 +275,9 @@ export async function healthHistory(q: Record<string, unknown>, now = new Date()
     b.runs_ended += s.runs_ended; b.runs_failed += s.runs_failed;
     b.deliveries_total += s.deliveries_total ?? 0; b.deliveries_failed += s.deliveries_failed ?? 0;
     b.webhooks_total += s.webhooks_total ?? 0; b.webhooks_failed += s.webhooks_failed ?? 0;
+    if (s.scheduler_jobs != null) b.scheduler_jobs = s.scheduler_jobs;
+    b.scheduler_runs += schedDelta[i]!.runs; b.scheduler_failures += schedDelta[i]!.failures;
+    if (s.scheduler_ms != null) a.took.push(s.scheduler_ms);
   });
   const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((x, y) => x + y, 0) / xs.length) : null);
   out.forEach((b, k) => {
@@ -265,6 +289,7 @@ export async function healthHistory(q: Record<string, unknown>, now = new Date()
     b.run_failure_pct = b.runs_ended ? Math.round((b.runs_failed / b.runs_ended) * 1000) / 10 : null;
     b.delivery_failure_pct = b.deliveries_total ? Math.round((b.deliveries_failed / b.deliveries_total) * 1000) / 10 : null;
     b.webhook_failure_pct = b.webhooks_total ? Math.round((b.webhooks_failed / b.webhooks_total) * 1000) / 10 : null;
+    b.scheduler_ms = avg(a.took);
   });
   const inRange = samples.filter((s) => new Date(s.at).getTime() >= start);
   const sum = (f: (b: Bucket) => number) => out.reduce((x, b) => x + f(b), 0);
@@ -280,6 +305,7 @@ export async function healthHistory(q: Record<string, unknown>, now = new Date()
       runs_ended: sum((b) => b.runs_ended), runs_failed: sum((b) => b.runs_failed),
       deliveries_total: sum((b) => b.deliveries_total), deliveries_failed: sum((b) => b.deliveries_failed),
       webhooks_total: sum((b) => b.webhooks_total), webhooks_failed: sum((b) => b.webhooks_failed),
+      scheduler_runs: sum((b) => b.scheduler_runs), scheduler_failures: sum((b) => b.scheduler_failures),
     },
     buckets: out,
   };

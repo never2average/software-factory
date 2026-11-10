@@ -62,6 +62,13 @@ const InPanel = createContext(false);
 export function useInRecordPanel(): boolean {
   return useContext(InPanel);
 }
+const PanelFull = createContext(false);
+/** The width (px) from which a panel at the list's full width has room for every tab (a phone's full-width panel has not). */
+const ROOMY = 768;
+/** mold_v0-293: whether the record panel this renders in fills the list's width and has room (Expand on a wide screen). */
+export function useRecordPanelFull(): boolean {
+  return useContext(PanelFull);
+}
 
 // ---------------------------------------------------------------------------------------------------- unsaved changes
 
@@ -354,7 +361,7 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
           </div>
           <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 md:px-6' data-slot='detail-panel-body'
             onInput={onEdit} onChange={onEdit} onSubmit={() => { edited.current = null; }}>
-            <InPanel.Provider value>{children}</InPanel.Provider>
+            <InPanel.Provider value><PanelFull.Provider value={full && split.space >= ROOMY}>{children}</PanelFull.Provider></InPanel.Provider>
           </div>
         </div>
         <Button variant='outline' size='icon'
