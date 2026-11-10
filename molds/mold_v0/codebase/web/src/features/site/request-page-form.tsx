@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { askedFields, isShellFormKey, maxLengthOf, normalizeUrl, thanksLine, type AccessAnswer, type AccessFormConfig, type FormField, type ShellFormKey } from '@/lib/access-request.generated';
+import { answersOf, askedFields, isShellFormKey, maxLengthOf, normalizeUrl, thanksLine, type AccessAnswer, type AccessFormConfig, type FormField, type ShellFormKey } from '@/lib/access-request.generated';
 import { requestPageDefaults, useLiveRequestForm } from './access-form';
 import type { RequestPage } from './landing-types';
 import { UTM, visitSource } from './visit-source';
@@ -83,7 +83,8 @@ export function RequestPageForm({ form = {}, config, preview }: {
       if (!t) { if (f.required) e[f.key] = f.key === 'company' && f.label === 'Company' ? 'Enter your company name.' : `${f.label} is required.`; continue; }
       if (f.type === 'url' && !normalizeUrl(t)) e[f.key] = `Enter a valid URL${f.placeholder ? `, e.g. ${f.placeholder}` : '.'}`;
       if (f.type === 'email' && !EMAIL.test(t)) e[f.key] = 'Enter a valid email address.';
-      if (f.type === 'number' && !/^-?\d{1,15}(\.\d{1,6})?$/.test(t)) e[f.key] = `${f.label}: enter a number, such as 12 or 4.5.`;
+      // The data types' rules are the server's own (src/access-request.ts).
+      if (f.type === 'number' || f.type === 'date' || f.type === 'boolean') { const p = answersOf({ answers: { [f.key]: t } }, [f]).problem; if (p) e[f.key] = p; }
     }
     setErrs(e);
     const first = Object.keys(e)[0];
@@ -168,13 +169,13 @@ export function RequestPageForm({ form = {}, config, preview }: {
         </fieldset>
       );
     }
-    if (f.type === 'select') return (
+    if (f.type === 'select' || f.type === 'boolean') return (
       <div key={f.key} className='space-y-1.5 pb-5'>
         <Label htmlFor={fid(f.key)}>{f.label}</Label>
         <NativeSelect id={fid(f.key)} name={f.key} value={text(f.key)} onChange={(e) => answer(f.key, e.target.value)} className='w-full'
           aria-invalid={Boolean(errs[f.key]) || undefined} aria-describedby={errs[f.key] ? `${id}-e-${f.key}` : f.help ? `${id}-h-${f.key}` : undefined}>
           <NativeSelectOption value=''>{f.placeholder ?? 'Choose'}</NativeSelectOption>
-          {(f.options ?? []).map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
+          {(f.type === 'boolean' ? [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] : f.options ?? []).map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
         </NativeSelect>
         {f.help ? <p id={`${id}-h-${f.key}`} className='text-muted-foreground text-xs'>{f.help}</p> : null}
         {errs[f.key] ? <p id={`${id}-e-${f.key}`} className='text-destructive text-xs'>{errs[f.key]}</p> : null}
@@ -190,7 +191,7 @@ export function RequestPageForm({ form = {}, config, preview }: {
     );
     return line(f.key, f.label, text(f.key), (e) => answer(f.key, e.target.value), {
       maxLength: maxLengthOf(f), placeholder: f.placeholder,
-      ...(f.type === 'url' ? { type: 'url', inputMode: 'url' as const, autoComplete: 'url' } : f.type === 'email' ? { type: 'email' } : f.type === 'number' ? { inputMode: 'decimal' as const } : {})
+      ...(f.type === 'url' ? { type: 'url', inputMode: 'url' as const, autoComplete: 'url' } : f.type === 'email' ? { type: 'email' } : f.type === 'number' ? { inputMode: 'decimal' as const } : f.type === 'date' ? { type: 'date' } : {})
     }, live ? f.help : undefined); // a line's help: only in a saved form (the page's own never showed it)
   };
 

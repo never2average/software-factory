@@ -288,7 +288,7 @@ function RecordPicker({ id, f, value, set }: { id: string; f: FormField; value: 
       )}
       <Input id={id} value={q} autoComplete='off' role={off ? undefined : 'combobox'} aria-expanded={off ? undefined : open} aria-controls={off ? undefined : list}
         aria-autocomplete={off ? undefined : 'list'} aria-activedescendant={open && shown[active] ? `${list}-${active}` : undefined}
-        placeholder={off ? (multiple ? 'record keys, comma-separated' : 'a record key') : `Search ${f.label.toLowerCase()} by name or key`}
+        placeholder={off ? (multiple ? 'record keys, comma-separated' : 'a record key') : 'Search by name'}
         onFocus={() => !off && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onKeyDown={onKey}
         onChange={(e) => { setQ(e.target.value); setTyped(true); setOpen(true); if (!multiple) set(e.target.value); else if (off) set(keysOf(e.target.value)); }} />
       {chosen && <p className='text-muted-foreground text-xs' data-picked-title=''>{chosen}</p>}
@@ -600,13 +600,15 @@ export function FileUploads({ field, items, setItems, max, disabled, id }: {
  * earlier key is uploaded again), then the record is written with their references. A refused write keeps them for the
  * next try; Cancel, or a file removed, discards the ones kept but never written.
  */
-export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial, filesBase }: {
+export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial, filesBase, note }: {
   area: { name: string; label: string; fields: FormField[]; key_from_title?: boolean }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
   uploadMax?: number | null;
   /** mold_v0-271: where its files upload (a staff record page: /api/admin/records); default the workspace's data API. */
   filesBase?: string;
   /** mold_v0-256: fields filled in (an Add <related record> action: the reference to the record it was taken on). */
   initial?: Record<string, unknown>;
+  /** Said inside the form, under its fields (mold_v0-289). */
+  note?: ReactNode;
 }) {
   const [key, setKey] = useState('');
   const [title, setTitle] = useState('');
@@ -673,19 +675,24 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
   return (
     <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>}>
       <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='action-key'>Key<span className='text-destructive' aria-hidden> *</span></Label>
-        <Input id='action-key' value={key} onChange={(e) => { setKey(e.target.value); setKeyTyped(e.target.value !== ''); }} required placeholder='a short id, unique in this list' />
-        {area.key_from_title && !keyTyped && <p className='text-muted-foreground text-xs' data-key-from-title=''>Filled from the title as you type it; change it to set your own.</p>}
-      </div>
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='action-title'>Title</Label>
-        <Input id='action-title' value={title} onChange={(e) => { setTitle(e.target.value); if (area.key_from_title && !keyTyped) setKey(keyFromTitle(e.target.value)); }} />
+        <Label htmlFor='action-title'>Name<span className='text-destructive' aria-hidden> *</span></Label>
+        <Input id='action-title' value={title} onChange={(e) => { setTitle(e.target.value); if (!keyTyped) setKey(keyFromTitle(e.target.value)); }} />
       </div>
       <FieldsForm fields={plain} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-field' />
       {fileFields.map((f) => (
         <FileUploads key={f.name} field={f} items={uploads[f.name] ?? []} setItems={setItems(f.name)} max={uploadMax!} disabled={busy} id={`action-file-${f.name}`} />
       ))}
       {vis.field?.('action-visibility')}
+      {note}
+      {/* mold_v0-289: the Key comes from the Name; only someone who wants another opens this. */}
+      <details className='text-sm' open={!key.trim() && !!title.trim()} data-form-advanced=''>
+        <summary className='text-muted-foreground cursor-pointer'>Advanced</summary>
+        <div className='mt-2 flex flex-col gap-1.5'>
+          <Label htmlFor='action-key'>Key</Label>
+          <Input id='action-key' value={key} onChange={(e) => { setKey(e.target.value); setKeyTyped(e.target.value !== ''); }} placeholder='a short id, unique in this list' />
+          <p className='text-muted-foreground text-xs' data-key-from-title=''>Made from the name; change it to set your own.</p>
+        </div>
+      </details>
     </CardForm>
   );
 }

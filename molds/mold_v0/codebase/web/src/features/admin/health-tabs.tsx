@@ -152,11 +152,18 @@ function FailedRuns({ rows, loading, summary, filters }: { rows: FailedRun[]; lo
       rows={rows} rowKey={(r) => r.id} cols={cols} loading={loading} summary={summary} filters={filters}
       searchText={(r) => `${r.label} ${r.kind} ${r.account} ${r.error ?? ''} ${kindWord(r.error_kind)} ${r.id}`} searchPlaceholder={`Search failed ${W.runs} by kind, account or error`}
       empty={`No failed ${W.runs} in this period.`}
-      detailTitle={(r) => `${r.label} · ${r.id}`}
+      detailTitle={(r) => r.label}
       detail={(r) => <RunEventsPeek id={r.id} />}
     />
   );
 }
+
+/** A step in the same words the session's trace uses (src/harness-trace.ts). */
+const EVENT_WORDS: Record<string, string> = {
+  claimed: 'It was picked up to run', agent_wake: 'It started working', agent_end: 'It stopped', agent_crashed: 'It stopped unexpectedly', agent_checkpoint: 'Its progress was saved', agent_tool_call: 'Used a tool',
+  agent_tool_result: 'A tool finished', model_call: 'Called the model', agent_retry: 'It retried after a temporary model error', agent_error: 'That step ended with an error', agent_stage: 'Getting ready', failed: 'It failed', waiting: 'Waiting for a place to run', queued: 'Queued to start', steer_queued: 'A message waits for its next step', steer_delivered: 'A message reached it', cancel_requested: 'It was asked to stop'
+};
+const eventWords = (t: string) => EVENT_WORDS[t] ?? t.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
 /** A failed run's events (types, attempts and the shell's own figures; never who asked or a value). */
 function RunEventsPeek({ id }: { id: string }) {
@@ -172,8 +179,8 @@ function RunEventsPeek({ id }: { id: string }) {
         <ol className='flex flex-col gap-2' data-run-events>
           {data.events.map((e) => (
             <li key={e.id} className='border-l-2 pl-3'>
-              <div className='flex items-center gap-2'><span className='font-medium'>{e.type}</span><span className='text-muted-foreground text-xs'>attempt {e.attempt}</span><When d={e.at} className='text-muted-foreground ml-auto text-xs' /></div>
-              {Object.keys(e.data).length > 0 && <p className='text-muted-foreground mt-0.5 text-xs break-words'>{Object.entries(e.data).map(([k, v]) => `${k}: ${String(v)}`).join(' · ')}</p>}
+              <div className='flex items-center gap-2'><span className='font-medium'>{eventWords(e.type)}</span>{e.attempt > 1 && <span className='text-muted-foreground text-xs'>attempt {e.attempt}</span>}<When d={e.at} className='text-muted-foreground ml-auto text-xs' /></div>
+              {Object.keys(e.data).length > 0 && <p className='text-muted-foreground mt-0.5 text-xs break-words'>{Object.entries(e.data).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : String(v)}`).join(' · ')}</p>}
             </li>
           ))}
         </ol>

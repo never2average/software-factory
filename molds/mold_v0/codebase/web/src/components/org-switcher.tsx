@@ -151,8 +151,7 @@ export function OrgSwitcher() {
             >
               <span className='truncate font-medium'>{displayOrganization.name}</span>
               <span className='text-muted-foreground truncate text-xs'>
-                {userMemberships.data.find((m) => m.organization.id === displayOrganization.id)
-                  ?.role || 'Organization'}
+                {roleLabel(userMemberships.data.find((m) => m.organization.id === displayOrganization.id)?.role)}
               </span>
             </div>
             <Icons.chevronsUpDown
@@ -211,4 +210,10 @@ export function OrgSwitcher() {
       </SidebarMenuItem>
     </SidebarMenu>
   );
+}
+
+/** A membership's role in words: "org:admin" and "admin" both read "Admin" (mold_v0-289). */
+function roleLabel(role: string | null | undefined) {
+  const r = (role ?? '').replace(/^org:/, '');
+  return r ? r.charAt(0).toUpperCase() + r.slice(1).replace(/_/g, ' ') : 'Organization';
 }

@@ -382,7 +382,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     ["/admin/health (its tabs)", "app/admin/health/page.tsx", "AdminAnalytics",
       [["features/admin/analytics.tsx", "ErrorsReport"], ["features/admin/health-tabs.tsx", "HealthTab"], ["features/admin/health-tabs.tsx", "RunsTab"], ["features/admin/health-tabs.tsx", "ScheduledTab"],
         ["features/admin/health-tabs.tsx", "DeliveriesTab"], ["features/admin/health-tabs.tsx", "WebhooksTab"]]],
-    // mold_v0-266 put the requests list behind in-page tabs (Requests, Request form, Sign-in page): the page draws
+    // mold_v0-289: two in-page tabs (Requests, Early access form), before them mold_v0-266's three: the page draws
     // AccessRequestsPage (its tab strip), which hands the Requests tab to AdminRequests, the list (mold_v0-273).
     ["/admin/requests", "app/admin/requests/page.tsx", "AccessRequestsPage", [["features/admin/access-pages.tsx", "AccessRequestsPage"], ["features/admin/requests.tsx", "AdminRequests"]]],
     ["/admin/accounts (Accounts, Admins)", "app/admin/accounts/page.tsx", "AccountsPage",
@@ -1001,7 +1001,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.match(kv, /connected \? <span>Connected<\/span> : .*Not set up/, "its status in the Keys column");
   assert.match(kv, /'installation' : 'installations'/, "and the installations count");
   assert.match(kv, /key: 'on'[\s\S]{0,120}p\.slug === GITHUB_APP \? null/, "no On switch on the row");
-  assert.match(kv, /canOpen=\{\(p\) => p\.slug === GITHUB_APP\}/, "only that row opens a panel");
+  assert.match(kv, /<ProviderKeys keys=\{keysOf\(p\)\} \/>/, "mold_v0-289: every provider's row opens its panel (the GitHub App's its own setup)");
   assert.match(kv, /actions=\{\(p\) => p\.slug === GITHUB_APP \? \[\]/, "no key actions on it");
   assert.match(rv, /rowKey\(r\) === open && opens\(r\)/, "a row that cannot open is not opened from the address either");
   assert.match(gh, /<ol /, "numbered steps");

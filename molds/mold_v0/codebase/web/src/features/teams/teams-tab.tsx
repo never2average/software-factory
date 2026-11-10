@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
 import { ErrorState } from '@/features/portal/shared';
-import { ActionCard, CardForm, ToolbarAction, useActionOpen } from '@/features/tabs/tab-action';
+import { CardForm, ToolbarAction, useActionOpen } from '@/features/tabs/tab-action';
 import { personWords, sendJson, useTeams, type TeamSummary } from './visibility';
 
 export const teamUrl = (id: number) => `/app/settings/teams/${id}`;
@@ -29,11 +29,6 @@ export function TeamsTab() {
   const mine = new Map((data?.mine ?? []).map((t) => [t.id, t.role]));
   const people = data?.people ?? [];
   const named = (id: string) => personWords(people.find((p) => p.user_id === id), id, data?.me);
-  if (adding && data?.can_manage) return (
-    <ActionCard open onOpenChange={setAdding} title='New team' description='A name your workspace will recognise. Add its people on its page.' back='Teams'>
-      <NewTeamForm onDone={(id) => { setAdding(false); void reload(); if (id) router.push(teamUrl(id)); }} />
-    </ActionCard>
-  );
   const cols: RecordCol<TeamSummary>[] = [
     { key: 'name', label: 'Team', title: true, keep: true, type: 'text', className: 'min-w-40', value: (t) => t.name,
       render: (t) => <Link className='font-medium underline-offset-4 hover:underline' href={teamUrl(t.id)} data-team-link={t.id}>{t.name}</Link> },
@@ -58,6 +53,8 @@ export function TeamsTab() {
       searchText={(t) => `${t.name} ${t.description ?? ''} ${t.leads.map(named).join(' ')}`}
       searchPlaceholder='Search teams'
       toolbarAction={data?.can_manage ? <ToolbarAction label='New team' icon={<Icons.add />} onClick={() => setAdding(true)} /> : undefined}
+      // mold_v0-289: New team opens in the side panel beside the list (?new=1).
+      sidePanel={adding && data?.can_manage ? { key: 'new-team', title: 'New team', onClose: () => setAdding(false), body: <NewTeamForm onDone={(id) => { setAdding(false); void reload(); if (id) router.push(teamUrl(id)); }} /> } : null}
       empty={<p className='text-muted-foreground text-sm' data-teams-empty=''>{data?.can_manage ? 'No teams yet. New team adds one; a record shared with a team is seen by its people.' : 'No teams yet. The workspace\'s owners add them.'}</p>}
       detailTitle={(t) => t.name}
       pageHref={(t) => teamUrl(t.id)}

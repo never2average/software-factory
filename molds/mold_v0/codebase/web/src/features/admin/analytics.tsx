@@ -483,6 +483,7 @@ function ErrorsReport({ view }: { view: 'analytics' | 'health' }) {
         {view === 'health' && <HealthTabs tab='errors' />}
         {/* Health (mold_v0-270): the standard list's order, the four cards, then the search row, then the table. */}
         {view === 'health' && (a ? <HealthCards a={a} /> : <LoadingCards count={4} />)}
+        {view === 'analytics' && (a ? <AnalyticsCards a={a} /> : <LoadingCards count={4} />)}
         <div className='flex flex-wrap items-center gap-2'>
           <div className='relative min-w-48 flex-1'>
             <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
@@ -519,19 +520,25 @@ function ErrorsReport({ view }: { view: 'analytics' | 'health' }) {
   );
 }
 
+/** mold_v0-289: the standard list's order: the four cards, then the search row. */
+function AnalyticsCards({ a }: { a: Analytics }) {
+  const series = useMemo(() => fillDays(a.daily, a.days, a.range?.from, a.new_daily), [a]);
+  return (
+    <StatStrip quad items={[
+      { label: 'Active accounts', value: num(a.totals.active_accounts), spark: series.map((d) => d.accounts) },
+      { label: 'Active people', value: num(a.totals.active_people), spark: series.map((d) => d.people) },
+      { label: 'Tool calls', value: num(a.totals.calls), spark: series.map((d) => d.calls) },
+      { label: 'New accounts', value: num(a.totals.new_accounts), spark: series.map((d) => d.created) }
+    ]} />
+  );
+}
+
 function AnalyticsBody({ a, match }: { a: Analytics; match: (r: object) => boolean }) {
   const series = useMemo(() => fillDays(a.daily, a.days, a.range?.from, a.new_daily), [a]);
   const tools = a.tools.filter(match), accounts = a.accounts.filter(match);
   const maxClient = Math.max(...a.clients.map((c) => c.accounts), 1);
   return (
     <div className='flex w-full flex-col pb-4'>
-      <StatStrip className='border-x [&>div:first-child]:pl-4 max-sm:[&>div:nth-child(odd)]:pl-4' items={[
-        { label: 'Active accounts', value: num(a.totals.active_accounts), spark: series.map((d) => d.accounts) },
-        { label: 'Active people', value: num(a.totals.active_people), spark: series.map((d) => d.people) },
-        { label: 'Tool calls', value: num(a.totals.calls), spark: series.map((d) => d.calls) },
-        { label: 'New accounts', value: num(a.totals.new_accounts), spark: series.map((d) => d.created) }
-      ]} />
-
       <div className='border-l'>
         {a.growth && <GrowthRows g={a.growth} />}
         <div className='grid lg:grid-cols-2'>
@@ -901,8 +908,9 @@ function HealthBody({ a: _a, base, match, kind }: { a: Analytics; base: string; 
               </TableHeader>
               <TableBody>
                 {!rows.length && (
-                  <TableRow><TableCell colSpan={cols.length} className='text-muted-foreground py-10 text-center'>
-                    {!fresh ? 'Loading…' : total ? 'Nothing on this page matches the search.' : 'No failures in this period.'}
+                  <TableRow><TableCell colSpan={cols.length} className='text-muted-foreground py-10'>
+                    {/* mold_v0-289: centred on the visible part of the table, however wide it scrolls. */}
+                    <span className='sticky left-0 block w-[calc(100vw-2rem)] text-center whitespace-normal md:static md:w-full'>{!fresh ? 'Loading…' : total ? 'Nothing on this page matches the search.' : 'No failures in this period.'}</span>
                   </TableCell></TableRow>
                 )}
                 {rows.map((r, i) => (

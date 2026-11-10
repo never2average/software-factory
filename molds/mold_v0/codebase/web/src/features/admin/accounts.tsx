@@ -188,7 +188,7 @@ function NewAccount({ clerk, onClose, onDone }: { clerk: boolean; onClose: () =>
             <Input id='na-name' required value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className='grid gap-1.5'>
-            <Label htmlFor='na-slug'>Slug (optional)</Label>
+            <Label htmlFor='na-slug'>Web address name (optional)</Label>
             <Input id='na-slug' placeholder='from the name' value={slug} onChange={(e) => setSlug(e.target.value)} />
           </div>
           <div className='grid gap-1.5'>

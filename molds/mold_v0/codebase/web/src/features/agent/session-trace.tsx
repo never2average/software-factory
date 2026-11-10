@@ -125,7 +125,7 @@ const formatDuration = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : ms 
 
 /** A step in words: a sentence, and the one identifying detail (the command, the file, the model) as a chip. */
 function present(s: TraceStep): { title: string; chip: string | null } {
-  if (s.members?.length) return { title: `Ran ${s.tool ?? 'a tool'} ${s.members.length} times`, chip: null };
+  if (s.members?.length) return { title: `Used ${s.title || 'a tool'} ${s.members.length} times`, chip: null };
   if (s.kind === 'model') return { title: s.status === 'error' ? (s.title === s.model ? 'A model call failed' : s.title) : 'Called the model', chip: s.model ?? null };
   if (s.kind === 'command') return { title: s.status === 'running' ? 'Running a command' : s.status === 'error' ? 'A command failed' : 'Ran a command', chip: s.preview ?? null };
   if (s.kind === 'tool') return { title: s.status === 'running' ? `Using ${s.title}` : s.status === 'error' ? `${s.title} failed` : `Used ${s.title}`, chip: s.preview ?? null };
@@ -250,7 +250,7 @@ function StepDetails({ s, call, sessionId }: { s: TraceStep; call: Call; session
     if (!s.more) return;
     call<{ step: { data: typeof data } }>('GET', `/${sessionId}/trace/${encodeURIComponent(s.id)}`).then((r) => setData(r.step.data), () => setFailed(true));
   }, [call, s.id, s.more, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const fact = [s.wake ? `Wake ${s.wake}` : null, new Date(s.at).toLocaleString(), s.duration_ms !== undefined ? `took ${formatDuration(s.duration_ms)}` : null, s.http_status !== undefined ? `status ${s.http_status}` : null].filter(Boolean).join(' · ');
+  const fact = [s.wake ? `Run ${s.wake}` : null, new Date(s.at).toLocaleString(), s.duration_ms !== undefined ? `took ${formatDuration(s.duration_ms)}` : null, s.http_status !== undefined ? `status ${s.http_status}` : null].filter(Boolean).join(' · ');
   const call_ = data?.agent_tool_call, result = data?.agent_tool_result;
   return (
     <div className='border-muted mb-2 ml-3 flex flex-col gap-2 border-l pb-1 pl-4 text-xs' data-trace-detail=''>

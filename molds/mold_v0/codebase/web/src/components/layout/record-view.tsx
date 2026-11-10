@@ -50,12 +50,15 @@ export function useStored<V>(key: string | null, init: V): [V, (v: V | ((prev: V
 interface Item<T> { row?: T; g?: Group<T> }
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 
+/** A panel of the page's own beside a list (mold_v0-289), the shared side panel. */
+export interface RecordSidePanel { key: string; title: string; onClose: () => void; body: ReactNode; items?: RowAction[] }
+
 /** mold_v0-260: a wide list's table: its natural width (at least the frame's), the first column sticky with its own background and a line. */
 const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_td:first-child]:bg-background [&_tr[data-state=selected]>td:first-child]:bg-muted [&_th:first-child]:bg-background [&_tr>*:first-child]:shadow-[1px_0_0_var(--border)]';
 
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, canOpen, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide, sidePanel
 }: {
   /**
    * mold_v0-260 (flag wide_lists): a list of more than 8 columns: the table keeps each column's width and scrolls sideways
@@ -84,6 +87,11 @@ export function RecordView<T>({
   initialSize?: number;
   /** Saves columns, view, sort and group to localStorage under `rv:${id}:`. */
   id?: string;
+  /**
+   * A panel of the page's own beside the list (mold_v0-289: an editor opened from the search row's menu): the same side
+   * panel a row opens, Expand included. Opening one closes an open row; opening a row closes it.
+   */
+  sidePanel?: RecordSidePanel | null;
   /** Tabs above the toolbar; the first is the default. */
   views?: RecordViewDef<T>[];
   defaultSort?: SortRule[];
@@ -208,7 +216,12 @@ export function RecordView<T>({
   const close = () => (panelClose.current ? panelClose.current() : setOpen(null));
   const hostRef = useRef<HTMLDivElement>(null);
   const showRecord = Boolean(current && detail);
-  const split = usePanelSplit(hostRef, showRecord, `${id ?? noun}`, panelKind, expanded);
+  const side = showRecord ? null : sidePanel ?? null;
+  const split = usePanelSplit(hostRef, showRecord || !!side, `${id ?? noun}`, side ? 'editor' : panelKind, expanded);
+  // One panel at a time: the page's own panel closes a row's, and a row opened afterwards closes the page's.
+  const sideKey = sidePanel?.key ?? null;
+  useEffect(() => { if (sideKey && open) setOpen(null); }, [sideKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open && showRecord && sideKey) sidePanel?.onClose(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const openRow = (k: string) => { if (k !== open) guarded(() => setOpen(k)); };
 
   // ↑ ↓ walk the rows as listed (collapsed groups skipped), turning the page when needed.
@@ -248,6 +261,23 @@ export function RecordView<T>({
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [hasCurrent]);
+
+  // mold_v0-289: whether the table still has columns to its right (the scroll cue).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [moreRight, setMoreRight] = useState(false);
+  const [frameW, setFrameW] = useState(0);
+  // The table's own wrapper (components/ui/table.tsx) is what scrolls sideways, inside the frame.
+  const measureScroll = useCallback(() => { const el = scrollRef.current; const c = el?.querySelector<HTMLElement>("[data-slot='table-container']") ?? el; setMoreRight(!!c && c.scrollWidth - c.clientWidth - c.scrollLeft > 2); setFrameW(el?.clientWidth ?? 0); }, []);
+  useLayoutEffect(() => {
+    measureScroll();
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measureScroll);
+    ro.observe(el);
+    const c = el.querySelector("[data-slot='table-container']");
+    if (c) { ro.observe(c); if (c.firstElementChild) ro.observe(c.firstElementChild); }
+    return () => ro.disconnect();
+  }, [measureScroll, rows.length, showRecord, side]);
 
   const shownCols = cols.filter((c) => !hidden.includes(c.key));
   const visible = shownCols;
@@ -328,7 +358,7 @@ export function RecordView<T>({
     // mold_v0-278: the list and, when a row is open, the record panel at its right (the list's column narrows).
     <div ref={hostRef} style={compact && fitH ? { height: fitH } : undefined} data-slot='list-split' data-panel-open={showRecord || undefined}
       className={cn('flex min-w-0 items-stretch', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
-    <div ref={fitRef} data-slot='list-main' className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-3', split.layout?.full && 'lg:hidden')}>
+    <div ref={fitRef} data-slot='list-main' className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-3 [overflow-x:clip] [overflow-clip-margin:4px]', split.layout?.full && 'lg:hidden')}>
       {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
       <div className='flex flex-wrap items-center gap-2'>
         <div className='relative min-w-48 flex-1'>
@@ -363,14 +393,19 @@ export function RecordView<T>({
 
       <div className='flex min-h-0 flex-1 gap-4'>
         <div className='flex min-h-0 w-full min-w-0 flex-col border'>
-          <div className='flex min-h-0 flex-1 flex-col overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
+          <div className='relative flex min-h-0 flex-1 flex-col'>
+          {/* mold_v0-289: a soft edge at the right says the table has more columns that way. */}
+          {moreRight && <span aria-hidden className='from-background pointer-events-none absolute inset-y-0 right-0 z-[2] w-10 bg-gradient-to-l to-transparent' data-scroll-cue='' />}
+          <div ref={scrollRef} onScrollCapture={measureScroll} className='flex min-h-0 flex-1 flex-col overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
             <Table className={wide ? WIDE_TABLE : undefined}>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
                 <TableRow>
                   {bulk && (
-                    <TableHead className='w-8'>
-                      <Checkbox aria-label='Select all on this page' checked={allOnPage} indeterminate={!allOnPage && someOnPage}
-                        onCheckedChange={(on) => toggle(pageKeys, !!on)} />
+                    <TableHead className='w-12 min-w-12 px-0'>
+                      <div className='flex items-center justify-center'>
+                        <Checkbox aria-label='Select all on this page' checked={allOnPage} indeterminate={!allOnPage && someOnPage}
+                          onCheckedChange={(on) => toggle(pageKeys, !!on)} />
+                      </div>
                     </TableHead>
                   )}
                   {visible.map((c) => {
@@ -401,7 +436,7 @@ export function RecordView<T>({
                             <Button variant='ghost' size='xs' className='-ml-1 gap-1.5'
                               onClick={() => setCollapsed((s) => { const n = new Set(s); if (!n.delete(it.g!.value)) n.add(it.g!.value); return n; })}>
                               <Icons.chevronRight className={cn('size-3.5 transition-transform', !collapsed.has(it.g.value) && 'rotate-90')} />
-                              {it.g.label}<span className='text-muted-foreground tabular-nums'>{it.g.rows.length}</span>
+                              {it.g.label}
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -414,8 +449,9 @@ export function RecordView<T>({
                           onKeyDown={can ? (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) openRow(k); } : undefined}
                           tabIndex={can ? 0 : undefined}>
                           {bulk && (
-                            <TableCell className='w-8 py-3' onClick={(e) => e.stopPropagation()}>
-                              <Checkbox aria-label='Select row' checked={sel.has(k)} onCheckedChange={(on) => toggle([k], !!on)} />
+                            <TableCell className='w-12 min-w-12 px-0 py-3' onClick={(e) => e.stopPropagation()}>
+                              {/* mold_v0-289: a 48 px column, the box centred in header and cells. */}
+                              <div className='flex items-center justify-center'><Checkbox aria-label='Select row' checked={sel.has(k)} onCheckedChange={(on) => toggle([k], !!on)} /></div>
                             </TableCell>
                           )}
                           {visible.map((c) => <TableCell key={c.key} className={cn('px-3 py-3.5', 'whitespace-normal', c.className)}>{c.render(r)}</TableCell>)}
@@ -429,14 +465,15 @@ export function RecordView<T>({
             </Table>
             {/* Loading and the empty state fill the whole table area below the headings (operator, 2026-11-08), centred. */}
             {(loading || data.items.length === 0) && (
-              <div className='text-muted-foreground flex flex-1 items-center justify-center px-6 py-12 text-center text-sm whitespace-normal' data-list-empty={loading ? undefined : ''}>
+              <div style={frameW ? { width: frameW } : undefined} className='text-muted-foreground sticky left-0 flex flex-1 items-center justify-center px-6 py-12 text-center text-sm whitespace-normal' data-list-empty={loading ? undefined : ''}>
                 {loading ? 'Loading…' : narrowed ? (
                   <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='outline' size='xs' onClick={clearAll}>Clear filters</Button>}</span>
                 ) : <div className='max-w-xl'>{empty}</div>}
               </div>
             )}
           </div>
-          <TablePager p={page} noun={noun} className='border-t px-2' count={data.ordered.length} of={searching ? data.base : undefined} />
+          </div>
+          <TablePager p={page} noun={noun} className='border-t px-2' count={data.ordered.length} of={searching ? data.base : undefined} loading={loading} />
         </div>
 
       </div>
@@ -450,6 +487,12 @@ export function RecordView<T>({
             <Separator className='mb-4' />
           </>)}
           <div key={open!} className='pb-4' data-record-body=''>{detail(current, close)}</div>
+        </RecordPanel>
+      )}
+      {side && (
+        <RecordPanel hostRef={hostRef} split={split} type={`${id ?? noun}-${side.key}`} rowKey={side.key} title={side.title} name={side.title} items={side.items ?? []}
+          expanded={expanded} onExpandedChange={setExpanded} onClose={side.onClose} closeRef={(c) => { panelClose.current = c; }}>
+          <div key={side.key} className='pb-4' data-record-body=''>{side.body}</div>
         </RecordPanel>
       )}
     </div>

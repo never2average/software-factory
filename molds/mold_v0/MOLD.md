@@ -3952,39 +3952,21 @@ duplicated; a rerun writes nothing. On a Vercel app it runs from the build copy 
 and, because its first line says `// SEALS.`, that project's `APP_VAULT_KEY` (hidden; lib/operator_run.py); without the
 key a real run into an area that makes databases is refused before anything is written (exit 2).
 
-## Early access and sign-in editor (mold_v0-266)
+## Early access form (mold_v0-266, mold_v0-289)
 
-Platform staff edit the early-access (request-access) form and the sign-in and sign-up pages' words in the staff console,
-live without a redeploy. No flag: with nothing saved every form and page is exactly what the build declares, drawn by the
-same code, and the API checks a request as it always did.
+The early-access (request-access) form is one JSON config end to end. It can be declared in the app's pack or spec, it is what the staff table reads and writes, and it drives the public form, the validation, the stored request, the requests list and its side panel, the export and the notification email, with no per-field code: a field added in the table appears everywhere without a deploy. With nothing saved and nothing declared, the form is exactly what the build declares, drawn by the same code.
 
-- **Where**: Admin › Access requests, three in-page tabs held in `?section=` like Accounts': Requests (the list),
-  Request form (`?section=form`) and Sign-in page (`?section=sign-in`); `web/src/features/admin/access-pages.tsx`. Each
-  editor works on a draft beside a live preview (the public form itself, drawn from the draft, never sent), each field in
-  a side panel; Save, Discard, Reset to defaults; a History table (the standard list) of every version, who, when, what
-  changed and the config before and after. Every role reads; saving and resetting need the Operator role (`need("accounts")`).
-- **The request form** (`src/access-request.ts` `AccessFormConfig`, `accessFormProblems`, `formSubmission`): every field,
-  the shell's own included (email, name, company, message: their own columns) and the packs' or profile's
-  `access_request` fields: label, help, placeholder, required, hidden, order, kind (text, long text, email, one choice,
-  several choices, number, web address), options and length; fields of staff's own (stored under `answers`); the submit
-  button; the thank-you title and lines (`{email}`, `{company}`). Email is always asked, required and an address; a hidden
-  field is not asked and its answer dropped; the shell's columns take any kind but several choices. The editor starts
-  from `defaultRequestForm`: the build's public form as it is today (the landing's `request_page` form when it has one:
-  its order, fold fields, placeholders, submit and done words, a declared field it never asks hidden; else
-  `/request-access`'s). Pack and profile `access_request` stay those defaults; Reset to defaults saves them back (config null).
-- **The sign-in words** (`SignInConfig`, `signInProblems`): the sign-in and sign-up pages' title, subtitle and main button,
-  a provider button ("Continue with {provider}"), a legal line under the form whose `{terms}` and `{privacy}` link to the
-  addresses given or the build's own Terms and Privacy, and which provider buttons show. Under Clerk the words go to
-  `ClerkProvider`'s `localization` (the open page hands them over: `web/src/features/auth/components/auth-words.tsx`) and
-  hidden providers are its `appearance` (`socialButtonsBlockButton__<provider>`); the methods listed are the Clerk
-  instance's own (its Frontend API environment), else the shell's. The built-in sign-in (lanes, local runs) takes the same
-  words; its emailed code is never hidden.
+- **The JSON** (`src/access-request.ts` `AccessFormConfig`, `accessFormProblems`, `formSubmission`): `{ "fields": [{ "key", "label", "type", "required", "options", "max_length", "help", "placeholder", "person", "hidden" }], "submit": "...", "thanks": { "title": "...", "lines": ["We email {email}."] } }`. Data types (`type`): `text`, `long_text`, `email`, `number`, `select` (a choice), `multi_select`, `url`, `date` (YYYY-MM-DD), `boolean` (yes or no). The keys `email`, `name`, `company` and `message` land in the request's own columns; any other key lands in `access_requests.answers`. Email is always asked, required and an address.
+- **Declaring it**: `access_request` in `pack.json` or `profile.json` either lists questions only (`{ "fields": [...] }` without `email`: added to the shell's own fields, as before) or holds the whole form (fields including `email`, with `submit` and `thanks` optional: the same JSON the table saves; `GENERATED_ACCESS_FORM`). One pack or the profile declares a whole form, never two.
+- **Where**: Admin › Access requests has two in-page tabs (`?section=` like Accounts'): Requests (the list) and Early access form (`?section=form`), `web/src/features/admin/access-pages.tsx`: one table, a row per field (Field name, Key, Data type, Required, Options, order) edited in place, the search row with Add field and Save, and Version history and View or import JSON in its ⋯ menu. Fields not asked (`hidden`), the words and anything else the table has no column for are kept and changed through the JSON. Every role reads; saving needs the Operator role (`need("accounts")`).
+- **Everywhere else**: the Requests list has a column per field in force (so the export has it too), the open request and `list_access_requests` and the alert email label answers by the form in force (`labelFields`), and an answer whose field is gone stays readable under its key in words (`labelledAnswers`).
+- **Sign-in and sign-up pages**: the build's own words. The sign-in editor of mold_v0-266 is gone (mold_v0-289): its staff route answers 404, and a row saved earlier stays in `access_pages` (id `sign_in`) but is never read or listed: `readAccessPages` selects `request_form` only and the pages no longer take saved words.
 - **Storage** (`sql/migrations/0055_access_pages.sql` with its rollback; `src/access-pages.ts`, the only writer):
   `access_pages` (one row per page: the version in force and its config, NULL for the defaults) and `access_page_changes`
   (every version: edited or reset, who, when, before and after), staff tables no tenant reaches (`src/rls.ts`). A save
   names the version it edited (a newer one: 409). Each save is also a staff log line.
-- **Live**: `GET /api/access-pages` (open to anyone) answers both configs, from an in-process copy at most 10 s old (a
-  save refreshes it); the public request pages and the auth pages read it on each request (`accessPagesLive`), the portal's
+- **Live**: `GET /api/access-pages` (open to anyone) answers the form in force, from an in-process copy at most 10 s old (a
+  save refreshes it); the public request pages read it on each request (`accessPagesLive`), the portal's
   no-account form asks it in the browser. `POST /api/access-requests` checks each request against the form in force
   (required, kinds, options); Admin › Access requests, `list_access_requests` and the alert email label answers by the
   form in force (`labelFields`: its fields, then the build's it no longer has).

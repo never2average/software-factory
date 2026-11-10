@@ -19,7 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
 import { UTM, visitSource } from './visit-source';
-import { askedFields, isShellFormKey, maxLengthOf, thanksLine, type AccessAnswer, type AccessField, type AccessFormConfig, type FormField, type ShellFormKey } from '@/lib/access-request.generated';
+import { answersOf, askedFields, isShellFormKey, maxLengthOf, thanksLine, type AccessAnswer, type AccessField, type AccessFormConfig, type FormField, type ShellFormKey } from '@/lib/access-request.generated';
 import { requestAccessDefaults, useLiveRequestForm } from './access-form';
 
 export interface RequestAccessDefaults { email?: string; name?: string; company?: string }
@@ -62,6 +62,9 @@ export function RequestAccessForm({ defaults = {}, from, onSent, config, preview
     // A required choice of several has no check of the browser's own: say so here (the server checks every field again).
     const missing = asked.find((f) => f.required && f.type === 'multi_select' && !((answers[f.key] as string[] | undefined)?.length));
     if (missing) { setError(`${missing.label}: choose at least one.`); return; }
+    // Every other data type's rules, the server's own (src/access-request.ts), so a bad answer is said before anything is sent.
+    const checked = answersOf({ answers }, asked.filter((f) => !isShellFormKey(f.key)));
+    if (checked.problem) { setError(checked.problem); return; }
     if (preview) { setError(null); setSent(shell.email.trim() || 'you@example.com'); return; }
     setBusy(true); setError(null);
     try {
@@ -168,16 +171,16 @@ function AccessFieldInput({ id, field: f, value, onChange, disabled }: { id: str
   return (
     <div className='grid min-w-0 gap-1.5' data-field={f.key}>
       <Label htmlFor={id}>{label}</Label>
-      {f.type === 'select' ? (
+      {f.type === 'select' || f.type === 'boolean' ? (
         <NativeSelect id={id} name={f.key} required={f.required} value={text} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-describedby={described} className='w-full'>
           <NativeSelectOption value=''>{f.placeholder ?? 'Choose one'}</NativeSelectOption>
-          {(f.options ?? []).map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
+          {(f.type === 'boolean' ? [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] : f.options ?? []).map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
         </NativeSelect>
       ) : f.type === 'long_text' ? (
         <Textarea id={id} name={f.key} required={f.required} maxLength={maxLengthOf(f)} rows={3} placeholder={f.placeholder} value={text} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-describedby={described} />
       ) : (
         <Input id={id} name={f.key} required={f.required} maxLength={maxLengthOf(f)} placeholder={f.placeholder} value={text} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-describedby={described} className='h-10'
-          {...(f.type === 'email' ? { type: 'email' } : f.type === 'url' ? { type: 'text', inputMode: 'url' as const, autoComplete: 'url' } : f.type === 'number' ? { type: 'text', inputMode: 'decimal' as const } : {})} />
+          {...(f.type === 'email' ? { type: 'email' } : f.type === 'url' ? { type: 'text', inputMode: 'url' as const, autoComplete: 'url' } : f.type === 'number' ? { type: 'text', inputMode: 'decimal' as const } : f.type === 'date' ? { type: 'date' } : {})} />
       )}
       {help}
     </div>

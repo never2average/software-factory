@@ -1,4 +1,4 @@
-// The early-access form and sign-in editor (mold_v0-266; src/access-pages.ts, src/access-request.ts, 0055_access_pages),
+// The early-access form as one JSON config, and its table editor (mold_v0-266, mold_v0-289; src/access-pages.ts, src/access-request.ts, 0055_access_pages),
 // offline: the rules, the defaults, the API on an embedded database and (with --browser) the console.
 //   npm run test:access-pages
 //   tsx scripts/access-pages-test.ts [--browser] [--shots <dir>]
@@ -79,7 +79,7 @@ async function outer() {
     ["several choices in a column", edit((c) => { Object.assign(c.fields[2]!, { type: "multi_select", options: [{ value: "a", label: "A" }] }); delete c.fields[2]!.max_length; }), /company is one answer/],
     ["a key twice", edit((c) => { c.fields.push({ key: "website", label: "Again", type: "text" }); }), /website is in the form twice/],
     ["source as a key", edit((c) => { c.fields.push({ key: "source", label: "Source", type: "text" }); }), /source is where the request came from/],
-    ["an unknown kind", edit((c) => { c.fields.push({ key: "cv", label: "CV", type: "file" as never }); }), /type: one of text, long_text, email, select, multi_select, number, url/],
+    ["an unknown kind", edit((c) => { c.fields.push({ key: "cv", label: "CV", type: "file" as never }); }), /type: one of text, long_text, email, number, select, multi_select, url, date, boolean/],
     ["an unknown key", edit((c) => { (c as unknown as Record<string, unknown>).intro = "x"; }), /intro: unknown key/],
     ["braces in the thank-you", edit((c) => { c.thanks.lines = ["Hello {name}"]; }), /thanks\.lines\[0\]: .*\{email\} and \{company\} are the only words in braces/],
     ["no thank-you line", edit((c) => { c.thanks.lines = []; }), /thanks\.lines: 1 to 6 lines/],
@@ -88,18 +88,7 @@ async function outer() {
   ];
   for (const [what, cfg, re] of refused) assert.match(R.accessFormProblems(cfg).join("\n"), re, what);
   assert.deepEqual(R.accessFormProblems(edit((c) => { c.thanks.lines = ["We look at {company} and write to {email}."]; c.fields.push({ key: "seats", label: "Seats", type: "number", required: true }); })), [], "tokens and a number are fine");
-  const signRefused: [string, unknown, RegExp][] = [
-    ["an unknown key", { title: "x" }, /title: unknown key/],
-    ["a word not plain", { sign_in: { title: "Hi <b>" } }, /sign_in\.title: plain text/],
-    ["braces in the legal line", { legal: { text: "See {cookies}" } }, /\{terms\} and \{privacy\} are the only words in braces/],
-    ["a bad address", { legal: { text: "See {terms}", terms_url: "javascript:alert(1)" } }, /legal\.terms_url: a path of this site/],
-    ["a method twice", { hidden_methods: ["oauth_google", "oauth_google"] }, /hidden_methods: a list/],
-  ];
-  for (const [what, cfg, re] of signRefused) assert.match(R.signInProblems(cfg).join("\n"), re, what);
-  assert.deepEqual(R.signInProblems({ sign_in: { title: "Welcome", subtitle: "Use your work address.", button: "Send my code" }, social_button: "Use {provider}",
-    legal: { text: "By continuing you agree to the {terms} and the {privacy}.", terms_url: "https://example.com/terms" }, hidden_methods: ["google"] }), [], "a full sign-in config passes");
-  assert.deepEqual(R.legalLineParts("Agree to the {terms} and {privacy}."), [{ text: "Agree to the " }, { link: "terms" }, { text: " and " }, { link: "privacy" }, { text: "." }]);
-  ok(`the rules: ${refused.length} malformed forms and ${signRefused.length} malformed sign-in configs refused (email always asked, required and an address; tokens; lengths; kinds)`);
+  ok(`the rules: ${refused.length} malformed forms refused (email always asked, required and an address; tokens; lengths; kinds)`);
 
   // ---------- 2. the defaults reproduce today's form ----------
   // What /request-access drew before mold_v0-266 (web/src/features/site/request-access-form.tsx at main): a work email and
@@ -204,10 +193,10 @@ async function inner() {
     const declared = [...GENERATED_ACCESS_FIELDS];
 
     // Nothing saved: null, and a request is checked as it always was.
-    assert.deepEqual((await call("GET", "/api/access-pages")).body, { request_form: null, sign_in: null });
+    assert.deepEqual((await call("GET", "/api/access-pages")).body, { request_form: null });
     const before = await call("POST", "/api/access-requests", {}, { email: `x-${STAMP}@acme.example`, company: "" });
     assert.deepEqual([before.status, before.body.error], [400, "Please tell us your company."], "as before: the company is required");
-    ok("nothing saved: GET /api/access-pages is null for both pages and a request is checked as before");
+    ok("nothing saved: GET /api/access-pages is null and a request is checked as before");
 
     // Staff-only writes.
     const words = { message: "What would you like to use it for?", thanks: "Thank you", first_step: "We look at it." };
@@ -302,20 +291,65 @@ async function inner() {
     assert.deepEqual(hist.body.changes.map((c: any) => c.version), [3, 2, 1], "the history, newest first");
     ok("versioned: a second save (its before the first's after), Reset to defaults a version of its own (after null), refused when already the defaults; requests checked as before again; the history newest first");
 
-    // The sign-in words.
-    const sign = { sign_in: { title: "Welcome back to the workspace", subtitle: "Use your work address.", button: "Send my code" }, legal: { text: "By continuing you agree to the {terms} and the {privacy}.", terms_url: "https://example.com/terms" }, hidden_methods: ["google"] };
-    assert.equal((await put(operator, { version: 0, config: { ...sign, legal: { text: "x {terms}", privacy_url: "ftp://x" } } }, "sign_in")).status, 400, "a bad address refused");
-    assert.equal((await put(await tok("support"), { version: 0, config: sign }, "sign_in")).status, 403, "support may not");
-    const ss = await put(operator, { version: 0, config: { ...sign, sign_up: { title: "  " } } }, "sign_in");
-    assert.equal(ss.status, 400, "an empty word is not plain text: refused");
-    const ss2 = await put(operator, { version: 0, config: sign }, "sign_in");
-    assert.equal(ss2.body.page.version, 1);
-    assert.deepEqual((await call("GET", "/api/access-pages")).body.sign_in, sign);
+    // mold_v0-289: no sign-in editor: its routes are gone, and a row saved before is never served (the pages use the build's own words).
+    assert.equal((await put(operator, { version: 0, config: { sign_in: { title: "Hello" } } }, "sign_in")).status, 404, "no such page");
+    await db.query("INSERT INTO access_pages (id, version, config, updated_by) VALUES ('sign_in', 1, $1, 'old') ON CONFLICT (id) DO UPDATE SET config = $1", [JSON.stringify({ sign_in: { title: "An old override" } })]);
+    await db.query("INSERT INTO access_page_changes (page_id, version, action, changed_by, before, after) VALUES ('sign_in', 1, 'edited', 'old', NULL, $1)", [JSON.stringify({ sign_in: { title: "An old override" } })]);
+    A.forgetAccessPages();
+    const pub = (await call("GET", "/api/access-pages")).body;
+    assert.deepEqual(Object.keys(pub), ["request_form"], "a stored sign-in override is never served");
     const admin = await call("GET", "/api/admin/onboarding/access-pages", await tok("viewer"));
-    assert.deepEqual(admin.body.methods.methods.map((m: any) => [m.id, m.hideable]), [["email_code", false], ["google", true]], "the built-in sign-in's methods (the emailed code always shown)");
-    assert.deepEqual(admin.body.changes.map((c: any) => `${c.page_id}:${c.version}`), ["sign_in:1", "request_form:3", "request_form:2", "request_form:1"]);
-    assert.equal((await put(operator, { version: 0, config: sign }, "nothing")).status, 404, "no such page");
-    ok("the sign-in words: saved (Operator), a bad address and an empty word refused, read back by the public pages; the methods there are (the emailed code never hidden); every change in the staff list");
+    assert.deepEqual(Object.keys(admin.body.pages), ["request_form"]);
+    assert.ok(!admin.body.changes.some((c: any) => c.page_id === "sign_in"), "nor listed in the history");
+    assert.equal((await call("GET", "/api/admin/onboarding/access-pages/sign_in/changes", await tok("viewer"))).status, 404);
+    await db.query("DELETE FROM access_pages WHERE id = 'sign_in'"); await db.query("DELETE FROM access_page_changes WHERE page_id = 'sign_in'");
+    ok("the sign-in editor is gone: its page 404s, a stored override is never served or listed");
+
+    // mold_v0-289: one JSON config, a field of every data type, end to end through the API.
+    const allTypes = structuredClone(R.defaultRequestForm(declared, words, null));
+    const opts = [{ value: "a", label: "Option A" }, { value: "b", label: "Option B" }];
+    const added = [
+      { key: "f_text", label: "F text", type: "text", required: true }, { key: "f_long", label: "F long", type: "long_text" }, { key: "f_email", label: "F email", type: "email" },
+      { key: "f_number", label: "F number", type: "number" }, { key: "f_choice", label: "F choice", type: "select", options: opts }, { key: "f_multi", label: "F multi", type: "multi_select", options: opts },
+      { key: "f_url", label: "F url", type: "url" }, { key: "f_date", label: "F date", type: "date", required: true }, { key: "f_yes", label: "F yes", type: "boolean" },
+    ] as any[];
+    allTypes.fields.push(...added);
+    assert.deepEqual(R.accessFormProblems(allTypes), [], "every data type is a valid field");
+    const allSaved = await put(operator, { version: 3, config: allTypes });
+    assert.equal(allSaved.status, 200, JSON.stringify(allSaved.body));
+    const typed = { website: "https://acme.example", f_text: "hello", f_long: "two\nlines", f_email: "x@acme.example", f_number: "12.5", f_choice: "a", f_multi: ["a", "b"], f_url: "acme.example", f_date: "2026-02-28", f_yes: "yes" };
+    const typeSend = (answers: Record<string, unknown>) => call("POST", "/api/access-requests", {}, { email: `t-${STAMP}@acme.example`, company: "Types Co", answers });
+    const typeRefusals: [Record<string, unknown>, RegExp][] = [
+      [{ ...typed, f_text: "" }, /F text is required/], [{ ...typed, f_email: "nope" }, /F email: enter a valid email/], [{ ...typed, f_number: "abc" }, /F number: enter a number/],
+      [{ ...typed, f_choice: "z" }, /F choice: choose one/], [{ ...typed, f_multi: ["z"] }, /F multi: choose from/], [{ ...typed, f_url: "not a url" }, /F url: enter a web address/],
+      [{ ...typed, f_date: "2026-02-31" }, /F date: enter a date/], [{ ...typed, f_yes: "maybe" }, /F yes: answer yes or no/],
+    ];
+    for (const [answers, re] of typeRefusals) { const r = await typeSend(answers); assert.equal(r.status, 400, JSON.stringify(answers)); assert.match(r.body.error, re); }
+    const good = await typeSend(typed);
+    assert.equal(good.status, 201, JSON.stringify(good.body));
+    const [typedRow] = await db.query<any>("SELECT answers FROM access_requests WHERE email = $1", [`t-${STAMP}@acme.example`]);
+    assert.deepEqual(typedRow.answers, { ...typed, f_url: "https://acme.example" }, "stored under answers, the address normalised");
+    const typedList = (await call("GET", "/api/admin/onboarding/requests", await tok("viewer"))).body.requests.find((q: any) => q.email === `t-${STAMP}@acme.example`);
+    assert.deepEqual(typedList.answers, typedRow.answers, "the staff list carries each answer");
+    const texts = Object.fromEntries(R.labelledAnswers(await A.answerLabelFields(), typedRow.answers).map((a) => [a.label, a.text]));
+    assert.deepEqual([texts["F choice"], texts["F multi"], texts["F yes"], texts["F date"]], ["Option A", "Option A, Option B", "Yes", "2026-02-28"], "labelled by the config, in words");
+    let typedAlert: any = null;
+    for (let i = 0; i < 200 && !typedAlert; i++) { typedAlert = (http.mock.state.emails as any[]).find((e) => e.text?.includes(`t-${STAMP}@acme.example`) && /F number: 12\.5/.test(e.text)); if (!typedAlert) await new Promise((r) => setTimeout(r, 25)); }
+    assert.ok(typedAlert, "the notification email lists the fields");
+    assert.match(typedAlert.text, /F yes: Yes/);
+    // A field taken out of the form: its older answers stay readable, under its key in words.
+    const fewer = structuredClone(allTypes); fewer.fields = fewer.fields.filter((f: any) => f.key !== "f_number");
+    assert.equal((await put(operator, { version: 4, config: fewer })).status, 200);
+    assert.ok(R.labelledAnswers(await A.answerLabelFields(), typedRow.answers).some((a) => a.label === "F number" && a.text === "12.5"), "an older answer stays readable after its field goes");
+    const undeclared = R.labelledAnswers([], { an_old_field: "kept" })[0]!;
+    assert.deepEqual([undeclared.label, undeclared.text], ["An old field", "kept"]);
+    ok("one config: a field of each data type: validated, refused, stored, carried by the staff list, the email and labels, and readable after its field is removed");
+
+    // A whole form declared in an access_request block is the same JSON (pack or profile).
+    const { fields: ownOf, form: declaredForm, problems: declaredProblems } = R.joinAccessFields([{ id: "pack_x", spec: { fields: allTypes.fields, submit: "Join", thanks: { title: "Done", lines: ["We email {email}."] } } }], undefined);
+    assert.deepEqual([declaredProblems, declaredForm?.submit, ownOf.some((f) => f.key === "company")], [[], "Join", false], "a whole form in a pack: the same shape as the table's");
+    assert.match(R.accessRequestProblems({ fields: [{ key: "x", label: "X", type: "text" }], submit: "Go" }).join(), /only in a whole form/, "words need a whole form");
+    ok("the pack or spec declares the same JSON the table saves (a whole form: fields with email, submit, thanks)");
 
     if (BROWSER) await browserChecks({ http, db, staffEmail, STAMP, TMP, teardown, operator, call });
     console.log(`access-pages: ${n} checks passed on the API${BROWSER ? " and the console" : ""}`);
@@ -423,7 +457,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     await c.close();
     return shape;
   };
-  const save = async (id: "request_form" | "sign_in", config: unknown) => {
+  const save = async (id: "request_form", config: unknown) => {
     const cur = (await w.call("GET", "/api/admin/onboarding/access-pages", w.operator)).body.pages[id].version;
     const r = await w.call("PUT", `/api/admin/onboarding/access-pages/${id}`, w.operator, { version: cur, config });
     assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -452,58 +486,34 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
   // Before an edit: the public request page.
   await shots("request-page-before", REQUEST_PAGE.path, false, async (p) => { await p.locator(PAGE_FORM).waitFor({ timeout: 20000 }); });
 
-  // Staff edit the form in the console: the side panel, a new field, the preview, Save.
+  // Staff edit the form in the console: the table of its fields on its own tab, in place, Add field, Save.
   {
     const c = await ctx(true, 1440, "dark");
     const p = await c.newPage();
     await p.goto("/admin/requests?section=form", { waitUntil: "networkidle" });
     await p.locator('[data-testid="form-fields"]').waitFor({ timeout: 20000 });
-    assert.match(await p.locator('[data-testid="access-page-version"]').innerText(), /the defaults/);
     const keys = await p.locator("[data-form-field]").evaluateAll((els: Element[]) => els.map((e) => e.getAttribute("data-form-field")));
-    assert.deepEqual(keys, ["email", "company", "website", "name", "team_size", "tools", "goal", "message"], "the editor starts from the page's own form");
-    await p.locator('[data-form-field="company"]').getByRole("button", { name: "Edit" }).click();
-    const panel = p.locator('[data-testid="field-panel"]');
-    await panel.waitFor();
-    assert.equal(await panel.getByLabel("Kind").locator("option").count(), 6, "the shell's company: every kind but several choices");
-    await panel.getByLabel("Label").fill("Organisation");
-    await panel.getByLabel("Help text").fill("The team or company you work for.");
-    await panel.getByRole("button", { name: "Apply" }).click();
+    assert.deepEqual(keys, ["email", "company", "website", "name", "team_size", "tools", "message"], "the table starts from the page's own form (what it does not ask stays out of the table)");
+    const row = (k: string) => p.locator(`[data-form-field="${k}"]`);
+    assert.equal(await row("email").getByRole("checkbox").isDisabled(), true, "email stays required");
+    await row("company").locator("input").first().fill("Organisation");
     await p.getByRole("button", { name: "Add field" }).click();
-    await panel.waitFor();
-    await panel.getByLabel("Label").fill("Seats");
-    await panel.getByLabel("Kind").selectOption("number");
-    await panel.getByRole("checkbox", { name: "Required" }).click();
-    await panel.getByLabel("Help text").fill("Roughly is fine.");
-    await panel.getByRole("button", { name: "Add to the form" }).click();
-    await p.getByLabel("Submit button").fill("Join the early list");
-    const preview = p.locator('[data-testid="form-preview"]');
-    await preview.getByText("Organisation").first().waitFor();
-    assert.ok(await preview.getByLabel("Seats").count() === 1, "the preview follows the draft");
-    assert.match(await preview.innerText(), /Join the early list/);
-    assert.equal(await p.locator('[data-form-field="seats"]').count(), 1);
-    await p.getByRole("button", { name: "Save changes" }).click();
-    await p.getByText(/Version 4, saved by/).waitFor({ timeout: 15000 }); // after the two saves and the reset above
+    const added = p.locator("[data-form-field^='new-']");
+    await added.locator("input").first().fill("Seats");
+    const seats = row("seats"); // the row's key comes from its name as it is typed
+    await seats.locator("select").selectOption("number");
+    await seats.getByRole("checkbox").click();
+    await p.getByRole("button", { name: "Save" }).click();
+    await p.waitForFunction(() => document.body.innerText.includes("Saved as version") || !document.querySelector("[data-testid='access-page-problems']"), null, { timeout: 15000 });
+    await wait(1500);
     await c.close();
     const saved = (await w.call("GET", "/api/access-pages")).body.request_form;
-    assert.deepEqual(saved.fields.find((f: any) => f.key === "company"), { key: "company", label: "Organisation", type: "text", required: true, placeholder: "Acme", max_length: 200, help: "The team or company you work for." });
-    assert.deepEqual(saved.fields.find((f: any) => f.key === "seats"), { key: "seats", label: "Seats", type: "number", required: true, help: "Roughly is fine." });
-    assert.equal(saved.submit, "Join the early list");
-    const [ch] = await w.db.query("SELECT version, action, changed_by FROM access_page_changes WHERE page_id = 'request_form' ORDER BY id DESC LIMIT 1");
-    assert.deepEqual([ch.version, ch.action, ch.changed_by], [4, "edited", w.staffEmail], "audited under the signed-in person");
-    ok("the editor: it starts from the page's own form; the side panel relabels the company (every kind but several choices offered) and adds a required number; the preview follows the draft; Save makes the next version (4) under the person's address");
+    assert.equal(saved.fields.find((f: any) => f.key === "company").label, "Organisation");
+    assert.deepEqual(saved.fields.find((f: any) => f.key === "seats"), { key: "seats", label: "Seats", type: "number", required: true });
+    const [ch] = await w.db.query("SELECT action, changed_by FROM access_page_changes WHERE page_id = 'request_form' ORDER BY id DESC LIMIT 1");
+    assert.deepEqual([ch.action, ch.changed_by], ["edited", w.staffEmail], "audited under the signed-in person");
+    ok("the editor: one table on its own tab: edited in place, email locked, Add field keyed from the name, Save");
   }
-  // The editor and its preview, in both modes and widths (the panel open on the company at the shot).
-  await shots("editor", "/admin/requests?section=form", true, async (p) => {
-    await p.locator('[data-form-field="company"]').waitFor({ timeout: 20000 });
-    await p.locator('[data-form-field="company"]').getByRole("button", { name: "Edit" }).click();
-    await p.locator('[data-testid="field-panel"]').waitFor();
-  });
-  await shots("editor-preview", "/admin/requests?section=form", true, async (p) => {
-    const el = p.locator('[data-testid="form-preview"]');
-    await el.getByLabel("Seats").waitFor({ timeout: 20000 });
-    return el;
-  });
-  await shots("editor-page", "/admin/requests?section=form", true, async (p) => { await p.locator('[data-testid="form-fields"]').waitFor({ timeout: 20000 }); });
 
   // After the edit: the public request page asks the new form, live; its answers land in the request.
   {
@@ -512,17 +522,17 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     await p.goto(REQUEST_PAGE.path, { waitUntil: "networkidle" });
     const form = p.locator(PAGE_FORM);
     await form.waitFor({ timeout: 20000 });
-    assert.match(await form.innerText(), /Organisation[\s\S]*Seats[\s\S]*Join the early list/);
+    assert.match(await form.innerText(), /Organisation[\s\S]*Seats[\s\S]*Ask for access/);
     await form.locator('input[name="email"]').fill(`page-${w.STAMP}@browser.example`);
     await form.locator('input[name="company"]').fill("Browser Co");
     await form.getByLabel("Company website").fill("browser.example");
-    await form.getByRole("button", { name: /Join the early list/ }).click();
+    await form.getByRole("button", { name: /Ask for access/ }).click();
     await p.getByText("Seats is required.").waitFor({ timeout: 5000 });
     await form.getByLabel("Seats").fill("12");
     await p.getByText("Add details").click();
     await form.getByLabel("Team size").selectOption("11-50");
     await form.getByRole("button", { name: "Spreadsheets" }).click();
-    await form.getByRole("button", { name: /Join the early list/ }).click();
+    await form.getByRole("button", { name: /Ask for access/ }).click();
     await p.getByText("You are on the list").waitFor({ timeout: 15000 });
     const [row] = await w.db.query("SELECT company, answers FROM access_requests WHERE email = $1", [`page-${w.STAMP}@browser.example`]);
     assert.deepEqual(row, { company: "Browser Co", answers: { website: "https://browser.example", seats: "12", team_size: "11-50", tools: ["sheets"] } });
@@ -543,16 +553,54 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
   });
   ok("Access requests: the open request shows every answer under the form's labels (the new Seats among the pack's)");
 
-  // The sign-in page with staff's words.
-  await save("sign_in", { sign_in: { title: "Welcome back to the workspace", subtitle: "Use the address your invitation went to.", button: "Send my sign-in code" },
-    legal: { text: "By continuing you agree to the {terms} and the {privacy}.", terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy" } });
-  await shots("sign-in", "/auth/sign-in", false, async (p) => {
-    await p.getByText("Welcome back to the workspace").waitFor({ timeout: 20000 });
-    const t = await p.locator("main").innerText();
-    assert.match(t, /Use the address your invitation went to\.[\s\S]*Send my sign-in code/);
-    assert.match(t, /By continuing you agree to the Terms and the Privacy\./);
-    assert.equal(await p.locator('[data-testid="auth-legal-line"] a[href="https://example.com/terms"]').count(), 1);
-  });
-  await shots("sign-in-editor", "/admin/requests?section=sign-in", true, async (p) => { await p.locator('[data-testid="sign-in-preview"]').getByText("Welcome back to the workspace").waitFor({ timeout: 20000 }); });
-  ok("the sign-in page shows staff's title, subtitle, button and legal line (links to the addresses given); its editor and preview show them");
+  // mold_v0-289: a field of every data type, through the config: the public form, validation, the stored row, the list column and the export.
+  {
+    const base = (await w.call("GET", "/api/access-pages")).body.request_form;
+    const opts = [{ value: "a", label: "Option A" }, { value: "b", label: "Option B" }];
+    const every = { ...base, fields: [...base.fields.filter((f: any) => !f.required || ["email", "company", "website"].includes(f.key)),
+      { key: "b_text", label: "B text", type: "text" }, { key: "b_long", label: "B long", type: "long_text" }, { key: "b_email", label: "B email", type: "email" }, { key: "b_num", label: "B number", type: "number" },
+      { key: "b_one", label: "B choice", type: "select", options: opts }, { key: "b_many", label: "B multi", type: "multi_select", options: opts }, { key: "b_url", label: "B url", type: "url" }, { key: "b_when", label: "B date", type: "date" }, { key: "b_yes", label: "B yes", type: "boolean" }] };
+    await save("request_form", every);
+    const c = await ctx(false);
+    const p = await c.newPage();
+    await p.goto("/request-access", { waitUntil: "networkidle" });
+    const form = p.locator('[data-testid="request-access-form"]');
+    await form.waitFor({ timeout: 20000 });
+    await form.locator('input[name="email"]').fill(`every-${w.STAMP}@browser.example`);
+    await form.locator('input[name="company"]').fill("Every Co");
+    await form.getByLabel("Company website").fill("browser.example");
+    assert.equal(await form.getByLabel("B date").getAttribute("type"), "date");
+    await form.getByLabel("B yes").selectOption("yes");
+    await form.getByLabel("B text").fill("words");
+    await form.getByLabel("B long").fill("more words");
+    await form.getByLabel("B email").fill("b@browser.example");
+    await form.getByLabel("B one".replace("one", "choice")).selectOption("b");
+    await form.getByLabel("Option A").check();
+    await form.getByLabel("B url").fill("example.com");
+    await form.getByLabel("B date").fill("2026-11-10");
+    await form.getByLabel("B number").fill("abc");
+    await form.getByRole("button", { name: /Ask for access|Request access/ }).click();
+    await p.getByText("B number: enter a number").waitFor({ timeout: 5000 });
+    await form.getByLabel("B number").fill("7");
+    await form.getByRole("button", { name: /Ask for access|Request access/ }).click();
+    await p.locator('[data-testid="request-access-sent"]').waitFor({ timeout: 15000 });
+    await c.close();
+    const [row] = await w.db.query("SELECT answers FROM access_requests WHERE email = $1", [`every-${w.STAMP}@browser.example`]);
+    assert.deepEqual(row.answers, { website: "https://browser.example", b_text: "words", b_long: "more words", b_email: "b@browser.example", b_num: "7", b_one: "b", b_many: ["a"], b_url: "https://example.com", b_when: "2026-11-10", b_yes: "yes" }, "the stored row");
+    const s = await ctx(true, 1440, "light");
+    const staff = await s.newPage();
+    await staff.goto("/admin/requests", { waitUntil: "networkidle" });
+    const row2 = staff.locator("tr", { hasText: "Every Co" });
+    await row2.waitFor({ timeout: 20000 });
+    const heads = await staff.locator("thead th").allInnerTexts();
+    for (const h of ["B number", "B choice", "B multi", "B date", "B yes"]) assert.ok(heads.includes(h), `the list has a column: ${h}`);
+    const cells = (await row2.innerText()).replace(/\s+/g, " ");
+    assert.match(cells, /Option B/); assert.match(cells, /2026-11-10/); assert.match(cells, /\bYes\b/);
+    const [dl] = await Promise.all([staff.waitForEvent("download", { timeout: 15000 }), (async () => { await staff.getByRole("button", { name: "Export" }).first().click(); await staff.getByRole("menuitem", { name: /Export CSV/ }).click(); })()]);
+    const csv = (await import("node:fs")).readFileSync(await dl.path(), "utf8");
+    for (const h of ["B number", "B choice", "B multi", "B date", "B yes"]) assert.match(csv.split("\n")[0]!, new RegExp(h), `the export has its column: ${h}`);
+    assert.match(csv, /Every Co[\s\S]*Option B/);
+    await s.close();
+    ok("a field of every data type through the config: the public form draws and validates it, the row stores it, the list has its column and the export carries it");
+  }
 }

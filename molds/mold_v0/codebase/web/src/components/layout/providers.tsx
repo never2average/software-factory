@@ -2,8 +2,7 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import { BuiltinAuthProvider } from '@/lib/auth/builtin-client';
 import { CLERK } from '@/lib/auth/provider';
-import React, { useMemo } from 'react';
-import { clerkLocalization, useClerkWords } from '@/features/auth/components/auth-words';
+import React from 'react';
 import { ActiveThemeProvider } from '../themes/active-theme';
 import QueryProvider from './query-provider';
 import { profile } from '@/config/profile.generated';
@@ -23,15 +22,12 @@ export default function Providers({
   activeThemeValue: string;
   children: React.ReactNode;
 }) {
-  // mold_v0-266: the open sign-in or sign-up page's saved words over the shell's (none saved: the shell's, as before).
-  const words = useClerkWords();
-  const localization = useMemo(() => clerkLocalization(CLERK_WORDS, words), [words]);
   return (
     <>
       <ActiveThemeProvider initialTheme={activeThemeValue}>
         {/* The built-in sign-in (mold_v0-004) needs no provider's script: one read of /api/auth/session. */}
         {!CLERK ? <BuiltinAuthProvider><QueryProvider>{children}</QueryProvider></BuiltinAuthProvider> : <ClerkProvider
-          localization={localization}
+          localization={CLERK_WORDS}
           appearance={{
             variables: {
               colorPrimary: 'var(--primary)',

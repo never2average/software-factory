@@ -355,8 +355,8 @@ export function computeKnobs(runtime: "vm" | "vercel") {
     ...RUN_KNOBS.map((k) => ({ name: k.name, value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
     { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,
       meaning: runtime === "vercel" ? "Serverless: the autoscaler ticks on events and a cron every 5 minutes." : "A long-running server: the autoscaler ticks on a timer." },
-    { name: "Kick configured", value: kickConfigured() ? "yes" : "no", source: "env" as const,
-      meaning: "Events can trigger a tick: the autoscaler is on, PUBLIC_URL is HTTPS and APP_WORKER_TOKEN is set." },
+    { name: "Kick configured", value: kickConfigured() ? "Yes" : "No", source: "env" as const,
+      meaning: "Events can start a check: the autoscaler is on, the public address uses https and the worker token is set." },
   ];
   return [
     ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
@@ -364,8 +364,8 @@ export function computeKnobs(runtime: "vm" | "vercel") {
       meaning: `Name prefix of this deployment's sandboxes; it only ever touches sandboxes named with it${lib.NAMESPACES.length > 1 ? ` (and, until a later cleanup, with ${lib.NAMESPACES.slice(1).join(", ")}, its default before mold_v0-156)` : ""}.` },
     { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,
       meaning: runtime === "vercel" ? "Serverless: the autoscaler ticks on events and a cron every 5 minutes." : "A long-running server: the autoscaler ticks on a timer." },
-    { name: "Kick configured", value: kickConfigured() ? "yes" : "no", source: "env" as const,
-      meaning: "Events can trigger a tick: the autoscaler is on, PUBLIC_URL is HTTPS and APP_WORKER_TOKEN is set." },
+    { name: "Kick configured", value: kickConfigured() ? "Yes" : "No", source: "env" as const,
+      meaning: "Events can start a check: the autoscaler is on, the public address uses https and the worker token is set." },
   ];
 }
 

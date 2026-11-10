@@ -10,7 +10,7 @@
     { "key": "api::/api/admin/onboarding/access-pages", "reason": "the editor's read, newly recorded by the snapshot's GET sweep" },
     { "key": "api::/api/admin/onboarding/health/status::body::release::**", "reason": "the schema is at 0055_access_pages" },
     { "key": "api::/api/admin/onboarding/spend/storage::**", "reason": "one more admin_access_log row: the snapshot's own GET of /api/admin/onboarding/access-pages, logged before storage is read" },
-    { "key": "pages::/admin/requests::text", "reason": "Access requests' in-page tabs: Requests, Request form, Sign-in page" },
-    { "key": "pages::/admin/requests::links", "reason": "the same tabs' links (?section=form, ?section=sign-in)" }
+    { "key": "pages::/admin/requests::text", "reason": "Access requests' in-page tabs: Requests, Early access form" },
+    { "key": "pages::/admin/requests::links", "reason": "the same tabs' links (?section=form)" }
   ]
 }

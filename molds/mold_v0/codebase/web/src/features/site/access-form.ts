@@ -1,17 +1,17 @@
 'use client';
 /**
- * The early-access form and the sign-in words in force (mold_v0-266; src/access-pages.ts): what staff saved in Admin ›
- * Access requests (Request form, Sign-in page), else the build's own. The public pages are given them by their server
+ * The early-access form in force (mold_v0-266, mold_v0-289; src/access-pages.ts): what staff saved in Admin › Access
+ * requests, else the whole form the build declares, else the build's own. The public pages are given them by their server
  * component (./access-pages-live.ts); a form drawn without them (the portal's page for no account) asks the API once.
  * The defaults are the build's own form (src/access-request.ts defaultRequestForm), in the build's words.
  */
 import { useEffect, useState } from 'react';
-import { accessFields } from '@/config/access-request.generated';
+import { accessFields, accessForm } from '@/config/access-request.generated';
 import { landing } from '@/config/landing.generated';
 import { fill } from '@/lib/vocabulary';
-import { defaultRequestForm, type AccessFormConfig, type FormWords, type RequestPageFormSpec, type SignInConfig } from '@/lib/access-request.generated';
+import { defaultRequestForm, type AccessFormConfig, type FormWords, type RequestPageFormSpec } from '@/lib/access-request.generated';
 
-export interface LiveAccessPages { request_form: AccessFormConfig | null; sign_in: SignInConfig | null }
+export interface LiveAccessPages { request_form: AccessFormConfig | null }
 
 /** The shell's words in the build's words, as the forms said them before mold_v0-266. */
 export const formWords = (): FormWords => ({
@@ -21,9 +21,9 @@ export const formWords = (): FormWords => ({
 });
 
 /** The /request-access form as the build declares it. */
-export const requestAccessDefaults = (): AccessFormConfig => defaultRequestForm(accessFields, formWords(), null);
+export const requestAccessDefaults = (): AccessFormConfig => accessForm ?? defaultRequestForm(accessFields, formWords(), null);
 /** The landing's request page's form as the build declares it. */
-export const requestPageDefaults = (form: RequestPageFormSpec = {}): AccessFormConfig => defaultRequestForm(accessFields, formWords(), form);
+export const requestPageDefaults = (form: RequestPageFormSpec = {}): AccessFormConfig => accessForm ?? defaultRequestForm(accessFields, formWords(), form);
 /** Where the editor starts (and Reset to defaults returns to): the build's public form, its request page's when it has one. */
 export const editorDefaults = (): AccessFormConfig => (landing?.request_page ? requestPageDefaults(landing.request_page.form ?? {}) : requestAccessDefaults());
 

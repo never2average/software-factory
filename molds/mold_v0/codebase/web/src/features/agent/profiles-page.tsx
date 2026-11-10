@@ -150,7 +150,7 @@ function ProfileModal({ id, facts, onClose }: { id: string | null; facts: Facts;
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl' data-agent-profile-modal={id ?? 'new'} onKeyDown={keepTabInside}>
         {error ? <ErrorBox error={error} /> : loading ? <p className='text-muted-foreground text-sm'>Loading the profile…</p>
-          : <ProfileForm key={p ? `${p.id}@${p.version}` : 'new'} profile={p} facts={facts} onClose={onClose} />}
+          : <ProfileForm key={p ? `${p.id}@${p.version}` : 'new'} modal profile={p} facts={facts} onClose={onClose} />}
       </DialogContent>
     </Dialog>
   );
@@ -174,7 +174,7 @@ function rulesOf(g: Governance | null | undefined): Rule[] {
   ];
 }
 
-function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; facts: Facts; onClose: () => void }) {
+function ProfileForm({ profile, facts, onClose, modal = false }: { profile: Detail | null; facts: Facts; onClose: () => void; modal?: boolean }) {
   const { can } = useAdminRole();
   const editable = can('compute') && profile?.status !== 'archived';
   const c = profile?.config ?? {};
@@ -268,15 +268,17 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
   };
   const archive = useAdminAction((on: boolean) => adminApi('POST', `${BASE}/${encodeURIComponent(profile!.id)}/${on ? 'archive' : 'restore'}`), { success: (r: { profile: Detail }) => (r.profile.status === 'archived' ? 'Archived: no new session starts with it' : 'Restored') });
   const ro = !editable;
+  const intro = <>{profile ? `Version ${profile.version}${profile.source === 'pack' ? `, brought by ${profile.pack}` : ''}. Saving makes version ${profile.version + 1}; sessions already running keep theirs.` : 'Saved as version 1.'} Anything left unset is the platform setting; budgets, turns and limits are always the platform&apos;s.</>;
 
   return (
     <form className='grid gap-5' onSubmit={(e) => { e.preventDefault(); void submit(); }} data-agent-profile-form=''>
-      <DialogHeader>
-        <DialogTitle>{profile ? profile.name : 'New profile'}</DialogTitle>
-        <DialogDescription>
-          {profile ? `Version ${profile.version}${profile.source === 'pack' ? `, brought by ${profile.pack}` : ''}. Saving makes version ${profile.version + 1}; sessions already running keep theirs.` : 'Saved as version 1.'} Anything left unset is the platform setting; budgets, turns and limits are always the platform&apos;s.
-        </DialogDescription>
-      </DialogHeader>
+      {/* mold_v0-289: the Dialog parts only inside the modal (outside one Base UI throws); the panel has its own title. */}
+      {modal ? (
+        <DialogHeader>
+          <DialogTitle>{profile ? profile.name : 'New profile'}</DialogTitle>
+          <DialogDescription>{intro}</DialogDescription>
+        </DialogHeader>
+      ) : <p className='text-muted-foreground text-sm'>{intro}</p>}
       <div className='grid gap-3 sm:grid-cols-2'>
         <Field label='Name' htmlFor='ap-name'><Input id='ap-name' value={name} onChange={(e) => setName(e.target.value)} disabled={ro || !!profile?.is_default} required maxLength={80} /></Field>
         <Field label='Description' htmlFor='ap-description'><Input id='ap-description' value={description} onChange={(e) => setDescription(e.target.value)} disabled={ro} maxLength={500} /></Field>

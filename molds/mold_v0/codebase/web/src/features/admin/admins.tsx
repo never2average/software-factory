@@ -4,7 +4,7 @@
 // admins; everyone else reads. Adding an address nobody has used creates the Clerk user, who is an admin on first sign-in.
 import { useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
-import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
+import { Field, RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -79,8 +79,14 @@ export function AdminAdmins({ tabs }: { tabs?: ReactNode } = {}) {
         detailTitle={(a) => a.email ?? 'Admin'}
         detail={(a) => (
           <div className='flex flex-col gap-3 text-sm'>
-            <p><span className='font-medium'>{a.role_label}.</span> {roles.find((r) => r.id === a.role)?.help}</p>
-            {a.source === 'environment' && <p className='text-muted-foreground'>Listed in APP_PLATFORM_ADMINS on the server, so always an owner. Change it there.</p>}
+            <dl className='grid gap-x-4 gap-y-1'>
+              {a.name && <Field label='Name'>{a.name}</Field>}
+              <Field label='Email'>{a.email ?? '—'}</Field>
+              <Field label='Role'>{a.role_label}</Field>
+              <Field label='What it allows'>{roles.find((r) => r.id === a.role)?.help ?? '—'}</Field>
+              <Field label='Added by'>{a.added_by ?? (a.source === 'environment' ? 'The server\'s settings' : '—')}</Field>
+            </dl>
+            {a.source === 'environment' && <p className='text-muted-foreground'>Set on the server, so always an owner. Change it there.</p>}
           </div>
         )}
       />

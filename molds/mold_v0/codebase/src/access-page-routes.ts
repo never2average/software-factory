@@ -1,8 +1,8 @@
 /**
- * Staff routes of the early-access form and sign-in editor (mold_v0-266; src/access-pages.ts), under
- * /api/admin/onboarding (the staff guard, its access log and the role check, src/admin-roles.ts):
- *   GET  /access-pages               both pages in force, the sign-in methods there are, the latest changes (any role)
- *   GET  /access-pages/:id/changes   one page's history: each version, who, when, before and after (any role)
+ * Staff routes of the early-access form (mold_v0-266, mold_v0-289; src/access-pages.ts), under /api/admin/onboarding (the
+ * staff guard, its access log and the role check, src/admin-roles.ts). The only page is request_form; another id is 404.
+ *   GET  /access-pages               the form in force and its latest changes (any role)
+ *   GET  /access-pages/:id/changes   its history: each version, who, when, before and after (any role)
  *   PUT  /access-pages/:id           save { version, config }: a new version (Operator and up: need("accounts"))
  *   POST /access-pages/:id/reset     back to the build's defaults { version } (Operator and up)
  * Every save and reset is also a staff log line (src/admin.ts log), beside its row in access_page_changes.
@@ -21,9 +21,9 @@ const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Req
 };
 
 export function accessPageAdminRoutes(ob: Router, need: (p: "accounts") => RequestHandler, who: (req: Request, res: Response) => string) {
-  ob.get("/access-pages", answer(async () => ({ pages: await A.readAccessPages(), methods: await A.signInMethods(), changes: await A.accessPageChanges(undefined, 50) })));
+  ob.get("/access-pages", answer(async () => ({ pages: await A.readAccessPages(), changes: await A.accessPageChanges("request_form", 50) })));
   ob.get("/access-pages/:id/changes", answer(async (req) => {
-    if (!A.isAccessPageId(req.params.id)) throw new PackError("no such page (request_form or sign_in)", 404);
+    if (!A.isAccessPageId(req.params.id)) throw new PackError("no such page (request_form)", 404);
     return { changes: await A.accessPageChanges(req.params.id) };
   }));
   ob.put("/access-pages/:id", need("accounts"), answer(async (req, res) => {

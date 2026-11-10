@@ -199,6 +199,23 @@ through the same check `factory.py validate` and the build use.
   app's Key vault). `compose_remote` needs `product.domain`. At least one platform administrator.
 - mold_v1: `vm_remote` needs `deploy.server` and `product.domain`; budgets, profile and run keys are not supported.
 
+## The early-access form (`access_request`)
+
+An app's early-access form is one JSON config, declared in `access_request` in the inline pack's `pack.json` (or the app's `profile.json`). The same JSON is what the staff table in Admin › Access requests › Early access form reads and writes, and it drives the public form, its validation, the stored request, the requests list and export, and the notification email.
+
+```json
+{ "access_request": { "fields": [
+    { "key": "email", "label": "Work email", "type": "email", "required": true },
+    { "key": "company", "label": "Company", "type": "text", "required": true },
+    { "key": "seats", "label": "Seats", "type": "number" },
+    { "key": "plan", "label": "Plan", "type": "select", "options": [{ "value": "free", "label": "Free" }] },
+    { "key": "start", "label": "Start date", "type": "date" },
+    { "key": "trial", "label": "Want a trial?", "type": "boolean" }
+  ], "submit": "Request access", "thanks": { "title": "Request sent", "lines": ["We email {email}."] } } }
+```
+
+Data types: `text`, `long_text`, `email`, `number`, `select`, `multi_select`, `url`, `date`, `boolean`. A block whose fields include `email` is the whole form (`submit` and `thanks` optional); without `email` it lists questions added to the shell's own fields.
+
 ## Commands
 
 ```

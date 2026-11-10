@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction, type InviteResult, type OrgList, type OrgRow } from './lib';
 import { useResult } from './result-dialog';
 import { Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
+import { StatStrip } from '@/components/layout/section';
 import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
@@ -204,6 +205,9 @@ export function AdminRequests({ tabs }: { tabs?: ReactNode } = {}) {
     // A host pack's research of the requester's company (hostFeature('research')): its verdict, only where it exists.
     ...(hostFeature('research') ? [{ key: 'fit', label: 'Fit', type: 'select' as const, className: 'w-28', value: (q: Req) => q.research?.fit ?? (q.research_status === 'running' ? 'researching' : 'not researched'),
       render: (q: Req) => q.research_status === 'running' ? muted('Researching…') : q.research ? <span className={cn('text-sm leading-none', FIT[q.research.fit])}>{q.research.fit}</span> : muted('—') } satisfies RecordCol<Req>] : []),
+    // mold_v0-289: every question of the form in force is a column of its own (and so a column of the export), no per-field code.
+    ...answerFields.filter((f) => !f.person && !(f as FormField).hidden).map((f): RecordCol<Req> => ({
+      key: `answer_${f.key}`, label: f.label, type: 'text', className: 'w-40', value: (q) => answerText(f, q.answers?.[f.key] ?? null), render: (q) => muted(answerText(f, q.answers?.[f.key] ?? null) || '—') })),
     { key: 'work', label: 'Work email', type: 'boolean', hidden: true, value: isWork, render: (q) => muted(isWork(q) ? 'Yes' : 'No') },
     { key: 'account', label: 'Account', type: 'text', hidden: true, value: (q) => q.org_name ?? matches.get(q.id), render: (q) => (q.org_name ? <span className='block truncate text-sm leading-none'>{q.org_name}</span> : muted(matches.get(q.id) ? `matches ${matches.get(q.id)}?` : '—')) },
     { key: 'created_at', label: 'Requested', type: 'date', className: 'w-28', keep: true, value: (q) => q.created_at, render: (q) => { const d = waited(q); return (<>
@@ -213,6 +217,8 @@ export function AdminRequests({ tabs }: { tabs?: ReactNode } = {}) {
     { key: 'decided_at', label: 'Decided', type: 'date', className: 'w-28', hidden: true, value: (q) => q.decided_at, render: (q) => <When d={q.decided_at} className='text-muted-foreground text-xs leading-none' /> }
   ];
 
+  const count = (status: Req['status']) => rows.filter((q) => q.status === status).length;
+  const over2 = rows.filter((q) => q.status === 'pending' && (waited(q) ?? 0) > 2).length;
   return (
     <PageContainer>
       <ErrorBox error={error} />
@@ -220,6 +226,12 @@ export function AdminRequests({ tabs }: { tabs?: ReactNode } = {}) {
       {tabs}
       <RecordView<Req>
         id='admin-requests-v3' noun='requests' exportName='access-requests' views={VIEWS} defaultSort={[{ key: 'created_at', dir: 'desc' }]} compact={!!tabs}
+        summary={<StatStrip quad items={[
+          { label: 'Pending', value: count('pending'), said: `${count('pending')} requests pending` },
+          { label: 'Waiting over 2 days', value: over2, said: `${over2} requests waiting over 2 days` },
+          { label: 'Approved', value: count('approved'), said: `${count('approved')} requests approved` },
+          { label: 'Declined', value: count('declined'), said: `${count('declined')} requests declined` },
+        ]} />}
         rows={rows} rowKey={(q) => String(q.id)} cols={cols} actions={actions} bulk={bulk} loading={isLoading || !data}
         searchText={(q) => `${q.company} ${q.email} ${q.name ?? ''} ${answersText(q)} ${q.message ?? ''} ${q.status} ${q.org_name ?? ''} ${q.research?.category ?? ''} ${q.research?.fit ?? ''}`}
         searchPlaceholder='Search access requests'

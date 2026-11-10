@@ -133,7 +133,8 @@ export function agentAppRouter(): Router {
   // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it. mold_v0-262: only
   // platform staff set or reset it (Admin › Accounts › <account>, agentAdminRoutes below): the workspace's PUT and DELETE
   // are gone, and say where it is set.
-  r.get("/icon", answer(async (_req, res) => ({ icon: await readAgentIcon(S(res).org), can_change: false, max_bytes: AGENT_ICON_MAX_BYTES })));
+  // A store that cannot be read (none set up, or down) is the default icon, not an error page's console noise.
+  r.get("/icon", answer(async (_req, res) => ({ icon: await readAgentIcon(S(res).org).catch((e: Error) => { console.error(`agent icon: ${e.message}`); return null; }), can_change: false, max_bytes: AGENT_ICON_MAX_BYTES })));
   const staffOnly = (_req: Request, res: Response) => void res.status(403).json({ error: "The agent icon is set by the platform's staff, on the account's page." });
   r.put("/icon", staffOnly);
   r.delete("/icon", staffOnly);

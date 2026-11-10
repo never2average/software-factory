@@ -253,7 +253,7 @@ export function createApp() {
     const src = req.body?.source && typeof req.body.source === "object" ? req.body.source : {};
     const source = Object.fromEntries([...["referrer", "landing", "first_page", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].map((k) => [k, s(src[k], 300)]),
       ["country", s(req.headers["x-vercel-ip-country"], 8)], ["city", s(decodeURIComponent(String(req.headers["x-vercel-ip-city"] ?? "")), 80)]].filter(([, v]) => v));
-    // mold_v0-266: the form staff saved (Admin › Access requests › Request form, src/access-pages.ts) is the one in force:
+    // mold_v0-266: the form staff saved (Admin › Access requests › Edit early access form, src/access-pages.ts) is the one in force:
     // the request is checked against it, every field the shell's own included. Nothing saved: checked as it always was.
     const form = await accessPages.currentRequestForm();
     let answers: Record<string, unknown>;

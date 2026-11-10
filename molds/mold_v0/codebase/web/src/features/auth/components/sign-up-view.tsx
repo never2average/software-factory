@@ -5,9 +5,6 @@ import { CLERK } from '@/lib/auth/provider';
 import { accountsMode } from '@/features/site/accounts-mode';
 import { AuthShell } from './auth-shell';
 import { BuiltinSignIn } from './builtin-sign-in';
-import { ApplyClerkWords } from './auth-words';
-import { clerkAppearance } from './clerk-appearance';
-import { accessPagesLive } from '@/features/site/access-pages-live';
 
 /**
  * Under the built-in sign-in, signing up is signing in with an invited address: the same form. When accounts are
@@ -15,10 +12,8 @@ import { accessPagesLive } from '@/features/site/access-pages-live';
  */
 export default async function SignUpViewPage() {
   const inviteOnly = (await accountsMode()) === 'invite_only';
-  // mold_v0-266: the words staff saved (Admin › Access requests › Sign-in page), read on each request; else the page's own.
-  const cfg = (await accessPagesLive()).sign_in;
   return (
-    <AuthShell legal={cfg?.legal}>
+    <AuthShell>
       <div className='flex flex-col items-center gap-6'>
         {inviteOnly ? (
           <div className='bg-card text-card-foreground w-full max-w-sm rounded-xl border p-4 text-sm' data-testid='invite-only-note'>
@@ -29,12 +24,7 @@ export default async function SignUpViewPage() {
             </p>
           </div>
         ) : null}
-        {CLERK ? (
-          <>
-            {cfg ? <ApplyClerkWords words={{ page: 'sign_up', words: cfg.sign_up ?? {}, ...(cfg.social_button ? { social_button: cfg.social_button } : {}) }} /> : null}
-            <SignUp fallbackRedirectUrl='/app' signInUrl='/auth/sign-in' {...(cfg?.hidden_methods?.length ? { appearance: clerkAppearance(cfg.hidden_methods) } : {})} />
-          </>
-        ) : <BuiltinSignIn words={cfg?.sign_up} socialButton={cfg?.social_button} hidden={cfg?.hidden_methods} />}
+        {CLERK ? <SignUp fallbackRedirectUrl='/app' signInUrl='/auth/sign-in' /> : <BuiltinSignIn />}
       </div>
     </AuthShell>
   );

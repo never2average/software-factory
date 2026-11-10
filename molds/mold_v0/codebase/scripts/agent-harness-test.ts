@@ -290,8 +290,21 @@ try {
     await w2.done;
     d = await read(s.id);
     assert.equal(d.phase, "stopped");
-    assert.ok(d.ended_at && !d.can.message && !d.can.resume);
-    await assert.rejects(H.messageSession(org.orgId, s.id, member, "hello?"), /stopped/);
+    assert.ok(d.ended_at && d.can.message && !d.can.resume, "mold_v0-289: the person who started it can still send");
+    assert.ok(!(await H.readSession(org.orgId, s.id, owner)).can.message, "nobody else can");
+    assert.ok(!(await H.readSession(null, s.id, staff)).can.message, "staff cannot");
+    await assert.rejects(H.messageSession(org.orgId, s.id, owner, "hello?"), /Only the person who started/, "someone else's session stays refused");
+    await assert.rejects(H.messageSession(org.orgId, s.id, viewer, "hello?"), /Only the person who started/);
+    // mold_v0-289: on an ended session a message reopens it on the same harness session (a new wake), and it is delivered.
+    const cont = await H.messageSession(org.orgId, s.id, member, "continue the work");
+    assert.deepEqual([cont.status, cont.phase], ["continued", "waking"]);
+    assert.equal((await read(s.id)).ended_at, null, "open again");
+    const wc = await wake(s.id);
+    await until("the continued session answers it", () => agentSaid(s.id, /Echo: continue the work/));
+    await H.stopSession(org.orgId, s.id, member);
+    await wc.done;
+    assert.equal((await read(s.id)).phase, "stopped");
+    ok("an ended session continues on the starter's message, and only theirs");
     // A queued wake is withdrawn by a pause, and staff may stop one.
     const q = await H.startSession(org.orgId, member, { message: "queued" });
     await H.pauseSession(org.orgId, q.id, member);
@@ -313,7 +326,7 @@ try {
     assert.equal(d.phase, "awaiting_approval");
     assert.equal(d.pending_request?.kind, "web");
     assert.equal(d.pending_request?.subject, "docs.example.org");
-    await assert.rejects(H.messageSession(org.orgId, s.id, member, "go on"), /waiting for a decision/);
+    await assert.rejects(H.messageSession(org.orgId, s.id, owner, "not mine"), /Only the person who started/, "only the starter may send while it waits");
     await assert.rejects(H.decideRequest(org.orgId, s.id, d.pending_request!.id, H.actorOf({ user: "user_x", email: "x@example.org", accountRole: "member" }), "approve"), /Only the person who started/);
     await assert.rejects(H.decideRequest(null, s.id, d.pending_request!.id, staff, "approve"), /Staff may decline/);
     d = await H.decideRequest(org.orgId, s.id, d.pending_request!.id, member, "approve");
@@ -325,6 +338,18 @@ try {
     await park();
     await w2.done;
     assert.equal((await read(s.id)).phase, "parked");
+    // mold_v0-289: a message while a decision is pending is queued, held, and delivered by the wake the decision causes.
+    const qa = await H.startSession(org.orgId, member, { message: "fetch https://queue.example.org/page" });
+    await (await wake(qa.id)).done;
+    const qr = (await read(qa.id)).pending_request!;
+    const queued = await H.messageSession(org.orgId, qa.id, member, "queued while it waits");
+    assert.deepEqual([queued.status, queued.phase], ["queued", "awaiting_approval"], "queued while a decision is pending");
+    assert.equal((await read(qa.id)).messages.find((m) => m.body === "queued while it waits")?.status, "pending", "held until it can be taken");
+    await H.decideRequest(org.orgId, qa.id, qr.id, member, "approve");
+    const qw = await wake(qa.id);
+    await until("the queued message is delivered by that wake", () => agentSaid(qa.id, /Echo: queued while it waits/));
+    await park();
+    await qw.done;
     // A tool outside the policy: declined with a reason, parked, and its next wake is told.
     const t = await H.startSession(org.orgId, member, { message: "use DeployTool" });
     await (await wake(t.id)).done;
@@ -334,6 +359,16 @@ try {
     td = await H.decideRequest(org.orgId, t.id, td.pending_request!.id, owner, "decline", "not in this workspace");
     assert.equal(td.phase, "parked");
     assert.ok(td.messages.some((m) => m.role === "system" && /declined using DeployTool: not in this workspace/.test(m.body)));
+    // mold_v0-289: a decline with a message queued wakes it for that message.
+    const dq = await H.startSession(org.orgId, member, { message: "use DeployTool" });
+    await (await wake(dq.id)).done;
+    const dqr = (await read(dq.id)).pending_request!;
+    await H.messageSession(org.orgId, dq.id, member, "queued then declined");
+    const dqd = await H.decideRequest(org.orgId, dq.id, dqr.id, member, "decline", "no");
+    assert.equal(dqd.phase, "waking", "a decline with a queued message wakes it");
+    const dqw = await wake(dq.id);
+    await until("the queued message is delivered", () => agentSaid(dq.id, /queued then declined/));
+    await park(); await dqw.done;
     await H.messageSession(org.orgId, t.id, member, "do it another way");
     const w3 = await wake(t.id);
     await until("told of the refusal", () => agentSaid(t.id, /Echo: do it another way/));
@@ -709,14 +744,14 @@ try {
       assert.equal(d.pending_request?.subject, "mcp__app__fx_put_item");
       assert.equal(d.pending_request?.detail.workspace_tool, "fx_put_item");
       assert.match(String(d.pending_request?.detail.input), /a-new/, "what it wanted to send is shown with the request");
-      assert.ok(d.messages.some((m) => m.role === "system" && m.body === "The agent asks to use the workspace tool fx_put_item."));
+      assert.ok(d.messages.some((m) => m.role === "system" && /^The agent asks to use (?!.*fx_put_item).+\.$/.test(m.body)), "mold_v0-289: the tool's title or its name in words, never the raw name");
       assert.ok((await ca.call("get_record", { area: "fx_items", key: "a-new" })).isError, "nothing written before the decision");
       const [t1] = await db.query<{ revoked_reason: string }>("SELECT revoked_reason FROM harness_session_tokens WHERE run_id = $1", [w.claim.run.id]);
       assert.equal(t1!.revoked_reason, "awaiting a decision", "the wake's token revoked as it stopped");
       d = await H.decideRequest(A.orgId, sid, d.pending_request!.id, person, "approve");
       assert.equal(d.reach!.tools.find((t) => t.name === "fx_put_item")?.asks, false, "approved: this session uses it without asking from now on");
       const w2 = await wake(sid);
-      await until("woken", () => said(sid, /approved: using the workspace tool fx_put_item/));
+      await until("woken", () => said(sid, /approved: using (?!.*fx_put_item)/));
       await H.messageSession(A.orgId, sid, person, `mcp fx_put_item {"key":"a-new","summary":"written by the agent ${STAMP}"}`);
       await until("written", () => said(sid, /^MCP fx_put_item: /));
       const got = await ca.call("get_record", { area: "fx_items", key: "a-new" });

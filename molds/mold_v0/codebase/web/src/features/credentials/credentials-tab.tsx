@@ -120,7 +120,7 @@ export function CredentialsTab() {
   const n = settingsCounts(rows.flatMap((r) => r.units ?? [{ status: r.status, required: r.required, changed_at: r.changed_at }]));
   return (
     <RecordView<Row>
-      id='settings-credentials' compact noun={rows.length === 1 ? 'credential' : 'credentials'} properties
+      id='settings-credentials' compact noun={rows.length === 1 ? 'credential' : 'credentials'}
       // mold_v0-278: every row opens its panel beside the list (?id=); a record's row says its credentials are on the
       // record's page, Open in its own page (and the panel's link) taking you there.
       pageHref={(r) => r.href ?? null}

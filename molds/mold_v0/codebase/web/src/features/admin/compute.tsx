@@ -225,7 +225,7 @@ function Freshness({ s }: { s: Summary }) {
   const age = ageOf(s.tick.at);
   const tone = age == null || age > 600 ? 'red' : age > 3 * s.tick.tick_seconds ? 'amber' : null;
   const runtime = s.runtime === 'vercel' ? 'Vercel' : 'VM';
-  const text = age == null ? 'Not ticked yet' : `Ticked ${dur(age)} ago`;
+  const text = age == null ? 'Has not checked yet' : `Checked ${dur(age)} ago`;
   const title = [s.tick.at && `Last autoscaler tick ${new Date(s.tick.at).toLocaleString()}${s.tick.holder ? ` by ${s.tick.holder}` : ''}`,
     tone === 'red' && s.runtime === 'vercel' && 'On Vercel, ticks only happen when something happens; queued work may wait for the next 5-minute cron.',
     `Runtime ${runtime} · data as of ${new Date(s.at).toLocaleTimeString()}`].filter(Boolean).join('\n');
@@ -315,7 +315,7 @@ function Meter({ used, limit, parts, status }: { used: number; limit: number; pa
 /** Where a setting's value comes from: set here (by whom, when), the environment, or the default. */
 function SourceOf({ s }: { s: Setting }) {
   if (s.source === 'set') return <span>set{s.updated_by && ` by ${s.updated_by}`}{s.updated_at && <span className='text-muted-foreground'>, <When d={s.updated_at} /></span>}</span>;
-  return <span className='text-muted-foreground'>{s.source === 'env' ? 'env' : 'default'}</span>;
+  return <span className='text-muted-foreground'>{s.source === 'env' ? 'Server setting' : 'Default'}</span>;
 }
 
 /**
@@ -499,16 +499,18 @@ function Environment({ s, boat, onTest, testing }: { s: Summary; boat: boolean; 
   ];
   const rows: EnvRow[] = [
     ...(boat ? boatRows : []),
-    ...s.knobs.map((k) => ({ name: k.name, value: k.value, source: k.source, sourceText: k.source, meaning: k.meaning, meaningText: k.meaning })),
+    ...s.knobs.map((k) => { const by = k.source === 'env' ? 'Server setting' : 'Default'; return { name: k.name, value: k.value, source: by, sourceText: by, meaning: k.meaning, meaningText: k.meaning }; }),
     ...RELATED.map((r) => ({ ...r, s: s.settings.find((x) => x.key === r.key) })).filter((r) => r.s).map((r) => ({
       name: r.key, value: String(r.s!.value), source: <SourceOf s={r.s!} />, sourceText: r.s!.source, meaningText: `${r.s!.label}. Change it in ${r.page}`,
       meaning: <>{r.s!.label}. <Link href={r.href} className='text-foreground hover:underline'>Change it in {r.page}</Link></>
     }))
   ];
   const cols: RecordCol<EnvRow>[] = [
-    { key: 'name', label: 'Name', title: true, keep: true, type: 'text', value: (r) => r.name, render: (r) => <Mono>{r.name}</Mono> },
-    { key: 'value', label: 'Value', type: 'text', value: (r) => r.value, render: (r) => <Mono>{r.value}</Mono> },
-    { key: 'source', label: 'Source', type: 'select', value: (r) => r.sourceText, render: (r) => <span className='text-xs'>{r.source}</span> },
+    // mold_v0-289: what it is in plain words first; the variable's name only on request (the columns menu).
+    { key: 'meaning', label: 'What it is', title: true, keep: true, type: 'text', value: (r) => r.meaningText, render: (r) => <span className='whitespace-normal'>{r.meaning}</span> },
+    { key: 'value', label: 'Value', type: 'text', value: (r) => r.value, render: (r) => <span>{r.value}</span> },
+    { key: 'source', label: 'Set by', type: 'select', value: (r) => r.sourceText, render: (r) => <span className='text-xs'>{r.source}</span> },
+    { key: 'name', label: 'Variable', hidden: true, type: 'text', value: (r) => r.name, render: (r) => <Mono>{r.name}</Mono> },
     { key: 'meaning', label: 'Meaning', className: 'min-w-80', type: 'text', value: (r) => r.meaningText, render: (r) => <span className='text-muted-foreground text-xs whitespace-normal'>{r.meaning}</span> }
   ];
   const cards = <Cards items={[

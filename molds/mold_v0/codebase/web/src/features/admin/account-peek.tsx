@@ -185,7 +185,7 @@ function AccountDialog({ kind, orgs, run, show, close }: { kind: Kind; orgs: Org
   const go = async (f: () => Promise<unknown>) => { setBusy(true); await f(); setBusy(false); };
   const spec: Record<Exclude<Kind, 'tip'>, { title: string; description: string; submit: string; ok: boolean; body: ReactNode; act: () => Promise<unknown> }> = {
     invite: {
-      title: `Invite to ${o.name}`, description: 'Clerk emails the invitation; without Clerk the person gets a key link.', submit: 'Invite', ok: !!a.trim(),
+      title: `Invite to ${o.name}`, description: 'They get an email with a link to join.', submit: 'Invite', ok: !!a.trim(),
       body: (<div className='grid gap-3 sm:grid-cols-[1fr_8rem]'>
         <Input type='email' required autoFocus placeholder='colleague@company.com' aria-label='Email' value={a} onChange={(e) => setA(e.target.value)} />
         <NativeSelect aria-label='Role' value={role} onChange={(e) => setRole(e.target.value)} className='w-full'>
@@ -390,7 +390,7 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
 /** Plan and where the subscription stands; "active" goes without saying. `stripeOn` is unknown until the detail loads. */
 function planLine(s: Org['subscription'], stripeOn: boolean | undefined): ReactNode {
   if (stripeOn === undefined && !s) return dash;
-  if (stripeOn === false) return <span className='text-muted-foreground'>Stripe off</span>;
+  if (stripeOn === false) return <span className='text-muted-foreground'>Billing is not connected</span>;
   if (!s) return <span className='text-muted-foreground'>No subscription</span>;
   const state = s.cancel_at_period_end ? <span className={amber}>cancels <When d={s.renews_at} /></span>
     : s.status === 'trialing' ? <>trial ends <When d={s.trial_end} /></>
@@ -466,10 +466,10 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
 
       <dl>
         <Field label='Customer'>
-          {org.stripe_customer_id ? <CopyText value={org.stripe_customer_id} ok='Customer id copied' /> : <span className='text-muted-foreground'>{stripeOn ? 'No Stripe customer yet' : 'Stripe off'}</span>}
+          {org.stripe_customer_id ? <CopyText value={org.stripe_customer_id} ok='Customer id copied' /> : <span className='text-muted-foreground'>{stripeOn ? 'No billing customer yet' : 'Billing is not connected'}</span>}
         </Field>
         <Field label='Stage'>
-          <span className='block truncate' title={`${org.stage_label} · next: ${org.next_step}`}>{org.stage_label}<span className='text-muted-foreground'> · next: {org.next_step}</span></span>
+          <span className='block break-words whitespace-normal'>{org.stage_label}<span className='text-muted-foreground'> · next: {org.next_step}</span></span>
         </Field>
         <Field label='Access'>
           {org.members || org.pending_invites || org.active_keys ? access.filter(Boolean).join(' · ') : <span className='text-muted-foreground'>No one yet</span>}

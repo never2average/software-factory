@@ -58,7 +58,7 @@ export function AdminOverview() {
             ]}
           />
 
-          <Section title='Funnel' description='Accounts created in the period, by the furthest step they reached. On the right, the share of the step before that stopped short of this one.'
+          <Section title='Funnel'
             action={<DateRangePicker value={range} onChange={setRange} />}>
             {/* Labels wrap rather than cut off (mold_v0-170); on a phone each step's label sits on its own line over its bar. */}
             <ol className='grid gap-x-3 gap-y-2.5 sm:gap-y-2'>
@@ -83,7 +83,7 @@ export function AdminOverview() {
             </ol>
           </Section>
 
-          <Section title='Needs attention' description='Accounts where a person should step in.'>
+          <Section title='Needs attention'>
             <div className='relative'>
               <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
               <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder='Search accounts, contacts or issues' aria-label='Search accounts needing attention' className='h-9 pl-8' />

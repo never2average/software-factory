@@ -88,7 +88,7 @@ export async function healthRuns(q: Record<string, unknown>) {
         GROUP BY r.status`, [...p, REFUSED_RETRY_EVENT]),
     db.query<Record<string, unknown>>(
       `/* tenant: internal: admin Health (staff), every account's latest failed runs */
-       SELECT r.id, r.pack, r.kind, coalesce(r.spec->>'runner', '') = 'agent-workspace' AS agent, r.error_kind, r.error, r.attempt, r.max_attempts,
+       SELECT (SELECT /* tenant: the run's own session */ h.title FROM harness_sessions h WHERE h.id = r.harness_session_id AND h.org_id = r.org_id) AS title, r.id, r.pack, r.kind, coalesce(r.spec->>'runner', '') = 'agent-workspace' AS agent, r.error_kind, r.error, r.attempt, r.max_attempts,
               r.created_at, r.ended_at, extract(epoch FROM r.ended_at - r.started_at) AS seconds, ${RUN_USD} AS usd, o.name AS account,
               EXISTS (SELECT 1 FROM run_events e WHERE e.run_id = r.id AND e.type = $3) AS refused_retry
          FROM runs r JOIN organizations o ON o.id = r.org_id
@@ -124,7 +124,7 @@ export async function healthRuns(q: Record<string, unknown>) {
     by_error_kind: byErrorKind,
     kinds: kindRows.sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)),
     daily: series,
-    recent_failed: recent.map((r) => ({ id: String(r.id), pack: String(r.pack), kind: String(r.kind), label: labelOf(String(r.pack), String(r.kind)), agent: Boolean(r.agent),
+    recent_failed: recent.map((r) => ({ id: String(r.id), pack: String(r.pack), kind: String(r.kind), label: (r.title as string | null) ?? labelOf(String(r.pack), String(r.kind)), agent: Boolean(r.agent),
       error_kind: (r.error_kind as string | null) ?? null, error: r.error ? safeError(r.error) : null, attempt: n(r.attempt), max_attempts: n(r.max_attempts),
       created_at: iso(r.created_at), ended_at: iso(r.ended_at), seconds: secs(r.seconds), usd: usd(n(r.usd)), account: String(r.account ?? ""), refused_retry: Boolean(r.refused_retry) })),
   };
@@ -135,13 +135,13 @@ export async function healthRunEvents(runId: string) {
   const db = await getDb();
   const [run] = await db.query<Record<string, unknown>>(
     `/* tenant: internal: admin Health (staff), one run by id */
-     SELECT r.id, r.pack, r.kind, r.status, r.error_kind, r.attempt, r.created_at, r.ended_at, o.name AS account FROM runs r JOIN organizations o ON o.id = r.org_id WHERE r.id = $1`, [String(runId)]);
+     SELECT r.id, r.pack, r.kind, r.status, r.error_kind, r.attempt, r.created_at, r.ended_at, o.name AS account, (SELECT /* tenant: the run's own session */ h.title FROM harness_sessions h WHERE h.id = r.harness_session_id AND h.org_id = r.org_id) AS title FROM runs r JOIN organizations o ON o.id = r.org_id WHERE r.id = $1`, [String(runId)]);
   if (!run) throw Object.assign(new Error("run not found"), { status: 404 });
   const events = await db.query<{ id: number; attempt: number; type: string; data: Record<string, unknown> | null; at: Date }>(
     "/* tenant: internal: admin Health (staff), one run's events, by run id */ SELECT id, attempt, type, data, at FROM run_events WHERE run_id = $1 ORDER BY id LIMIT 500", [String(runId)]);
   const kinds = jobKinds();
   return {
-    run: { id: String(run.id), pack: String(run.pack), kind: String(run.kind), label: kinds.find((k) => k.pack === run.pack && k.name === run.kind)?.label ?? String(run.kind),
+    run: { id: String(run.id), pack: String(run.pack), kind: String(run.kind), label: (run.title as string | null) ?? kinds.find((k) => k.pack === run.pack && k.name === run.kind)?.label ?? String(run.kind),
       status: String(run.status), error_kind: (run.error_kind as string | null) ?? null, attempt: n(run.attempt), created_at: iso(run.created_at), ended_at: iso(run.ended_at), account: String(run.account ?? "") },
     events: events.map((e) => {
       const d = e.data ?? {};

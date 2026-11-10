@@ -5,6 +5,7 @@
 // record of an area their role may not read, is never shown.
 import Link from 'next/link';
 import { Icons } from '@/components/icons';
+import { fill } from '@/lib/vocabulary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { featureOn } from '@/config/features';
 import { packTabs } from '@/config/pack-nav.generated';
@@ -45,9 +46,9 @@ const Empty = ({ title, text }: { title: string; text: string }) => (
 export function RecentRunsCard() {
   const { data, error } = useOrgLoad(() => getJson<{ runs: RecentRun[] }>('/api/home/recent-runs'));
   return (
-    <GridCell title='Recent runs' icon={<Icons.play />} description='The latest runs in this workspace.'>
+    <GridCell title={fill('Recent {runs}')} icon={<Icons.play />}>
       {error ? <ErrorState error={error} /> : !data ? <Loading label='Loading recent runs' /> : !data.runs.length ? <Empty title='No runs yet' text='Runs show here as soon as one starts.' /> : (
-        <ul className='flex flex-col gap-0.5' aria-label='Recent runs' data-recent-runs=''>
+        <ul className='flex flex-col gap-0.5' aria-label={fill('Recent {runs}')} data-recent-runs=''>
           {data.runs.map((r) => (
             <li key={r.id}>
               <Link href={runHref(r)} className='hover:bg-muted/60 flex items-center gap-3 rounded-lg px-2 py-2 text-sm'>

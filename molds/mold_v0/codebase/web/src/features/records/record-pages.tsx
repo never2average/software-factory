@@ -28,12 +28,13 @@ import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import { Sparklines } from '@/features/tabs/sparklines';
+import { singular } from '@/features/tabs/run-rows';
 import { FormHost, isWebAddress, REPOSITORY_NAME, useAreaAction } from '@/features/tabs/tab-action';
 import { useRecordCredentials } from '@/features/credentials/record-credentials';
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
-import { LINKED_PARAM, layoutOf, parseLinked } from './detail-layout';
+import { LINKED_PARAM, columnUnit, layoutOf, numberWords, parseLinked } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
 import { RowCreateMenu } from './row-create';
 import { PANEL_TAB_PARAM } from '@/lib/split-panel';
@@ -146,13 +147,10 @@ export interface RecordSource {
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
 function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] = [], base: 'app' | 'admin' = 'app'): RecordCol<RecordRow>[] {
   const record: RecordCol<RecordRow> = {
-    key: '_record', label: source?.title?.label ?? 'Record', title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
+    key: '_record', label: source?.title?.label ?? singular(area.label), title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
     value: source?.title?.value ?? ((r) => r.title || r.key),
     render: source?.render ?? ((r) => (
-      <span className='flex min-w-0 flex-col gap-1'>
-        <span className='leading-snug font-medium'>{r.title || r.key}</span>
-        {r.title && r.title !== r.key && <span className='text-muted-foreground font-mono text-xs leading-none break-all'>{r.key}</span>}
-      </span>
+      <span className='leading-snug font-medium'>{r.title || r.key}</span>
     ))
   };
   const hidden = new Set([...(source?.hidden ?? []), ...extra.filter((n) => !area.list_columns.includes(n))]);
@@ -177,10 +175,13 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
           const keys = (Array.isArray(r.data[name]) ? r.data[name] as unknown[] : [r.data[name]]).filter((k): k is string => typeof k === 'string' && k !== '');
           if (keys.length) return <span className='line-clamp-2' data-ref-cell={name}>{keys.map((k, i) => <span key={k}>{i > 0 && ', '}<Link href={`/${base}/records/${to}/${encodeURIComponent(k)}`} className='underline-offset-4 hover:underline' onClick={(e) => e.stopPropagation()}>{titles[k] ?? k}</Link></span>)}</span>;
         }
-        const chips = chipValues(f, r.data[name]);
+        const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
+        // mold_v0-289: a number with its field's or its page's unit ($0.42, 5m 0s), a date on one line.
+        const unit = type === 'number' ? (f as { unit?: string } | undefined)?.unit ?? columnUnit(area, name) : undefined;
+        if (unit && r.data[name] != null) return <span className='tabular-nums'>{moneyOr(r.data[name], unit)}</span>;
         const t = fieldText(f, r.data[name], r.key);
-        return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums')}>{t}</span> : dash;
+        return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums', type === 'date' && 'whitespace-nowrap')}>{t}</span> : dash;
       }
     };
   });
@@ -199,6 +200,13 @@ export const refWords = (v: unknown, titles?: Record<string, string>) => (Array.
 export const chipValues = (f: RecordFieldSpec | undefined, v: unknown): string[] | null =>
   f && f.type === 'json' && (f as RecordFieldSpec & { display?: string }).display === 'chips' && featureOn('record_pages') && Array.isArray(v) && v.length
     && v.every((x) => typeof x === 'string' || typeof x === 'number') ? v.map(String) : null;
+/** A number in its unit: "$0.42" for dollars, else the record page's words for a unit (5m 0s, 87.4%). */
+const moneyOr = (v: unknown, unit: string) => (/^(usd|\$)$/i.test(unit.trim()) ? `$${Number(v).toFixed(2)}` : numberWords(v, unit));
+
+/** A chip's words, when its field asks for them (pack field `chip_words: true`, mold_v0-289): web-app reads "Web app". */
+const chipWords = (f: RecordFieldSpec | undefined, values: string[] | null) => !values || !(f as { chip_words?: boolean } | undefined)?.chip_words ? values
+  : values.map((x) => x.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase()));
+
 /** A list of short strings as chips (mold_v0-262, a json field with `display: chips`). */
 export function Chips({ values, max }: { values: string[]; max?: number }) {
   const shown = max ? values.slice(0, max) : values;
