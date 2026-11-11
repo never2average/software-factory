@@ -102,7 +102,11 @@ export function searchDocs(question: string, areas: DocsArea[], k = SOURCES): (D
 const dailyMax = () => Math.max(0, settingNumber("DOCS_ANSWERS_DAILY_MAX"));
 const perMinute = () => Math.max(0, settingNumber("DOCS_ANSWERS_PER_MINUTE"));
 
-/** Model calls today (UTC) across everyone, and this person's in the last minute. */
+/** The two limits (the list answers, src/list-answers.ts, share them). */
+export const answerLimits = () => ({ daily: dailyMax(), perMinute: perMinute() });
+
+/** Model calls today (UTC) across everyone, and this person's in the last minute (docs and list answers together). */
+export async function answerUsage(userKey: string) { return usage(userKey); }
 async function usage(userKey: string) {
   const [r] = await (await getDb()).query<{ today: number; minute: number }>(
     `SELECT count(*) FILTER (WHERE at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::int AS today,

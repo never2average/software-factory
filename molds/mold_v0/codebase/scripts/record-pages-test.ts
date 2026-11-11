@@ -209,7 +209,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(code, /<RecordTableView /, "the access log draws the records pages' table");
   assert.doesNotMatch(code, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
   assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, above the search row (the table's summary)");
-  assert.match(code, /primary: <CsvLink href=\{csv\} \/>/, "Download CSV: the server's file of every entry");
+  // mold_v0-294: Download logs is an item of the list's Actions ▾ menu (it was a button of its own).
+  assert.match(code, /exports: \[csvItem\(csv\)\]/, "Download CSV: the server's file of every entry");
+  assert.match(code, /function csvItem\(href: string\): RowAction \{[\s\S]*?label: 'Download logs'[\s\S]*?a\.href = href; a\.download = ''/, "Download logs: the same CSV, downloaded from the menu");
   assert.match(code, /title: \{ label: 'When', type: 'date'/, "the entry's time: sorted and filtered by date range");
   // mold_v0-286: filters on who, what, workspace (staff), the result and the date range (When).
   for (const [name, type] of [["who", "enum"], ["what", "text"], ["workspace", "enum"], ["result", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);
@@ -278,8 +280,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(st, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
   assert.match(st, /summary=\{<Sparklines url=\{consoleUrl\(area\.name, 'sparklines'\)\}/, "its four cards above the search row, from the staff route");
   // mold_v0-221: New <noun> the primary action, Import beside it, on every shared area (a repository's too).
-  assert.match(st, /\{form\.create && <ToolbarAction label=\{`New \$\{noun\}`\}/, "New <noun>: the primary action at the search row's right end, only when the server offers create");
-  assert.match(st, /\{form\.import && \([\s\S]{0,80}<Button type='button' variant='outline' onClick=\{\(\) => setImporting\(true\)\}/, "Import: the search row's secondary action, before New, only when the server offers import");
+  assert.match(st, /toolbarAction=\{form\?\.create \? <ToolbarAction label=\{`New \$\{noun\}`\}/, "New <noun>: the primary action at the search row's right end, only when the server offers create");
+  // mold_v0-294: Import is an item of the search row's Actions ▾ menu (before New), not a button of its own.
+  assert.match(st, /importAction=\{form\?\.import \? \{ label: `Import \$\{area\.label\}`[^}]*onSelect: \(\) => setImporting\(true\)/, "Import: the search row's secondary action (Actions ▾), before New, only when the server offers import");
   assert.match(st, /<ImportRecordsForm area=\{area\}/, "the import card");
   assert.doesNotMatch(st, /\bFab\b|fab=/, "no floating action");
   assert.match(st, /rowActions=\{form\?\.edit \|\| form\?\.remove \?/, "Edit (Override) and Remove on an open record, only when the server offers them");

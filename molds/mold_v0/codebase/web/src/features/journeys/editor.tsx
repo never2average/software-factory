@@ -3,7 +3,7 @@
 // /app Setup and /app/journeys, written on /admin/journeys (./admin.tsx) and promoted there. Progress on /app comes from
 // real tool calls.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionsMenu } from '@/components/layout/record-view';
+import { RowMenu } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -137,7 +137,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
                       </span>
                       <Icons.chevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', isOpen && 'rotate-180')} />
                     </button>
-                    <ActionsMenu label={`Stage ${i + 1} actions`} items={[
+                    <RowMenu label={`Stage ${i + 1} actions`} items={[
                       { label: 'Move up', icon: <Icons.chevronUp />, disabled: i === 0, onSelect: () => moveStage(i, -1) },
                       { label: 'Move down', icon: <Icons.chevronDown />, disabled: i === d.stages.length - 1, onSelect: () => moveStage(i, 1) },
                       { label: 'Duplicate', icon: <Icons.page />, disabled: d.stages.length >= 12, onSelect: () => { setD((x) => ({ ...x, stages: [...x.stages.slice(0, i + 1), { ...st, id: undefined, title: `${st.title} (copy)`, tools: [...st.tools] }, ...x.stages.slice(i + 1)] })); setOpen(i + 1); } },

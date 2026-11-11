@@ -9,7 +9,7 @@ import PageContainer from '@/components/layout/page-container';
 import { Badge } from '@/components/ui/badge';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { EmptyState } from '@/features/tabs/empty';
-import { ExportRowsButton } from '@/features/tabs/export';
+import { exportRowsItem } from '@/features/tabs/export';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
@@ -116,7 +116,7 @@ export function NoticesPage() {
           defaultSort={[{ key: 'due', dir: 'asc' }]}
           searchText={(n) => `${n.title ?? ''} ${n.key} ${n.area_label} ${n.due_on} ${n.what ?? ''}`}
           searchPlaceholder='Search notices'
-          primary={data?.notices.length ? <ExportRowsButton name='notices' rows={data.notices} cols={cols} /> : undefined}
+          exports={data?.notices.length ? [exportRowsItem({ name: 'notices', rows: data.notices, cols })] : undefined}
           empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-notices' empty={{
             title: 'Nothing is due soon.',
             text: 'A record shows here when its due date comes within its area\'s window. Checked once a day; owners also get them by email.',

@@ -102,10 +102,10 @@ function MemoryTable({ d, section }: { d: Ctx; section: ContextSection }) {
         u.user_id === subject && items ? items.length : u.memories)}</NativeSelectOption>)}
     </NativeSelect>
   );
-  // One button plus RecordView's ▾ menu holding Import and Export.
+  // One button plus the search row's Actions ▾ menu holding Import and Export (mold_v0-294).
   const primary = !noSubject && <Allowed need='edit'><Button onClick={() => setEditing({})}><Icons.add /> Add memory</Button></Allowed>;
-  const primaryMenu: RowAction[] | undefined = noSubject ? undefined : [
-    lock({ label: 'Import CSV or JSON', icon: <Icons.upload />, onSelect: () => file.current?.click() }, 'edit'),
+  const imports: RowAction[] | undefined = noSubject ? undefined : [lock({ label: 'Import CSV or JSON', icon: <Icons.upload />, onSelect: () => file.current?.click() }, 'edit')];
+  const exports: RowAction[] | undefined = noSubject ? undefined : [
     { label: 'Export CSV', icon: <Icons.download />, disabled: !items?.length, onSelect: () => { if (items) exportCsv(items, label, section === 'products'); } }
   ];
   return (
@@ -120,7 +120,7 @@ function MemoryTable({ d, section }: { d: Ctx; section: ContextSection }) {
         searchText={(m) => `${m.kind} ${m.body} ${m.created_by ?? ''} ${m.subject_name ?? ''}`}
         searchPlaceholder={`Search ${label ? `${label === words().you_label ? 'your' : `${label}'s`} ` : ''}memory`}
         filters={picker || undefined}
-        primary={primary || undefined} primaryMenu={primaryMenu}
+        primary={primary || undefined} imports={imports} exports={exports}
         empty={noSubject ? 'Nobody to show.' : 'Nothing remembered yet. Add the first memory, or import a CSV or JSON file.'}
         detailTitle={(m) => `${m.kind[0].toUpperCase()}${m.kind.slice(1)}${m.subject_name && section === 'products' ? ` · ${m.subject_name}` : ''}`}
         detail={(m) => (

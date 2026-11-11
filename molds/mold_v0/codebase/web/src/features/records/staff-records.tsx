@@ -181,14 +181,9 @@ export function StaffRecordListPage({ area, bare = false }: { area: RecordAreaSp
       <RecordTableView key={round} area={area} base='admin' url={`${recordsApi('admin')}/${area.name}`} id={`admin-records-${area.name}`}
         empty={<RecordEmpty area={area} base='admin' />}
         summary={<Sparklines url={consoleUrl(area.name, 'sparklines')} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-        toolbarAction={form?.create || form?.import ? (<>
-          {form.import && (
-            <Button type='button' variant='outline' onClick={() => setImporting(true)} aria-label='Import' title='Import' data-toolbar-import='' className='shrink-0 max-sm:w-8 max-sm:px-0'>
-              <Icons.upload /><span className='hidden sm:inline'>Import</span>
-            </Button>
-          )}
-          {form.create && <ToolbarAction label={`New ${noun}`} icon={<Icons.add />} onClick={() => setCreating(true)} />}
-        </>) : undefined}
+        // mold_v0-294: Import is an item of the search row's Actions ▾ menu (before Export); New <noun> the primary action after it.
+        importAction={form?.import ? { label: `Import ${area.label}`, icon: <Icons.upload />, hint: 'CSV or JSON', onSelect: () => setImporting(true), testId: 'toolbar-import' } : null}
+        toolbarAction={form?.create ? <ToolbarAction label={`New ${noun}`} icon={<Icons.add />} onClick={() => setCreating(true)} /> : undefined}
         rowActions={form?.edit || form?.remove ? (r) => rowItems({ area, form, row: r, edit: () => setEditing(r), removed: reload }) : undefined}
         detailNote={(r) => <ProvenanceFields row={r} form={form} />} />
       </FormHost>

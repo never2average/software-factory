@@ -16,9 +16,8 @@
 // (GET /api/admin/audit/*). With both trails on, both are one list, newest first (mold_v0-270).
 import { useEffect, useMemo, useState } from 'react';
 import PageContainer from '@/components/layout/page-container';
-import { Field } from '@/components/layout/record-view';
+import { Field, type RowAction } from '@/components/layout/record-view';
 import { Icons } from '@/components/icons';
-import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { LIST_MAX, RecordTableView, type RecordRow, type RecordSource } from '@/features/records/record-pages';
 import { toast } from 'sonner';
@@ -172,9 +171,10 @@ async function loadEntries(api: string) {
   return { records: all.slice(0, LIST_MAX), more: parts.some((p) => p.more) || all.length > LIST_MAX };
 }
 
-function CsvLink({ href }: { href: string }) {
-  // Operator, 2026-11-09: the spreadsheet icon and "Download logs" (the file is the same CSV, every entry).
-  return <Button variant='outline' size='sm' render={<a href={href} download />}><Icons.spreadsheet /> Download logs</Button>;
+/** Download logs, an item of the list's Actions ▾ menu (mold_v0-294): the file is the same CSV, every entry. */
+function csvItem(href: string): RowAction {
+  // Operator, 2026-11-09: the spreadsheet icon and "Download logs".
+  return { label: 'Download logs', icon: <Icons.spreadsheet />, testId: 'download-logs', onSelect: () => { const a = document.createElement('a'); a.href = href; a.download = ''; document.body.append(a); a.click(); a.remove(); } };
 }
 
 /** The access log on the records table: the rows through the data adapter, the four cards above the search row. */
@@ -184,7 +184,7 @@ function TrailTable({ api, base, fleet, id }: { api: string; base: 'app' | 'admi
   const area = useMemo(() => accessArea(fleet), [fleet]);
   const csv = `${api}/${which}.csv`, cards = `${api}/${which}/sparklines`;
   const source = useMemo<RecordSource>(() => ({
-    key: `${api}/${which}`, load: () => loadEntries(api), primary: <CsvLink href={csv} />, noun: 'entries', hidden: HIDDEN, updated: false,
+    key: `${api}/${which}`, load: () => loadEntries(api), exports: [csvItem(csv)], noun: 'entries', hidden: HIDDEN, updated: false,
     title: { label: 'When', type: 'date', value: (r) => String(r.data.at ?? r.updated_at) }, defaultSort: [{ key: '_record', dir: 'desc' }],
     render: (r) => <span className='text-sm whitespace-nowrap tabular-nums'>{r.title}</span>,
     detailTitle: (r) => String(r.data.what ?? ''),

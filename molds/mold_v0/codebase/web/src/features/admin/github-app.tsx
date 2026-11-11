@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { ActionsMenu, useListAsk } from '@/components/layout/actions-menu';
+import { listAskContext } from '@/lib/toolbar-actions';
 import { Icons } from '@/components/icons';
 import { downloadCsv, today } from '@/lib/csv';
 import { adminApi, ApiError } from '@/lib/api-client';
@@ -97,6 +99,8 @@ export function GithubAppPanel({ data }: { data: GithubAppView }) {
 
 type Show = 'active' | 'ended' | 'all';
 const SHOW: readonly (readonly [Show, string])[] = [['active', 'Active'], ['ended', 'Ended'], ['all', 'All']];
+const CSV_HEAD = ['Workspace', 'Slug', 'GitHub account', 'Installation', 'Repositories', 'Status', 'Connected', 'Connected by'];
+const csvRow = (i: Installation) => [i.workspace.name, i.workspace.slug, i.account, i.installation_id, i.repository_selection === 'all' ? `all (${i.repositories})` : i.repositories, statusOf(i), i.connected_at, i.connected_by?.replace(/^customer:/, '') ?? ''];
 const statusOf = (i: Installation) => (i.removed_at ? (i.removed_reason ?? 'ended').replaceAll('_', ' ') : i.suspended ? 'suspended' : 'live');
 
 /**
@@ -111,8 +115,8 @@ export function GithubInstallationsDialog({ data, open, onOpenChange }: { data: 
   const rows = data.installations
     .filter((i) => (show === 'all' ? true : show === 'ended' ? !!i.removed_at : !i.removed_at))
     .filter((i) => { const t = `${i.workspace.name} ${i.workspace.slug} ${i.account} ${i.installation_id} ${statusOf(i)} ${i.connected_by ?? ''}`.toLowerCase(); return words.every((w) => t.includes(w)); });
-  const exportRows = () => downloadCsv(`github-app-installations-${today()}.csv`, ['Workspace', 'Slug', 'GitHub account', 'Installation', 'Repositories', 'Status', 'Connected', 'Connected by'],
-    rows.map((i) => [i.workspace.name, i.workspace.slug, i.account, i.installation_id, i.repository_selection === 'all' ? `all (${i.repositories})` : i.repositories, statusOf(i), i.connected_at, i.connected_by?.replace(/^customer:/, '') ?? '']));
+  const ask = useListAsk(() => listAskContext({ list: 'GitHub App installations', search: q, filters: [`show ${show}`], columns: CSV_HEAD, rows: rows.map(csvRow) }));
+  const exportRows = () => downloadCsv(`github-app-installations-${today()}.csv`, CSV_HEAD, rows.map(csvRow));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='flex max-h-[85dvh] flex-col gap-3 sm:max-w-4xl' data-testid='github-installations'>
@@ -128,7 +132,8 @@ export function GithubInstallationsDialog({ data, open, onOpenChange }: { data: 
           <NativeSelect aria-label='Show' value={show} onChange={(e) => setShow(e.target.value as Show)} data-installations-show=''>
             {SHOW.map(([v, l]) => <NativeSelectOption key={v} value={v}>{l}</NativeSelectOption>)}
           </NativeSelect>
-          <Button variant='ghost' size='icon' aria-label='Export CSV' title={`Export CSV (${rows.length} rows)`} onClick={exportRows} disabled={!rows.length}><Icons.download /></Button>
+          <ActionsMenu exports={[{ label: `Export CSV (${rows.length} rows)`, icon: <Icons.download />, onSelect: exportRows, disabled: !rows.length, testId: 'export-csv' }]} ask={ask.open} />
+          {ask.sheet}
         </div>
         <div className='min-h-0 overflow-y-auto'>
           <DataList<Installation> rows={rows} noun='installations' minWidth={640} empty={q || show !== 'active' ? 'No installation matches.' : 'No workspace has GitHub connected now.'} cols={[

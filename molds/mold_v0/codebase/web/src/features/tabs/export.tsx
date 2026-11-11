@@ -8,10 +8,11 @@
 // Export (its search row, just left of the primary action) writes the view: when search or a filter narrows the list,
 // the file holds those rows alone (the same pages are read, so the data trail records the export as before).
 // mold_v0-235: on a workspace's list Export shows only to the roles that may export (an area's contract may narrow it
-// below read; the server refuses the rest). mold_v0-234's Import is its own button beside it (features/records/
-// workspace-import.tsx useImportAction), placed by the list.
+// below read; the server refuses the rest). mold_v0-294: Export is an item of the list's Actions ▾ menu, beside
+// Import (features/records/workspace-import.tsx useImportAction) and Ask AI.
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import type { RowAction } from '@/components/layout/record-filters';
 import { Icons } from '@/components/icons';
 import { exportWithheldAreas, recordAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
@@ -57,69 +58,52 @@ export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'
   }
 }
 
-type ExportProps = {
-  url: string; area: Pick<RecordAreaSpec, 'fields'>; name: string; rows?: (p: Page) => Page; areas: string[];
-  /** The view's rows when search or a filter narrows the list (mold_v0-217): the file holds these alone. */
-  keys?: readonly string[] | null;
-  /** In a list's search row: "Export", the icon alone on a phone. */
-  compact?: boolean;
-};
+type ExportProps = { url: string; area: Pick<RecordAreaSpec, 'fields'>; name: string; rows?: (p: Page) => Page; areas: string[] };
 
 /**
- * The Export CSV button: nothing when the area's pack withholds its export (mold_v0-067 mcp settings). On a workspace's
- * list (/api/records) it follows the person's role: shown to the roles that may export (mold_v0-235).
+ * A list's Export CSV, an item of its Actions ▾ menu (mold_v0-294, components/layout/actions-menu.tsx): null when the
+ * area's pack withholds its export (mold_v0-067 mcp settings), and on a workspace's list (/api/records) for the roles
+ * that may not export (mold_v0-235). `keys`: the view's rows when search or a filter narrows the list (mold_v0-217): the
+ * file holds these alone. What it wrote (or why not) is said in a toast.
  */
-export function ExportCsvButton(props: ExportProps) {
-  return props.url.startsWith('/api/records') ? <WorkspaceListData {...props} /> : <ExportControl {...props} />;
-}
-
-function WorkspaceListData(props: ExportProps) {
-  const { role, loaded } = useAccountRole();
-  // Until the role is known nothing is hidden (the server refuses what the role may not do).
-  const exportable = !loaded || !role || props.areas.every((n) => { const s = recordAreas.find((a) => a.name === n); return !s?.export_roles || s.export_roles.includes(role); });
-  return exportable ? <ExportControl {...props} /> : null;
-}
-
-function ExportControl({ url, area, name, rows, areas, keys, compact = false }: ExportProps) {
+export function useExportCsv({ url, area, name, rows, areas }: ExportProps): { item: (keys?: readonly string[] | null) => RowAction | null; busy: boolean } {
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ error: boolean; text: string } | null>(null);
-  if (areas.some((a) => exportWithheldAreas.includes(a))) return null;
-  const run = async () => {
-    setBusy(true); setNote(null);
+  const workspace = url.startsWith('/api/records');
+  // The role is a workspace's (/api/app/me): read only on a workspace's list, whose url never changes for one list.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { role, loaded } = workspace ? useAccountRole() : { role: null, loaded: true };
+  // Until the role is known nothing is hidden (the server refuses what the role may not do).
+  const exportable = !workspace || !loaded || !role || areas.every((n) => { const s = recordAreas.find((a) => a.name === n); return !s?.export_roles || s.export_roles.includes(role); });
+  const withheld = areas.some((a) => exportWithheldAreas.includes(a));
+  const run = async (keys?: readonly string[] | null) => {
+    setBusy(true);
     try {
       const { csv, count, more } = await exportCsv(url, area, rows, keys ? new Set(keys) : null);
       downloadText(`${name}-${today()}.csv`, '\ufeff' + csv, 'text/csv;charset=utf-8');
-      setNote({ error: false, text: `${count} record${count === 1 ? '' : 's'} exported${more ? ` (the first ${EXPORT_MAX}; ask your AI client to export the rest with the export tool)` : ''}.` });
+      toast.success(`${count} record${count === 1 ? '' : 's'} exported${more ? ` (the first ${EXPORT_MAX}; ask your AI client to export the rest with the export tool)` : ''}.`);
     } catch (e) {
-      setNote({ error: true, text: `The export failed: ${(e as Error).message}` });
+      toast.error(`The export failed: ${(e as Error).message}`);
     } finally { setBusy(false); }
   };
-  return (
-    <div className='flex min-w-0 flex-wrap items-center gap-2'>
-      <Button variant='outline' size={compact ? 'default' : 'sm'} onClick={() => void run()} disabled={busy} data-testid='export-csv'
-        aria-label={compact ? (keys ? 'Export the rows shown as CSV' : 'Export CSV') : undefined} title={compact ? (keys ? 'Export the rows shown as CSV' : 'Export CSV') : undefined}
-        className={compact ? 'max-sm:w-8 max-sm:px-0' : undefined}>
-        {busy ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.download aria-hidden='true' />}
-        {compact ? <span className='hidden sm:inline'>{busy ? 'Exporting…' : 'Export'}</span> : busy ? ' Exporting…' : ' Export CSV'}
-      </Button>
-      <span role='status' className={note?.error ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}>{note?.text ?? ''}</span>
-    </div>
-  );
+  return {
+    busy,
+    item: (keys) => (withheld || !exportable ? null : {
+      label: busy ? 'Exporting…' : keys ? `Export CSV (${keys.length} shown)` : 'Export CSV', icon: <Icons.download aria-hidden='true' />,
+      disabled: busy, testId: 'export-csv', onSelect: () => void run(keys),
+    }),
+  };
 }
 
 /**
- * Export CSV of a list the page already holds (mold_v0-176: runs, reports, schedules, notices): every row it read, a
- * column per typed column (its plain name, its raw value), text a spreadsheet would run as a formula defused as above.
+ * Export CSV of a list the page already holds (mold_v0-176: runs, reports, schedules, notices), an Actions ▾ item: every
+ * row it read, a column per typed column (its plain name, its raw value), text a spreadsheet would run as a formula
+ * defused as above.
  */
-export function ExportRowsButton<T>({ name, rows, cols }: { name: string; rows: readonly T[]; cols: { key: string; label: unknown; name?: string; value?: (r: T) => unknown; csv?: false }[] }) {
+export function exportRowsItem<T>({ name, rows, cols }: { name: string; rows: readonly T[]; cols: { key: string; label: unknown; name?: string; value?: (r: T) => unknown; csv?: false }[] }): RowAction {
   const shown = cols.filter((c) => c.value && c.csv !== false);
   const run = () => {
     const head = shown.map((c) => c.name ?? (typeof c.label === 'string' ? c.label : c.key));
-    downloadText(`${name}-${today()}.csv`, '﻿' + line(head) + rows.map((r) => line(shown.map((c) => c.value!(r)))).join(''), 'text/csv;charset=utf-8');
+    downloadText(`${name}-${today()}.csv`, '\ufeff' + line(head) + rows.map((r) => line(shown.map((c) => c.value!(r)))).join(''), 'text/csv;charset=utf-8');
   };
-  return (
-    <Button variant='outline' size='sm' onClick={run} disabled={!rows.length} data-testid='export-csv'>
-      <Icons.download aria-hidden='true' /> Export CSV
-    </Button>
-  );
+  return { label: `Export CSV (${rows.length} rows)`, icon: <Icons.download aria-hidden='true' />, onSelect: run, disabled: !rows.length, testId: 'export-csv' };
 }

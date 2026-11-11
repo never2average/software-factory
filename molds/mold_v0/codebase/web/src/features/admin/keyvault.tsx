@@ -134,7 +134,7 @@ export function AdminKeyVault() {
         views={[{ id: 'all', label: 'All' }, ...TYPES.filter((t) => providers.some((p) => typeOf(p.slug) === t)).slice(0, 4).map((t) => ({ id: t, label: t, match: (p: Provider) => typeOf(p.slug) === t }))]}
         defaultSort={[{ key: 'type', dir: 'asc' }]}
         primary={<Gate need='keys'><Button onClick={() => setAdding(providers.find((p) => p.slug !== OBJECT_STORAGE)?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
-        primaryMenu={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
+        imports={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
         summary={<StatStrip quad items={[
           { label: 'Providers', value: rows.length, said: `${rows.length} providers` },
           { label: 'Keys', value: rows.reduce((n, p) => n + keysOf(p).length, 0), said: 'keys' },

@@ -39,6 +39,7 @@ import * as clerk from "./clerk.js";
 import { people, signedIn } from "./people.js";
 import * as roles from "./account-roles.js";
 import { answerDocs, sseStart, streamDocsAnswer, type DocsStreamEvent } from "./docs-answers.js";
+import { listAnswerAvailable, streamListAnswer } from "./list-answers.js";
 
 
 /** Where people open the console (src/console-url.ts): billing pages send them back there (mold_v0-144: one front door). */
@@ -702,6 +703,17 @@ export function appRouter() {
     });
     const done = last as DocsStreamEvent | null;
     if (done?.type === "done") capture({ distinctId: who, orgSlug: s.slug }, "docs_answer_asked", { answered: done.answer != null, reason: done.reason, streamed: true });
+    res.end();
+  });
+  // "Ask AI" on a list (src/list-answers.ts, mold_v0-294): any signed-in person, about rows their page showed them.
+  api.get("/list/answer", async (_req, res) => void res.json({ available: await listAnswerAvailable() }));
+  api.post("/list/answer/stream", async (req, res) => {
+    const s = S(res);
+    let started = false;
+    await streamListAnswer("customer", req.body?.question, req.body?.list, { userKey: s.user ?? `org:${s.slug}`, orgId: s.org }, (e) => {
+      if (!started) { sseStart(res); started = true; }
+      res.write(`data: ${JSON.stringify(e)}\n\n`);
+    });
     res.end();
   });
   api.get("/billing", async (_req, res) => {

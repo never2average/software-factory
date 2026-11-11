@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, LoadingCards, Notice, Section, When } from './ui';
-import { ActionsMenu, Field, RecordView, type RecordCol } from '@/components/layout/record-view';
+import { RowMenu, Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { ageOf, dur, SectionLink, UrlTabs, useComputeParams, useNow } from './compute-common';
 import { StatStrip } from '@/components/layout/section';
 import { ComputeOrchestrators } from './compute-orchestrators';

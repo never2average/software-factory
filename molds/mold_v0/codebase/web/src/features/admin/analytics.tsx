@@ -14,7 +14,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -26,6 +25,9 @@ import { TablePager, type Paged } from '@/components/layout/table-pager';
 import { StatStrip } from '@/components/layout/section';
 import { Box, RankBars, top } from '@/components/layout/chart-grid';
 import { Icons } from '@/components/icons';
+import { ActionsMenu, useListAsk } from '@/components/layout/actions-menu';
+import type { RowAction } from '@/components/layout/record-filters';
+import { listAskContext } from '@/lib/toolbar-actions';
 import { adminApi } from '@/lib/api-client';
 import { downloadCsv, downloadJson, type CsvValue } from '@/lib/csv';
 import { counted, num, usd } from '@/lib/display-format';
@@ -398,25 +400,33 @@ function useExport(view: 'analytics' | 'health', a: Analytics | undefined, base:
   return { busy, one, every, json };
 }
 
-function ExportButton({ view, a, x }: { view: 'analytics' | 'health'; a: Analytics | undefined; x: ReturnType<typeof useExport> }) {
+/**
+ * The search row's Actions ▾ (mold_v0-294): Open PostHog / New Relic (the page's own), Export (a submenu: everything,
+ * each section as CSV, the whole report as JSON), then Ask AI about the report as shown.
+ */
+function ReportActions({ view, a, x, q, match }: { view: 'analytics' | 'health'; a: Analytics | undefined; x: ReturnType<typeof useExport>; q: string; match: (r: object) => boolean }) {
   const open = (url: string) => window.open(url, '_blank', 'noopener,noreferrer');
-  return (
-    <DropdownMenu>
-        <DropdownMenuTrigger render={<Button size='icon' variant='ghost' aria-label='Export' title='Export' disabled={!a} />}>
-          {x.busy ? <Icons.spinner className='animate-spin' /> : <Icons.download />}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align='end' className='w-60'>
-          <DropdownMenuItem disabled={x.busy} onClick={x.every}><Icons.download /> Everything (CSV)</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {SECTIONS[view].map(([id, label]) => <DropdownMenuItem key={id} disabled={x.busy} onClick={() => x.one(id)}><Icons.download /> {label}</DropdownMenuItem>)}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem disabled={x.busy} onClick={x.json}><Icons.code /> Whole report (JSON)</DropdownMenuItem>
-          {(a?.links.posthog || a?.links.new_relic) && <DropdownMenuSeparator />}
-          {a?.links.posthog && <DropdownMenuItem onClick={() => open(a.links.posthog!)}><Icons.externalLink /> Open PostHog</DropdownMenuItem>}
-          {a?.links.new_relic && <DropdownMenuItem onClick={() => open(a.links.new_relic!)}><Icons.externalLink /> Open New Relic</DropdownMenuItem>}
-        </DropdownMenuContent>
-      </DropdownMenu>
-  );
+  const ask = useListAsk(() => {
+    const t = a?.totals;
+    const rows: (string | number | null)[][] = !a || !t ? [] : view === 'health'
+      ? [['summary', 'tool_error_pct', t.error_pct], ['summary', 'tool_p50_ms', t.p50_ms], ['summary', 'tool_p95_ms', t.p95_ms], ['summary', 'tool_errors', a.errors_total], ...Object.entries(a.ops).map(([k, v]) => ['summary', k, v as number])]
+      : [['summary', 'active_accounts', t.active_accounts], ['summary', 'active_people', t.active_people], ['summary', 'tool_calls', t.calls], ['summary', 'new_accounts', t.new_accounts], ['summary', 'error_pct', t.error_pct],
+        ...a.tools.filter(match).map((x) => ['tool calls', x.name, x.calls]), ...a.accounts.filter(match).map((r) => ['account calls', r.name, r.calls])];
+    return listAskContext({ list: view === 'health' ? 'Health errors report' : 'Analytics report', search: q, filters: a?.range ? [`from ${a.range.from} to ${a.range.to}`] : [], columns: ['section', 'name', 'value'], rows });
+  });
+  const exportItem: RowAction = { label: 'Export', icon: <Icons.download />, disabled: !a || x.busy, testId: 'report-export', items: [
+    { label: 'Everything (CSV)', icon: <Icons.download />, disabled: x.busy, onSelect: x.every },
+    ...SECTIONS[view].map(([id, label], i) => ({ label, icon: <Icons.download />, disabled: x.busy, onSelect: () => x.one(id), separator: i === 0 })),
+    { label: 'Whole report (JSON)', icon: <Icons.code />, disabled: x.busy, onSelect: x.json, separator: true },
+  ] };
+  const page: RowAction[] = [
+    ...(a?.links.posthog ? [{ label: 'Open PostHog', icon: <Icons.externalLink />, onSelect: () => open(a.links.posthog!) }] : []),
+    ...(a?.links.new_relic ? [{ label: 'Open New Relic', icon: <Icons.externalLink />, onSelect: () => open(a.links.new_relic!) }] : []),
+  ];
+  return (<>
+    <ActionsMenu page={page} exports={[exportItem]} ask={a ? ask.open : null} busy={x.busy} />
+    {ask.sheet}
+  </>);
 }
 
 // ---------- the page ----------
@@ -502,7 +512,7 @@ function ErrorsReport({ view }: { view: 'analytics' | 'health' }) {
               <FiltersPopover p={p} facets={a?.facets} />
             </>
           )}
-          <ExportButton view={view} a={a} x={x} />
+          <ReportActions view={view} a={a} x={x} q={q} match={match} />
         </div>
         <FilterChipRow p={p} facets={a?.facets} />
         <ErrorBox error={error} />

@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, LoadingCards, Mono, Notice, Section, When } from './ui';
-import { ActionsMenu, Field, RecordView, type RecordCol } from '@/components/layout/record-view';
+import { RowMenu, Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { ageOf, dur, SectionLink, UrlTabs, useComputeParams, useNow } from './compute-common';
 import { StatStrip } from '@/components/layout/section';
 import { ComputeOrchestrators } from './compute-orchestrators';
@@ -141,7 +141,7 @@ function ComputePage() {
               {paused && <Button variant='outline' size='sm' onClick={() => setResumed(true)} title={editing ? 'Refresh is paused while a setting has an unsaved edit' : 'Refresh is paused while a record is open'}><Icons.clock /> Paused · Resume</Button>}
               <Button variant='outline' size='sm' disabled={refreshing} onClick={() => void refresh()} title={boat ? 'Ask boat.dev again and reload every figure' : 'Reload every figure'}>{refreshing ? <Icons.spinner className='animate-spin' /> : <Icons.refresh />} Refresh</Button>
               {data && <RunTick s={data} />}
-              {data?.links.newrelic && <ActionsMenu label='More' items={[{ label: 'Open in New Relic', icon: <Icons.externalLink />, onSelect: () => window.open(data.links.newrelic!, '_blank', 'noopener') }]} />}
+              {data?.links.newrelic && <RowMenu label='More' items={[{ label: 'Open in New Relic', icon: <Icons.externalLink />, onSelect: () => window.open(data.links.newrelic!, '_blank', 'noopener') }]} />}
             </div>
           </div>
         } />
