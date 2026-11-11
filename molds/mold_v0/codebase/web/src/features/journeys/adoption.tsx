@@ -159,11 +159,11 @@ export function AdoptionPage() {
     return a;
   };
 
-  // One button plus RecordView's ▾ menu holding Import and the exports.
+  // One button plus the search row's Actions ▾ menu holding Import and the exports (mold_v0-294).
   const primary = <Allowed need='edit'><Button onClick={() => setAdding(true)}><Icons.add /> Add use case</Button></Allowed>;
-  const primaryMenu: RowAction[] = [
-    lock({ label: 'Import JSON or CSV', icon: <Icons.upload />, onSelect: () => file.current?.click() }, 'edit'),
-    { label: 'Export JSON', icon: <Icons.download />, separator: true, disabled: !jr?.journeys.length, onSelect: exportJson },
+  const imports: RowAction[] = [lock({ label: 'Import JSON or CSV', icon: <Icons.upload />, onSelect: () => file.current?.click() }, 'edit')];
+  const exports: RowAction[] = [
+    { label: 'Export JSON', icon: <Icons.download />, disabled: !jr?.journeys.length, onSelect: exportJson },
     { label: 'Export CSV', icon: <Icons.download />, disabled: !jr?.journeys.length, onSelect: exportCsv }
   ];
   const peopleOpts = useMemo(() => (ad?.members ?? []).map((m) => ({ value: m.user_id, label: m.label ?? 'Unnamed', count: m.calls })), [ad?.members]);
@@ -179,7 +179,7 @@ export function AdoptionPage() {
           <MultiSelectFilter noun='people' icon={<Icons.teams />} options={peopleOpts} value={users} onChange={setUsers} />
           <DateRangePicker value={range} onChange={setRange} />
         </>}
-        primary={primary} primaryMenu={primaryMenu}
+        primary={primary} imports={imports} exports={exports}
         empty={narrowed ? 'Nobody you picked worked on a use case in this period.' : 'Nothing to show yet.'}
         detailTitle={(r) => r.name}
         actions={(r) => r.type === 'use case' ? useCaseActions(r) : r.type === 'workflow' ? (note && launchGroup(r.g.id) ? [] : [{ label: 'Copy prompt', icon: <Icons.page />, onSelect: () => copy(r.g.prompt) }])

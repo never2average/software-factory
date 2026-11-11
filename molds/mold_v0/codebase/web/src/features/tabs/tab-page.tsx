@@ -39,7 +39,8 @@ import { InPageTabs } from './in-page-tabs';
 import { BoardColumns, TimelineList, type Page } from './board';
 import { ChartCell, ChartTiles, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
-import { ExportCsvButton } from './export';
+import { useExportCsv } from './export';
+import { ActionsMenu } from '@/components/layout/actions-menu';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { RunsTable } from './runs';
@@ -216,19 +217,21 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   const [round, setRound] = useState(0);
   // mold_v0-217: its button in the search row, its form a full card in the list's place while open (?start=1, ?new=1).
   const { button: action, card: actionCard, panel } = useTabAction(tab.action ? tab : null, () => setRound((n) => n + 1));
-  // mold_v0-234: Import on a tab of one area whose contract grants it to this person (its own button just left of
-  // Export; its form a full card in the list's place, ?import=1).
+  // mold_v0-234: Import on a tab of one area whose contract grants it to this person (mold_v0-294: an item of the
+  // Actions ▾ menu, before Export; its form a full card in the list's place, ?import=1).
   const imp = useImportAction(area && !tab.areas ? area : null, () => setRound((n) => n + 1));
+  const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : area ? [area.name] : [];
+  // A board's or a timeline's Export (the table has its own, in its search row).
+  const exporter = useExportCsv({ url: src?.url ?? '', area: area ?? { fields: [] }, rows: src?.rows, name: `${tab.pack}-${tab.id}`, areas: exportAreas });
   const card = actionCard ?? imp.card;
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
-  const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
   const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
     // mold_v0-208: a list tab is its cards, its search row and its table (no charts). mold_v0-217: the tab's primary
-    // action is the table's search row's last control; a board or a timeline has it in the views' row, after Export CSV.
+    // action is the table's search row's last control; a board or a timeline has it in the views' row, after Actions ▾.
     // mold_v0-256: an Add form in a panel beside the list (flag side_panel_forms), else the card in the list's place.
     <FormHost card={card} panel={panel && !imp.card}><div className='flex flex-col gap-6'>
-      {/* The views' switch, and Export CSV and the action for the board and the timeline (the table has its own toolbar). */}
+      {/* The views' switch, and Actions ▾ (Import, Export) and the action for the board and the timeline (the table has its own toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
       {views.length > 1 ? (
@@ -250,8 +253,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
       ) : <span />}
         {!table && (
           <div className='flex flex-wrap items-center gap-2'>
-            {imp.button}
-            <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />
+            <ActionsMenu imports={imp.item ? [imp.item] : undefined} exports={[exporter.item()].filter((x) => x !== null)} busy={exporter.busy} />
             {action}
           </div>
         )}
@@ -265,7 +267,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         : view === 'timeline' ? <TimelineView key={round} src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
-            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined} importAction={imp.button}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined} importAction={imp.item}
             related={relatedColumnsOf(tab)}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}

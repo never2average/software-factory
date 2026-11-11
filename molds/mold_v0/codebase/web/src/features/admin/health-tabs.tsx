@@ -13,10 +13,10 @@ import { RecordView, type RecordCol, type RecordViewDef } from '@/components/lay
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent } from '@/components/ui/popover';
+import { ActionsMenu, useListAsk } from '@/components/layout/actions-menu';
+import { listAskContext } from '@/lib/toolbar-actions';
 import { Icons } from '@/components/icons';
 import { downloadCsv, today } from '@/lib/csv';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -468,6 +468,8 @@ function StatusTab() {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const [deploy, setDeploy] = useState(false);
   const moreRef = useRef<HTMLSpanElement>(null);
+  const ask = useListAsk(() => listAskContext({ list: 'Health status: live checks', search: q, filters: [`period ${RANGE_WORD[range]}`], columns: ['Signal', 'State', 'Value', 'Detail'],
+    rows: (d?.checks ?? []).filter((c) => { const t = `${c.label} ${c.value} ${c.detail ?? ''}`.toLowerCase(); return words.every((w) => t.includes(w)); }).map((c) => [c.label, c.state, c.value, c.detail ?? '']) }));
   return (
     <div className='flex flex-col gap-3' data-health-status>
       <ErrorBox error={live.error ?? hist.error} />
@@ -490,17 +492,14 @@ function StatusTab() {
         <ToggleGroup aria-label='Period' variant='outline' size='sm' spacing={0} value={[range]} onValueChange={(v: unknown[]) => { if (v[0]) setRange(v[0] as HistoryRange); }}>
           {RANGES.map(([v, l]) => <ToggleGroupItem key={v} value={v} aria-label={RANGE_WORD[v]} className='px-3'>{l}</ToggleGroupItem>)}
         </ToggleGroup>
-        <Button variant='ghost' size='icon' aria-label='Export CSV' title='Export the live checks (CSV)' disabled={!d} onClick={() => d && downloadCsv(`health-status-${today()}.csv`, ['Signal', 'State', 'Value', 'Detail'], d.checks.map((c) => [c.label, c.state, c.value, c.detail ?? '']))}>
-          <Icons.download />
-        </Button>
+        {/* mold_v0-294: Deploy details (the page's own), Export the live checks and Ask AI in one Actions ▾ menu. */}
         <span ref={moreRef} className='inline-flex'>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant='ghost' size='icon' aria-label='More' title='More' />}><Icons.dots /></DropdownMenuTrigger>
-            <DropdownMenuContent align='end' className='w-48'>
-              <DropdownMenuItem disabled={!d} onClick={() => setDeploy(true)}><Icons.rocket /> Deploy details</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ActionsMenu page={[{ label: 'Deploy details', icon: <Icons.rocket />, disabled: !d, onSelect: () => setDeploy(true) }]}
+            exports={[{ label: 'Export the live checks (CSV)', icon: <Icons.download />, disabled: !d, testId: 'export-csv',
+              onSelect: () => d && downloadCsv(`health-status-${today()}.csv`, ['Signal', 'State', 'Value', 'Detail'], d.checks.map((c) => [c.label, c.state, c.value, c.detail ?? ''])) }]}
+            ask={d ? ask.open : null} />
         </span>
+        {ask.sheet}
         <Popover open={deploy} onOpenChange={setDeploy}>
           <PopoverContent anchor={moreRef} align='end' className='w-80'>
             <DeployDetails r={d?.release} />

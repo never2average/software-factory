@@ -5,7 +5,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ActionsMenu, Field, type RowAction } from '@/components/layout/record-view';
+import { RowMenu, Field, type RowAction } from '@/components/layout/record-view';
 import { PanelMenu } from '@/components/layout/detail-panel';
 import { OverflowTabs } from '@/components/layout/overflow-tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -333,7 +333,7 @@ export function List<T>({ title, noun, rows, cols, empty, actions, rowClassName 
             {p.rows.map((r, i) => (
               <TableRow key={i} className={rowClassName?.(r)}>
                 {cols.map(([, f, c], j) => <TableCell key={j} className={cn('px-3 py-2.5 text-sm leading-none', c)}>{f(r)}</TableCell>)}
-                {actions && <TableCell className='w-8 py-1 text-right'><ActionsMenu items={actions(r)} /></TableCell>}
+                {actions && <TableCell className='w-8 py-1 text-right'><RowMenu items={actions(r)} /></TableCell>}
               </TableRow>
             ))}
             {!rows.length && (

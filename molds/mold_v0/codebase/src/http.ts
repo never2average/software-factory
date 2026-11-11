@@ -101,6 +101,7 @@ import * as ticks from "./autoscaler-ticks.js";
 import { pruneComputeHistory } from "./autoscaler-ticks.js";
 import { freshSettings, listSettings, settingGroups, SettingError } from "./settings.js";
 import { answerDocs, sseStart, streamDocsAnswer } from "./docs-answers.js";
+import { listAnswerAvailable, streamListAnswer } from "./list-answers.js";
 import { freshPlatformHarnesses } from "./harnesses.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
@@ -942,6 +943,16 @@ export function createApp() {
   ob.post("/docs/answer/stream", need("read"), async (req, res) => {
     let started = false;
     await streamDocsAnswer("admin", req.body?.question, { userKey: `admin:${adminActor(req, res)}` }, (e) => {
+      if (!started) { sseStart(res); started = true; }
+      res.write(`data: ${JSON.stringify(e)}\n\n`);
+    });
+    res.end();
+  });
+  // "Ask AI" on a staff list (src/list-answers.ts, mold_v0-294): any role that reads, about rows its page showed.
+  ob.get("/list/answer", need("read"), async (_req, res) => void res.json({ available: await listAnswerAvailable() }));
+  ob.post("/list/answer/stream", need("read"), async (req, res) => {
+    let started = false;
+    await streamListAnswer("admin", req.body?.question, req.body?.list, { userKey: `admin:${adminActor(req, res)}` }, (e) => {
       if (!started) { sseStart(res); started = true; }
       res.write(`data: ${JSON.stringify(e)}\n\n`);
     });

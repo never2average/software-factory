@@ -1,6 +1,6 @@
 'use client';
-// A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, export,
-// then the page's primary action at its right end), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and the record panel.
+// A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, then
+// Actions ▾ (mold_v0-294: the page's own actions, Import, Export, Ask AI) and the page's primary action at its right end), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and the record panel.
 // mold_v0-278: clicking a row never leaves the page: the list narrows and the record opens in a panel at its right
 // (./detail-panel.tsx: a splitter, Expand / Collapse, the ⋯ menu with Open in its own page, ✕ and Esc, Back to list on
 // a phone), the open row highlighted and kept in the address (?id=<key>, &panel=full, &panelTab=); another row switches
@@ -15,7 +15,6 @@ import {
 } from '@/components/layout/record-filters';
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -25,6 +24,8 @@ import { DETAIL_PARAM, PANEL_FULL, PANEL_PARAM, PANEL_TAB_PARAM, type PanelKind 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
 import { downloadCsv, today, type CsvValue } from '@/lib/csv';
+import { listAskContext, type ListAskContext } from '@/lib/toolbar-actions';
+import { ActionsMenu, ListAskPanel } from '@/components/layout/actions-menu';
 import { cn } from '@/lib/utils';
 
 export type { FilterRule, Op, PropType, RecordCol, RecordViewDef, RowAction, SortRule } from '@/components/layout/record-filters';
@@ -58,7 +59,7 @@ const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky
 
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, canOpen, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide, sidePanel
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, imports, exports, ask, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide, sidePanel
 }: {
   /**
    * mold_v0-260 (flag wide_lists): a list of more than 8 columns: the table keeps each column's width and scrolls sideways
@@ -72,7 +73,7 @@ export function RecordView<T>({
   searchText: (row: T) => string;
   searchPlaceholder?: string;
   filters?: ReactNode;
-  /** The toolbar's own action (Export); a function is given the view: its rows as shown and whether search or a filter narrows them. */
+  /** The page's primary call to action (one button), after Actions ▾; a function is given the view: its rows as shown and whether search or a filter narrows them. */
   primary?: ReactNode | ((view: { rows: readonly T[]; narrowed: boolean }) => ReactNode);
   /** The record, shown in the panel beside the table when a row is clicked (mold_v0-278); without it rows are not clickable. */
   detail?: (row: T, close: () => void) => ReactNode;
@@ -98,10 +99,19 @@ export function RecordView<T>({
   groupable?: boolean;
   /** Turns on the checkbox column and the bulk bar. */
   bulk?: (rows: T[], clear: () => void) => RowAction[];
-  /** Turns on CSV export: `${exportName}-YYYY-MM-DD.csv`. */
+  /** The CSV file's name: `${exportName}-YYYY-MM-DD.csv` (mold_v0-294: every list exports; without it the list's id or noun names the file). */
   exportName?: string;
-  /** Extra items in the primary's ▾ menu. */
+  /** The page's own secondary actions: first in the search row's Actions ▾ menu (mold_v0-294, ./actions-menu.tsx). */
   primaryMenu?: RowAction[];
+  /** The list's Import (Actions ▾, before Export). */
+  imports?: RowAction[];
+  /**
+   * The list's Export, in place of exportName's (Actions ▾): items, or a function given the view (its rows as shown and
+   * whether search or a filter narrows them).
+   */
+  exports?: RowAction[] | ((view: { rows: readonly T[]; narrowed: boolean }) => RowAction[]);
+  /** Ask AI about the list (Actions ▾, mold_v0-294): what the list is called (default: the page's title and noun); false: none. */
+  ask?: string | false;
   /** The panel lists every column as a property above detail() (a function: for the rows it says). */
   properties?: boolean | ((row: T) => boolean);
   /** mold_v0-278: the open record's actions, the panel's ⋯ menu (before the row's own ⋯ items and Open in its own page). */
@@ -153,6 +163,10 @@ export function RecordView<T>({
   const [editing, setEditing] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [sel, setSel] = useState<Set<string>>(() => new Set());
+  // mold_v0-294: Ask AI about the list, docked beside it as a row's record is (one panel at a time).
+  const [asking, setAsking] = useState(false);
+  const askContextRef = useRef<() => ListAskContext>(() => listAskContext({ list: noun, columns: [], rows: [] }));
+  const askPanel: RecordSidePanel | null = asking ? { key: 'ask-ai', title: 'Ask AI', onClose: () => setAsking(false), body: <ListAskPanel context={() => askContextRef.current()} /> } : null;
 
   // No view tabs: every table shows its first (whole) view; search and filters do the narrowing.
   const view = views?.[0];
@@ -216,12 +230,12 @@ export function RecordView<T>({
   const close = () => (panelClose.current ? panelClose.current() : setOpen(null));
   const hostRef = useRef<HTMLDivElement>(null);
   const showRecord = Boolean(current && detail);
-  const side = showRecord ? null : sidePanel ?? null;
+  const side = showRecord ? null : askPanel ?? sidePanel ?? null;
   const split = usePanelSplit(hostRef, showRecord || !!side, `${id ?? noun}`, side ? 'editor' : panelKind, expanded);
   // One panel at a time: the page's own panel closes a row's, and a row opened afterwards closes the page's.
-  const sideKey = sidePanel?.key ?? null;
+  const sideKey = (askPanel ?? sidePanel)?.key ?? null;
   useEffect(() => { if (sideKey && open) setOpen(null); }, [sideKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (open && showRecord && sideKey) sidePanel?.onClose(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open && showRecord && sideKey) (askPanel ?? sidePanel)?.onClose(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const openRow = (k: string) => { if (k !== open) guarded(() => setOpen(k)); };
 
   // ↑ ↓ walk the rows as listed (collapsed groups skipped), turning the page when needed.
@@ -294,35 +308,31 @@ export function RecordView<T>({
     const sample = rows[0];
     const csvCols = shownCols.filter((c) => c.csv !== false && (c.value || (sample !== undefined && ['string', 'number'].includes(typeof c.render(sample)))));
     const cell = (c: RecordCol<T>, r: T): CsvValue => { if (c.value) return c.value(r); const x = c.render(r); return typeof x === 'string' || typeof x === 'number' ? x : ''; };
-    downloadCsv(`${exportName}${suffix}-${today()}.csv`, csvCols.map(colName), list.map((r) => csvCols.map((c) => cell(c, r))));
+    downloadCsv(`${fileName}${suffix}-${today()}.csv`, csvCols.map(colName), list.map((r) => csvCols.map((c) => cell(c, r))));
   };
-  const menuItems = primaryMenu?.length || exportName ? (<>
-    {primaryMenu?.map((a, i) => <MenuItem key={i} a={a} sep={i > 0} />)}
-    {!!primaryMenu?.length && exportName && <DropdownMenuSeparator />}
-    {exportName && (<>
-      <DropdownMenuItem onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV ({data.ordered.length} rows)</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => exportRows(rows, '-all')}><Icons.download /> Export all ({rows.length} rows)</DropdownMenuItem>
-    </>)}
-  </>) : null;
+  // mold_v0-294: one Actions ▾ menu holds the page's own actions, Import, Export and Ask AI; the primary action follows it.
+  const fileName = exportName ?? (id ?? noun).replace(/-v\d+$/, '');
+  const exportItems: RowAction[] = typeof exports === 'function' ? exports({ rows: data.ordered, narrowed: searching }) : exports ?? (!loading ? [
+    { label: `Export CSV (${data.ordered.length} ${data.ordered.length === 1 ? 'row' : 'rows'})`, icon: <Icons.download />, onSelect: () => exportRows(data.ordered), disabled: !data.ordered.length, testId: 'export-csv' },
+    ...(data.ordered.length !== rows.length || searching ? [{ label: `Export all (${rows.length} ${rows.length === 1 ? 'row' : 'rows'})`, icon: <Icons.download />, onSelect: () => exportRows(rows, '-all') }] : []),
+  ] : []);
   const primaryEl: ReactNode = typeof primary === 'function' ? primary({ rows: data.ordered, narrowed: searching }) : primary;
-  const primaryNode = menuItems && !primaryEl ? (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button size='icon' variant='ghost' aria-label='Export' title='Export' />}><Icons.download /></DropdownMenuTrigger>
-      <DropdownMenuContent align='end' className='w-56'>{menuItems}</DropdownMenuContent>
-    </DropdownMenu>
-  ) : menuItems ? (
-    <ButtonGroup>
-      {primaryEl || (exportName && <Button variant='outline' onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV</Button>)}
-      <DropdownMenu>
-        <DropdownMenuTrigger render={primaryEl
-          ? <Button size='icon' aria-label='More actions' className='border-l-primary-foreground/20 border-l' />
-          : <Button size='icon' variant='outline' aria-label='More export options' />}>
-          <Icons.chevronDown />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align='end' className='w-56'>{menuItems}</DropdownMenuContent>
-      </DropdownMenu>
-    </ButtonGroup>
-  ) : primaryEl;
+  // Ask AI: the view as shown (search, filters, the first rows), the columns its Export writes.
+  askContextRef.current = () => {
+    const sample = rows[0];
+    const askCols = shownCols.filter((c) => c.csv !== false && (c.value || (sample !== undefined && ['string', 'number'].includes(typeof c.render(sample)))));
+    const cell = (c: RecordCol<T>, r: T): unknown => { if (c.value) return c.value(r); const x = c.render(r); return typeof x === 'string' || typeof x === 'number' ? x : ''; };
+    const title = typeof document !== 'undefined' ? document.title.split(/ [·|–-] /)[0].trim() : '';
+    return listAskContext({
+      list: typeof ask === 'string' ? ask : title || noun,
+      search: q, filters: rules.filter(ruleActive).map((r) => { const c = cols.find((x) => x.key === r.key); return `${c ? colName(c) : r.key} ${r.op.replace(/_/g, ' ')}${r.value === undefined ? '' : ` ${Array.isArray(r.value) ? r.value.join(', ') : typeof r.value === 'object' ? JSON.stringify(r.value) : r.value}`}`; }),
+      columns: askCols.map(colName), rows: data.ordered.map((r) => askCols.map((c) => cell(c, r))),
+    });
+  };
+  const primaryNode = (<>
+    <ActionsMenu page={primaryMenu} imports={imports} exports={exportItems} ask={ask === false ? null : () => { setOpen(null); setAsking(true); }} />
+    {primaryEl}
+  </>);
 
   const sortDir = (k: string) => sort.find((s) => s.key === k)?.dir;
   const cycle = (k: string) => {
@@ -381,7 +391,7 @@ export function RecordView<T>({
           {bulkItems.map((a, i) => (
             <Button key={i} variant='ghost' size='sm' disabled={a.disabled} title={a.hint} onClick={a.onSelect} className={cn(a.destructive && 'text-destructive hover:text-destructive')}>{a.icon}{a.label}</Button>
           ))}
-          {exportName && <Button variant='ghost' size='sm' onClick={() => exportRows(selRows, '-selected')}><Icons.download /> Export selected</Button>}
+          {<Button variant='ghost' size='sm' onClick={() => exportRows(selRows, '-selected')}><Icons.download /> Export selected</Button>}
           <Button variant='ghost' size='sm' className='text-muted-foreground ml-auto' onClick={clearSel}>Clear</Button>
         </div>
       ) : rules.length > 0 && (
@@ -455,7 +465,7 @@ export function RecordView<T>({
                             </TableCell>
                           )}
                           {visible.map((c) => <TableCell key={c.key} className={cn('px-3 py-3.5', 'whitespace-normal', c.className)}>{c.render(r)}</TableCell>)}
-                          {actions && <TableCell className='w-10 py-1.5 text-center' onClick={(e) => e.stopPropagation()}><ActionsMenu items={actions(r)} /></TableCell>}
+                          {actions && <TableCell className='w-10 py-1.5 text-center' onClick={(e) => e.stopPropagation()}><RowMenu items={actions(r)} /></TableCell>}
                         </TableRow>
                       )}
                     </Fragment>
@@ -508,7 +518,8 @@ function MenuItem({ a, sep }: { a: RowAction; sep: boolean }) {
 }
 
 /** A ⋯ menu of actions: on each table row, and on sub-table rows inside a peek. */
-export function ActionsMenu({ items, align = 'end', label = 'Actions' }: { items: RowAction[]; align?: 'start' | 'center' | 'end'; label?: string }) {
+/** A row's ⋯ menu (a list's search row has ActionsMenu, ./actions-menu.tsx). */
+export function RowMenu({ items, align = 'end', label = 'Row actions' }: { items: RowAction[]; align?: 'start' | 'center' | 'end'; label?: string }) {
   if (!items.length) return null;
   return (
     <DropdownMenu>

@@ -20,7 +20,7 @@ import { httpError } from '@/features/status/from-error';
 import { fill } from '@/lib/vocabulary';
 import { formatValue } from './charts';
 import { EmptyState } from './empty';
-import { ExportRowsButton } from './export';
+import { exportRowsItem } from './export';
 import { useTabAction } from './tab-action';
 import { duration, FINISHED, JOB_KINDS, lowerFirst, RESULT_LABELS, resultCounts, RUN_STATUSES, runKindLabel, runSeconds, runStatusText, runTarget, targetLabel, when, type Run } from './run-rows';
 
@@ -130,7 +130,7 @@ export function RunsTable({ tab, reports, summary }: {
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${runStatusText(r)} ${runTarget(r)?.key ?? ''} ${r.id}`}
       searchPlaceholder={`Search ${noun}`}
-      primary={runs.length ? <ExportRowsButton name={`${tab.pack}-${tab.id}`} rows={runs} cols={cols} /> : undefined}
+      exports={runs.length ? [exportRowsItem({ name: `${tab.pack}-${tab.id}`, rows: runs, cols })] : undefined}
       empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={reports ? 'empty-reports' : 'empty-runs'} /></div>}
       detailTitle={(r) => runKindLabel(r.pack, r.kind)}
       // mold_v0-278: the panel's ⋯ menu: the record it ran on; the run's own page (flag record_pages, mold_v0-256) is Open in its own page.

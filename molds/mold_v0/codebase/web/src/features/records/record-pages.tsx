@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
-import { ExportCsvButton } from '@/features/tabs/export';
+import { useExportCsv } from '@/features/tabs/export';
 import { useImportAction } from './workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
@@ -117,7 +117,7 @@ const dash = <span className='text-muted-foreground'>—</span>;
 /**
  * A data adapter (mold_v0-205): the same table over rows that do not come from a records route, as a read-only system
  * area (the Access log's trails, features/audit/access-log.tsx). `load` reads the rows (at most LIST_MAX; `more` when
- * there were more), `primary` is the toolbar's action in place of Export CSV, `title` types the record column (the
+ * there were more), `exports` are its Actions ▾ export items in place of Export CSV, `title` types the record column (the
  * entry's time: sorted and filtered by date range), `hidden` adds fields as columns the column picker shows on request,
  * `updated` false leaves out the Updated column, and `defaultSort` orders the rows at first.
  */
@@ -125,7 +125,7 @@ export interface RecordSource {
   load: () => Promise<{ records: RecordRow[]; more: boolean }>;
   /** What the rows depend on (reloaded when it changes). */
   key: string;
-  primary?: ReactNode;
+  exports?: RowAction[];
   title?: { label: string; type: PropType; value: (r: RecordRow) => RawValue };
   hidden?: string[];
   updated?: false;
@@ -269,8 +269,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   summary?: ReactNode;
   /** The tab's primary action (mold_v0-208, features/tabs/tab-action.tsx): the search row's last control (mold_v0-217). */
   toolbarAction?: ReactNode;
-  /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, just left of Export in the search row. */
-  importAction?: ReactNode;
+  /** The list's Import (mold_v0-234, ./workspace-import.tsx): an item of the Actions ▾ menu, before Export (mold_v0-294). */
+  importAction?: RowAction | null;
   /** An open record's own actions, its panel's ⋯ items (mold_v0-212: a staff record's Edit, features/records/staff-records.tsx). */
   rowActions?: (r: RecordRow) => RowAction[];
   /** An open record's first lines (mold_v0-221: a staff row's provenance and an override's mark, features/records/staff-records.tsx). */
@@ -283,6 +283,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   related?: RelatedColumns;
 }) {
   const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
+  const exporter = useExportCsv({ url, area, rows, name: exportName ?? area.name, areas: exportAreas ?? [area.name] });
   // mold_v0-256: the computed columns' values for the rows read, as the person reading (an area they may not read: empty).
   const rowKeys = useMemo(() => (data?.records ?? []).map((r) => r.key), [data]);
   const relatedValues = useOrgLoad(async () => {
@@ -357,18 +358,10 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
-      // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
-      primary={source ? source.primary : ({ rows: view, narrowed }) => (importAction ? (
-        // mold_v0-234: Import and Export side by side (two buttons, one group: they wrap together on a phone).
-        <div className='flex shrink-0 items-center gap-2'>
-          {importAction}
-          <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
-            keys={narrowed ? view.map((r) => r.key) : null} />
-        </div>
-      ) : (
-        <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
-          keys={narrowed ? view.map((r) => r.key) : null} />
-      ))}
+      // mold_v0-294: Import and Export (every list's, empty or not; the view's rows when narrowed, mold_v0-217) are items
+      // of the search row's Actions ▾ menu, with Ask AI, before the primary action.
+      imports={importAction ? [importAction] : undefined}
+      exports={source ? source.exports ?? [] : ({ rows: view, narrowed }) => { const it = exporter.item(narrowed ? view.map((r) => r.key) : null); return it ? [it] : []; }}
       empty={empty}
       detailTitle={(r) => (source?.detailTitle ? source.detailTitle(r) : r.title || r.key)}
       actions={source?.actions}
@@ -406,7 +399,7 @@ export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string 
   // A record added from the primary action: the list is read again.
   const [round, setRound] = useState(0);
   const { button, card, panel } = useAreaAction(area, () => setRound((n) => n + 1));
-  // mold_v0-234: Import, where the area's contract grants it to this person: its button beside Export, its card in the list's place.
+  // mold_v0-234: Import, where the area's contract grants it to this person: an Actions ▾ item before Export, its card in the list's place.
   const imp = useImportAction(area, () => setRound((n) => n + 1));
   if (imp.card && !card) return imp.card;
   // The Add form: the full card in the list's place, or (mold_v0-256, flag side_panel_forms) a panel beside the list.
@@ -414,7 +407,7 @@ export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string 
     <FormHost card={card} panel={panel}>
       <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
         summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-        toolbarAction={button ?? undefined} importAction={imp.button} />
+        toolbarAction={button ?? undefined} importAction={imp.item} />
     </FormHost>
   );
 }

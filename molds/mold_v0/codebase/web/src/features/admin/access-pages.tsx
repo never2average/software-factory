@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { ActionsMenu } from '@/components/layout/record-view';
+import { ActionsMenu } from '@/components/layout/actions-menu';
 import PageContainer from '@/components/layout/page-container';
 import { UrlTabs } from './compute-common';
 import { Icons } from '@/components/icons';
@@ -151,12 +151,11 @@ function Editor({ page, changes }: { page: Page; changes: Change[] }) {
           <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
           <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder='Search fields' aria-label='Search fields' className='h-9 pl-8' />
         </div>
+        {/* mold_v0-294: the search row's Actions ▾ (Version history, then View or import JSON) before Save and Add field. */}
+        <ActionsMenu page={[{ label: 'Version history', icon: <Icons.history />, onSelect: () => setDialog('history') }]}
+          imports={[{ label: 'View or import JSON', icon: <Icons.code />, onSelect: () => setDialog('json') }]} />
         <Gate need='accounts'><Button variant='outline' disabled={!dirty || busy || problems.length > 0} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</Button></Gate>
         <Button type='button' onClick={() => setRows((rs) => [...rs, { row: ++seq.current, key: '', label: '', type: 'text' }])}><Icons.add />Add field</Button>
-        <ActionsMenu label='Form actions' items={[
-          { label: 'Version history', icon: <Icons.history />, onSelect: () => setDialog('history') },
-          { label: 'View or import JSON', icon: <Icons.code />, onSelect: () => setDialog('json') },
-        ]} />
       </div>
       <div className='overflow-x-auto rounded-md border'>
         <table className='w-full min-w-[46rem] text-sm' data-testid='form-fields'>

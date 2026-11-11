@@ -245,7 +245,9 @@ async function browserChecks(w: any) {
     await c.addCookies([{ name: cookie.split("=")[0]!, value: cookie.slice(cookie.indexOf("=") + 1), url: origin }]);
     return c;
   };
+  // mold_v0-294: Export CSV is an item of the list's Actions ▾ menu.
   const download = async (p: any) => {
+    await p.locator('[data-testid="list-actions"]').first().click();
     const [d] = await Promise.all([p.waitForEvent("download", { timeout: 20000 }), p.locator('[data-testid="export-csv"]').click()]);
     return { name: d.suggestedFilename() as string, text: readFileSync(await d.path(), "utf8") };
   };
@@ -253,12 +255,13 @@ async function browserChecks(w: any) {
   const p = await c.newPage();
   // An area tab: the same file as the MCP tool's, with a byte-order mark for spreadsheets.
   await p.goto("/app/packs/fixture_vulns/vulnerabilities", { waitUntil: "networkidle" });
-  await p.locator('[data-testid="export-csv"]').waitFor({ timeout: 20000 });
+  await p.locator('[data-testid="list-actions"]').first().waitFor({ timeout: 20000 });
   await p.locator("table").first().waitFor({ timeout: 20000 });
   const tab = await download(p);
   assert.match(tab.name, /^fixture_vulns-vulnerabilities-\d{4}-\d{2}-\d{2}\.csv$/);
   assert.equal(tab.text, `\ufeff${w.mcpCsv}`, "the tab's file is the MCP tool's");
-  assert.match(await p.locator('[role="status"]').filter({ hasText: "exported" }).innerText(), /7 records exported/);
+  // What it wrote is said in a toast (it was a status line beside the button).
+  assert.match(await p.getByText(/records? exported/).first().innerText(), /7 records exported/);
   if (SHOTS) await p.screenshot({ path: path.join(SHOTS, "export-tab-1280.png"), fullPage: true });
   await p.addScriptTag({ content: AXE });
   const found = await p.evaluate(async () => (await (window as any).axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"] }, resultTypes: ["violations"] }))
@@ -266,19 +269,19 @@ async function browserChecks(w: any) {
   assert.deepEqual(found.filter((x: any) => x.impact === "serious" || x.impact === "critical"), [], "axe on the tab");
   // A merged tab: its Source column and every area's rows.
   await p.goto("/app/packs/fixture_status/ours", { waitUntil: "networkidle" });
-  await p.locator('[data-testid="export-csv"]').waitFor({ timeout: 20000 });
+  await p.locator('[data-testid="list-actions"]').first().waitFor({ timeout: 20000 });
   const merged = await download(p);
   assert.match(merged.text, /^\ufeffKey,Title,Source,/, "the merged tab's Source column");
   // An area's records page.
   await p.goto("/app/records/audit_apps", { waitUntil: "networkidle" });
-  await p.locator('[data-testid="export-csv"]').waitFor({ timeout: 20000 });
+  await p.locator('[data-testid="list-actions"]').first().waitFor({ timeout: 20000 });
   const apps = await download(p);
   assert.ok(apps.text.includes("\r\napp-a,") && !apps.text.includes("app-b"), "the records page's file: A's application, never B's");
   await c.close();
   const narrow = await ctx(390);
   const q = await narrow.newPage();
   await q.goto("/app/packs/fixture_vulns/vulnerabilities", { waitUntil: "networkidle" });
-  await q.locator('[data-testid="export-csv"]').waitFor({ timeout: 20000 });
+  await q.locator('[data-testid="list-actions"]').first().waitFor({ timeout: 20000 });
   const wide = await q.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
   assert.ok(wide[0]! <= wide[1]! + 1, `the tab at 390 px scrolls sideways (${wide[0]} > ${wide[1]})`);
   if (SHOTS) await q.screenshot({ path: path.join(SHOTS, "export-tab-390.png"), fullPage: true });

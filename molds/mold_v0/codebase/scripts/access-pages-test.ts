@@ -608,7 +608,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     for (const h of ["B number", "B choice", "B multi", "B date", "B yes"]) assert.ok(heads.includes(h), `the list has a column: ${h}`);
     const cells = (await row2.innerText()).replace(/\s+/g, " ");
     assert.match(cells, /Option B/); assert.match(cells, /2026-11-10/); assert.match(cells, /\bYes\b/);
-    const [dl] = await Promise.all([staff.waitForEvent("download", { timeout: 15000 }), (async () => { await staff.getByRole("button", { name: "Export" }).first().click(); await staff.getByRole("menuitem", { name: /Export CSV/ }).click(); })()]);
+    const [dl] = await Promise.all([staff.waitForEvent("download", { timeout: 15000 }), (async () => { await staff.getByTestId("list-actions").first().click(); await staff.getByRole("menuitem", { name: /Export CSV/ }).click(); })()]);
     const csv = (await import("node:fs")).readFileSync(await dl.path(), "utf8");
     for (const h of ["B number", "B choice", "B multi", "B date", "B yes"]) assert.match(csv.split("\n")[0]!, new RegExp(h), `the export has its column: ${h}`);
     assert.match(csv, /Every Co[\s\S]*Option B/);

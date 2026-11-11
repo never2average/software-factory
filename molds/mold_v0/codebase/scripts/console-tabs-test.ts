@@ -40,12 +40,17 @@
 //    <button> or trigger goes without one, no <div>/<span> acts as a button; the sidebar's navigation is left as it is. And
 //    the scan catches each of those in a copy of the console with one put back (a ghost variant with no border, a raw
 //    <button>, a <span role='button'>, a Button handed border-0). In a browser: testing/console/outlines.mjs.
+// 6b. One Actions ▾ menu per search row (mold_v0-294; scripts/console-actions-scan.ts): no Export, Import, Download or Ask
+//    AI button of its own; the menu's order; Ask AI's list context capped and masked (client and server).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { scanOutlines } from "./console-outlines.js";
+import { scanActions } from "./console-actions-scan.js";
+import { actionsItems, listAskContext, ASK_ROWS_MAX } from "../web/src/lib/toolbar-actions.js";
+import { cleanListContext, LIST_COLS_MAX, LIST_ROWS_MAX } from "../src/list-answers.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TMP = mkdtempSync(path.join(tmpdir(), "console-tabs-"));
@@ -671,10 +676,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(sc, /useActionOpen\('new'\)/); assert.match(ru, /if \(card\) return card;/, "runs: the card in the list's place");
     // mold_v0-256: through FormHost (the card in the list's place; a new record's form in a side panel with side_panel_forms on).
     assert.match(tp, /<FormHost card=\{card\} panel=\{panel && !imp\.card\}><div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
-    assert.match(tp, /<ExportCsvButton [^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Export CSV in the views' row");
+    // mold_v0-294: a board's or a timeline's Import and Export are items of the Actions ▾ menu, the button after it.
+    assert.match(tp, /<ActionsMenu imports=\{imp\.item \? \[imp\.item\] : undefined\} exports=\{\[exporter\.item\(\)\][^}]*\}[^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Actions ▾ (Import, then Export CSV) in the views' row");
     // mold_v0-234: a workspace's Import, its own button just left of Export, its form a card in the list's place.
     assert.match(tp, /const card = actionCard \?\? imp\.card;/, "an area tab: the import's card in the list's place too");
-    assert.match(tp, /\{imp\.button\}\s*<ExportCsvButton /, "a board or a timeline: Import just left of Export CSV");
+    assert.doesNotMatch(tp, /\{imp\.button\}|<ExportCsvButton /, "a board or a timeline: no Import or Export button of its own");
     assert.match(tp, /pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}/, "no title or description above a list tab");
     // mold_v0-278 (the operator's call, replacing mold_v0-217's full card): an open record is the panel beside the narrowed list.
     assert.match(rv, /\{current && detail && \(\s*<RecordPanel /, "an open record: the record panel beside the list");
@@ -685,8 +691,10 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
     assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
     // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
-    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(importAction \? \([\s\S]*?\{importAction\}\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>[\s\S]*?\) : \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed (mold_v0-234: a workspace's Import, its own button, just left of it)");
-    assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
+    // mold_v0-294: Import and Export are items of the search row's Actions ▾ menu (Import first), not buttons of their own.
+    assert.match(rp, /imports=\{importAction \? \[importAction\] : undefined\}\s*exports=\{source \? source\.exports \?\? \[\] : \(\{ rows: view, narrowed \}\) => \{ const it = exporter\.item\(narrowed \? view\.map\(\(r\) => r\.key\) : null\); return it \? \[it\] : \[\]; \}\}/, "Export on every area list, the view's rows when narrowed (mold_v0-234: a workspace's Import before it), both in Actions ▾");
+    assert.doesNotMatch(rp, /data\?\.records\.length \? \[?exporter/, "Export shown on an empty list too");
+    assert.doesNotMatch(rp, /<ExportCsvButton|importAction\}\s*</, "no Export or Import button of its own");
     const ex = read("features/tabs/export.tsx");
     assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
     assert.match(ex, /audit=export/, "the data trail records it");
@@ -758,6 +766,55 @@ export function Probe({ on }: { on: () => void }) {
     assert.doesNotMatch(caught, /outline-probe\.tsx:7/, "a tab is not a button: it keeps its own look");
     assert.equal(caught.split("\n").length, 4, `exactly those four: ${caught}`);
     console.log("✓ every button has a visible outline (mold_v0-251): the shared Button's and the toggle's variants draw a coloured border, no raw <button>, trigger or clickable <span>/<div> goes without one (the sidebar's navigation excepted); the top bar's buttons, the workspace agent's included, are the outline variant; the scan catches a ghost variant without its border, a raw button, a span acting as a button and a Button handed border-0, and leaves a tab alone");
+  }
+
+  // ---------- 6b. one Actions ▾ menu per search row (mold_v0-294) ----------
+  {
+    const read = (f: string) => readFileSync(path.join(ROOT, "web", "src", f), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const found = scanActions(path.join(ROOT, "web", "src"));
+    assert.deepEqual(found, [], `every Export, Import, Download and Ask AI is an Actions ▾ item:\n${found.join("\n")}`);
+    // The order: the page's own, then Import and Export, then Ask AI, a separator between groups; nothing: no menu.
+    const items = actionsItems<{ label: string; separator?: boolean }>({ page: [{ label: "Copy emails" }], imports: [{ label: "Import" }], exports: [{ label: "Export CSV" }, { label: "Export all" }], ask: { label: "Ask AI" } });
+    assert.deepEqual(items.map((i) => `${i.separator ? "| " : ""}${i.label}`), ["Copy emails", "| Import", "Export CSV", "Export all", "| Ask AI"]);
+    assert.deepEqual(actionsItems<{ label: string; separator?: boolean }>({ exports: [{ label: "Export CSV" }] }).map((i) => [i.label, !!i.separator]), [["Export CSV", false]], "one group: no separator");
+    assert.deepEqual(actionsItems<{ label: string; separator?: boolean }>({}), [], "nothing to hold: no Actions button");
+    // Ask AI's context: the first ASK_ROWS_MAX rows of the view, the search kept unless it looks like an address or a phone.
+    const many = Array.from({ length: 80 }, (_, i) => [`row ${i}`, i]);
+    const ctx = listAskContext({ list: "accounts", search: "acme", columns: ["Name", "N"], rows: many });
+    assert.equal(ctx.rows.length, ASK_ROWS_MAX); assert.equal(ctx.total, 80); assert.equal(ctx.search, "acme");
+    assert.equal(listAskContext({ list: "people", search: "someone@example.com", columns: [], rows: [] }).search, undefined, "an address is not sent as the search");
+    // The server caps and cleans it again, and masks what looks like a key.
+    const clean = cleanListContext({ list: "accounts", columns: Array.from({ length: 30 }, (_, i) => `c${i}`), rows: [[`sk-${"a".repeat(30)}`, "x".repeat(500)], ...many], total: 81, filters: ["Status is Active"] });
+    assert.equal(clean.columns.length, LIST_COLS_MAX); assert.ok(clean.rows.length <= LIST_ROWS_MAX);
+    assert.equal(clean.rows[0][0], "[hidden]", "a key-like value is masked"); assert.ok(clean.rows[0][1].length <= 200, "a cell is capped");
+    assert.throws(() => cleanListContext({ columns: [], rows: [] }), /which list/);
+    // RecordView: the search row is search, filters, Filter, the columns button, Actions ▾, then the primary action.
+    const rv = read("components/layout/record-view.tsx");
+    assert.match(rv, /<Input type='search'[\s\S]*?\{filters\}\s*\{anyTyped && <FilterButton[\s\S]*?<ViewMenu [\s\S]*?\{primaryNode\}\s*\{toolbarAction\}/, "the search row's order");
+    assert.match(rv, /const primaryNode = \(<>\s*<ActionsMenu page=\{primaryMenu\} imports=\{imports\} exports=\{exportItems\} ask=\{ask === false \? null : \(\) => \{ setOpen\(null\); setAsking\(true\); \}\} \/>\s*\{primaryEl\}/, "Actions ▾ then the primary action");
+    const am = read("components/layout/actions-menu.tsx");
+    assert.match(am, /<Button variant='outline' data-testid='list-actions'[\s\S]*?Actions\s*<Icons\.chevronDown/, "an outlined button labelled Actions with a chevron, the label at every width");
+    assert.match(am, /const askItem: RowAction \| null = ask && available/, "Ask AI only when a model is configured");
+    // The scan catches what it is for: a standalone Export button, a download-icon trigger and the old control put back.
+    const src = path.join(TMP, "actions-src");
+    cpSync(path.join(ROOT, "web", "src"), src, { recursive: true });
+    writeFileSync(path.join(src, "features", "actions-probe.tsx"), `import { Button } from '@/components/ui/button';
+import { Icons } from '@/components/icons';
+export function Probe({ on }: { on: () => void }) {
+  return (<div>
+    <Button variant='outline' onClick={on}>Export CSV</Button>
+    <Button variant='outline' aria-label='More' onClick={on}><Icons.upload /></Button>
+    <ExportCsvButton />
+    <Button variant='outline' onClick={on}>Save</Button>
+  </div>);
+}
+`);
+    const caught = scanActions(src).join("\n");
+    assert.match(caught, /actions-probe\.tsx:5: a button of its own labelled "Export CSV"/, caught);
+    assert.match(caught, /actions-probe\.tsx:6: a button of its own with the download or upload icon/, caught);
+    assert.match(caught, /actions-probe\.tsx:7: the old standalone control <ExportCsvButton>/, caught);
+    assert.equal(caught.split("\n").length, 3, `exactly those three: ${caught}`);
+    console.log("✓ one Actions ▾ menu per search row (mold_v0-294): no Export, Import, Download or Ask AI button of its own anywhere in the console (the scan catches each put back); the menu's order, its outlined labelled button, Ask AI only with a model, the context capped (50 rows) and masked");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
