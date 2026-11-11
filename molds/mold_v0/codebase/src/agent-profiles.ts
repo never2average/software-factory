@@ -21,6 +21,7 @@
  *             to AGENT_UPLOAD_MAX_MB in all. A wake fetches them with its lease and writes them into its scratch.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { profilePurpose, type AgentLabel, type AgentPurpose } from "./agent-purpose.js";
 import { getDb, type Queryable } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 import { PackError } from "./pack-api.js";
@@ -157,13 +158,15 @@ export interface ProfileSummary {
   id: string; name: string; description: string; version: number; status: ProfileStatus; source: "platform" | "pack"; pack: string | null; is_default: boolean;
   harness: string; model: string; provider: string; keys: number; uploads: number; upload_bytes: number; governance: string;
   sessions: number; updated_at: string; updated_by: string;
+  /** mold_v0-295: what its agent is for, its own or read from its id and name (src/agent-purpose.ts). */
+  purpose: AgentPurpose;
 }
 const sourceOf = (s: string) => (s.startsWith("pack:") ? { source: "pack" as const, pack: s.slice(5) } : { source: "platform" as const, pack: null });
 function summary(r: ProfileRow, sessions = 0): ProfileSummary {
   const e = effectiveOf(r.config ?? {});
   return { id: r.id, name: r.name, description: r.description, version: r.version, status: r.status, ...sourceOf(r.source), is_default: r.id === DEFAULT_PROFILE,
     harness: flavourOf(e.harness)?.label ?? e.harness, model: e.model, provider: e.provider, keys: e.keys.length, uploads: e.uploads.length,
-    upload_bytes: e.uploads.reduce((t, u) => t + u.bytes, 0), governance: governanceWords(e.governance), sessions, updated_at: iso(r.updated_at)!, updated_by: r.updated_by };
+    upload_bytes: e.uploads.reduce((t, u) => t + u.bytes, 0), governance: governanceWords(e.governance), sessions, updated_at: iso(r.updated_at)!, updated_by: r.updated_by, purpose: profilePurpose(r) };
 }
 
 /** Staff: every profile (archived ones too), the Default first, then by name. */
@@ -541,7 +544,7 @@ export async function profileForStart(id: string | null | undefined, actor: { ki
 /** What the Start a session dialog offers a person: the active profiles they may start, each with its terms for them. */
 export interface StartableProfile {
   id: string; name: string; description: string; version: number; is_default: boolean; harness: string; model: string;
-  budget: { default_usd: number; max_usd: number; ceiling_usd: number }; keys: number; uploads: number; governance: string;
+  budget: { default_usd: number; max_usd: number; ceiling_usd: number }; keys: number; uploads: number; governance: string; purpose: AgentPurpose;
 }
 export async function startableProfiles(actor: { kind: string; role: AccountRole | null }, ceilingOf: () => Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }>): Promise<StartableProfile[]> {
   needOn();
@@ -552,7 +555,7 @@ export async function startableProfiles(actor: { kind: string; role: AccountRole
   return rows.map((r) => {
     const eff = effectiveOf(r.config ?? {});
     return { id: r.id, name: r.name, description: r.description, version: r.version, is_default: r.id === DEFAULT_PROFILE, harness: flavourOf(eff.harness)?.label ?? eff.harness,
-      model: eff.model, budget, keys: eff.keys.length, uploads: eff.uploads.length, governance: governanceWords(eff.governance) };
+      model: eff.model, budget, keys: eff.keys.length, uploads: eff.uploads.length, governance: governanceWords(eff.governance), purpose: profilePurpose(r) };
   });
 }
 
@@ -603,3 +606,25 @@ export async function editorChoices() {
 
 /** Whether an exception of a frozen policy is still in force (the session card's words). */
 export const exceptionsInForce = (g: Governance | null | undefined) => activeExceptions(g).length;
+
+/**
+ * mold_v0-295: the agent a session runs as, by the profile version it froze: its name and purpose (src/agent-purpose.ts).
+ * A version never changes, so each is read once per process; a profile gone or never named is the Default's words.
+ */
+const agentCache = new Map<string, AgentLabel>();
+export async function profileAgent(id: string | null, version: number | null): Promise<AgentLabel> {
+  const key = `${id ?? DEFAULT_PROFILE}@${version ?? 0}`;
+  const hit = agentCache.get(key);
+  if (hit) return hit;
+  const [r] = await read((q) => (version
+    ? q.query<{ name: string; config: ProfileConfig | null }>("SELECT name, config FROM agent_profile_versions WHERE profile_id = $1 AND version = $2", [id ?? DEFAULT_PROFILE, version])
+    : q.query<{ name: string; config: ProfileConfig | null }>("SELECT name, config FROM agent_profiles WHERE id = $1", [id ?? DEFAULT_PROFILE]))).catch(() => []);
+  const out: AgentLabel = { name: r?.name ?? DEFAULT_ROW.name, purpose: profilePurpose({ id: id ?? DEFAULT_PROFILE, name: r?.name ?? DEFAULT_ROW.name, config: r?.config ?? null }) };
+  if (r && version && agentCache.size < 1000) agentCache.set(key, out);
+  return out;
+}
+/** Every profile's declared purpose (none: absent), for programs that run with one. */
+export async function declaredProfilePurposes(): Promise<Map<string, AgentPurpose>> {
+  const rows = await read((q) => q.query<{ id: string; purpose: string | null }>("SELECT id, config->>'purpose' AS purpose FROM agent_profiles")).catch(() => []);
+  return new Map(rows.flatMap((r) => (r.purpose ? [[r.id, r.purpose as AgentPurpose] as [string, AgentPurpose]] : [])));
+}

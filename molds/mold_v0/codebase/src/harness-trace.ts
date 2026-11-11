@@ -14,6 +14,7 @@
  *             (harness_budget_grants). Listed whole on every read: they change in place.
  */
 import { maskSecrets } from "./run-events.js";
+import { isPurpose, purposeFromWords, DEFAULT_PURPOSE, type AgentLabel } from "./agent-purpose.js";
 
 export type TraceKind = "sandbox" | "wake" | "model" | "tool" | "command" | "approval" | "budget" | "note" | "message";
 export type TraceStatus = "ok" | "error" | "running" | "waiting";
@@ -34,6 +35,8 @@ export interface TraceStep {
   attachments?: { files: { name: string; bytes: number }[]; repositories: string[] } | null;
   /** The tool call a sub-agent's step belongs under. */
   parent?: string | null;
+  /** mold_v0-295: the agent it comes from (an agent's message, a child run started or settled, a sub-agent's call): its name and purpose. */
+  agent?: AgentLabel;
   /** Everything else worth showing when the step is opened. */
   fields?: Record<string, unknown>;
   /** Its full arguments and result are read from the step's own endpoint when it is opened. */
@@ -61,6 +64,10 @@ const WAKE_REASON: Record<string, string> = { start: "its first message", messag
 const END_WORDS: Record<string, string> = { parked: "It went quiet and parked", paused: "It was paused", awaiting: "It needs a decision", budget: "It reached its budget", stopped: "It was stopped", done: "It finished its work", web_limit: "It used up its web calls", policy: "Its governance policy refused a call", failed: "It failed" };
 const words = (t: string) => t.replaceAll("_", " ");
 
+/** mold_v0-295: a child run's agent, as its event recorded it (its name and purpose; older events: read from its name and program). */
+const childAgent = (d: Record<string, unknown>): { agent?: AgentLabel } => (str(d.name)
+  ? { agent: { name: cap(d.name, 80)!, purpose: isPurpose(d.purpose) ? d.purpose : purposeFromWords(str(d.program), str(d.name)) ?? DEFAULT_PURPOSE } } : {});
+
 /** One run event as a step, or null for one with nothing to show of its own (a request's own row says it). */
 function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (name: string) => string): TraceStep | null {
   const d = (e.data ?? {}) as Record<string, unknown>;
@@ -80,7 +87,9 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (nam
     }
     case "agent_tool_call": {
       const name = str(d.name) ?? "tool";
-      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: "running", title: toolTitle(name), tool: name, preview: cap(d.preview, 300), parent: str(d.parent) ?? null, more: true };
+      // A sub-agent's call: the agent it starts, by the kind the harness names (its words read for a purpose).
+      const sub = name === "Task" || name === "Agent" ? { agent: { name: cap(d.subagent, 80) ?? "Sub-agent", purpose: purposeFromWords(str(d.subagent), str(d.preview)) ?? DEFAULT_PURPOSE } } : {};
+      return { ...base, id: `tool:${str(d.id) ?? e.id}`, kind: name === "Bash" ? "command" : "tool", status: "running", title: toolTitle(name), tool: name, preview: cap(d.preview, 300), parent: str(d.parent) ?? null, more: true, ...sub };
     }
     case "agent_tool_result": {
       const name = str(d.name) ?? "tool";
@@ -114,8 +123,8 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (nam
     case "failed": return { ...base, id, kind: "wake", status: "error", title: "It failed", error: cap(d.error, 2000), fields: clean(d) as Record<string, unknown> };
     case "agent_request": return null; // what it asked for has its own row (a mark)
     // mold_v0-291: its children, in plain words (the handle and the numbers stay in the step's fields).
-    case "child_spawned": return { ...base, id, kind: "note", status: "ok", title: `Started ${str(d.name) ?? "a child run"}`, fields: clean(d) as Record<string, unknown> };
-    case "child_settled": return { ...base, id, kind: "note", status: d.status === "error" ? "error" : "ok", title: d.status === "done" ? "A child run finished" : d.status === "cancelled" ? "A child run was cancelled" : "A child run failed", fields: clean(d) as Record<string, unknown> };
+    case "child_spawned": return { ...base, id, kind: "note", status: "ok", title: `Started ${str(d.name) ?? "a child run"}`, fields: clean(d) as Record<string, unknown>, ...childAgent(d) };
+    case "child_settled": return { ...base, id, kind: "note", status: d.status === "error" ? "error" : "ok", title: d.status === "done" ? "A child run finished" : d.status === "cancelled" ? "A child run was cancelled" : "A child run failed", fields: clean(d) as Record<string, unknown>, ...childAgent(d) };
     case "child_outputs": return { ...base, id, kind: "note", status: "ok", title: "Handed in its result" };
     case "child_outputs_refused": return { ...base, id, kind: "note", status: "error", title: "Its result did not match what was asked for", fields: clean(d) as Record<string, unknown> };
     case "candidate_recorded": return { ...base, id, kind: "note", status: "ok", title: "Sent a candidate", fields: clean(d) as Record<string, unknown> };
@@ -131,8 +140,8 @@ const carried = (m: TraceMessageRow): TraceStep["attachments"] => {
   return files.length || repositories.length ? { files: files.map((f) => ({ name: maskSecrets(f.name), bytes: f.bytes })), repositories: repositories.map(maskSecrets) } : null;
 };
 /** One message of the conversation as a step of the stream. */
-export const messageStep = (m: TraceMessageRow, wakes: Map<string, number>): TraceStep =>
-  ({ id: `m${m.id}`, at: iso(m.created_at), kind: "message", status: "ok", title: "", role: m.role, body: maskSecrets(m.body), by: m.by_name, message_status: m.status, run_id: m.run_id, wake: m.run_id ? wakes.get(m.run_id) ?? null : null, attachments: carried(m) });
+export const messageStep = (m: TraceMessageRow, wakes: Map<string, number>, agent?: AgentLabel): TraceStep =>
+  ({ ...(m.role === "agent" && agent ? { agent } : {}), id: `m${m.id}`, at: iso(m.created_at), kind: "message", status: "ok", title: "", role: m.role, body: maskSecrets(m.body), by: m.by_name, message_status: m.status, run_id: m.run_id, wake: m.run_id ? wakes.get(m.run_id) ?? null : null, attachments: carried(m) });
 
 /** The events in order, a tool's call and result merged into one step (the same merge the page applies across reads). */
 export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<string, number>, toolTitle: (name: string) => string = (n) => n): TraceStep[] {

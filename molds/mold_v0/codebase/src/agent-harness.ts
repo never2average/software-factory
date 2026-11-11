@@ -134,10 +134,13 @@ export function fitEvent(data: Record<string, unknown>, limit = 15 * 1024): Reco
   return out;
 }
 
+/** mold_v0-295: the kind of sub-agent a Task (Agent) call starts, as the harness names it (its subagent_type), or null. */
+export const subagentOf = (u: ToolUse): string | null => ((u.name === "Task" || u.name === "Agent") && typeof u.input.subagent_type === "string" && u.input.subagent_type ? u.input.subagent_type.slice(0, 80) : null);
+
 /** The one identifying detail of a tool call in the trace: a command, a file path, a search; else its arguments. */
 export function previewOf(u: ToolUse): string {
   const i = u.input;
-  const pick = u.name === "Bash" ? i.command : u.name === "Read" || u.name === "Edit" || u.name === "Write" ? i.file_path : u.name === "Grep" || u.name === "Glob" ? i.pattern : u.name === "WebFetch" ? i.url : u.name === "WebSearch" ? i.query : u.name === "Task" ? i.description : null;
+  const pick = u.name === "Bash" ? i.command : u.name === "Read" || u.name === "Edit" || u.name === "Write" ? i.file_path : u.name === "Grep" || u.name === "Glob" ? i.pattern : u.name === "WebFetch" ? i.url : u.name === "WebSearch" ? i.query : u.name === "Task" || u.name === "Agent" ? i.description : null;
   return typeof pick === "string" ? pick : JSON.stringify(i);
 }
 
@@ -563,7 +566,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
         for (const u of toolUses(e)) {
           toolStarted.set(u.id, { at: now(), name: u.name });
           const input = clean(JSON.stringify(u.input));
-          queueTrace("agent_tool_call", fitEvent({ id: u.id, name: u.name, input, preview: clean(previewOf(u)), ...(typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id ? { parent: e.parent_tool_use_id } : {}) }));
+          queueTrace("agent_tool_call", fitEvent({ id: u.id, name: u.name, input, preview: clean(previewOf(u)), ...(subagentOf(u) ? { subagent: clean(subagentOf(u)!) } : {}), ...(typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id ? { parent: e.parent_tool_use_id } : {}) }));
         }
         for (const u of toolUses(e)) {
           if (e.parent_tool_use_id) continue;

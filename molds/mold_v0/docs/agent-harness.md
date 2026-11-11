@@ -398,12 +398,14 @@ pushes to no app and no default branch. Limits today: the worst-case hold assume
 
 ## The agent's dock (mold_v0-292, flag `nested_runs`)
 
-Beside a session's conversation, a rail of icons: one per section of the work this workspace is doing, each with its live count.
-Opening a section replaces the rail with its panel, and a breadcrumb is the only way in and out of a detail. Every panel can be
-searched, and can fork a second agent from a point in the conversation (`POST /api/agent/:id/fork`: a session of its own, the
-transcript up to there as its context, only for the person who started it; the conversation it came from never sees it). On a
-phone the rail is one button in the session's bar, opening the same panels as a sheet. The chat bar is in the conversation's own
-column, so nothing opens over it.
+In the session's top bar, beside its title and ⋯, the sections of the work this workspace is doing, as a few grouped tabs (the
+console's shared OverflowTabs; mold_v0-295 moved them there from a rail beside the chat): each group a menu of its sections with
+their live counts, its own total beside its name, lit while one of its sections works and amber while one needs a person.
+Choosing a section opens its panel beside the conversation; with none open the conversation is full width. A breadcrumb is the
+only way in and out of a detail. Every panel can be searched, and can fork a second agent from a point in the conversation
+(`POST /api/agent/:id/fork`: a session of its own, the transcript up to there as its context, only for the person who started
+it; the conversation it came from never sees it). On a phone the tabs are one button in the session's bar, opening the same
+sections, by group, as a sheet. The chat bar is in the conversation's own column, so nothing opens over it.
 
 - **Sections come from the programs** (`src/agent-dock.ts`). A program's `dock` names its section, its words, its icon and its
   order, and how it is drawn: `items` lists its typed outputs (`items` the list inside them, `title` and `meta` the fields a row
@@ -411,6 +413,17 @@ column, so nothing opens over it.
   (three.js; the program's metric up, its floors across, the region they allow; each point a measured version). `also` adds more
   sections from one program. A program with no `dock` is a section of its own; while nothing declares them, an acceptance rule
   brings the built-ins, named Changes and Climb.
+- **Groups** (mold_v0-295). A section's `dock.group` (and each `also` entry's) names the tab it sits under: `think`, `measure`,
+  `ship` or an id of the app's own (its words: the id, capitalised). With none, its kind's: `items` under Think, `climb` under
+  Measure, `changes` under Ship (the built-ins too). Think, Measure and Ship come first, an app's own groups after them.
+- **Agent purposes** (mold_v0-295, `src/agent-purpose.ts`). What an agent is for, one of `researcher`, `formalizer`, `builder`,
+  `reviewer`, `tester`, `deployer`, `analyst`, `improver`, `general`, each drawn with one icon beside the agent's name. Declared
+  on an agent profile (its config's `purpose`: Admin › Agent profiles' Purpose, a pack's `agent_profiles[].purpose`) or on a
+  program (`config.purpose`); a label only, it changes nothing a session runs with. Where nothing is declared it is read: a
+  program's from its profile's declared one, else its id, name, section and icon, else its shape (an acceptance rule or a climb:
+  improver; a machine: builder); a profile's from its id and name; else general. The trace names the agent of each of its
+  messages, each child run it starts or settles and each sub-agent a harness starts (its kind); the run tree, Active runs and
+  the dock's rows name each child's and program's agent the same way.
 - **Active runs.** A pack's tab of kind `agent_runs` (`/app/agent/runs`) lists every root session with a child still at work; a row
   opens its run in the panel, and Expand or its own page shows the same view: spend, the tree of children, each machine's step graph
   live, what was decided, the version timeline and the climb.
