@@ -27,6 +27,7 @@ import { When, fail } from '@/features/portal/shared';
 import { AgentComposer, type ComposerSend } from '../composer/agent-composer';
 import { TraceStream, useTrace } from '../session-trace';
 import { Climb, RunView, StatusBadge, type ClimbTarget, type DockCall } from './run-view';
+import { RecordView, type RecordCol } from '@/components/layout/record-view';
 
 export interface DockCheckpoint { id: number; label: string; role: 'person' | 'agent' }
 interface Section { id: string; label: string; sub: string; icon: string; kind: 'items' | 'changes' | 'climb'; group?: string; count: number; live: boolean; attention: boolean; needs?: { review: number; stopped: number }; programs: { id: string; name: string; description: string; purpose?: AgentPurpose }[] }
@@ -89,21 +90,6 @@ function SectionWords({ s }: { s: Section }) {
   return <><span className='truncate'>{s.label}</span><span className='text-muted-foreground truncate text-xs' data-menu-sub=''>{subWords(s)}{why && <> · <span className='text-amber-700 dark:text-amber-400'>{why}</span></>}</span></>;
 }
 
-function Row({ title, facts, status, onOpen, live, agent }: { title: string; facts: (string | null | false | undefined)[]; status?: string; onOpen?: () => void; live?: boolean; agent?: { name: string; purpose: AgentPurpose | null | undefined } | null }) {
-  const line = facts.filter(Boolean).join(' · ');
-  return (
-    <Button variant='outline' disabled={!onOpen} onClick={onOpen} title={title} data-dock-row=''
-      className={cn('flex h-auto w-full shrink-0 flex-col items-stretch gap-1 px-3 py-2.5 text-left font-normal whitespace-normal', live && 'border-primary/40')}>
-      <span className='flex w-full min-w-0 items-center gap-2'>
-        <span className='min-w-0 flex-1 truncate text-sm font-medium'>{title}</span>
-        {status && <StatusBadge status={status} />}
-        {onOpen && <Icons.chevronRight className='text-muted-foreground size-3.5 shrink-0' />}
-      </span>
-      {(line || agent) && <span className='text-muted-foreground flex w-full min-w-0 items-center gap-2 text-xs'>{agent && <AgentName name={agent.name} purpose={agent.purpose} className='shrink-0' />}{agent && line && <span aria-hidden>·</span>}{line && <span className='min-w-0 truncate'>{line}</span>}</span>}
-    </Button>
-  );
-}
-
 function Facts({ rows }: { rows: [string, ReactNode][] }) {
   return <dl className='grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs'>{rows.map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='min-w-0 break-words'>{v}</dd></div>)}</dl>;
 }
@@ -139,30 +125,78 @@ function EmptySection({ section, text, onAsk }: { section: Section; text: string
   );
 }
 
-function SectionBody({ section, call, query, onAsk, open }: { section: Section; call: DockCall; query: string; onAsk: (t: string) => void; open: (d: Detail) => void }) {
+/** The columns of a section's list: the same table as every other list in the tool (mold_v0-297). */
+function itemCols(kind: Section['kind']): RecordCol<Item>[] {
+  return [
+    { key: 'ref', label: 'Number', type: 'text', keep: true, value: (i) => i.ref ?? '', render: (i) => (i.ref ? <span className='font-mono text-xs whitespace-nowrap'>{i.ref}</span> : dash) },
+    { key: 'title', label: kind === 'changes' ? 'Change' : 'Title', title: true, keep: true, type: 'text', className: 'min-w-56', value: (i) => i.title, render: (i) => <span className='leading-snug font-medium'>{i.title}</span> },
+    { key: 'agent', label: 'Agent', type: 'text', value: (i) => i.program ?? '', render: (i) => (i.program ? <AgentName name={i.program} purpose={i.purpose} muted={false} className='text-sm' /> : dash) },
+    { key: 'status', label: 'Status', type: 'select', value: (i) => i.status, render: (i) => <StatusBadge status={i.status} /> },
+    { key: 'details', label: 'Details', type: 'text', value: (i) => i.meta.join(' · '), render: (i) => (i.meta.length ? <span className='text-muted-foreground line-clamp-2 max-w-[28rem]'>{i.meta.join(' · ')}</span> : dash) },
+    { key: 'at', label: 'When', type: 'date', keep: true, value: (i) => i.at, render: (i) => <When d={i.at} /> },
+  ];
+}
+const dash = <span className='text-muted-foreground'>—</span>;
+
+function useSectionData(call: DockCall, id: string) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [targets, setTargets] = useState<ClimbTarget[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let on = true;
-    const load = () => call<{ items?: Item[]; targets?: ClimbTarget[] }>('GET', `/dock/${encodeURIComponent(section.id)}`).then((r) => { if (on) { setItems(r.items ?? null); setTargets(r.targets ?? null); setError(null); } }, (e: Error) => { if (on) setError(e.message); });
+    const load = () => call<{ items?: Item[]; targets?: ClimbTarget[] }>('GET', `/dock/${encodeURIComponent(id)}`).then((r) => { if (on) { setItems(r.items ?? null); setTargets(r.targets ?? null); setError(null); } }, (e: Error) => { if (on) setError(e.message); });
     void load();
     const t = setInterval(() => void load(), 5000);
     return () => { on = false; clearInterval(t); };
-  }, [call, section.id]);
-  if (error && !items && !targets) return <p className='text-destructive text-sm'>{error}</p>;
-  if (!items && !targets) return <div className='bg-muted/40 h-24 animate-pulse rounded-lg' />;
-  if (section.kind === 'climb') {
-    const shown = (targets ?? []).filter((t) => hit(query, t.id, t.program));
-    if (!shown.length) return query.trim() ? <p className='text-muted-foreground text-sm'>Nothing here matches.</p> : <EmptySection section={section} text='Nothing is climbing yet. A run shows here once a candidate is measured.' onAsk={onAsk} />;
-    return <>{shown.map((t) => <div key={`${t.kind}:${t.id}`} className='flex flex-col gap-2 rounded-lg border p-3'><div className='flex items-center gap-2'><span className='min-w-0 flex-1 truncate text-sm font-medium'>{t.id}</span>{t.active && <StatusBadge status='running' />}</div><Climb target={t} onAsk={onAsk} /></div>)}</>;
-  }
-  const rows = (items ?? []).filter((i) => hit(query, i.title, i.program, i.ref, i.status, ...i.meta));
-  if (!rows.length) return query.trim() ? <p className='text-muted-foreground text-sm'>Nothing here matches.</p> : <EmptySection section={section} text={`Nothing here yet. ${section.programs.length === 1 ? section.programs[0]!.description : 'Results show here as programs finish.'}`} onAsk={onAsk} />;
-  return <>{rows.map((i) => (
-    <Row key={i.id} title={i.title} status={i.status === 'done' ? undefined : i.status} live={i.status === 'running' || i.status === 'queued'} facts={[i.ref, ...i.meta.slice(0, 3)]} agent={i.program ? { name: i.program, purpose: i.purpose } : null}
-      onOpen={() => open({ title: i.title, node: section.kind === 'changes' ? <ChangeView item={i} call={call} onAsk={onAsk} open={open} /> : <ItemView item={i} call={call} onAsk={onAsk} open={open} /> })} />
-  ))}</>;
+  }, [call, id]);
+  return { items, targets, error };
+}
+
+/** A section of items or changes: the tool's standard list filling the modal; a row opens it in the panel beside the table. */
+function SectionTable({ section, call, onAsk, open, toolbar }: { section: Section; call: DockCall; onAsk: (t: string) => void; open: (d: Detail) => void; toolbar: ReactNode }) {
+  const { items, error } = useSectionData(call, section.id);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const cols = useMemo(() => itemCols(section.kind), [section.kind]);
+  if (error && !items) return <p className='text-destructive text-sm'>{error}</p>;
+  const rows = items ?? [];
+  return (
+    // The table fills the modal below its tabs (RecordView's page height is replaced by the modal's own).
+    <div className='flex min-h-0 flex-1 flex-col [&>[data-slot=list-split]]:!h-full [&>[data-slot=list-split]]:!min-h-0' data-dock-table={section.id}>
+      <RecordView<Item> id={`dock-${section.id}`} noun={rows.length === 1 ? 'item' : 'items'} loading={!items} rows={rows} rowKey={(i) => i.id} cols={cols}
+        openKey={openKey} onOpenChange={setOpenKey} defaultSort={[{ key: 'at', dir: 'desc' }]} ask={false}
+        searchText={(i) => `${i.ref ?? ''} ${i.title} ${i.program ?? ''} ${i.status} ${i.meta.join(' ')}`} searchPlaceholder={`Search ${section.label.toLowerCase()}`}
+        toolbarAction={toolbar} exportName={`dock-${section.id}`}
+        detailTitle={(i) => i.title}
+        detail={(i) => (section.kind === 'changes' ? <ChangeView key={i.id} item={i} call={call} onAsk={onAsk} open={open} /> : <ItemView key={i.id} item={i} call={call} onAsk={onAsk} open={open} />)}
+        empty={<EmptySection section={section} text={`Nothing here yet. ${section.programs.length === 1 ? section.programs[0]!.description : 'Results show here as programs finish.'}`} onAsk={onAsk} />} />
+    </div>
+  );
+}
+
+/** A climbing section: each target's measured candidates as a card (no table: a chart per target). */
+function ClimbBody({ section, call, query, onAsk }: { section: Section; call: DockCall; query: string; onAsk: (t: string) => void }) {
+  const { targets, error } = useSectionData(call, section.id);
+  if (error && !targets) return <p className='text-destructive text-sm'>{error}</p>;
+  if (!targets) return <div className='bg-muted/40 h-24 animate-pulse rounded-lg' />;
+  const shown = targets.filter((t) => hit(query, t.id, t.program));
+  if (!shown.length) return query.trim() ? <p className='text-muted-foreground text-sm'>Nothing here matches.</p> : <EmptySection section={section} text='Nothing is climbing yet. A run shows here once a candidate is measured.' onAsk={onAsk} />;
+  return <>{shown.map((t) => <div key={`${t.kind}:${t.id}`} className='flex flex-col gap-2 rounded-lg border p-3'><div className='flex items-center gap-2'><span className='min-w-0 flex-1 truncate text-sm font-medium'>{t.id}</span>{t.active && <StatusBadge status='running' />}</div><Climb target={t} onAsk={onAsk} /></div>)}</>;
+}
+
+/** Fork a second agent from a point in the conversation: the button and its list of points. */
+function AttachAgent({ checkpoints, forking, picking, setPicking, onPick, onClose }: { checkpoints: DockCheckpoint[]; forking: boolean; picking: boolean; setPicking: (f: (v: boolean) => boolean) => void; onPick: (c: DockCheckpoint) => void; onClose: () => void }) {
+  return (
+    <div className='relative shrink-0'>
+      <Button variant='outline' size='sm' className='h-9 shrink-0' aria-expanded={picking} onClick={() => (forking ? onClose() : setPicking((v) => !v))}><Icons.gitBranch className='size-3.5' />{forking ? 'Close agent' : 'Attach agent'}</Button>
+      {picking && (
+        <div className='bg-popover absolute top-full right-0 z-50 mt-1 w-[min(420px,80vw)] overflow-hidden rounded-md border p-1 shadow-md' data-dock-checkpoints=''>
+          <p className='text-muted-foreground px-2 py-1.5 text-xs'>Fork from</p>
+          {checkpoints.length === 0 ? <p className='text-muted-foreground px-2 py-1.5 text-xs'>Nothing to fork from yet: say something in the conversation first.</p>
+            : <div className='flex max-h-72 flex-col gap-1 overflow-y-auto'>{checkpoints.map((c) => <Button key={c.id} variant='outline' size='sm' className='h-auto w-full justify-start px-2 py-1.5 text-left text-xs font-normal whitespace-normal' onClick={() => onPick(c)}><span className='truncate'>{c.label}</span></Button>)}</div>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ChangeView({ item, call, onAsk, open }: { item: Item; call: DockCall; onAsk: (t: string) => void; open: (d: Detail) => void }) {
@@ -268,22 +302,23 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
           tabs={shownGroups.map((g) => ({ id: g.id, label: g.label, data: { 'data-dock-group-tab': g.id } }))} /></div>}
         {siblings.length > 1 && <div data-dock-siblings={groupOfCurrent!.id}><InPageTabs size='sm' label={groupOfCurrent!.label} value={current.id} onValueChange={(id) => openSection(id)} tabs={siblings.map(tabOf)} /></div>}
       </div>
-      <div className='relative flex shrink-0 items-center gap-2 border-b px-4 py-2'>
-        <Input aria-label={`Search ${current.label}`} className='h-8 min-w-0 flex-1' value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${current.label.toLowerCase()}`} />
-        <Button variant='outline' size='sm' className='h-8 shrink-0' aria-expanded={picking} onClick={() => (fork ? setFork(null) : setPicking((v) => !v))}><Icons.gitBranch className='size-3.5' />{fork ? 'Close agent' : 'Attach agent'}</Button>
-        {picking && (
-          <div className='bg-popover absolute top-full right-4 z-50 mt-1 w-[min(420px,90%)] overflow-hidden rounded-md border p-1 shadow-md' data-dock-checkpoints=''>
-            <p className='text-muted-foreground px-2 py-1.5 text-xs'>Fork from</p>
-            {checkpoints.length === 0 ? <p className='text-muted-foreground px-2 py-1.5 text-xs'>Nothing to fork from yet: say something in the conversation first.</p>
-              : <div className='flex max-h-72 flex-col gap-1 overflow-y-auto'>{checkpoints.map((c) => <Button key={c.id} variant='outline' size='sm' className='h-auto w-full justify-start px-2 py-1.5 text-left text-xs font-normal whitespace-normal' onClick={() => { setFork(c); setPicking(false); setDetail(null); }}><span className='truncate'>{c.label}</span></Button>)}</div>}
+      {(() => {
+        const attach = <AttachAgent checkpoints={checkpoints} forking={!!fork} picking={picking} setPicking={setPicking} onPick={(c) => { setFork(c); setPicking(false); setDetail(null); }} onClose={() => setFork(null)} />;
+        // mold_v0-297: a section of items is the tool's standard table, filling the modal (its own search row carries Attach agent).
+        const table = !fork && !detail && current.kind !== 'climb';
+        return (<>
+          {!table && <div className='flex shrink-0 items-center gap-2 border-b px-4 py-2'>
+            {current.kind === 'climb' && !fork && !detail ? <Input aria-label={`Search ${current.label}`} className='h-9 min-w-0 flex-1' value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${current.label.toLowerCase()}`} /> : <span className='flex-1' />}
+            {attach}
+          </div>}
+          <div className={cn('flex min-h-0 flex-1 flex-col gap-2 overscroll-contain p-4', detail?.fill || fork || table ? 'overflow-hidden' : 'overflow-y-auto')} data-dock-body={current.id}>
+            {fork ? <ForkPanel parent={sessionId} checkpoint={fork} call={call} onOpenSession={onOpenSession} />
+              : detail ? detail.node
+                : table ? <SectionTable key={current.id} section={current} call={call} onAsk={ask} open={setDetail} toolbar={attach} />
+                  : <ClimbBody key={current.id} section={current} call={call} query={query} onAsk={ask} />}
           </div>
-        )}
-      </div>
-      <div className={cn('flex min-h-0 flex-1 flex-col gap-2 overscroll-contain p-4', detail?.fill || fork ? 'overflow-hidden' : 'overflow-y-auto')} data-dock-body={current.id}>
-        {fork ? <ForkPanel parent={sessionId} checkpoint={fork} call={call} onOpenSession={onOpenSession} />
-          : detail ? detail.node
-            : <SectionBody section={current} call={call} query={query} onAsk={ask} open={setDetail} />}
-      </div>
+        </>);
+      })()}
     </>
   );
 

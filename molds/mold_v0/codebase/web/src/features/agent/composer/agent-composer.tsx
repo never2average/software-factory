@@ -144,11 +144,19 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
   } });
   const settled = () => composeVoiceInput(baseRef.current, spokenSince(finalRef.current, fromRef.current), interimRef.current);
   const stopListening = () => { if (!voice.listening) return value; voice.stop(); const v = settled(); onChange(v); return v; };
-  const toggleVoice = () => {
-    if (voice.listening) { stopListening(); return; }
-    if (voice.state === 'requesting') { voice.stop(); return; }
+  // mold_v0-297: hold to speak. Pressing the microphone starts listening and the words type into the box as they are
+  // said; letting go stops and keeps them (nothing is sent). Space or Enter held on the focused button does the same.
+  const holdRef = useRef(false);
+  const startHold = () => {
+    if (holdRef.current || disabled || busy) return;
+    holdRef.current = true;
     baseRef.current = value; finalRef.current = ''; interimRef.current = ''; fromRef.current = 0;
     voice.start();
+  };
+  const endHold = () => {
+    if (!holdRef.current) return;
+    holdRef.current = false;
+    if (voice.listening) stopListening(); else voice.stop();
     box.current?.focus();
   };
 
@@ -175,9 +183,8 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
 
   const filesOffer = offer?.files;
   const attachHint = filesOffer ? limitWords(filesOffer) : 'Attach files';
-  const voiceWords = voice.error ?? (voice.listening ? 'Listening. Your words appear as you speak; nothing is sent until you press send.' : voice.state === 'requesting' ? 'Waiting for the microphone.' : null);
-  const voiceTip = voice.state === 'denied' ? 'Microphone access is blocked: allow it from the address bar.'
-    : voice.listening ? 'Stop listening' : "Speak your message. Your browser's speech service does the transcription.";
+  // No line under the box: the button itself says it is listening, and its tip says why it could not.
+  const voiceTip = voice.error ?? (voice.listening ? 'Listening: let go to stop' : 'Hold to speak');
 
   return (
     <TooltipProvider>
@@ -209,7 +216,12 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
             <RepoPicker offer={offer?.repositories ?? null} chosen={repos} onChange={setRepos} disabled={disabled} />
             <span className='flex-1' />
             {voice.supported && <Hint text={voiceTip}>
-              <Button type='button' variant='outline' size='icon' className={cn(round, voice.listening && 'border-destructive text-destructive', voice.state === 'denied' && 'text-destructive')} disabled={disabled || busy} aria-label={voice.listening ? 'Stop listening' : 'Speak your message'} aria-pressed={voice.listening} onClick={toggleVoice} data-composer-mic={voice.state}>
+              <Button type='button' variant='outline' size='icon' className={cn(round, 'touch-none select-none', voice.listening && 'border-destructive text-destructive', (voice.state === 'denied' || voice.state === 'error') && 'text-destructive')} disabled={disabled || busy} aria-label='Hold to speak' aria-pressed={voice.listening} data-composer-mic={voice.state}
+                onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); startHold(); }}
+                onPointerUp={endHold} onPointerCancel={endHold} onLostPointerCapture={endHold} onContextMenu={(e) => e.preventDefault()}
+                onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); startHold(); } }}
+                onKeyUp={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); endHold(); } }}
+                onClick={(e) => e.preventDefault()}>
                 <span className='relative inline-flex'>{voice.listening && <span aria-hidden className='bg-destructive/30 absolute inset-0 -m-1 rounded-full motion-safe:animate-ping' />}<Icons.microphone className='relative size-4' aria-hidden /></span>
               </Button>
             </Hint>}
@@ -217,7 +229,7 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
           </div>
           {dragging && <div className='bg-background/90 pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm' data-composer-drop=''>{filesOffer ? `Drop to attach. ${limitWords(filesOffer)}` : 'Drop to attach'}</div>}
         </div>
-        {voiceWords && <p className={cn('px-2 text-xs', voice.error ? 'text-destructive' : 'text-muted-foreground')} role='status' data-composer-voice=''>{voiceWords}</p>}
+        <span className='sr-only' role='status' data-composer-voice=''>{voice.error ?? (voice.listening ? 'Listening' : '')}</span>
       </form>
     </TooltipProvider>
   );
