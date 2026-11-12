@@ -1,17 +1,25 @@
 'use client';
-// The agent page's dock (mold_v0-292, flag nested_runs; src/agent-dock.ts): the sections of the work this workspace is doing,
-// each with its live count. mold_v0-295: no rail beside the chat any more; the sections are a few grouped tabs in the session's
-// top bar (the shared OverflowTabs: each group a menu of its sections and their counts, lit while one of them works, amber while
-// one needs a person). Choosing a section opens its panel beside the chat, and a breadcrumb is the only way in and out of a
-// detail; with none open the chat is full width. Every panel has the same two controls: find something in it, or fork a second
-// agent from a point in the conversation. On a phone the tabs are one button in the session's bar, opening the same content as
-// a sheet. The sections' words and groups are the app's (each program's dock); the chat bar stays in view, whatever is open.
+// The agent page's dock (mold_v0-292, flag nested_runs; src/agent-dock.ts): the sections of the work this workspace is doing.
+// mold_v0-295: no rail beside the chat; the sections are a few grouped tabs in the session's top bar (the shared OverflowTabs:
+// each group a menu of its sections). A breadcrumb is the only way in and out of a detail. Every section has the same two
+// controls: find something in it, or fork a second agent from a point in the conversation. On a phone the tabs are one button
+// in the session's bar, opening the same list as a sheet. The sections' words and groups are the app's (each program's dock);
+// the chat bar stays in view, whatever is open.
+// mold_v0-296: no counts. Each section in a group's menu is two lines (its name, then its plain words, or "Nothing yet",
+// greyed), a dot on the right (green and pulsing while it works, amber while it needs a person, saying why; a legend at the
+// menu's foot when one shows) and the open one checked. Choosing any section opens it in one large modal (the shared Dialog,
+// about 90% of the screen; a phone's whole screen) over the full-width chat: a breadcrumb (Think › Deep Thoughts), the groups
+// and each group's sections as tabs (the shared InPageTabs; every section reachable from inside), the section itself, and a
+// detail drilled into in place (never a second modal); Esc or the X closes it. The open section is in the address
+// (?section=<id>): a refresh, Back or a shared link reopens it.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Icons } from '@/components/icons';
 import { OverflowTabs } from '@/components/layout/overflow-tabs';
+import { InPageTabs } from '@/features/tabs/in-page-tabs';
 import { cn } from '@/lib/utils';
 import type { AgentPurpose } from '@/lib/agent-purpose';
 import { AgentName } from '../agent-name';
@@ -21,7 +29,7 @@ import { TraceStream, useTrace } from '../session-trace';
 import { Climb, RunView, StatusBadge, type ClimbTarget, type DockCall } from './run-view';
 
 export interface DockCheckpoint { id: number; label: string; role: 'person' | 'agent' }
-interface Section { id: string; label: string; sub: string; icon: string; kind: 'items' | 'changes' | 'climb'; group?: string; count: number; live: boolean; attention: boolean; programs: { id: string; name: string; description: string; purpose?: AgentPurpose }[] }
+interface Section { id: string; label: string; sub: string; icon: string; kind: 'items' | 'changes' | 'climb'; group?: string; count: number; live: boolean; attention: boolean; needs?: { review: number; stopped: number }; programs: { id: string; name: string; description: string; purpose?: AgentPurpose }[] }
 interface Group { id: string; label: string }
 interface Item { id: string; title: string; meta: string[]; status: string; at: string; program: string | null; purpose?: AgentPurpose | null; handle: string | null; session_id: string | null; root_id: string | null; ref: string | null; error: string | null; fields: Record<string, unknown> }
 type Detail = { title: string; node: ReactNode; fill?: boolean };
@@ -43,6 +51,43 @@ function useWide() {
 const hit = (q: string, ...parts: (string | null | undefined)[]) => !q.trim() || parts.some((p) => (p ?? '').toLowerCase().includes(q.trim().toLowerCase()));
 const words = (v: unknown): string => (v === null || v === undefined ? '' : typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) && v.every((x) => typeof x === 'string') ? v.join(', ') : JSON.stringify(v));
 const label = (k: string) => { const t = k.replaceAll('_', ' '); return `${t.charAt(0).toUpperCase()}${t.slice(1)}`; };
+
+/** Why a section needs a person, in plain words, no numbers (an older answer without the counts: that it does). */
+export function needsWords(s: Pick<Section, 'attention' | 'needs'>): string | null {
+  if (!s.attention) return null;
+  const n = s.needs ?? { review: 0, stopped: 0 };
+  const parts = [n.review ? (n.review === 1 ? 'A change waits for your review' : 'Changes wait for your review') : null, n.stopped ? (n.stopped === 1 ? 'A run stopped and waits for you' : 'Runs stopped and wait for you') : null].filter(Boolean) as string[];
+  return parts.length ? parts.map((p, i) => (i ? p.charAt(0).toLowerCase() + p.slice(1) : p)).join(', and ') : 'Something here needs you';
+}
+/** The plain line under a section's name: its own words (its `sub`, capitalised; no number), or that nothing is in it yet. */
+export const subWords = (s: Pick<Section, 'count' | 'sub' | 'live'>) => {
+  if (!s.count) return s.live ? 'Working on the first' : 'Nothing yet';
+  const t = s.sub.trim() || 'Results';
+  return `${t.charAt(0).toUpperCase()}${t.slice(1)}`;
+};
+const quiet = (s: Section) => !s.count && !s.live && !s.attention;
+const LIVE_DOT = 'bg-emerald-500', NEEDS_DOT = 'bg-amber-500';
+
+/** A section's state as one dot: amber while it needs a person, green and pulsing while it works, nothing otherwise. */
+function StateDot({ live, attention, why }: { live: boolean; attention: boolean; why?: string | null }) {
+  if (!attention && !live) return null;
+  return <span role='img' aria-label={attention ? (why ?? 'Needs you') : 'Working'} title={attention ? (why ?? 'Needs you') : 'Working'} data-dock-dot={attention ? 'attention' : 'live'}
+    className={cn('size-2 shrink-0 rounded-full', attention ? NEEDS_DOT : cn(LIVE_DOT, 'motion-safe:animate-pulse'))} />;
+}
+/** The one line at a menu's foot that says what its dots mean. */
+function Legend() {
+  return <span className='inline-flex items-center gap-1.5' data-dock-legend=''><span className={cn('size-2 rounded-full', LIVE_DOT)} aria-hidden />working<span aria-hidden>·</span><span className={cn('size-2 rounded-full', NEEDS_DOT)} aria-hidden />needs you</span>;
+}
+/** The plain line under a section's name in a group's menu (the menu draws the name). */
+function SectionSub({ s }: { s: Section }) {
+  const why = needsWords(s);
+  return <>{subWords(s)}{why && <> · <span className='text-amber-700 dark:text-amber-400'>{why}</span></>}</>;
+}
+/** Two lines: the section's name, then its plain words (and, amber, why it needs a person). */
+function SectionWords({ s }: { s: Section }) {
+  const why = needsWords(s);
+  return <><span className='truncate'>{s.label}</span><span className='text-muted-foreground truncate text-xs' data-menu-sub=''>{subWords(s)}{why && <> · <span className='text-amber-700 dark:text-amber-400'>{why}</span></>}</span></>;
+}
 
 function Row({ title, facts, status, onOpen, live, agent }: { title: string; facts: (string | null | false | undefined)[]; status?: string; onOpen?: () => void; live?: boolean; agent?: { name: string; purpose: AgentPurpose | null | undefined } | null }) {
   const line = facts.filter(Boolean).join(' · ');
@@ -174,6 +219,13 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
   const [picking, setPicking] = useState(false);
   const [sheet, setSheet] = useState(false);
   const wide = useWide();
+  // The open section is in the address (?section=<id>): read on arrival and on Back, written when one opens or closes.
+  useEffect(() => {
+    const read = () => { setDetail(null); setFork(null); setPicking(false); setOpenId(new URLSearchParams(window.location.search).get('section')); };
+    read();
+    window.addEventListener('popstate', read);
+    return () => window.removeEventListener('popstate', read);
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     let on = true;
@@ -183,36 +235,51 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
     return () => { on = false; clearInterval(t); };
   }, [enabled, call]);
   const current = useMemo(() => sections.find((s) => s.id === openId) ?? null, [sections, openId]);
-  const openSection = useCallback((id: string | null) => { setDetail(null); setFork(null); setPicking(false); setQuery(''); setOpenId(id); }, []);
-  const ask = useCallback((t: string) => { onAsk(t); setSheet(false); }, [onAsk]);
-  if (!enabled || !sections.length) return { column: null, bar: null };
+  const openSection = useCallback((id: string | null) => {
+    setDetail(null); setFork(null); setPicking(false); setQuery(''); setOpenId(id);
+    const u = new URL(window.location.href);
+    if (id) u.searchParams.set('section', id); else u.searchParams.delete('section');
+    if (u.toString() !== window.location.href) window.history.pushState(null, '', u.toString());
+  }, []);
+  const ask = useCallback((t: string) => { onAsk(t); openSection(null); setSheet(false); }, [onAsk, openSection]);
+  if (!enabled || !sections.length) return { modal: null, bar: null };
   // A section that names no group (an older answer) sits under one of its own words.
   const groupOf = (s: Section) => s.group ?? 'sections';
   const shownGroups: Group[] = [...groups.filter((g) => sections.some((s) => groupOf(s) === g.id)), ...[...new Set(sections.map(groupOf))].filter((id) => !groups.some((g) => g.id === id)).map((id) => ({ id, label: id === 'sections' ? 'Sections' : id }))];
   const inGroup = (g: Group) => sections.filter((s) => groupOf(s) === g.id);
+  const groupOfCurrent = current ? shownGroups.find((g) => g.id === groupOf(current)) ?? null : null;
+  const siblings = groupOfCurrent ? inGroup(groupOfCurrent) : [];
+  const tabOf = (x: Section) => { const I = iconOf(x.icon); return { id: x.id, label: x.label, icon: <I aria-hidden />, data: { 'data-dock-sibling': x.id, 'data-empty': quiet(x) ? 'true' : undefined } }; };
 
   const body = current && (
     <>
-      <nav aria-label='Breadcrumb' className='flex h-12 shrink-0 flex-nowrap items-center gap-1.5 overflow-hidden border-b px-3' data-dock-breadcrumb=''>
-        {(() => { const I = iconOf(current.icon); return <I className='text-muted-foreground size-4 shrink-0' />; })()}
+      <nav aria-label='Breadcrumb' className='flex h-12 shrink-0 flex-nowrap items-center gap-1.5 overflow-hidden border-b px-4' data-dock-breadcrumb=''>
+        {(() => { const I = iconOf(current.icon); return <I className='text-muted-foreground size-4 shrink-0' aria-hidden />; })()}
+        {groupOfCurrent && <><span className='text-muted-foreground shrink-0 text-sm' data-dock-crumb-group={groupOfCurrent.id}>{groupOfCurrent.label}</span><Icons.chevronRight className='text-muted-foreground/60 size-3.5 shrink-0' aria-hidden /></>}
         {detail || fork
           ? <Button variant='outline' size='sm' className='h-7 max-w-[45%] shrink-0 truncate px-2 text-sm font-medium' onClick={() => { setDetail(null); setFork(null); }}>{current.label}</Button>
           : <span className='min-w-0 truncate text-sm font-medium' aria-current='page'>{current.label}</span>}
-        {(fork || detail) && <><Icons.chevronRight className='text-muted-foreground/60 size-3.5 shrink-0' /><span className='min-w-0 flex-1 truncate text-sm font-medium' title={fork ? 'Second agent' : detail!.title}>{fork ? 'Second agent' : detail!.title}</span></>}
-        <Button variant='outline' size='icon' aria-label='Close' className='ml-auto size-7 shrink-0' onClick={() => { setSheet(false); openSection(null); }}><Icons.close className='size-4' /></Button>
+        {(fork || detail) && <><Icons.chevronRight className='text-muted-foreground/60 size-3.5 shrink-0' aria-hidden /><span className='min-w-0 flex-1 truncate text-sm font-medium' title={fork ? 'Second agent' : detail!.title}>{fork ? 'Second agent' : detail!.title}</span></>}
+        <Button variant='outline' size='icon' aria-label='Close' title='Close (Esc)' className='ml-auto size-8 shrink-0' onClick={() => openSection(null)}><Icons.close className='size-4' /></Button>
       </nav>
-      <div className='relative flex shrink-0 items-center gap-2 border-b px-3 py-2'>
+      {/* Every section reachable from inside: the groups, then the open group's sections. */}
+      <div className='flex shrink-0 flex-col gap-1 border-b px-4 pt-2' data-dock-tabs=''>
+        {shownGroups.length > 1 && <div data-dock-group-tabs=''><InPageTabs size='sm' label='Groups' value={groupOfCurrent?.id ?? shownGroups[0]!.id} onValueChange={(id) => { const first = sections.find((x) => groupOf(x) === id); if (first) openSection(first.id); }}
+          tabs={shownGroups.map((g) => ({ id: g.id, label: g.label, data: { 'data-dock-group-tab': g.id } }))} /></div>}
+        {siblings.length > 1 && <div data-dock-siblings={groupOfCurrent!.id}><InPageTabs size='sm' label={groupOfCurrent!.label} value={current.id} onValueChange={(id) => openSection(id)} tabs={siblings.map(tabOf)} /></div>}
+      </div>
+      <div className='relative flex shrink-0 items-center gap-2 border-b px-4 py-2'>
         <Input aria-label={`Search ${current.label}`} className='h-8 min-w-0 flex-1' value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${current.label.toLowerCase()}`} />
         <Button variant='outline' size='sm' className='h-8 shrink-0' aria-expanded={picking} onClick={() => (fork ? setFork(null) : setPicking((v) => !v))}><Icons.gitBranch className='size-3.5' />{fork ? 'Close agent' : 'Attach agent'}</Button>
         {picking && (
-          <div className='bg-popover absolute top-full right-3 z-50 mt-1 w-[min(420px,90%)] overflow-hidden rounded-md border p-1 shadow-md' data-dock-checkpoints=''>
+          <div className='bg-popover absolute top-full right-4 z-50 mt-1 w-[min(420px,90%)] overflow-hidden rounded-md border p-1 shadow-md' data-dock-checkpoints=''>
             <p className='text-muted-foreground px-2 py-1.5 text-xs'>Fork from</p>
             {checkpoints.length === 0 ? <p className='text-muted-foreground px-2 py-1.5 text-xs'>Nothing to fork from yet: say something in the conversation first.</p>
               : <div className='flex max-h-72 flex-col gap-1 overflow-y-auto'>{checkpoints.map((c) => <Button key={c.id} variant='outline' size='sm' className='h-auto w-full justify-start px-2 py-1.5 text-left text-xs font-normal whitespace-normal' onClick={() => { setFork(c); setPicking(false); setDetail(null); }}><span className='truncate'>{c.label}</span></Button>)}</div>}
           </div>
         )}
       </div>
-      <div className={cn('flex min-h-0 flex-1 flex-col gap-2 overscroll-contain p-3', detail?.fill || fork ? 'overflow-hidden' : 'overflow-y-auto')} data-dock-body={current.id}>
+      <div className={cn('flex min-h-0 flex-1 flex-col gap-2 overscroll-contain p-4', detail?.fill || fork ? 'overflow-hidden' : 'overflow-y-auto')} data-dock-body={current.id}>
         {fork ? <ForkPanel parent={sessionId} checkpoint={fork} call={call} onOpenSession={onOpenSession} />
           : detail ? detail.node
             : <SectionBody section={current} call={call} query={query} onAsk={ask} open={setDetail} />}
@@ -220,63 +287,69 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
     </>
   );
 
-  // Wide: the panel beside the chat while a section is open, nothing otherwise (the chat full width).
-  const column = wide && current
-    ? <aside aria-label={current.label} className='bg-background flex h-full shrink-0 flex-col border-l' style={{ width: 'min(40vw, 640px)', minWidth: 380 }} data-right-dock-panel={current.id}>{body}</aside>
-    : null;
+  // Any section, from the bar or the phone's list: one large modal over the chat (the chat stays full width behind it).
+  const modal = (
+    <Dialog open={!!current} onOpenChange={(o) => { if (!o) openSection(null); }}>
+      <DialogContent showCloseButton={false} data-right-dock-panel={current?.id ?? ''} data-dock-modal=''
+        className='flex h-[90vh] w-[90vw] max-w-[90vw] flex-col gap-0 overflow-hidden p-0 sm:max-w-[90vw] max-sm:h-[100dvh] max-sm:w-screen max-sm:max-w-none max-sm:rounded-none'>
+        <DialogTitle className='sr-only'>{current ? `${groupOfCurrent ? `${groupOfCurrent.label}: ` : ''}${current.label}` : 'The work so far'}</DialogTitle>
+        <DialogDescription className='sr-only'>One section of the work this workspace is doing.</DialogDescription>
+        {body}
+      </DialogContent>
+    </Dialog>
+  );
 
-  // Wide: the groups as tabs in the session's top bar, each a menu of its sections with their counts.
+  // Wide: the groups as tabs in the session's top bar, each a menu of its sections (two lines, a state dot, the open one
+  // checked); as many groups as the bar has room for, the rest behind its » (the title keeps its room).
   const tabs = wide ? (
-    <OverflowTabs strip label='Work so far' max={4} value={current ? groupOf(current) : null} className='shrink-0' tabs={shownGroups.map((g) => {
+    <OverflowTabs strip fit label='Work so far' value={current ? groupOf(current) : null} tabs={shownGroups.map((g) => {
       const mine = inGroup(g);
-      const count = mine.reduce((t, s) => t + s.count, 0), live = mine.some((s) => s.live), attention = mine.some((s) => s.attention);
+      const live = mine.some((s) => s.live), attention = mine.some((s) => s.attention);
+      const why = mine.map((s) => { const w = needsWords(s); return w ? `${s.label}: ${w}` : null; }).filter(Boolean).join('; ') || null;
       return {
         id: g.id, label: g.label,
         data: { 'data-dock-group': g.id, 'data-live': live ? 'true' : undefined, 'data-attention': attention ? 'true' : undefined },
-        mark: <Mark count={count} live={live} attention={attention} label={`${count} in ${g.label}`} />,
+        mark: <StateDot live={live} attention={attention} why={why} />,
+        foot: mine.some((s) => s.live || s.attention) ? <Legend /> : undefined,
         menu: mine.map((s) => { const I = iconOf(s.icon); return {
-          id: s.id, label: s.label, current: s.id === openId, onSelect: () => openSection(s.id),
+          id: s.id, label: s.label, sub: <SectionSub s={s} />, current: s.id === openId, dim: quiet(s), onSelect: () => openSection(s.id),
           icon: <I className='size-4 shrink-0' aria-hidden />,
-          end: <Mark count={s.count} live={s.live} attention={s.attention} label={`${s.count} ${s.sub}`} always />,
-          data: { 'data-dock-section': s.id, 'data-live': s.live ? 'true' : undefined },
+          end: <StateDot live={s.live} attention={s.attention} why={needsWords(s)} />,
+          data: { 'data-dock-section': s.id, 'data-live': s.live ? 'true' : undefined, 'data-attention': s.attention ? 'true' : undefined, 'data-empty': quiet(s) ? 'true' : undefined },
         }; }),
       };
     })} />
   ) : null;
 
-  const total = sections.reduce((t, s) => t + s.count, 0), live = sections.some((s) => s.live);
+  // A phone: one button, its list of sections as a sheet; choosing one closes the sheet and opens the modal, full screen.
+  const live = sections.some((s) => s.live), attention = sections.some((s) => s.attention);
   const phoneButton = wide ? null : (
     <>
-      <Button variant='outline' size='sm' className='relative shrink-0' aria-label={`Work so far: ${total}`} onClick={() => setSheet(true)} data-right-dock-phone=''>
-        <Icons.sparkles className='size-4' />{total > 0 && <span className='text-xs tabular-nums'>{total > 99 ? '99+' : total}</span>}
-        {live && <span className='bg-primary absolute -top-1 -right-1 size-2 rounded-full motion-safe:animate-pulse' aria-hidden />}
+      <Button variant='outline' size='sm' className='relative shrink-0' aria-label='Work so far' onClick={() => setSheet(true)} data-right-dock-phone=''>
+        <Icons.sparkles className='size-4' />
+        {(live || attention) && <span className={cn('absolute -top-1 -right-1 size-2 rounded-full', attention ? NEEDS_DOT : cn(LIVE_DOT, 'motion-safe:animate-pulse'))} aria-hidden />}
       </Button>
-      <Sheet open={sheet} onOpenChange={(o) => { setSheet(o); if (!o) openSection(null); }}>
-        <SheetContent side='right' showCloseButton={!current} className='flex w-full flex-col gap-0 p-0 sm:max-w-md' data-right-dock-sheet=''>
-          <SheetHeader className='sr-only'><SheetTitle>{current?.label ?? 'The work so far'}</SheetTitle><SheetDescription>Each section of the work this workspace is doing.</SheetDescription></SheetHeader>
-          {current ? body : <div className='flex flex-col gap-4 overflow-y-auto p-3 pt-12'>{shownGroups.map((g) => (
+      <Sheet open={sheet} onOpenChange={setSheet}>
+        <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-md' data-right-dock-sheet=''>
+          <SheetHeader className='sr-only'><SheetTitle>The work so far</SheetTitle><SheetDescription>Each section of the work this workspace is doing.</SheetDescription></SheetHeader>
+          <div className='flex flex-col gap-4 overflow-y-auto p-3 pt-12'>{shownGroups.map((g) => (
             <section key={g.id} className='flex flex-col gap-2' data-dock-group={g.id} aria-label={g.label}>
               <h3 className='text-muted-foreground text-xs font-medium'>{g.label}</h3>
               {inGroup(g).map((s) => { const I = iconOf(s.icon); return (
-                <Button key={s.id} variant='outline' className='flex h-11 w-full items-center justify-start gap-2 font-normal' data-dock-section={s.id} onClick={() => openSection(s.id)}><I className='size-4 shrink-0' /><span className='min-w-0 flex-1 truncate text-left'>{s.label}</span><Mark count={s.count} live={s.live} attention={s.attention} label={`${s.count} ${s.sub}`} always /></Button>
+                <Button key={s.id} variant='outline' className={cn('flex h-auto min-h-11 w-full items-center justify-start gap-2.5 py-2 text-left font-normal', quiet(s) && 'text-muted-foreground')}
+                  data-dock-section={s.id} data-empty={quiet(s) ? 'true' : undefined} data-attention={s.attention ? 'true' : undefined} onClick={() => { setSheet(false); openSection(s.id); }}>
+                  <I className='size-4 shrink-0' />
+                  <span className='flex min-w-0 flex-1 flex-col'><SectionWords s={s} /></span>
+                  <StateDot live={s.live} attention={s.attention} why={needsWords(s)} />
+                </Button>
               ); })}
             </section>
-          ))}</div>}
+          ))}
+          {(live || attention) && <p className='text-muted-foreground text-xs'><Legend /></p>}
+          </div>
         </SheetContent>
       </Sheet>
     </>
   );
-  return { column, bar: wide ? tabs : phoneButton };
-}
-
-/** A count with its state: amber while something waits for a person, lit while something works, plain otherwise; a live dot with nothing counted yet. */
-function Mark({ count, live, attention, label, always = false }: { count: number; live: boolean; attention: boolean; label: string; always?: boolean }) {
-  if (!count && !live && !always) return null;
-  return (
-    <span className='inline-flex shrink-0 items-center gap-1' data-dock-count='' data-tone={attention ? 'attention' : live ? 'live' : undefined}>
-      {live && <span className='bg-primary size-1.5 rounded-full motion-safe:animate-pulse' aria-hidden />}
-      {(count > 0 || always) && <span aria-label={label} className={cn('min-w-[18px] rounded-full px-1.5 text-center text-[10px] leading-4 font-medium tabular-nums',
-        attention ? 'bg-amber-500 text-black' : live ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground')}>{count > 99 ? '99+' : count}</span>}
-    </span>
-  );
+  return { modal, bar: wide ? tabs : phoneButton };
 }

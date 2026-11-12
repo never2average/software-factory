@@ -28,7 +28,9 @@ const needOn = () => { if (!nestedOn() || !programsOn()) throw new PackError("Ne
 /** At most this many of a workspace's latest handles and decisions are read for one answer. */
 const WINDOW = 500;
 
-export interface DockSection { id: string; label: string; sub: string; icon: string; kind: DockKind; group: string; count: number; live: boolean; attention: boolean; programs: { id: string; name: string; description: string; purpose: AgentPurpose }[] }
+/** mold_v0-296: why a section needs a person, counted: changes waiting for a review, runs stopped and waiting for someone. */
+export interface DockNeeds { review: number; stopped: number }
+export interface DockSection { id: string; label: string; sub: string; icon: string; kind: DockKind; group: string; count: number; live: boolean; attention: boolean; needs: DockNeeds; programs: { id: string; name: string; description: string; purpose: AgentPurpose }[] }
 export interface DockGroup { id: string; label: string }
 interface Declared { id: string; label: string; sub: string; icon: string; kind: DockKind; group: string; order: number; programs: DockProgram[]; dock: Map<string, ProgramDock> }
 
@@ -106,8 +108,9 @@ export async function dockSections(orgId: number): Promise<{ sections: DockSecti
       const count = s.kind === "changes" ? evs.length
         : s.kind === "climb" ? new Set(evs.map((e) => `${e.target_kind}:${e.target_id}`)).size
           : hs.reduce((t, h) => t + resultsOf(h, s.dock.get(h.program_id!)).length, 0);
-      const attention = hs.some((h) => h.attention) || (s.kind !== "items" && evs.some((e) => e.outcome === "needs_review" && !e.review_decision));
-      return { id: s.id, label: s.label, sub: s.sub, icon: s.icon, kind: s.kind, group: s.group, count, attention, live: hs.some((h) => OPEN.has(h.status)), programs: s.programs.map((p) => ({ id: p.id, name: p.name, description: p.description, purpose: purpose.get(p.id) ?? DEFAULT_PURPOSE })) };
+      const needs: DockNeeds = { review: s.kind === "items" ? 0 : evs.filter((e) => e.outcome === "needs_review" && !e.review_decision).length, stopped: hs.filter((h) => h.attention).length };
+      const attention = needs.review + needs.stopped > 0;
+      return { id: s.id, label: s.label, sub: s.sub, icon: s.icon, kind: s.kind, group: s.group, count, attention, needs, live: hs.some((h) => OPEN.has(h.status)), programs: s.programs.map((p) => ({ id: p.id, name: p.name, description: p.description, purpose: purpose.get(p.id) ?? DEFAULT_PURPOSE })) };
     });
     return { sections: out, groups: dockGroups(sections), live: out.some((s) => s.live) };
   });

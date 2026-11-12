@@ -134,6 +134,7 @@ function AgentList({ area }: { area: Area }) {
     setOpenState(k);
     const u = new URL(window.location.href);
     if (k) u.searchParams.set('session', k); else u.searchParams.delete('session');
+    u.searchParams.delete('section'); // mold_v0-296: a dock section open in one session is not opened in another
     window.history.pushState(null, '', u.toString());
   };
   // The Agents crumb and a link keep the address's word (mold_v0-290: the breadcrumb is the way back to the list).
@@ -420,11 +421,24 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
     return () => ro.disconnect();
   }, [d?.id]);
   const changed = async () => { await load(); await onChange(); };
-  // mold_v0-292 (flag nested_runs): the dock, its sections as grouped tabs in this bar (mold_v0-295) and a panel beside the
-  // conversation while one is open; the chat bar is in the conversation's own column.
+  // mold_v0-292 (flag nested_runs): the dock, its sections as grouped tabs in this bar (mold_v0-295) and, while one is open, a
+  // large modal over the conversation (mold_v0-296; the conversation stays full width behind it).
   const [prefill, setPrefill] = useState<{ text: string; at: number } | null>(null);
   const checkpoints = useMemo<DockCheckpoint[]>(() => (d?.messages ?? []).filter((m) => m.role !== 'system').map((m) => ({ id: m.id, role: m.role as DockCheckpoint['role'], label: m.body.replace(/\s+/g, ' ').slice(0, 120) })).reverse(), [d?.messages]);
   const dock = useAgentDock({ enabled: area === 'app' && featureOn('nested_runs'), call, sessionId: id, checkpoints, onAsk: (text) => setPrefill({ text, at: Date.now() }), onOpenSession });
+  // mold_v0-296: the title keeps its room in the bar (its whole width up to half the bar), the groups take what is left and
+  // spill into their »; a longer title is cut, the whole of it on hover.
+  const barRef = useRef<HTMLDivElement | null>(null), titleRef = useRef<HTMLHeadingElement | null>(null);
+  const [titleRoom, setTitleRoom] = useState(0);
+  useLayoutEffect(() => {
+    const b = barRef.current, t = titleRef.current;
+    if (!b || !t) return;
+    const m = () => setTitleRoom(Math.min(t.scrollWidth, Math.round(b.clientWidth / 2), 360));
+    m();
+    const ro = new ResizeObserver(m);
+    ro.observe(b);
+    return () => ro.disconnect();
+  }, [d?.title]);
   // mold_v0-290: the session is a level of the top bar's breadcrumb (Account / Agents / AGI-001): that is the way back.
   const ref = d?.ref ?? null;
   useEffect(() => { setBreadcrumbLeaf(ref); return () => setBreadcrumbLeaf(null); }, [ref]);
@@ -436,8 +450,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   return (
     <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem]' data-agent-session-page=''>
     <div className='flex min-w-0 flex-1 flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
-      <div className='flex items-center gap-2 sm:gap-3' data-agent-session-bar=''>
-        <h1 className='min-w-0 flex-1 truncate text-base font-medium' title={d.title}>{d.title}</h1>
+      <div ref={barRef} className='flex min-w-0 items-center gap-2 sm:gap-3' data-agent-session-bar=''>
+        <h1 ref={titleRef} className='min-w-0 flex-1 truncate text-base font-medium' style={{ minWidth: titleRoom }} title={d.title} data-agent-session-title=''>{d.title}</h1>
         {dock.bar}
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
@@ -460,7 +474,7 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
         </DialogContent>
       </Dialog>
     </div>
-    {dock.column}
+    {dock.modal}
     </div>
   );
 }

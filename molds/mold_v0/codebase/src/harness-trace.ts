@@ -123,8 +123,10 @@ function eventStep(e: TraceEventRow, wakes: Map<string, number>, toolTitle: (nam
     case "failed": return { ...base, id, kind: "wake", status: "error", title: "It failed", error: cap(d.error, 2000), fields: clean(d) as Record<string, unknown> };
     case "agent_request": return null; // what it asked for has its own row (a mark)
     // mold_v0-291: its children, in plain words (the handle and the numbers stay in the step's fields).
-    case "child_spawned": return { ...base, id, kind: "note", status: "ok", title: `Started ${str(d.name) ?? "a child run"}`, fields: clean(d) as Record<string, unknown>, ...childAgent(d) };
-    case "child_settled": return { ...base, id, kind: "note", status: d.status === "error" ? "error" : "ok", title: d.status === "done" ? "A child run finished" : d.status === "cancelled" ? "A child run was cancelled" : "A child run failed", fields: clean(d) as Record<string, unknown>, ...childAgent(d) };
+    // mold_v0-296: with the agent named beside it (its chip: purpose icon and name), the row's own words never repeat the name.
+    case "child_spawned": { const a = childAgent(d); return { ...base, id, kind: "note", status: "ok", title: a.agent ? "Started" : "Started a child run", fields: clean(d) as Record<string, unknown>, ...a }; }
+    case "child_settled": { const a = childAgent(d); const [named, plain] = d.status === "done" ? ["Finished", "A child run finished"] : d.status === "cancelled" ? ["Cancelled", "A child run was cancelled"] : ["Failed", "A child run failed"];
+      return { ...base, id, kind: "note", status: d.status === "error" ? "error" : "ok", title: a.agent ? named : plain, fields: clean(d) as Record<string, unknown>, ...a }; }
     case "child_outputs": return { ...base, id, kind: "note", status: "ok", title: "Handed in its result" };
     case "child_outputs_refused": return { ...base, id, kind: "note", status: "error", title: "Its result did not match what was asked for", fields: clean(d) as Record<string, unknown> };
     case "candidate_recorded": return { ...base, id, kind: "note", status: "ok", title: "Sent a candidate", fields: clean(d) as Record<string, unknown> };
