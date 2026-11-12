@@ -4618,6 +4618,11 @@
                                 },
                                 "additionalProperties": false
                               },
+                              "versions": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": false
+                              },
                               "when": {
                                 "type": "object",
                                 "properties": {
@@ -8253,7 +8258,8 @@
                   "page",
                   "files",
                   "sections",
-                  "agent"
+                  "agent",
+                  "agent_runs"
                 ]
               },
               "label": {
@@ -9815,6 +9821,41 @@
             "additionalProperties": false
           }
         },
+        "programs": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,39}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "config": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "config"
+            ],
+            "additionalProperties": false
+          }
+        },
         "email": {
           "type": "object",
           "properties": {
@@ -10131,6 +10172,20 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "purpose": {
+                "type": "string",
+                "enum": [
+                  "researcher",
+                  "formalizer",
+                  "builder",
+                  "reviewer",
+                  "tester",
+                  "deployer",
+                  "analyst",
+                  "improver",
+                  "general"
+                ]
               },
               "$comment": {
                 "type": "string",
@@ -16925,7 +16980,8 @@
                   "files",
                   "connected-apps",
                   "keys",
-                  "agent"
+                  "agent",
+                  "agent_runs"
                 ]
               }
             },
@@ -18032,6 +18088,13 @@
           "title": "Workspace recipes (mold_v0-271)",
           "description": "Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline. Asked for when the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json). Default true. Off: No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out. Needs agent_harness on.",
           "markdownDescription": "**Workspace recipes** (mold_v0-271; board name `recipes`). Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline.\n\n- **Asked for** when the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json).\n- **Default** `true`.\n- **Off**: No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out.\n- **Needs** Needs agent_harness on.\n\nBrief line: `features.workspace_recipes = false` in `## Profile`."
+        },
+        "nested_runs": {
+          "type": "boolean",
+          "default": false,
+          "title": "Nested agent runs and programs (mold_v0-291)",
+          "description": "A running agent session spawns child sessions (each a full session in its own sandbox, depth-limited, with budgets carved out of the parent's and enforced at the gateway on every request) and collects their typed results; Programs are versioned, staff-managed or pack-declared definitions of such a child (prompt, typed inputs and outputs, failure policy, an optional machine of states and transitions, an optional server-owned acceptance rule with a frozen test). /api/admin/onboarding/programs and the workspace's /api/agent/:id/children. Asked for when the app's profile (no pack declares it; the staff page shows once console.admin_records lists programs). Default false. Off: No tool, route, page or sidebar entry; no session is given a child or a program; the tables stay empty; the generated files leave the flag out. Needs agent_harness on.",
+          "markdownDescription": "**Nested agent runs and programs** (mold_v0-291; board name `nested`). A running agent session spawns child sessions (each a full session in its own sandbox, depth-limited, with budgets carved out of the parent's and enforced at the gateway on every request) and collects their typed results; Programs are versioned, staff-managed or pack-declared definitions of such a child (prompt, typed inputs and outputs, failure policy, an optional machine of states and transitions, an optional server-owned acceptance rule with a frozen test). /api/admin/onboarding/programs and the workspace's /api/agent/:id/children.\n\n- **Asked for** when the app's profile (no pack declares it; the staff page shows once console.admin_records lists programs).\n- **Default** `false`.\n- **Off**: No tool, route, page or sidebar entry; no session is given a child or a program; the tables stay empty; the generated files leave the flag out.\n- **Needs** Needs agent_harness on.\n\nBrief line: `features.nested_runs = true` in `## Profile`."
         },
         "record_resources": {
           "type": "boolean",
