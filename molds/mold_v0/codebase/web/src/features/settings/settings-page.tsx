@@ -72,7 +72,7 @@ export function SettingsPage({ group = null }: { group?: string | null }) {
       ) : (
         <Tabs value={tab.id} onValueChange={(v) => setTab(String(v))} className='w-full gap-4'>
           {/* On a phone a long strip wraps to a second line rather than scroll out of sight. */}
-          <div className='max-w-full overflow-x-auto'>
+          <div className='max-w-full overflow-x-auto pb-1.5' data-tab-strip-room=''>
             <TabsList variant='line' className='flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-settings-tabs=''>
               {tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className='h-7 flex-none px-0'>{t.label}</TabsTrigger>)}
             </TabsList>
