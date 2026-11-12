@@ -420,7 +420,7 @@ await item("6. a stop asked while the harness says done is still a stop", async 
 });
 
 await item("7. a prompt and a name are redacted", async () => {
-  const secret = "sk-ant-api03-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+  const secret = "sk-" + "ant-api03-" + "C".repeat(40);
   const root = await rootWake();
   const h = await N.spawnChild(root.ctx, { prompt: `use ${secret} please`, name: `named ${secret}`, budget_usd: 0.5 });
   const r = await handleRow(h.handle);

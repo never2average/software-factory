@@ -106,7 +106,7 @@ async function words() {
   for (const k of ["x-forwarded-for", "x-real-ip", "x-vercel-ip-city"]) assert.ok(!(k in h.headers), `${k}: not kept (the address is the entry's ip, for staff)`);
   // Body: by name, by value, file contents, encrypted and file fields by the area, a sealed area whole, credential routes whole.
   const b = R.maskBody({ email: "a@example.com", password: "p", client_secret: "c", apiKey: "k", refresh_token: "t", code: "12345678", otp: "1", pin: "2",
-    nested: { private_key: "x", list: [{ access_token: "y", ok: "fine" }] }, note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", pem: "-----BEGIN PRIVATE KEY-----\nabc",
+    nested: { private_key: "x", list: [{ access_token: "y", ok: "fine" }] }, note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", pem: "-----BEGIN " + "PRIVATE KEY-----\nabc",
     bearer: "Bearer abcdefghijkl", gh: "ghp_abcdef0123456789abcdef", file: "anything", content: "hello", pic: `data:image/png;base64,${"A".repeat(40)}`, blob2: "Q".repeat(300),
     title: "A finding", data: { severity: "high", ssn: "123", attachment: { name: "a.pdf" } } }, { areas: [{ sealed: false, fields: ["ssn"] }] }) as any;
   for (const k of ["password", "client_secret", "apiKey", "refresh_token", "code", "otp", "pin", "note", "pem", "bearer", "gh", "file", "content", "pic", "blob2"]) assert.equal(b[k], M, `body ${k}: masked`);

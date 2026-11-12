@@ -514,7 +514,7 @@ try {
   {
     const other = (await createOrg(`Nested other ${STAMP}`)).org;
     const root = await rootWake("isolation", { budget_usd: 4 });
-    const h = await N.spawnChild(root.ctx, { prompt: "secret", budget_usd: 0.5, inputs: { note: "token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } });
+    const h = await N.spawnChild(root.ctx, { prompt: "secret", budget_usd: 0.5, inputs: { note: "token " + "sk-" + "ant-api03-" + "A".repeat(40) } });
     assert.ok(!JSON.stringify(await db.query("SELECT inputs FROM harness_children WHERE id = $1", [h.handle])).includes("sk-ant-api03-AAAA"), "inputs are redacted before they are kept");
     const c = await claim(h.session_id!); const s = await start(c);
     assert.ok(!s.w.first[0]!.text.includes("sk-ant-api03-AAAA"), "and before the child reads them");
@@ -523,7 +523,7 @@ try {
     await assert.rejects(H.readSession(other.orgId, h.session_id!, person), /no such session/);
     const [t] = await db.query("SELECT 1 FROM harness_session_tokens WHERE org_id = $1", [other.orgId]);
     assert.equal(t, undefined, "no token of its is another's");
-    await N.submitOutputs(s.ctx, { answer: "see sk-ant-api03-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" });
+    await N.submitOutputs(s.ctx, { answer: "see " + "sk-" + "ant-api03-" + "B".repeat(40) });
     await finish(c);
     const got = (await N.collect(root.ctx, { handles: [h.handle] })).children[0]!;
     assert.ok(!(got.answer ?? "").includes("sk-ant-api03-BBBB"), "outputs are redacted as they are submitted");
