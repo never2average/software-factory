@@ -10,6 +10,8 @@
 //  6. Tenant isolation: another workspace reads nothing of this
 //  7. mold_v0-295: the top bar's groups (a section's declared group, else its kind's) and each agent's purpose: the list, the
 //     console's copy of it, what is read from a program or profile, and where the trace, the tree and Active runs name it
+//  8. mold_v0-296: why a section needs a person (its needs: reviews, stopped runs), and a named child's trace rows (Started,
+//     Finished) never repeating the name its chip shows; the console opens any section in one large modal (no counts, no panel)
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -115,6 +117,21 @@ try {
     const [spawned, settled, task] = T.traceSteps([evt("child_spawned", { handle: "h1", name: "Look around", purpose: "researcher", depth: 1 }, 1), evt("child_settled", { handle: "h1", name: "Deploy it", status: "done" }, 2), evt("agent_tool_call", { id: "t1", name: "Task", preview: "Review the change", subagent: "code-reviewer" }, 3)], new Map());
     assert.deepEqual([spawned!.agent, settled!.agent, task!.agent], [{ name: "Look around", purpose: "researcher" }, { name: "Deploy it", purpose: "deployer" }, { name: "code-reviewer", purpose: "reviewer" }],
       "a child's start says its purpose; an older event's is read from its words; a sub-agent's call names it");
+    assert.deepEqual([spawned!.title, settled!.title], ["Started", "Finished"], "mold_v0-296: a named child's row never repeats the name its chip shows");
+    const [anon, anonDone, failed] = T.traceSteps([evt("child_spawned", { handle: "h2" }, 4), evt("child_settled", { handle: "h2", status: "done" }, 5), evt("child_settled", { handle: "h1", name: "Look around", status: "error" }, 6)], new Map());
+    assert.deepEqual([anon!.title, anonDone!.title, failed!.title], ["Started a child run", "A child run finished", "Failed"], "an unnamed child keeps its words; a named one's settle is one word");
+    // mold_v0-296: the console's dock: any section in one large modal (the shared Dialog), every section reachable from inside
+    // it through the shared InPageTabs, the open one in the address, no counts in the bar or its menus.
+    const { readFileSync } = await import("node:fs");
+    const dockSrc = readFileSync(path.join(import.meta.dirname, "..", "web", "src", "features", "agent", "dock", "right-dock.tsx"), "utf8");
+    assert.match(dockSrc, /from '@\/components\/ui\/dialog'/, "a section opens in the shared Dialog");
+    assert.match(dockSrc, /h-\[90vh\] w-\[90vw\]/, "about 90% of the screen");
+    assert.match(dockSrc, /max-sm:h-\[100dvh\] max-sm:w-screen/, "a phone's whole screen");
+    assert.match(dockSrc, /import \{ InPageTabs \} from '@\/features\/tabs\/in-page-tabs'/, "the groups and sections as the shared in-page tabs");
+    assert.match(dockSrc, /searchParams\.set\('section', id\)/, "the open section in the address");
+    assert.doesNotMatch(dockSrc, /data-dock-count|<aside/, "no count chips and no panel beside the chat");
+    const page = readFileSync(path.join(import.meta.dirname, "..", "web", "src", "features", "agent", "agent-page.tsx"), "utf8");
+    assert.match(page, /\{dock\.modal\}/, "the session page draws the modal"); assert.doesNotMatch(page, /dock\.column/, "and no column beside the chat");
     ok("groups and purposes: declared or by kind, think/measure/ship first; one purpose list in both places, read from a program or profile; the trace names each agent");
   }
 
@@ -181,6 +198,7 @@ try {
     dock = await D.dockSections(org.orgId);
     const log = dock.sections.find((x) => x.id === "log")!, climb = dock.sections.find((x) => x.id === "climbing")!;
     assert.equal(log.count, 2, "each decision is a change"); assert.equal(log.attention, true, "one waits for a person");
+    assert.deepEqual(log.needs, { review: 1, stopped: 0 }, "mold_v0-296: and says why: one change waits for a review");
     assert.equal(climb.count, 1, "one target climbed");
     const changes = (await D.dockSection(org.orgId, "log")).items!;
     assert.deepEqual(changes.map((c) => c.status), ["needs_review", "refused"], "newest first");
@@ -255,7 +273,7 @@ try {
   {
     const other = (await createOrg(`Dock other ${STAMP}`)).org;
     const theirs = await D.dockSections(other.orgId);
-    assert.ok(theirs.sections.every((x) => x.count === 0 && !x.live && !x.attention), "programs are the platform's; what they did is each workspace's own");
+    assert.ok(theirs.sections.every((x) => x.count === 0 && !x.live && !x.attention && x.needs.review + x.needs.stopped === 0), "programs are the platform's; what they did is each workspace's own");
     assert.deepEqual((await D.dockSection(other.orgId, "thoughts")).items, []);
     assert.deepEqual((await D.dockSection(other.orgId, "climbing")).targets, []);
     assert.deepEqual(await D.activeRuns(other.orgId), []);

@@ -400,8 +400,8 @@ pushes to no app and no default branch. Limits today: the worst-case hold assume
 
 In the session's top bar, beside its title and ⋯, the sections of the work this workspace is doing, as a few grouped tabs (the
 console's shared OverflowTabs; mold_v0-295 moved them there from a rail beside the chat): each group a menu of its sections with
-their live counts, its own total beside its name, lit while one of its sections works and amber while one needs a person.
-Choosing a section opens its panel beside the conversation; with none open the conversation is full width. A breadcrumb is the
+a dot beside its name while one of its sections works or needs a person. Choosing a section opens it in a large modal over the
+conversation (mold_v0-296; before, a panel beside it); the conversation is always full width. A breadcrumb is the
 only way in and out of a detail. Every panel can be searched, and can fork a second agent from a point in the conversation
 (`POST /api/agent/:id/fork`: a session of its own, the transcript up to there as its context, only for the person who started
 it; the conversation it came from never sees it). On a phone the tabs are one button in the session's bar, opening the same
@@ -416,6 +416,17 @@ sections, by group, as a sheet. The chat bar is in the conversation's own column
 - **Groups** (mold_v0-295). A section's `dock.group` (and each `also` entry's) names the tab it sits under: `think`, `measure`,
   `ship` or an id of the app's own (its words: the id, capitalised). With none, its kind's: `items` under Think, `climb` under
   Measure, `changes` under Ship (the built-ins too). Think, Measure and Ship come first, an app's own groups after them.
+- **Menus, the modal and the address** (mold_v0-296). No counts: each section in a group's menu is two lines, its name and
+  then its own `sub` words ("Hypotheses formed"), or "Nothing yet" greyed while it is empty. A dot on the right (and beside a
+  group's name) is green and pulsing while it works and amber while it needs a person, saying why (each section's `needs`:
+  changes waiting for a review, runs stopped and waiting for someone); a legend sits at the menu's foot when a dot shows, and the
+  open section is checked. Choosing any section opens one large modal (the shared Dialog, about 90% of the screen; a phone's
+  whole screen) over the conversation, which stays full width behind it: a breadcrumb (`Think › Deep Thoughts`), the groups and
+  the open group's sections as tabs (the shared InPageTabs, so every section is reachable from inside), the section, and any
+  detail drilled into in place with the breadcrumb as the way back. Esc or the X closes it. The open section is in the address
+  (`?section=<id>`): a refresh, Back or a shared link reopens it, closing takes it out. The title keeps its room in the bar (its
+  whole width, up to half the bar); groups that do not fit go behind the bar's ». A named child run's trace rows say only
+  Started, Finished, Cancelled or Failed, beside its agent's name and icon.
 - **Agent purposes** (mold_v0-295, `src/agent-purpose.ts`). What an agent is for, one of `researcher`, `formalizer`, `builder`,
   `reviewer`, `tester`, `deployer`, `analyst`, `improver`, `general`, each drawn with one icon beside the agent's name. Declared
   on an agent profile (its config's `purpose`: Admin › Agent profiles' Purpose, a pack's `agent_profiles[].purpose`) or on a
