@@ -670,7 +670,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
 
       {layout.tabs.length > 1 ? (
         <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(layout.tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
-          <div className='max-w-full overflow-x-auto'>
+          <div className='max-w-full overflow-x-auto pb-1.5' data-tab-strip-room=''>
             <TabsList variant='line' className='flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
               {layout.tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
             </TabsList>
