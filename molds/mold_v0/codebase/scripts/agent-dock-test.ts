@@ -8,6 +8,8 @@
 //  3. Active runs and a run's view: the tree, a machine's step graph, decisions, versions
 //  4. A record's runs and versions; 5. A fork: its context, its own budget, only the person who started it
 //  6. Tenant isolation: another workspace reads nothing of this
+//  7. mold_v0-295: the top bar's groups (a section's declared group, else its kind's) and each agent's purpose: the list, the
+//     console's copy of it, what is read from a program or profile, and where the trace, the tree and Active runs name it
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -72,6 +74,48 @@ try {
     assert.equal(climb.points[1]!.version, 3);
     assert.ok(Math.abs(climb.axes[1]!.bound! - 0.5) < 1e-9, "a floor's bound on the same scale");
     ok("pure: a program's dock, the sections' order and built-ins, an app's words, a climb's axes and scale");
+
+    // mold_v0-295: groups. A section's own, else its kind's; think, measure and ship first, an app's own after them.
+    assert.match(parse({ section: "a", group: "Bad Group" })[0]!, /group/);
+    assert.match(parse({ section: "a", also: [{ section: "b", group: 3 }] })[0]!, /also\[0\]\.group/);
+    assert.deepEqual(parse({ section: "a", group: "measure", also: [{ section: "b", kind: "changes", group: "ship" }] }), []);
+    const grouped = D.declaredSections([prog("a", { section: "x", order: 1 }), prog("b", { section: "y", kind: "climb", order: 2 }), prog("c", { section: "z", group: "measure", order: 3, also: [{ section: "w", kind: "changes", order: 4 }] }), prog("d", { section: "v", group: "later_on", order: 5 })]);
+    assert.deepEqual(grouped.map((x) => [x.id, x.group]), [["x", "think"], ["y", "measure"], ["z", "measure"], ["w", "ship"], ["v", "later_on"]], "declared, else by kind");
+    assert.deepEqual(D.dockGroups(grouped), [{ id: "think", label: "Think" }, { id: "measure", label: "Measure" }, { id: "ship", label: "Ship" }, { id: "later_on", label: "Later on" }]);
+    assert.deepEqual(D.declaredSections([prog("a", undefined, true)]).map((x) => x.group), ["think", "ship", "measure"], "the built-ins too");
+    assert.deepEqual(D.dockGroups(D.declaredSections([prog("a", { section: "only", kind: "climb" })])).map((g) => g.id), ["measure"], "only the groups in use");
+
+    // mold_v0-295: purposes. One list, the console's copy equal to it; declared, else read from the program or profile.
+    const Pu = await import("../src/agent-purpose.js");
+    const Wp = await import("../web/src/lib/agent-purpose.js");
+    assert.deepEqual([...Pu.AGENT_PURPOSES], ["researcher", "formalizer", "builder", "reviewer", "tester", "deployer", "analyst", "improver", "general"]);
+    assert.deepEqual([...Wp.AGENT_PURPOSES], [...Pu.AGENT_PURPOSES], "the console's list is the server's");
+    assert.deepEqual(Wp.PURPOSE_WORDS, Pu.PURPOSE_WORDS);
+    assert.equal(new Set(Object.values(Wp.PURPOSE_ICON)).size, Pu.AGENT_PURPOSES.length, "each purpose its own icon");
+    assert.deepEqual(["Deep thoughts", "Formalization discovery", "Research pursuits", "Analytics scanning", "A/B testing", "Hill climbing", "Deployments", "Build an application", "Code review", "Default", ""].map((w) => Pu.purposeFromWords(w)),
+      ["researcher", "formalizer", "researcher", "analyst", "tester", "improver", "deployer", "builder", "reviewer", null, null]);
+    assert.equal(Pu.purposeFromWords("mathFunction"), "formalizer", "an icon's name read as words");
+    const cfg = (c: Record<string, unknown>) => ({ id: "p", name: "Plain", config: c });
+    assert.equal(Pu.programPurpose(cfg({ purpose: "tester", icon: "rocket" })), "tester", "declared wins");
+    assert.equal(Pu.programPurpose(cfg({ agent_profile: "x" }), "reviewer"), "reviewer", "else its profile's declared one");
+    assert.equal(Pu.programPurpose(cfg({ icon: "rocket" })), "deployer", "else its words and icon");
+    assert.equal(Pu.programPurpose(cfg({ acceptance: {} })), "improver", "else its shape: an acceptance rule improves");
+    assert.equal(Pu.programPurpose(cfg({})), "general", "else general");
+    assert.equal(Pu.profilePurpose({ id: "default", name: "Default", config: {} }), "general");
+    assert.equal(Pu.profilePurpose({ id: "build-application", name: "Build an application", config: null }), "builder");
+    assert.equal(Pu.profilePurpose({ id: "build-application", name: "Build an application", config: { purpose: "analyst" } }), "analyst");
+    assert.match(S.parseProgram({ prompt: "x", purpose: "wizard" }, P.sha256).problems[0]!, /purpose: researcher, formalizer/);
+    assert.equal(S.parseProgram({ prompt: "x", purpose: "tester" }, P.sha256).config!.purpose, "tester");
+    assert.equal("purpose" in S.parseProgram({ prompt: "x" }, P.sha256).config!, false, "absent stays absent: read when shown");
+    const T = await import("../src/harness-trace.js");
+    const said = T.messageStep({ id: 1, role: "agent", body: "hi", status: null, by_name: null, created_at: new Date(), run_id: null }, new Map(), { name: "Default", purpose: "general" });
+    assert.deepEqual(said.agent, { name: "Default", purpose: "general" }, "an agent's message names its agent");
+    assert.equal(T.messageStep({ id: 2, role: "person", body: "hi", status: null, by_name: "x", created_at: new Date(), run_id: null }, new Map(), { name: "Default", purpose: "general" }).agent, undefined, "a person's does not");
+    const evt = (type: string, data: Record<string, unknown>, id = 1) => ({ id, run_id: "r", attempt: 1, type, at: new Date(), data });
+    const [spawned, settled, task] = T.traceSteps([evt("child_spawned", { handle: "h1", name: "Look around", purpose: "researcher", depth: 1 }, 1), evt("child_settled", { handle: "h1", name: "Deploy it", status: "done" }, 2), evt("agent_tool_call", { id: "t1", name: "Task", preview: "Review the change", subagent: "code-reviewer" }, 3)], new Map());
+    assert.deepEqual([spawned!.agent, settled!.agent, task!.agent], [{ name: "Look around", purpose: "researcher" }, { name: "Deploy it", purpose: "deployer" }, { name: "code-reviewer", purpose: "reviewer" }],
+      "a child's start says its purpose; an older event's is read from its words; a sub-agent's call names it");
+    ok("groups and purposes: declared or by kind, think/measure/ship first; one purpose list in both places, read from a program or profile; the trace names each agent");
   }
 
   // ---------- the world, on ----------
@@ -89,12 +133,15 @@ try {
 
   await P.createProgram("staff-1", { id: "discover", name: "Discover", config: { prompt: "find", outputs: { type: "object", required: ["problems"], properties: { problems: { type: "array", items: { type: "object", required: ["statement"], properties: { statement: { type: "string" }, severity: { type: "string" } } } } } }, budget_usd: 1, spawned_by: ["*"], dock: { section: "thoughts", label: "Thoughts", sub: "problems found", icon: "brain", order: 10, items: "problems", title: "statement", meta: ["severity"] } } });
   const machine = { max_transitions: 4, states: [{ id: "plan", entry: true, prompt: "plan" }, { id: "build", prompt: "build" }], transitions: [{ from: "plan", to: "build" }] };
-  await P.createProgram("staff-1", { id: "improve", name: "Improve", config: { machine, inputs: { type: "object", properties: {} }, outputs: { type: "object" }, budget_usd: 2, spawned_by: ["*"], dock: { section: "climbing", label: "Climbing", kind: "climb", order: 30, also: [{ section: "log", kind: "changes", label: "Log", order: 20 }] } } });
+  await P.createProgram("staff-1", { id: "improve", name: "Improve", config: { machine, inputs: { type: "object", properties: {} }, outputs: { type: "object" }, budget_usd: 2, spawned_by: ["*"], purpose: "builder", dock: { section: "climbing", label: "Climbing", kind: "climb", order: 30, also: [{ section: "log", kind: "changes", label: "Log", order: 20 }] } } });
 
   const s = await H.startSession(org.orgId, person, { message: "the root message", budget_usd: 8 });
   const root = await claimOf(s.id); const rootW = await startWake(root);
   let dock = await D.dockSections(org.orgId);
   assert.deepEqual(dock.sections.map((x) => x.id), ["thoughts", "log", "climbing"], "the app's order");
+  assert.deepEqual(dock.sections.map((x) => x.group), ["think", "ship", "measure"], "mold_v0-295: each under its kind's group");
+  assert.deepEqual(dock.groups.map((g) => g.label), ["Think", "Measure", "Ship"], "the groups in their order");
+  assert.deepEqual(dock.sections.map((x) => x.programs.map((p) => p.purpose)), [["researcher"], ["builder"], ["builder"]], "each program's purpose: read from it, or declared");
   assert.equal(dock.sections[0]!.count, 0);
   assert.equal(dock.live, false);
 
@@ -106,6 +153,9 @@ try {
     assert.equal(dock.sections[0]!.count, 0, "nothing finished yet");
     const inflight = (await D.dockSection(org.orgId, "thoughts")).items!;
     assert.ok(["queued", "running"].includes(inflight[0]!.status)); assert.equal(inflight[0]!.title, "Discover");
+    assert.equal(inflight[0]!.purpose, "researcher", "mold_v0-295: an item says its agent's purpose");
+    const started = (await H.sessionTrace(org.orgId, s.id, person)).steps.find((x) => x.fields?.handle === h.handle && x.agent);
+    assert.deepEqual(started?.agent, { name: "Discover", purpose: "researcher" }, "mold_v0-295: the trace names the child it started");
     const c = await claimOf(h.session_id!); const w = await startWake(c);
     await N.submitOutputs(w.ctx, { outputs: { problems: [{ statement: "Late replies", severity: "high" }, { statement: "Duplicate rows", severity: "low" }] } });
     await finish(c);
@@ -147,12 +197,16 @@ try {
     const active = await D.activeRuns(org.orgId);
     assert.equal(active.length, 1); assert.equal(active[0]!.id, s.id);
     assert.equal(active[0]!.ref, s.ref); assert.deepEqual(active[0]!.programs.sort(), ["Discover", "Improve"]);
+    assert.deepEqual(active[0]!.agent, { name: "Default", purpose: "general" }, "mold_v0-295: the agent the root runs as");
+    assert.deepEqual(active[0]!.agents.map((a) => [a.name, a.purpose]).sort(), [["Discover", "researcher"], ["Improve", "builder"]], "and each program's agent at work");
     assert.equal(active[0]!.open, 1, "the machine's step at work, the machine itself not counted");
     const run = await D.runDetail(org.orgId, s.id, person);
     assert.equal(run.root.ref, s.ref);
     const mNode = run.children.find((c) => c.handle === m.handle)!;
     assert.deepEqual(mNode.graph!.states.map((x) => [x.id, x.running, x.settled]), [["plan", true, false], ["build", false, false]], "the graph knows where it has got to");
     assert.deepEqual(mNode.graph!.transitions.map((t) => [t.from, t.to]), [["plan", "build"]]);
+    assert.equal(mNode.purpose, "builder", "mold_v0-295: a child in the tree says its purpose (its program's, declared)");
+    assert.deepEqual(run.root.agent, { name: "Default", purpose: "general" });
     const stepNode = run.children.find((c) => c.step_of === m.handle)!;
     assert.equal(stepNode.state, "plan");
     assert.equal(run.decisions.length, 2);

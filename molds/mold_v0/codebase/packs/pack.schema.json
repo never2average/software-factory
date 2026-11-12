@@ -3121,6 +3121,11 @@
                             },
                             "additionalProperties": false
                           },
+                          "versions": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": false
+                          },
                           "when": {
                             "type": "object",
                             "properties": {
@@ -6756,7 +6761,8 @@
               "page",
               "files",
               "sections",
-              "agent"
+              "agent",
+              "agent_runs"
             ]
           },
           "label": {
@@ -8318,6 +8324,41 @@
         "additionalProperties": false
       }
     },
+    "programs": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,39}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "config": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "config"
+        ],
+        "additionalProperties": false
+      }
+    },
     "email": {
       "type": "object",
       "properties": {
@@ -8634,6 +8675,20 @@
               }
             },
             "additionalProperties": false
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "researcher",
+              "formalizer",
+              "builder",
+              "reviewer",
+              "tester",
+              "deployer",
+              "analyst",
+              "improver",
+              "general"
+            ]
           },
           "$comment": {
             "type": "string",
@@ -15428,7 +15483,8 @@
               "files",
               "connected-apps",
               "keys",
-              "agent"
+              "agent",
+              "agent_runs"
             ]
           }
         },

@@ -35,6 +35,7 @@ import { decideAcceptance, offSurface, seedOf, type Decision, type MeasuredCase 
 import { programForSpawn, programsForProfile, sha256 } from "./programs.js";
 import { maskSecrets } from "./run-events.js";
 import type { EvaluationResult, EvaluationStart } from "./program-evaluator.js";
+import { programPurpose, purposeFromWords, type AgentPurpose } from "./agent-purpose.js";
 
 const { tx, read, newId, num, money, committedUsd, rowOf, closed, endSession, systemMessage, runEvent, recomputeSpend, queueWake, wakeOf } = H;
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -195,6 +196,19 @@ async function spendable(q: Queryable, p: H.SessionRow): Promise<number> {
   return money(num(p.budget_usd) - spent - num(p.reserve_usd) - num(p.carved_usd) - num(p.children_spent_usd) - num(h?.held));
 }
 
+/**
+ * mold_v0-295: what a child's agent is for, written with its start (the trace names it): its program's purpose (src/agent-purpose.ts),
+ * else what its name says, else its parent's profile's.
+ */
+async function childPurpose(parent: H.SessionRow, prog: { id: string; name: string; config: ProgramConfig } | null, name: string): Promise<AgentPurpose> {
+  const { declaredProfilePurposes, profileAgent } = await import("./agent-profiles.js");
+  if (prog) {
+    const declared = !prog.config.purpose && prog.config.agent_profile ? (await declaredProfilePurposes()).get(prog.config.agent_profile) ?? null : null;
+    return programPurpose(prog, declared);
+  }
+  return purposeFromWords(name) ?? (await profileAgent(parent.profile_id, parent.profile_version)).purpose;
+}
+
 export interface SpawnInput { program?: unknown; prompt?: unknown; inputs?: unknown; name?: unknown; budget_usd?: unknown }
 
 /** Start a child (or a program's machine). Returns its handle at once; a child waiting for a place says so. */
@@ -223,6 +237,7 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
   if (!Number.isFinite(ask) || ask < MIN_CHILD_BUDGET) throw new PackError(`budget_usd: at least $${MIN_CHILD_BUDGET.toFixed(2)}`, 400);
   if (config?.limits?.max_budget_usd && ask > config.limits.max_budget_usd) throw new PackError(`budget_usd: this program takes at most $${config.limits.max_budget_usd.toFixed(2)}`, 400);
   const handleId = newId("hch");
+  const purpose = await childPurpose(before, prog, name);
   const prompt = config ? renderPrompt(config.prompt, inputs) : maskSecrets(String(input.prompt)).trim();
   const isMachine = !!config?.machine;
   const pending = isMachine ? null : await buildChild(before, handleId, { name, prompt, inputs, profile: config?.agent_profile ?? (config ? before.profile_id : null), config, schema: typedOutputs(config?.outputs), depth, role: ctx.role });
@@ -246,7 +261,7 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
         config?.failure_policy ?? "continue", config?.retries ?? 1, JSON.stringify(isMachine ? { spec: config!.machine, pending: null } : { pending }), "waiting for a place"]);
     await q.query("UPDATE harness_sessions SET carved_usd = carved_usd + $3, last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [p.id, p.org_id, amount]);
     if (p.current_run_id) await q.query("UPDATE runs SET budget_usd = GREATEST(budget_usd - $3, 0.000001) WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')", [p.current_run_id, p.org_id, amount]);
-    await runEvent(q, p.current_run_id, p.org_id, "child_spawned", { handle: handleId, name, program: prog?.id ?? null, version: prog?.version ?? null, budget_usd: amount, depth });
+    await runEvent(q, p.current_run_id, p.org_id, "child_spawned", { handle: handleId, name, purpose, program: prog?.id ?? null, version: prog?.version ?? null, budget_usd: amount, depth });
     if (isMachine) {
       const started = machineBegin(config!.machine!, inputs, config!.failure_policy);
       await q.query("UPDATE harness_children SET status = 'running', queue_reason = NULL, machine = $2 WHERE id = $1 AND org_id = $3", [handleId, JSON.stringify({ spec: config!.machine, run: started.run, acceptance: config!.acceptance ? { config: config!.acceptance, candidate_from: "", hypothesis: null } : undefined }), p.org_id]);
@@ -530,7 +545,7 @@ export async function settleHandle(q: Queryable, orgId: number, handleId: string
     if (refund > 0 && p?.current_run_id) await q.query("UPDATE runs SET budget_usd = budget_usd + $3 WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')", [p.current_run_id, orgId, refund]);
   }
   const [{ current_run_id: parentRun }] = await q.query<{ current_run_id: string | null }>("SELECT current_run_id FROM harness_sessions WHERE id = $1 AND org_id = $2", [h.parent_id, orgId]);
-  await runEvent(q, parentRun, orgId, "child_settled", { handle: h.id, status: r.status, spent_usd: money(cost), returned_usd: refund, error: r.error ? maskSecrets(r.error).slice(0, 300) : undefined });
+  await runEvent(q, parentRun, orgId, "child_settled", { handle: h.id, name: h.name, program: h.program_id, status: r.status, spent_usd: money(cost), returned_usd: refund, error: r.error ? maskSecrets(r.error).slice(0, 300) : undefined });
   return true;
 }
 

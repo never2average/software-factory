@@ -14,6 +14,8 @@ import { Markdown } from '@/components/markdown';
 import { cn } from '@/lib/utils';
 import { When } from '@/features/portal/shared';
 import { sizeWords } from './composer/use-attachments';
+import { AgentName } from './agent-name';
+import type { AgentLabel } from '@/lib/agent-purpose';
 
 export type TraceKind = 'sandbox' | 'wake' | 'model' | 'tool' | 'command' | 'approval' | 'budget' | 'note' | 'message';
 export interface TraceStep {
@@ -29,6 +31,8 @@ export interface TraceStep {
   members?: TraceStep[];
   /** Sub-agent steps nested under the call that started them. */
   children?: TraceStep[];
+  /** mold_v0-295: the agent it comes from (an agent's message, a child run, a sub-agent's call): its name and purpose. */
+  agent?: AgentLabel;
 }
 export interface TraceAnswer { steps: TraceStep[]; marks: TraceStep[]; cursor: string; more: boolean; waiting_on: string | null; phase: string; spent_usd: number; budget_usd: number }
 type Call = <T>(method: string, path?: string, body?: unknown) => Promise<T>;
@@ -195,6 +199,7 @@ function MessageEntry({ s }: { s: TraceStep }) {
   );
   return (
     <div className='flex flex-col gap-1 px-1.5 py-2' data-trace-message='agent'>
+      {s.agent && <AgentName name={s.agent.name} purpose={s.agent.purpose} className='self-start font-medium' />}
       <div className='text-sm'><Markdown>{s.body ?? ''}</Markdown></div>
     </div>
   );
@@ -217,6 +222,7 @@ function Step({ s, retries, call, sessionId, depth = 0 }: { s: TraceStep; retrie
           : <span className={cn('flex size-6 items-center justify-center', icon)} aria-hidden data-trace-icon=''>{ICONS[s.kind]}</span>}
         <span className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5' data-trace-text=''>
           <span className={cn('text-[13px] font-medium', s.status === 'error' && 'text-destructive', s.status === 'running' && 'shimmer')}>{p.title}</span>
+          {s.agent && <AgentName name={s.agent.name} purpose={s.agent.purpose} className='rounded-md border px-1.5 py-0.5' />}
           {s.status === 'waiting' && <span className='text-amber-700 dark:text-amber-300 text-xs'>Waiting</span>}
           {s.error && <span className='text-destructive basis-full text-xs break-words'>{s.error}</span>}
         </span>
@@ -286,11 +292,19 @@ function useFollow(dependency: unknown) {
   return { box, following, onScroll, toEnd };
 }
 
+/** mold_v0-295: a child run's later steps (it settled, it handed in) named as its start named it: one agent, one name and icon. */
+function withAgents(steps: TraceStep[]): TraceStep[] {
+  const byHandle = new Map<string, AgentLabel>();
+  for (const s of steps) { const h = s.fields?.handle; if (typeof h === 'string' && s.agent && s.fields && 'depth' in s.fields) byHandle.set(h, s.agent); } // its start: the only child event with a depth
+  if (!byHandle.size) return steps;
+  return steps.map((s) => { const h = s.fields?.handle; const a = typeof h === 'string' ? byHandle.get(h) : undefined; return a && s.agent !== a ? { ...s, agent: a } : s; });
+}
+
 /** The stream. `dock` (the composer) floats over its bottom edge; the rows carry padding so nothing lives under it for good. */
 export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, dockHeight }: {
   sessionId: string; call: Call; steps: TraceStep[]; waitingOn: string | null; connected: boolean; live: boolean; pruned: boolean; dock: ReactNode; dockHeight: number;
 }) {
-  const shaped = useMemo(() => shapeSteps(steps), [steps]);
+  const shaped = useMemo(() => shapeSteps(withAgents(steps)), [steps]);
   const retries = useMemo(() => retryNumbers(steps), [steps]);
   const expansion = useMemo(() => ({ gen: 0, open: false }), []);
   const { box, following, onScroll, toEnd } = useFollow(steps.length + (waitingOn ?? '').length + (steps.at(-1)?.status ?? ''));
@@ -310,7 +324,7 @@ export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, d
       </ExpansionContext.Provider>
       {!following && (
         <div className='pointer-events-none absolute inset-x-0 z-10 flex justify-center' style={{ bottom: dockHeight + 12 }}>
-          <Button variant='outline' size='sm' className='bg-background pointer-events-auto rounded-full shadow-sm' onClick={() => toEnd('smooth')}>Jump to latest</Button>
+          <Button variant='outline' size='sm' className='bg-background pointer-events-auto items-center gap-1.5 rounded-full shadow-sm' onClick={() => toEnd('smooth')} data-jump-latest=''><Icons.arrowDown className='size-4 shrink-0' aria-hidden />Jump to latest</Button>
         </div>
       )}
       {dock}

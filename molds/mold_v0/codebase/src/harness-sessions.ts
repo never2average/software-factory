@@ -54,6 +54,7 @@ import { maskSecrets } from "./run-events.js";
 import { PROFILE } from "./profile.js";
 import { attachmentMaxBytes, attachmentNote, bindFiles, COMPOSER_LIMITS, fileIds, filesAvailable, isSessionFile, repositoryNames, sessionFileBytes, sessionRepositories, sessionUploads, sweepAttachments, type MessageAttachments } from "./agent-composer.js";
 import { domainAllowed, fetchRules } from "./agent-governance.js";
+import { programPurpose, purposeFromWords, type AgentLabel } from "./agent-purpose.js";
 import { messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
 
 // ---------------------------------------------------------------- types
@@ -912,6 +913,8 @@ async function traceWakes(q: Queryable, r: SessionRow) {
  */
 export async function sessionTrace(orgId: number | null, id: string, actor: Actor, cursor?: unknown): Promise<TraceAnswer> {
   needOn();
+  // mold_v0-295: the agent its own messages come from, named on each (its program's for a child, else its profile's).
+  const agent = await sessionAgent(orgId, id);
   return read(async (q) => {
     const r = await rowOf(q, orgId, id);
     const { wakes, ids, wakeIndex } = await traceWakes(q, r);
@@ -940,9 +943,35 @@ export async function sessionTrace(orgId: number | null, id: string, actor: Acto
     const [startedEv] = current ? await q.query("SELECT 1 FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'agent_wake' LIMIT 1", [r.org_id, current.id]) : [];
     const nextEvent = page.length ? Number(page.at(-1)!.id) : since.events;
     const nextMsg = Math.max(since.messages, ...msgPage.map((m) => Number(m.id)));
-    return { steps: [...traceSteps(page, wakeIndex, toolTitle), ...msgPage.map((m) => messageStep(m, wakeIndex))], marks, cursor: `${nextEvent}:${nextMsg}`, more,
+    return { steps: [...traceSteps(page, wakeIndex, toolTitle), ...msgPage.map((m) => messageStep(m, wakeIndex, agent))], marks, cursor: `${nextEvent}:${nextMsg}`, more,
       waiting_on: waitingOn({ phase: phaseOf(r), run: current, sandbox, waiting: waited?.reason ?? null, started: !!startedEv }), ...facts };
   });
+}
+
+/**
+ * mold_v0-295: the agent a session runs as: a child's program (its name and purpose), else the profile version it froze. Read
+ * before the trace and kept per session and version: neither changes under a session.
+ */
+const sessionAgents = new Map<string, AgentLabel>();
+async function sessionAgent(orgId: number | null, id: string): Promise<AgentLabel | undefined> {
+  const r = await read((q) => q.query<{ program_id: string | null; program_version: number | null; profile_id: string | null; profile_version: number | null; title: string; parent_id: string | null }>(
+    `SELECT program_id, program_version, profile_id, profile_version, title, parent_id FROM harness_sessions WHERE id = $1${orgId === null ? "" : " AND org_id = $2"}`, orgId === null ? [id] : [id, orgId])).then((x) => x[0], () => undefined);
+  if (!r) return undefined;
+  const key = `${id}|${r.program_id}@${r.program_version}|${r.profile_id}@${r.profile_version}`;
+  const had = sessionAgents.get(key);
+  if (had) return had;
+  const { profileAgent, declaredProfilePurposes } = await import("./agent-profiles.js");
+  const profile = await profileAgent(r.profile_id, r.profile_version);
+  let out: AgentLabel = profile;
+  if (r.program_id) {
+    const { listDockPrograms } = await import("./programs.js");
+    const prog = (await listDockPrograms().catch(() => [])).find((p) => p.id === r.program_id);
+    const declared = prog?.config.agent_profile && !prog.config.purpose ? (await declaredProfilePurposes()).get(prog.config.agent_profile) ?? null : null;
+    out = prog ? { name: prog.name, purpose: programPurpose(prog, declared) } : { name: r.title, purpose: purposeFromWords(r.program_id, r.title) ?? profile.purpose };
+  } else if (r.parent_id) out = { name: r.title, purpose: purposeFromWords(r.title) ?? profile.purpose };
+  if (sessionAgents.size > 2000) sessionAgents.clear();
+  sessionAgents.set(key, out);
+  return out;
 }
 
 /** One step's full detail (its event's whole data, arguments and result included), when it is opened. */

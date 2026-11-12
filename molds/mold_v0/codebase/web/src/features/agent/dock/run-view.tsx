@@ -7,6 +7,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { When } from '@/features/portal/shared';
+import type { AgentLabel, AgentPurpose } from '@/lib/agent-purpose';
+import { AgentName } from '../agent-name';
 
 const HillClimbing3D = dynamic(() => import('./hill-climbing-3d').then((m) => m.HillClimbing3D), { ssr: false, loading: () => <div className='bg-muted/40 h-64 animate-pulse rounded-lg' /> });
 
@@ -16,8 +18,8 @@ export interface ClimbPoint { id: string; label: string; at: string; coords: [nu
 export interface Version { id: string; version: number; status: string; lift: number | null; applied_at: string | null; applied_ref: string | null; rolled_back_at: string | null; rollback_reason: string | null; at: string; workspace?: string | null }
 export interface ClimbTarget { id: string; kind: string; program: string; axes: ClimbAxis[]; points: ClimbPoint[]; versions: Version[]; active: boolean }
 interface Graph { states: { id: string; kind: string; entries: number; settled: boolean; running: boolean }[]; transitions: { from: string; to: string; label: string | null }[]; status: string; error: string | null; fired: number; max: number }
-interface RunNode { handle: string; name: string; ref: string | null; kind: string; program: string | null; state: string | null; status: string; settled: boolean; error: string | null; budget_usd: number; spent_usd: number; waiting: string | null; attention: boolean; session_id: string | null; started_at: string; settled_at: string | null; parent_id: string; step_of: string | null; graph: Graph | null }
-export interface RunDetail { root: { id: string; ref: string | null; title: string; state: string; budget_usd: number; spent_usd: number; carved_usd: number; children_spent_usd: number; remaining_usd: number }; children: RunNode[]; decisions: { id: string; target: string; outcome: string | null; lift: number | null; hypothesis: string; reasons: string[]; at: string; promoted: boolean }[]; targets: ClimbTarget[] }
+interface RunNode { handle: string; name: string; ref: string | null; kind: string; program: string | null; state: string | null; status: string; settled: boolean; error: string | null; budget_usd: number; spent_usd: number; waiting: string | null; attention: boolean; session_id: string | null; started_at: string; settled_at: string | null; parent_id: string; step_of: string | null; graph: Graph | null; purpose?: AgentPurpose }
+export interface RunDetail { root: { id: string; ref: string | null; title: string; agent?: AgentLabel; state: string; budget_usd: number; spent_usd: number; carved_usd: number; children_spent_usd: number; remaining_usd: number }; children: RunNode[]; decisions: { id: string; target: string; outcome: string | null; lift: number | null; hypothesis: string; reasons: string[]; at: string; promoted: boolean }[]; targets: ClimbTarget[] }
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 const pct = (v: number | null | undefined) => (typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : 'Not measured');
@@ -114,7 +116,7 @@ function Tree({ nodes, onOpen }: { nodes: RunNode[]; onOpen?: (n: RunNode) => vo
   const childrenOf = (n: RunNode) => nodes.filter((m) => m.step_of === n.handle || (!m.step_of && n.session_id !== null && m.parent_id === n.session_id));
   const row = (n: RunNode, depth: number): ReactNode => {
     const inner = <><span className={cn('size-2 shrink-0 rounded-full', n.status === 'running' ? 'motion-safe:animate-pulse bg-emerald-500' : n.status === 'error' ? 'bg-destructive' : n.status === 'queued' ? 'bg-amber-500' : 'bg-muted-foreground/40')} aria-hidden />
-      <span className='min-w-0 flex-1 truncate text-sm' title={n.name}>{n.name}</span>
+      <AgentName name={n.name} purpose={n.purpose} muted={false} className='flex-1 text-sm' />
       {n.ref && <span className='text-muted-foreground shrink-0 font-mono text-xs'>{n.ref}</span>}
       <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{usd(n.spent_usd)}</span></>;
     return (
@@ -149,6 +151,7 @@ export function RunView({ id, call, onAsk, onOpenChild }: { id: string; call: Do
   const spent = run.root.spent_usd + run.root.children_spent_usd;
   return (
     <div className='flex flex-col gap-5' data-run-view={run.root.id}>
+      {run.root.agent && <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>Runs as <AgentName name={run.root.agent.name} purpose={run.root.agent.purpose} muted={false} /></span>}
       <dl className='grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4'>
         {[['Spent', `${usd(spent)} of ${usd(run.root.budget_usd)}`], ['Set aside for children', usd(run.root.carved_usd)], ['Children', String(run.children.filter((c) => c.kind !== 'machine').length)], ['Best improvement', lifts.length ? pct(Math.max(...lifts)) : 'None yet']].map(([k, v]) => (
           <div key={k} className='flex min-w-0 flex-col gap-0.5'><dt className='text-muted-foreground text-xs'>{k}</dt><dd className='text-sm font-medium tabular-nums'>{v}</dd></div>

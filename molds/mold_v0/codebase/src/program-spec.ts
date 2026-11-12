@@ -9,6 +9,7 @@
  *   schemas     a subset of JSON Schema, implemented here so that what is declared is what is enforced: a keyword this file
  *               does not know is refused when the program is saved, never ignored when a child's output is checked.
  */
+import { AGENT_PURPOSES, isPurpose, type AgentPurpose } from "./agent-purpose.js";
 
 export const PROGRAM_ID = /^[a-z][a-z0-9-]{1,39}$/;
 export const PROGRAM_LIMITS = { name: 80, description: 500, prompt: 20_000, note: 4000, schema_bytes: 64 * 1024, states: 64, transitions: 256, max_transitions: 256, foreach: 32 } as const;
@@ -172,10 +173,14 @@ export interface Acceptance {
 export const DOCK_KINDS = ["items", "changes", "climb"] as const;
 export type DockKind = (typeof DOCK_KINDS)[number];
 /** Where a program's results show in a session's dock (mold_v0-292): a section's id and words, and how it is drawn. */
-export interface ProgramDock { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; items?: string; title?: string; meta?: string[]; group?: string; also?: { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind }[] }
+/** mold_v0-295: `group` names the top bar tab its section sits under (a group's id: think, measure, ship or the app's own; by
+ *  default its kind's: items think, climb measure, changes ship). */
+export interface ProgramDock { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; items?: string; title?: string; meta?: string[]; group?: string; also?: { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; group?: string }[] }
 
 export interface ProgramConfig {
   icon: string;
+  /** mold_v0-295: what its agent is for (src/agent-purpose.ts); absent, read from the program (programPurpose). */
+  purpose?: AgentPurpose;
   agent_profile: string | null;
   prompt: string;
   inputs: JsonSchema;
@@ -309,10 +314,11 @@ function acceptanceProblems(raw: unknown, at: string, hash: (s: string) => strin
 export function parseProgram(raw: unknown, hash: (s: string) => string): { config?: ProgramConfig; problems: string[] } {
   if (!isObject(raw)) return { problems: ["config: an object"] };
   const out: string[] = [];
-  const known = new Set(["$comment", "icon", "agent_profile", "prompt", "inputs", "outputs", "budget_usd", "limits", "failure_policy", "retries", "spawned_by", "machine", "acceptance", "dock"]);
+  const known = new Set(["$comment", "icon", "purpose", "agent_profile", "prompt", "inputs", "outputs", "budget_usd", "limits", "failure_policy", "retries", "spawned_by", "machine", "acceptance", "dock"]);
   for (const k of Object.keys(raw)) if (!known.has(k)) out.push(`${k}: not a field of a program`);
   const icon = raw.icon === undefined ? "sparkles" : raw.icon;
   if (typeof icon !== "string" || !ICON.test(icon)) out.push("icon: an icon's name");
+  if (raw.purpose !== undefined && !isPurpose(raw.purpose)) out.push(`purpose: ${AGENT_PURPOSES.join(", ")}`);
   if (raw.agent_profile !== undefined && raw.agent_profile !== null && typeof raw.agent_profile !== "string") out.push("agent_profile: an agent profile's id");
   const prompt = typeof raw.prompt === "string" ? raw.prompt.trim() : "";
   if (!prompt && raw.machine === undefined) out.push("prompt: what the child is asked to do");
@@ -350,18 +356,19 @@ export function parseProgram(raw: unknown, hash: (s: string) => string): { confi
       if (x.icon !== undefined && (typeof x.icon !== "string" || !ICON.test(x.icon))) out.push(`${at}.icon: an icon's name`);
       if (x.order !== undefined && !(typeof x.order === "number" && Number.isFinite(x.order))) out.push(`${at}.order: a number`);
       if (x.kind !== undefined && !DOCK_KINDS.includes(x.kind as DockKind)) out.push(`${at}.kind: ${DOCK_KINDS.join(", ")}`);
+      if (x.group !== undefined && (typeof x.group !== "string" || !SECTION.test(x.group))) out.push(`${at}.group: the id of the top bar group its section sits under (think, measure, ship or the app's own)`);
     };
     sectionProblems(d, "dock", ["section", "label", "sub", "icon", "order", "kind", "items", "title", "meta", "group", "also"]);
-    for (const k of ["items", "title", "group"]) if (d[k] !== undefined && (typeof d[k] !== "string" || (d[k] as string).length > 80)) out.push(`dock.${k}: an output's path`);
+    for (const k of ["items", "title"]) if (d[k] !== undefined && (typeof d[k] !== "string" || (d[k] as string).length > 80)) out.push(`dock.${k}: an output's path`);
     if (d.meta !== undefined && !(Array.isArray(d.meta) && d.meta.length <= 6 && d.meta.every((x) => typeof x === "string"))) out.push("dock.meta: at most 6 output paths");
     if (d.also !== undefined) {
       if (!Array.isArray(d.also) || d.also.length > 4) out.push("dock.also: at most 4 more sections");
-      else d.also.forEach((x, i) => { if (!isObject(x)) out.push(`dock.also[${i}]: an object`); else sectionProblems(x, `dock.also[${i}]`, ["section", "label", "sub", "icon", "order", "kind"]); });
+      else d.also.forEach((x, i) => { if (!isObject(x)) out.push(`dock.also[${i}]: an object`); else sectionProblems(x, `dock.also[${i}]`, ["section", "label", "sub", "icon", "order", "kind", "group"]); });
     }
     if (!out.some((p) => p.startsWith("dock."))) dock = d as unknown as ProgramDock;
   }
   if (out.length) return { problems: out };
-  return { problems: [], config: { icon: icon as string, agent_profile: (raw.agent_profile as string | null | undefined) ?? null, prompt, inputs: inputs as JsonSchema, outputs: outputs as JsonSchema,
+  return { problems: [], config: { icon: icon as string, ...(raw.purpose !== undefined ? { purpose: raw.purpose as AgentPurpose } : {}), agent_profile: (raw.agent_profile as string | null | undefined) ?? null, prompt, inputs: inputs as JsonSchema, outputs: outputs as JsonSchema,
     budget_usd: budget as number, limits: limits as ProgramConfig["limits"], failure_policy: fp as FailurePolicy, retries: retries as number, spawned_by: spawnedBy as string[],
     ...(machine ? { machine } : {}), ...(acceptance ? { acceptance } : {}), ...(dock ? { dock } : {}) } };
 }

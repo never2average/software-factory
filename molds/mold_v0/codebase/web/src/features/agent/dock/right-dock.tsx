@@ -1,23 +1,29 @@
 'use client';
-// The agent page's right dock (mold_v0-292, flag nested_runs; src/agent-dock.ts): one icon per section of the work this
-// workspace is doing, each with its live count. Opening a section replaces the rail with its panel, and a breadcrumb is the only
-// way in and out of a detail. Every panel has the same two controls: find something in it, or fork a second agent from a point
-// in the conversation. On a phone the rail is one button in the session's bar, opening the same content as a sheet. The
-// sections' words are the app's (each program's dock); the chat bar stays in view beside it, whatever is open.
+// The agent page's dock (mold_v0-292, flag nested_runs; src/agent-dock.ts): the sections of the work this workspace is doing,
+// each with its live count. mold_v0-295: no rail beside the chat any more; the sections are a few grouped tabs in the session's
+// top bar (the shared OverflowTabs: each group a menu of its sections and their counts, lit while one of them works, amber while
+// one needs a person). Choosing a section opens its panel beside the chat, and a breadcrumb is the only way in and out of a
+// detail; with none open the chat is full width. Every panel has the same two controls: find something in it, or fork a second
+// agent from a point in the conversation. On a phone the tabs are one button in the session's bar, opening the same content as
+// a sheet. The sections' words and groups are the app's (each program's dock); the chat bar stays in view, whatever is open.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Icons } from '@/components/icons';
+import { OverflowTabs } from '@/components/layout/overflow-tabs';
 import { cn } from '@/lib/utils';
+import type { AgentPurpose } from '@/lib/agent-purpose';
+import { AgentName } from '../agent-name';
 import { When, fail } from '@/features/portal/shared';
 import { AgentComposer, type ComposerSend } from '../composer/agent-composer';
 import { TraceStream, useTrace } from '../session-trace';
 import { Climb, RunView, StatusBadge, type ClimbTarget, type DockCall } from './run-view';
 
 export interface DockCheckpoint { id: number; label: string; role: 'person' | 'agent' }
-interface Section { id: string; label: string; sub: string; icon: string; kind: 'items' | 'changes' | 'climb'; count: number; live: boolean; attention: boolean; programs: { id: string; name: string; description: string }[] }
-interface Item { id: string; title: string; meta: string[]; status: string; at: string; program: string | null; handle: string | null; session_id: string | null; root_id: string | null; ref: string | null; error: string | null; fields: Record<string, unknown> }
+interface Section { id: string; label: string; sub: string; icon: string; kind: 'items' | 'changes' | 'climb'; group?: string; count: number; live: boolean; attention: boolean; programs: { id: string; name: string; description: string; purpose?: AgentPurpose }[] }
+interface Group { id: string; label: string }
+interface Item { id: string; title: string; meta: string[]; status: string; at: string; program: string | null; purpose?: AgentPurpose | null; handle: string | null; session_id: string | null; root_id: string | null; ref: string | null; error: string | null; fields: Record<string, unknown> }
 type Detail = { title: string; node: ReactNode; fill?: boolean };
 
 const iconOf = (name: string) => (Icons as unknown as Record<string, typeof Icons.sparkles>)[name] ?? Icons.sparkles;
@@ -38,7 +44,7 @@ const hit = (q: string, ...parts: (string | null | undefined)[]) => !q.trim() ||
 const words = (v: unknown): string => (v === null || v === undefined ? '' : typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) && v.every((x) => typeof x === 'string') ? v.join(', ') : JSON.stringify(v));
 const label = (k: string) => { const t = k.replaceAll('_', ' '); return `${t.charAt(0).toUpperCase()}${t.slice(1)}`; };
 
-function Row({ title, facts, status, onOpen, live }: { title: string; facts: (string | null | false | undefined)[]; status?: string; onOpen?: () => void; live?: boolean }) {
+function Row({ title, facts, status, onOpen, live, agent }: { title: string; facts: (string | null | false | undefined)[]; status?: string; onOpen?: () => void; live?: boolean; agent?: { name: string; purpose: AgentPurpose | null | undefined } | null }) {
   const line = facts.filter(Boolean).join(' · ');
   return (
     <Button variant='outline' disabled={!onOpen} onClick={onOpen} title={title} data-dock-row=''
@@ -48,7 +54,7 @@ function Row({ title, facts, status, onOpen, live }: { title: string; facts: (st
         {status && <StatusBadge status={status} />}
         {onOpen && <Icons.chevronRight className='text-muted-foreground size-3.5 shrink-0' />}
       </span>
-      {line && <span className='text-muted-foreground block w-full truncate text-xs'>{line}</span>}
+      {(line || agent) && <span className='text-muted-foreground flex w-full min-w-0 items-center gap-2 text-xs'>{agent && <AgentName name={agent.name} purpose={agent.purpose} className='shrink-0' />}{agent && line && <span aria-hidden>·</span>}{line && <span className='min-w-0 truncate'>{line}</span>}</span>}
     </Button>
   );
 }
@@ -66,7 +72,7 @@ function ChildTrace({ id, call }: { id: string; call: DockCall }) {
 function ItemView({ item, call, onAsk, open }: { item: Item; call: DockCall; onAsk: (t: string) => void; open: (d: Detail) => void }) {
   return (
     <div className='flex flex-col gap-4' data-dock-detail={item.id}>
-      <Facts rows={[...(item.ref ? [['From', item.ref] as [string, ReactNode]] : []), ...(item.program ? [['Program', item.program] as [string, ReactNode]] : []), ['When', <When key='when' d={item.at} />]]} />
+      <Facts rows={[...(item.ref ? [['From', item.ref] as [string, ReactNode]] : []), ...(item.program ? [['Agent', <AgentName key='agent' name={item.program} purpose={item.purpose} muted={false} />] as [string, ReactNode]] : []), ['When', <When key='when' d={item.at} />]]} />
       {Object.keys(item.fields).length > 0 && <Facts rows={Object.entries(item.fields).map(([k, v]) => [label(k), words(v)] as [string, ReactNode])} />}
       {item.error && <p className='text-destructive text-xs'>{item.error}</p>}
       <div className='flex flex-wrap gap-2'>
@@ -83,7 +89,7 @@ function EmptySection({ section, text, onAsk }: { section: Section; text: string
   return (
     <div className='flex flex-col items-start gap-2' data-dock-empty={section.id}>
       <p className='text-muted-foreground text-sm'>{text}</p>
-      <div className='flex flex-wrap gap-2'>{section.programs.map((p) => <Button key={p.id} size='sm' variant='outline' data-dock-start={p.id} onClick={() => onAsk(`Run the ${p.name} program: `)}>Use {p.name}</Button>)}</div>
+      <div className='flex flex-wrap gap-2'>{section.programs.map((p) => <Button key={p.id} size='sm' variant='outline' className='items-center' data-dock-start={p.id} onClick={() => onAsk(`Run the ${p.name} program: `)}><AgentName name={`Use ${p.name}`} purpose={p.purpose} muted={false} className='text-sm' /></Button>)}</div>
     </div>
   );
 }
@@ -109,7 +115,7 @@ function SectionBody({ section, call, query, onAsk, open }: { section: Section; 
   const rows = (items ?? []).filter((i) => hit(query, i.title, i.program, i.ref, i.status, ...i.meta));
   if (!rows.length) return query.trim() ? <p className='text-muted-foreground text-sm'>Nothing here matches.</p> : <EmptySection section={section} text={`Nothing here yet. ${section.programs.length === 1 ? section.programs[0]!.description : 'Results show here as programs finish.'}`} onAsk={onAsk} />;
   return <>{rows.map((i) => (
-    <Row key={i.id} title={i.title} status={i.status === 'done' ? undefined : i.status} live={i.status === 'running' || i.status === 'queued'} facts={[i.ref, ...i.meta.slice(0, 3)]}
+    <Row key={i.id} title={i.title} status={i.status === 'done' ? undefined : i.status} live={i.status === 'running' || i.status === 'queued'} facts={[i.ref, ...i.meta.slice(0, 3)]} agent={i.program ? { name: i.program, purpose: i.purpose } : null}
       onOpen={() => open({ title: i.title, node: section.kind === 'changes' ? <ChangeView item={i} call={call} onAsk={onAsk} open={open} /> : <ItemView item={i} call={call} onAsk={onAsk} open={open} /> })} />
   ))}</>;
 }
@@ -160,6 +166,7 @@ function ForkTrace({ id, call }: { id: string; call: DockCall }) {
 
 export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onOpenSession }: { enabled: boolean; call: DockCall; sessionId: string; checkpoints: DockCheckpoint[]; onAsk: (text: string) => void; onOpenSession: (id: string) => void }) {
   const [sections, setSections] = useState<Section[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [query, setQuery] = useState('');
@@ -170,7 +177,7 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
   useEffect(() => {
     if (!enabled) return;
     let on = true;
-    const load = () => call<{ sections: Section[] }>('GET', '/dock').then((r) => { if (on) setSections(r.sections); }, () => { /* the badges keep their last numbers */ });
+    const load = () => call<{ sections: Section[]; groups?: Group[] }>('GET', '/dock').then((r) => { if (on) { setSections(r.sections); setGroups(r.groups ?? []); } }, () => { /* the badges keep their last numbers */ });
     void load();
     const t = setInterval(() => void load(), 5000);
     return () => { on = false; clearInterval(t); };
@@ -178,7 +185,11 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
   const current = useMemo(() => sections.find((s) => s.id === openId) ?? null, [sections, openId]);
   const openSection = useCallback((id: string | null) => { setDetail(null); setFork(null); setPicking(false); setQuery(''); setOpenId(id); }, []);
   const ask = useCallback((t: string) => { onAsk(t); setSheet(false); }, [onAsk]);
-  if (!enabled || !sections.length) return { column: null, phoneButton: null };
+  if (!enabled || !sections.length) return { column: null, bar: null };
+  // A section that names no group (an older answer) sits under one of its own words.
+  const groupOf = (s: Section) => s.group ?? 'sections';
+  const shownGroups: Group[] = [...groups.filter((g) => sections.some((s) => groupOf(s) === g.id)), ...[...new Set(sections.map(groupOf))].filter((id) => !groups.some((g) => g.id === id)).map((id) => ({ id, label: id === 'sections' ? 'Sections' : id }))];
+  const inGroup = (g: Group) => sections.filter((s) => groupOf(s) === g.id);
 
   const body = current && (
     <>
@@ -209,17 +220,29 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
     </>
   );
 
-  const column = !wide ? null : current
+  // Wide: the panel beside the chat while a section is open, nothing otherwise (the chat full width).
+  const column = wide && current
     ? <aside aria-label={current.label} className='bg-background flex h-full shrink-0 flex-col border-l' style={{ width: 'min(40vw, 640px)', minWidth: 380 }} data-right-dock-panel={current.id}>{body}</aside>
-    : <div className='flex h-full w-14 shrink-0 flex-col items-center justify-center gap-1.5 overflow-y-auto border-l' data-right-dock=''>
-      {sections.map((s) => { const I = iconOf(s.icon); return (
-        <Button key={s.id} variant='outline' size='icon' aria-label={`${s.label}: ${s.count} ${s.sub}`} title={`${s.label}: ${s.sub}`} className='relative size-10 rounded-xl' data-dock-section={s.id} data-live={s.live ? 'true' : undefined} onClick={() => openSection(s.id)}>
-          <I className='size-4' />
-          {s.count > 0 && <span className={cn('border-background absolute -top-1.5 -right-1.5 min-w-[18px] rounded-full border px-1 text-center text-[10px] leading-4 font-medium tabular-nums', s.attention ? 'bg-amber-500 text-black' : s.live ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground')} data-dock-count=''>{s.count > 99 ? '99+' : s.count}</span>}
-          {s.live && s.count === 0 && <span className='bg-primary absolute -top-1 -right-1 size-2 rounded-full motion-safe:animate-pulse' aria-hidden />}
-        </Button>
-      ); })}
-    </div>;
+    : null;
+
+  // Wide: the groups as tabs in the session's top bar, each a menu of its sections with their counts.
+  const tabs = wide ? (
+    <OverflowTabs strip label='Work so far' max={4} value={current ? groupOf(current) : null} className='shrink-0' tabs={shownGroups.map((g) => {
+      const mine = inGroup(g);
+      const count = mine.reduce((t, s) => t + s.count, 0), live = mine.some((s) => s.live), attention = mine.some((s) => s.attention);
+      return {
+        id: g.id, label: g.label,
+        data: { 'data-dock-group': g.id, 'data-live': live ? 'true' : undefined, 'data-attention': attention ? 'true' : undefined },
+        mark: <Mark count={count} live={live} attention={attention} label={`${count} in ${g.label}`} />,
+        menu: mine.map((s) => { const I = iconOf(s.icon); return {
+          id: s.id, label: s.label, current: s.id === openId, onSelect: () => openSection(s.id),
+          icon: <I className='size-4 shrink-0' aria-hidden />,
+          end: <Mark count={s.count} live={s.live} attention={s.attention} label={`${s.count} ${s.sub}`} always />,
+          data: { 'data-dock-section': s.id, 'data-live': s.live ? 'true' : undefined },
+        }; }),
+      };
+    })} />
+  ) : null;
 
   const total = sections.reduce((t, s) => t + s.count, 0), live = sections.some((s) => s.live);
   const phoneButton = wide ? null : (
@@ -231,12 +254,29 @@ export function useAgentDock({ enabled, call, sessionId, checkpoints, onAsk, onO
       <Sheet open={sheet} onOpenChange={(o) => { setSheet(o); if (!o) openSection(null); }}>
         <SheetContent side='right' showCloseButton={!current} className='flex w-full flex-col gap-0 p-0 sm:max-w-md' data-right-dock-sheet=''>
           <SheetHeader className='sr-only'><SheetTitle>{current?.label ?? 'The work so far'}</SheetTitle><SheetDescription>Each section of the work this workspace is doing.</SheetDescription></SheetHeader>
-          {current ? body : <div className='flex flex-col gap-2 overflow-y-auto p-3 pt-12'>{sections.map((s) => { const I = iconOf(s.icon); return (
-            <Button key={s.id} variant='outline' className='flex h-11 w-full items-center justify-start gap-2 font-normal' data-dock-section={s.id} onClick={() => openSection(s.id)}><I className='size-4 shrink-0' /><span className='min-w-0 flex-1 truncate text-left'>{s.label}</span>{s.live && <span className='bg-primary size-2 shrink-0 rounded-full motion-safe:animate-pulse' aria-hidden />}<span className='text-muted-foreground text-xs tabular-nums'>{s.count}</span></Button>
-          ); })}</div>}
+          {current ? body : <div className='flex flex-col gap-4 overflow-y-auto p-3 pt-12'>{shownGroups.map((g) => (
+            <section key={g.id} className='flex flex-col gap-2' data-dock-group={g.id} aria-label={g.label}>
+              <h3 className='text-muted-foreground text-xs font-medium'>{g.label}</h3>
+              {inGroup(g).map((s) => { const I = iconOf(s.icon); return (
+                <Button key={s.id} variant='outline' className='flex h-11 w-full items-center justify-start gap-2 font-normal' data-dock-section={s.id} onClick={() => openSection(s.id)}><I className='size-4 shrink-0' /><span className='min-w-0 flex-1 truncate text-left'>{s.label}</span><Mark count={s.count} live={s.live} attention={s.attention} label={`${s.count} ${s.sub}`} always /></Button>
+              ); })}
+            </section>
+          ))}</div>}
         </SheetContent>
       </Sheet>
     </>
   );
-  return { column, phoneButton };
+  return { column, bar: wide ? tabs : phoneButton };
+}
+
+/** A count with its state: amber while something waits for a person, lit while something works, plain otherwise; a live dot with nothing counted yet. */
+function Mark({ count, live, attention, label, always = false }: { count: number; live: boolean; attention: boolean; label: string; always?: boolean }) {
+  if (!count && !live && !always) return null;
+  return (
+    <span className='inline-flex shrink-0 items-center gap-1' data-dock-count='' data-tone={attention ? 'attention' : live ? 'live' : undefined}>
+      {live && <span className='bg-primary size-1.5 rounded-full motion-safe:animate-pulse' aria-hidden />}
+      {(count > 0 || always) && <span aria-label={label} className={cn('min-w-[18px] rounded-full px-1.5 text-center text-[10px] leading-4 font-medium tabular-nums',
+        attention ? 'bg-amber-500 text-black' : live ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground')}>{count > 99 ? '99+' : count}</span>}
+    </span>
+  );
 }

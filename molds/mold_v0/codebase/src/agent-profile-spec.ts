@@ -15,9 +15,11 @@
  *                  store, made executable in its scratch), up to the platform's size limit (AGENT_UPLOAD_MAX_MB)
  *   5. governance  its governance policy (src/agent-governance.ts: web tools, egress approvals, a tool allowlist,
  *                  exceptions, retention), ported from the reference product's
- * Budgets, turns and every other limit are the platform settings, never a profile's.
+ * Budgets, turns and every other limit are the platform settings, never a profile's. Beside the five, a label: its `purpose`
+ * (mold_v0-295, src/agent-purpose.ts), the icon the console draws beside its agent's name; it sets nothing a session runs with.
  */
 import { z } from "zod";
+import { AGENT_PURPOSES } from "./agent-purpose.js";
 import { ALLOW_ALL_DOMAINS, GOVERNANCE_LIMITS, normalizeDomains, webPolicyProblems, type Governance } from "./agent-governance.js";
 
 /** The profile every session uses unless another is chosen: the platform settings, as they are. Never archived. */
@@ -138,6 +140,8 @@ export const ProfileConfigSchema = z.object({
   recipes: z.array(ProfileRecipeSchema).max(10, "at most 10 recipes").optional(),
   /** 5. Its governance policy. */
   governance: GovernanceSchema.nullable().optional(),
+  /** mold_v0-295: what its agent is for (src/agent-purpose.ts), a label the console draws as an icon beside its name; no setting. */
+  purpose: z.enum(AGENT_PURPOSES).optional(),
 }).strict();
 export type ProfileConfig = z.output<typeof ProfileConfigSchema>;
 export const PROFILE_KEYS = ["harness", "inference", "keys", "uploads", "governance"] as const;
@@ -154,6 +158,7 @@ export const PackAgentProfileSchema = z.object({
   inference: InferenceSchema.omit({ key: true }).optional(),
   keys: z.array(z.object({ kind: z.literal("workspace"), name: z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>") }).strict()).max(PROFILE_LIMITS.keys).optional(),
   governance: GovernanceSchema.omit({ exceptions: true }).optional(),
+  purpose: z.enum(AGENT_PURPOSES).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type PackAgentProfile = z.output<typeof PackAgentProfileSchema>;

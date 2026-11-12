@@ -420,7 +420,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
     return () => ro.disconnect();
   }, [d?.id]);
   const changed = async () => { await load(); await onChange(); };
-  // mold_v0-292 (flag nested_runs): the right dock beside the conversation; the chat bar is in the conversation's own column.
+  // mold_v0-292 (flag nested_runs): the dock, its sections as grouped tabs in this bar (mold_v0-295) and a panel beside the
+  // conversation while one is open; the chat bar is in the conversation's own column.
   const [prefill, setPrefill] = useState<{ text: string; at: number } | null>(null);
   const checkpoints = useMemo<DockCheckpoint[]>(() => (d?.messages ?? []).filter((m) => m.role !== 'system').map((m) => ({ id: m.id, role: m.role as DockCheckpoint['role'], label: m.body.replace(/\s+/g, ' ').slice(0, 120) })).reverse(), [d?.messages]);
   const dock = useAgentDock({ enabled: area === 'app' && featureOn('nested_runs'), call, sessionId: id, checkpoints, onAsk: (text) => setPrefill({ text, at: Date.now() }), onOpenSession });
@@ -437,7 +438,7 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
     <div className='flex min-w-0 flex-1 flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
       <div className='flex items-center gap-2 sm:gap-3' data-agent-session-bar=''>
         <h1 className='min-w-0 flex-1 truncate text-base font-medium' title={d.title}>{d.title}</h1>
-        {dock.phoneButton}
+        {dock.bar}
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
           extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
       </div>

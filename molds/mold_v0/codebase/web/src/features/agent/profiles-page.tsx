@@ -29,6 +29,8 @@ import { useAdmin, useAdminAction } from '@/features/admin/lib';
 import { Gate, useAdminRole } from '@/features/admin/role';
 import { ToneBadge } from '@/features/records/detail-page';
 import { ToolbarAction } from '@/features/tabs/tab-action';
+import { AGENT_PURPOSES, PURPOSE_WORDS, type AgentPurpose } from '@/lib/agent-purpose';
+import { AgentName } from './agent-name';
 
 // ---------------------------------------------------------------- the shapes (src/agent-profile-spec.ts)
 
@@ -37,12 +39,14 @@ interface Upload { id: string; path: string; bytes: number; sha256: string; exec
 interface WebPolicy { enabled: boolean; web_search_enabled: boolean; web_fetch_enabled: boolean; web_fetch_allowed_domains: string[]; max_calls: number }
 interface Exception { domain: string; reason: string; expires_at: string; approved_by?: string }
 interface Governance { web?: WebPolicy; egress_approvals?: boolean; tools?: { allowed: string[]; max_calls: number } | null; exceptions?: Exception[]; retention_days?: number | null }
-export interface ProfileConfig { harness?: string | null; inference?: { provider: string; model: string; key?: string | null } | null; keys?: Key[]; uploads?: Upload[]; recipes?: RecipePick[]; governance?: Governance | null }
+export interface ProfileConfig { purpose?: AgentPurpose; harness?: string | null; inference?: { provider: string; model: string; key?: string | null } | null; keys?: Key[]; uploads?: Upload[]; recipes?: RecipePick[]; governance?: Governance | null }
 /** mold_v0-271 (flag workspace_recipes): a workspace recipe the profile's sessions receive with its uploads (version null: its latest). */
 interface RecipePick { id: string; version: number | null }
 interface Summary {
   id: string; name: string; description: string; version: number; status: 'active' | 'archived'; source: 'platform' | 'pack'; pack: string | null; is_default: boolean;
   harness: string; model: string; provider: string; keys: number; uploads: number; upload_bytes: number; governance: string; sessions: number; updated_at: string; updated_by: string;
+  /** mold_v0-295: what its agent is for, its own or read from its id and name. */
+  purpose?: AgentPurpose;
 }
 interface Detail extends Summary { config: ProfileConfig; changes: { id: number; version: number; action: string; by: string; at: string }[] }
 interface Facts {
@@ -72,6 +76,7 @@ export function AgentProfilesPage({ bare = false }: { bare?: boolean } = {}) {
     { key: 'name', label: 'Profile', title: true, keep: true, type: 'text', className: 'min-w-60', value: (p) => p.name,
       render: (p) => <span className='flex min-w-0 flex-col gap-1'><span className='leading-snug font-medium'>{p.name}</span>{p.description && <span className='text-muted-foreground line-clamp-2 text-xs whitespace-normal'>{p.description}</span>}</span> },
     { key: 'status', label: 'Status', type: 'select', keep: true, options: [{ value: 'active', label: 'Active' }, { value: 'archived', label: 'Archived' }], value: (p) => p.status, render: (p) => <StatusBadges p={p} /> },
+    { key: 'purpose', label: 'Purpose', type: 'select', options: AGENT_PURPOSES.map((x) => ({ value: x, label: PURPOSE_WORDS[x] })), value: (p) => p.purpose ?? 'general', render: (p) => <AgentName name={PURPOSE_WORDS[p.purpose ?? 'general']} purpose={p.purpose} muted={false} className='text-sm' /> },
     { key: 'harness', label: 'Harness', type: 'text', value: (p) => p.harness, render: (p) => p.harness },
     { key: 'model', label: 'Model', type: 'text', value: (p) => p.model, render: (p) => <span className='font-mono text-xs'>{p.model}</span> },
     { key: 'keys', label: 'Keys', type: 'number', value: (p) => p.keys, render: (p) => <span className='tabular-nums'>{p.keys}</span> },
@@ -182,6 +187,8 @@ function ProfileForm({ profile, facts, onClose, modal = false }: { profile: Deta
   const [name, setName] = useState(profile?.name ?? '');
   const [description, setDescription] = useState(profile?.description ?? '');
   const [harness, setHarness] = useState(c.harness ?? '');
+  // mold_v0-295: what its agent is for; one not declared shows what is read from its name (general when nothing says).
+  const [purpose, setPurpose] = useState<AgentPurpose>(c.purpose ?? profile?.purpose ?? 'general');
   const [provider, setProvider] = useState(c.inference?.provider ?? '');
   const [model, setModel] = useState(c.inference?.model ?? '');
   const [inferenceKey, setInferenceKey] = useState(c.inference?.key ?? '');
@@ -240,6 +247,7 @@ function ProfileForm({ profile, facts, onClose, modal = false }: { profile: Deta
     const exceptions = rules.filter((r) => r.type === 'exception' && r.value.trim()).map((r) => ({ domain: r.value.trim(), reason: r.reason.trim(), expires_at: r.until ? new Date(`${r.until}T23:59:59Z`).toISOString() : '' }));
     const enabled = search || fetchOn;
     return {
+      purpose,
       ...(harness ? { harness } : {}),
       ...(provider && model ? { inference: { provider, model, ...(inferenceKey ? { key: inferenceKey } : {}) } } : {}),
       ...(keys.length ? { keys: keys.map(({ row: _r, ...k }) => k as Key) } : {}),
@@ -279,9 +287,14 @@ function ProfileForm({ profile, facts, onClose, modal = false }: { profile: Deta
           <DialogDescription>{intro}</DialogDescription>
         </DialogHeader>
       ) : <p className='text-muted-foreground text-sm'>{intro}</p>}
-      <div className='grid gap-3 sm:grid-cols-2'>
+      <div className='grid gap-3 sm:grid-cols-[1fr_1fr_12rem]'>
         <Field label='Name' htmlFor='ap-name'><Input id='ap-name' value={name} onChange={(e) => setName(e.target.value)} disabled={ro || !!profile?.is_default} required maxLength={80} /></Field>
         <Field label='Description' htmlFor='ap-description'><Input id='ap-description' value={description} onChange={(e) => setDescription(e.target.value)} disabled={ro} maxLength={500} /></Field>
+        <Field label='Purpose' htmlFor='ap-purpose'>
+          <NativeSelect id='ap-purpose' value={purpose} onChange={(e) => setPurpose(e.target.value as AgentPurpose)} disabled={ro} data-ap-purpose=''>
+            {AGENT_PURPOSES.map((x) => <NativeSelectOption key={x} value={x}>{PURPOSE_WORDS[x]}</NativeSelectOption>)}
+          </NativeSelect>
+        </Field>
       </div>
 
       <Part n={1} title='Harness' hint='Which agent program runs the session. Only the ones this platform has pinned are offered.'>

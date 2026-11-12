@@ -8,6 +8,10 @@ import {
   IconTable,
   IconCpu,
   IconRobot,
+  IconArrowDown,
+  IconHammer,
+  IconFlask,
+  IconEyeCheck,
   IconPlayerPause,
   IconPlayerStop,
   IconWorld,
@@ -189,6 +193,10 @@ export const Icons = {
   activity: IconActivity,
   mathFunction: IconMathFunction,
   microscope: IconMicroscope,
+  // mold_v0-295: agent purposes (web/src/lib/agent-purpose.tsx)
+  hammer: IconHammer,
+  flask: IconFlask,
+  eyeCheck: IconEyeCheck,
   split: IconArrowsSplit2,
   gitPullRequest: IconGitPullRequest,
   graduationCap: IconSchool,
@@ -224,6 +232,7 @@ export const Icons = {
   microphone: IconMicrophone,
   folderCode: IconFolderCode,
   arrowUp: IconArrowUp,
+  arrowDown: IconArrowDown,
 
   // Files
   page: IconFile,
