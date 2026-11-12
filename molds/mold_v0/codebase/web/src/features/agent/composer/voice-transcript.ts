@@ -37,7 +37,7 @@ export function transcriptFromResults(results: ArrayLike<{ isFinal: boolean; 0: 
 export function voiceErrorWords(code: string, heardAnything: boolean): { message: string; state: 'denied' | 'error' } | null {
   switch (code) {
     case 'aborted': return null;
-    case 'no-speech': return heardAnything ? null : { message: 'No speech was heard. Press the microphone and try again.', state: 'error' };
+    case 'no-speech': return heardAnything ? null : { message: 'No speech was heard. Hold the microphone while you speak.', state: 'error' };
     case 'not-allowed':
     case 'service-not-allowed': return { message: 'Microphone access is blocked for this site. Allow it from the icon in the address bar, then try again.', state: 'denied' };
     case 'network': return { message: "Your browser's speech service could not be reached. Check your connection and try again.", state: 'error' };
