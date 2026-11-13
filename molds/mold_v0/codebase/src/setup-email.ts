@@ -1,5 +1,5 @@
 /**
- * The setup email (mold_v0-277): how to connect the product, written ONLY for the AI clients the person chose (one, or
+ * The setup email (mold_v0-277): how to connect the product, written ONLY for the agents the person chose (one, or
  * several), each with its own exact steps (src/connect-catalog.ts: its one-click link, command, config file and snippet)
  * and the connection URL. Never a generic list of every client: the caller names the clients by catalog id, and an
  * empty choice, an unknown id or too many are refused (SetupEmailError, a 400).
@@ -20,12 +20,12 @@ export const MAX_SETUP_CLIENTS = 5;
  * names an id the catalog does not have, or names more than MAX_SETUP_CLIENTS.
  */
 export function chosenClients(ids: unknown, catalog: readonly ClientEntry[]): ClientEntry[] {
-  if (!Array.isArray(ids) || ids.some((x) => typeof x !== "string")) throw new SetupEmailError("Choose the AI clients to set up: clients must be a list of client ids");
+  if (!Array.isArray(ids) || ids.some((x) => typeof x !== "string")) throw new SetupEmailError("Choose the agents to set up: clients must be a list of client ids");
   const want = [...new Set(ids.map((x: string) => x.trim()).filter(Boolean))];
-  if (!want.length) throw new SetupEmailError("Choose at least one AI client to set up");
-  if (want.length > MAX_SETUP_CLIENTS) throw new SetupEmailError(`Choose at most ${MAX_SETUP_CLIENTS} AI clients for one email`);
+  if (!want.length) throw new SetupEmailError("Choose at least one agent to set up");
+  if (want.length > MAX_SETUP_CLIENTS) throw new SetupEmailError(`Choose at most ${MAX_SETUP_CLIENTS} Agents for one email`);
   const unknown = want.filter((id) => !catalog.some((c) => c.id === id));
-  if (unknown.length) throw new SetupEmailError(`Unknown AI client: ${unknown.map((x) => JSON.stringify(x.slice(0, 40))).join(", ")}`);
+  if (unknown.length) throw new SetupEmailError(`Unknown agent: ${unknown.map((x) => JSON.stringify(x.slice(0, 40))).join(", ")}`);
   return want.map((id) => catalog.find((c) => c.id === id)!);
 }
 
@@ -47,7 +47,7 @@ function clientSection(c: ClientEntry, numbered: boolean, n: number): string {
  * placeholder the staff console pastes it over) adds the note on keeping it private; `prompt` is the first thing to type.
  */
 export function setupEmailText(chosen: readonly ClientEntry[], o: { name: string; url: string; key?: string | null; prompt: string }): { subject: string; body: string; clients: string[] } {
-  if (!chosen.length) throw new SetupEmailError("Choose at least one AI client to set up");
+  if (!chosen.length) throw new SetupEmailError("Choose at least one agent to set up");
   const names = chosen.map((c) => c.client);
   const subject = `Set up ${o.name} in ${andList(names)}`;
   const many = chosen.length > 1;

@@ -16,7 +16,7 @@
 // 4. builtin: the list (a verified app by its address, a registered one marked not verified, the workspace, the dates),
 //    Revoke asks first, then the row goes and the app's token stops on /mcp; the empty state once none is left.
 //    clerk: the "managed by the service you sign in with" note, the link to the person's sign-in account (from the
-//    build's publishable key), the AI apps seen (mold_v0-298), no Revoke, and no call to the built-in list.
+//    build's publishable key), the agents seen (mold_v0-298), no Revoke, and no call to the built-in list.
 // 5. axe (testing/accessibility/vendor/axe.min.js): no serious or critical WCAG A/AA violation, dark and light; at 390
 //    and 1280 px nothing scrolls sideways.
 import assert from "node:assert/strict";
@@ -342,17 +342,17 @@ async function browserChecks(w: World) {
       assert.equal(await link.getAttribute("href"), `https://${DEV_HOST.replace(".clerk.accounts.dev", ".accounts.dev")}/user`, "the person's account at Clerk, from the build's key");
       assert.equal(await link.getAttribute("target"), "_blank");
       assert.equal(await note.getByRole("link", { name: "Your profile" }).getAttribute("href"), "/app/profile");
-      // mold_v0-298: the AI apps seen are listed (no Revoke: the sign-in service holds their sign-ins), or the empty note.
+      // mold_v0-298: the agents seen are listed (no Revoke: the sign-in service holds their sign-ins), or the empty note.
       const seen = r.p.locator("[data-connected-apps-seen]");
       await seen.waitFor();
       const seenText = await seen.innerText();
-      assert.ok((await seen.locator("table").count()) > 0 || /No AI apps seen yet/.test(seenText), `the AI apps seen, or the empty note: ${seenText.slice(0, 300)}`);
+      assert.ok((await seen.locator("table").count()) > 0 || /No agents seen yet/.test(seenText), `the agents seen, or the empty note: ${seenText.slice(0, 300)}`);
       assert.equal(await r.p.getByRole("button", { name: /^Revoke/ }).count(), 0, "no Revoke");
       assert.deepEqual(r.asked, [], "the page never asks the built-in list");
       assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
     } finally { await r.c.close(); }
-    ok("the page (clerk): the managed-by-the-service-you-sign-in-with note, the link to the person's sign-in account and their profile; the AI apps seen, no Revoke, and the built-in list never asked");
+    ok("the page (clerk): the managed-by-the-service-you-sign-in-with note, the link to the person's sign-in account and their profile; the agents seen, no Revoke, and the built-in list never asked");
   } else {
     const r = await open();
     try {

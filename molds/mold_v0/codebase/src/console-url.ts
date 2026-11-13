@@ -10,7 +10,7 @@
  *                 invitations and every other email link to the console, not to the API.
  *
  *   mcpUrl()      APP_MCP_URL, else the console's address when it is its own (frontDoor below), else PUBLIC_URL: where
- *                 AI clients connect (mold_v0-118, 144); the MCP endpoint is its /mcp. On Vercel the console project
+ *                 Agents connect (mold_v0-118, 144); the MCP endpoint is its /mcp. On Vercel the console project
  *                 forwards /mcp, /.well-known, /oauth and /install to this API, so the console's address is the one
  *                 front door (the operator's decision of 2026-10-26, mold_v0-144): the app's own domain once it has one
  *                 (domain.py switch, which also sets APP_MCP_URL to it), else the console project's own address. The
@@ -47,10 +47,10 @@ export function cleanAddress(raw: string | undefined | null, name = "address"): 
 /** Where this API answers: PUBLIC_URL, else this process's own local address. */
 export const publicUrl = () => cleanAddress(process.env.PUBLIC_URL, "PUBLIC_URL") ?? fallbackPublic();
 
-/** Where AI clients connect: APP_MCP_URL (a trailing /mcp is dropped), else the console's own address, else PUBLIC_URL. Never from a request. */
+/** Where agents connect: APP_MCP_URL (a trailing /mcp is dropped), else the console's own address, else PUBLIC_URL. Never from a request. */
 export const mcpUrl = () => mcpUrlSetting() ?? publicUrl();
 /**
- * The front door AI clients connect to when it is not PUBLIC_URL: APP_MCP_URL as an address, else the console's address
+ * The front door agents connect to when it is not PUBLIC_URL: APP_MCP_URL as an address, else the console's address
  * when it is another origin (frontDoor, mold_v0-144); null when neither (everything is on PUBLIC_URL).
  */
 export const mcpUrlSetting = () => cleanAddress(ENV.APP_MCP_URL, "APP_MCP_URL")?.replace(/\/mcp$/, "") ?? frontDoor();

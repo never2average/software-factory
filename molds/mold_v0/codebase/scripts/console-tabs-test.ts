@@ -227,7 +227,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
   } finally { for (const f of ["render-home.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(web, f), { force: true }); }
   const step = (id: string, label: string, done: boolean, help: string, prompt: string | null = null) => ({ id, label, done, at: done ? "2026-10-20T00:00:00.000Z" : null, help, prompt });
   const steps = [step("joined", "Join your team's account", true, "You accepted the invitation and signed in."),
-    step("connected", "Add the connector to your AI client", complete, "Copy the URL into your client."),
+    step("connected", "Add the connector to your agent", complete, "Copy the URL into your client."),
     step("tools", "Switch the tools on", complete, "Turn the tools on in your client."),
     step("first_call", "Ask Fixture something", complete, "Your first question checks everything works end to end.", "What can Fixture do?")];
   const notices = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), kind: "due", area: "audit_findings", area_label: "Vulnerabilities", key: `f${i + 1}`, title: `Finding ${i + 1}`,
@@ -311,7 +311,7 @@ try {
     const empty = Object.fromEntries(nav.packTabs.filter((t: any) => t.pack === "fixture_vulns").map((t: any) => [t.id, t.empty ?? null]));
     assert.deepEqual(empty.applications, { title: "No applications yet.", text: "Add the applications you want audited; each one is a folder of repositories.",
       cta: { label: "How to describe an application", href: "https://example.org/guides/applications" } }, "a tab's own empty state");
-    assert.deepEqual(empty.audits, { title: "No audits yet.", text: "Ask your AI client to start “Audit an application”. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "a runs tab pointing at its job kind");
+    assert.deepEqual(empty.audits, { title: "No audits yet.", text: "Ask your agent to start “Audit an application”. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "a runs tab pointing at its job kind");
     assert.equal(empty.vulnerabilities.title, "No vulnerabilities yet.", "the default names the area");
     assert.match(empty.controls.text, /^Every workspace shares these\./, "a shared area's default, in the build's words");
     assert.deepEqual([empty.overview, empty.billing], [null, null], "an overview and a shell page have none");
@@ -487,7 +487,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const at = (html: string, re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
       // The Setup page's layout (mold_v0-172), one flat grid in a phone's order (mold_v0-214): the connection card, the
       // steps cell (the checklist), then the rail's cards in order. No charts (mold_v0-207): the tab's charts are not drawn.
-      const order = [at(open, />Connect your AI client</), at(open, />Get set up</), at(open, />Where things stand</), at(open, />Due soon</), open.length];
+      const order = [at(open, />Connect your agent</), at(open, />Get set up</), at(open, />Where things stand</), at(open, />Due soon</), open.length];
       assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the connection card, the checklist, the number card, the notices card: ${order}`);
       assert.doesNotMatch(open, /data-chart-cell|class="grid border-t border-l lg:grid-cols-2|aria-label="Open vulnerabilities by severity\./, "no charts grid on the home page (mold_v0-207)");
       assert.doesNotMatch(open, /role="radiogroup"|aria-haspopup="listbox"/, "a rail without journeys: no journey selector, a plain heading");
@@ -495,7 +495,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const setup = open.slice(order[1]!, order[2]!);
       assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
       assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
-      const order146 = ["Join your team", "Add the connector to your AI client", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
+      const order146 = ["Join your team", "Add the connector to your agent", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
       assert.ok(order146.every((x, i) => x >= 0 && (i === 0 || x > order146[i - 1]!)), `the shell's steps, then the pack's: ${order146}`);
       for (const t of ["You accepted the invitation and signed in.", "Copy the URL into your client.", "Turn the tools on in your client.", "Describe one application you want audited."])
         assert.ok(setup.includes(t), `every step says what it is, done or not: ${t}`);
@@ -518,7 +518,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(open, /Found and fixed per week|Open by regulator/, "none of the charts");
       // Every step done: the same page (the original's never folds), every step a check, no prompt left to copy.
       assert.match(done, /5 of 5 steps done\./, "all done");
-      assert.match(done, /Connect your AI client[\s\S]*Test my connection/, "the connection card stays");
+      assert.match(done, /Connect your agent[\s\S]*Test my connection/, "the connection card stays");
       assert.equal([...done.matchAll(/Copy prompt/g)].length, 0, "no prompt for a done step");
       assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 5, "every step checked");
       console.log("✓ rendered home tab: the Setup page's layout: one checklist (shell steps then the pack's, one count, every step described, a Copy prompt on each open one with a prompt), the connection card, the number card with a link to Dashboard, five of seven notices with Show all, no charts grid (mold_v0-207); all done, the same page with every step checked");
@@ -587,7 +587,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
           card("mean_cvss_open", "Average CVSS of open ones", "number", "weekly", 7.2), card("opened_per_week", "Found this week", "count", "latest", 3)] };
       const html = await renderHome(chrome2, tweb, false, { "/api/sparklines/fixture_vulns/overview": cards }, "home-top");
       const at = (re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
-      const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Connect your AI client</), at(/>Get set up</), at(/>Where things stand</)];
+      const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Connect your agent</), at(/>Get set up</), at(/>Where things stand</)];
       assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the headline row first, then the connection card, the checklist and the number card (mold_v0-214: a phone's order): ${order}`);
       const row = html.slice(order[0]!, html.indexOf("</section>", order[0]!));
       assert.match(html, /<section aria-label="Headline numbers"[^>]*data-sparklines="fixture_vulns\/overview"/, "a named section");
@@ -635,7 +635,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const at = (re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
       assert.match(html, /<h2[^>]*><button[^>]*aria-haspopup="listbox"[^>]*aria-expanded="false"[^>]*>[\s\S]{0,200}Get set up/, "the main column's heading is the journey selector, closed, reading Get set up");
       assert.doesNotMatch(html, /role="radiogroup"/, "no Journeys card");
-      const order = [at(/>Connect your AI client</), at(/aria-haspopup="listbox"/), at(/>Due soon</), at(/>Where things stand</)];
+      const order = [at(/>Connect your agent</), at(/aria-haspopup="listbox"/), at(/>Due soon</), at(/>Where things stand</)];
       assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the connection card, the selector heading, Due soon in the journeys slot, then the number card (mold_v0-214: a phone's order): ${order}`);
       const card = html.slice(order[2]!, order[3]!);
       assert.deepEqual([...card.matchAll(/data-due-row="([a-z_]+)"/g)].map((m) => m[1]), ["overdue", "overdue", "due_soon"], "overdue first, then due soon");
@@ -653,7 +653,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const calm = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [] } }, "home-journeys-empty");
       assert.match(calm, /data-due-soon-empty[\s\S]*Nothing is due or overdue/, "nothing due: a calm line");
       const none = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [], areas: [] } }, "home-journeys-none");
-      assert.match(none, /Connect your AI client/); assert.doesNotMatch(none, />Due soon<|data-due-soon-empty/, "a role that may read no clock area: no card");
+      assert.match(none, /Connect your agent/); assert.doesNotMatch(none, />Due soon<|data-due-soon-empty/, "a role that may read no clock area: no card");
       console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card; no Notices section or caption under the steps, /app/notices its own page (mold_v0-216)");
     }
   }

@@ -143,7 +143,7 @@ const AccountStagesSchema = z.object({
  * build where one pack declares it. `scopes` (company, user, product: whose memory there is, each a page of
  * /app/context), `tools` (the names of its save and search MCP tools; none without), `tool_words` (their title,
  * description, status lines and argument descriptions), `tool_meta` (the _meta both carry: a widget that shows them),
- * `words` (MEMORY_WORDS: what it shows and tells the AI client), `answer_styles` (what the AI client is told for each),
+ * `words` (MEMORY_WORDS: what it shows and tells the agent), `answer_styles` (what the agent is told for each),
  * `pages` (each page's title, and old page addresses under /app/context kept working: `aliases`).
  */
 const memoryTool = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's name: lowercase letters, digits and _");

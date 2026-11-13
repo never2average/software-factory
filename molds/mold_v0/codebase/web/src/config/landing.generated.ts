@@ -4,7 +4,7 @@ import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/si
 /** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */
 export const landing: LandingBlock | null = null;
 
-/** The AI clients the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */
+/** The agents the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */
 export const landingClients: readonly LandingClient[] = [
   {
     "id": "claude",

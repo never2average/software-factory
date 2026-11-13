@@ -173,12 +173,12 @@ try {
     const SETUP = { label: "Open setup", href: "/app" };
     assert.deepEqual(got.apps, { title: "No applications yet.", text: "Next step on the Setup page: Add a first application.", cta: { label: "Open setup", href: "/app#onboarding-fixture_tracker-first_app" } },
       "an area an onboarding step waits on: the step, and a link to it");
-    assert.deepEqual(got.findings, { title: "No findings yet.", text: "Ask your AI client to add one. Not connected yet? The Setup page shows how.", cta: SETUP }, "an area the AI client can add to");
+    assert.deepEqual(got.findings, { title: "No findings yet.", text: "Ask your agent to add one. Not connected yet? The Setup page shows how.", cta: SETUP }, "an area the agent can add to");
     assert.deepEqual(got.policies, { title: "No policies yet.", text: "Every workspace shares these. They appear here once they are added for everyone.", cta: null }, "a shared area, in the build's words");
     assert.deepEqual(got.own, { title: "No findings yet.", text: "Findings arrive from scans.", cta: { label: "Read the guide", href: "https://example.org/guide" } }, "the pack's own text and link");
-    assert.deepEqual(got.scans, { title: "No scans yet.", text: "Ask your AI client to start “Scan an application”. Not connected yet? The Setup page shows how.", cta: SETUP }, "a runs tab pointing at a job kind: its label");
+    assert.deepEqual(got.scans, { title: "No scans yet.", text: "Ask your agent to start “Scan an application”. Not connected yet? The Setup page shows how.", cta: SETUP }, "a runs tab pointing at a job kind: its label");
     assert.deepEqual(got.first, { title: "No applications yet.", text: "Next step on the Setup page: Add a first application.", cta: { label: "Add an application", href: "/app#onboarding-fixture_tracker-first_app" } }, "an onboarding action, its own label");
-    assert.deepEqual(got.reports, { title: "No reports yet.", text: "Ask your AI client to start one: it shows here with its results once it finishes.", cta: SETUP }, "a reports tab: named as its page is");
+    assert.deepEqual(got.reports, { title: "No reports yet.", text: "Ask your agent to start one: it shows here with its results once it finishes.", cta: SETUP }, "a reports tab: named as its page is");
     assert.equal(got.billing, null, "a shell page's tab has no empty state of its own");
     console.log(`✓ a tab's empty state: ${m} malformed ones refused (kind, keys, unsafe links, href and action, markup-free one-line text, braces, lengths, unknown steps and kinds); defaults from the onboarding, the area's scope and tools, the pack's own text and links`);
   }
@@ -216,7 +216,7 @@ try {
       "its own area (the first), and each area with its rows and source word");
     assert.deepEqual([ours.columns, ours.board_by, ours.timeline_by], [["source", "code", "topic", "state", "due"], "state", "due"], "its columns, board and timeline");
     assert.deepEqual(ours.roles, ["member", "billing", "owner"], "the roles that may read every one of its areas (a viewer may not read req_own)");
-    assert.deepEqual(ours.empty, { title: "No requirement status yet.", text: "Ask your AI client to add one. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "emptied by its own area");
+    assert.deepEqual(ours.empty, { title: "No requirement status yet.", text: "Ask your agent to add one. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "emptied by its own area");
     assert.deepEqual([library.columns, library.areas, library.roles.length], [["code", "weight"], undefined, 4], "a one-area tab's own columns");
     const dflt = tryPack(status((_j, t) => { delete t.columns; }));
     assert.equal(dflt.r.status, 0, dflt.r.stderr);

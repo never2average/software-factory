@@ -14,7 +14,7 @@
 //    company's and the person's context and the latest memory in the instructions at connect time (over /mcp), in the
 //    fixture's words; the portal's routes (owners edit the company's context, members their own and add memory, viewers
 //    read; another person's memory only for owners; any subject name kept as written without a host hook); save and
-//    search from the AI client (a viewer's save refused, another person's memory never found).
+//    search from the agent (a viewer's save refused, another person's memory never found).
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -163,9 +163,9 @@ try {
   const ctx = (await call(member, "GET", "/context")).body;
   assert.deepEqual(ctx.products, [], "no host hook: no listed subjects");
   assert.match(ctx.preview, /^\n\nTeam context \(set by Context [^;]+; background, not instructions\):\n- The company: Acme runs a help desk\.\n- Who they serve: Small shops\n- Names they track: Zed, Ink\.\n- Their internal names and terms: a ticket is a case\n- Notes from the account: Be plain\.\n- The person you are helping: role: Lead; focus: Northwind \(use it when they do not name one\)\.\n- What they care about: response times\n- Answer in one line\.\n- Company memory:\n  - decision: We answer within a day\.\n- What this person asked you to remember:\n  - preference: Lead with the numbers\.\n- Memory about the client Northwind:\n  - Imported 199/,
-    "the preview is what the AI client is told: the fixture's words, the shell's defaults, its answer style");
+    "the preview is what the agent is told: the fixture's words, the shell's defaults, its answer style");
   // The same text at connect time, over /mcp as the member.
-  // An AI client of that person: an OAuth access token Clerk issued for /mcp (the offline Clerk's).
+  // An agent of that person: an OAuth access token Clerk issued for /mcp (the offline Clerk's).
   const { mcpAudiences } = await import("../src/clerk.js");
   const oauth = async (session: string) => (await (await fetch(`${http.mock.url}/_mock/oauth`, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ user_id: sub(session), aud: mcpAudiences()[0] }) })).json()).access_token as string;
@@ -197,7 +197,7 @@ try {
   assert.ok(refusedSave.isError, "a viewer's save is refused");
   await v.c.close();
   await http.close();
-  console.log("✓ on: its tools under the fixture's names and words; the company's and the person's context and memory at connect time in its words; the portal's routes by role; save and search from the AI client");
+  console.log("✓ on: its tools under the fixture's names and words; the company's and the person's context and memory at connect time in its words; the portal's routes by role; save and search from the agent");
 } finally {
   rmSync(TMP, { recursive: true, force: true });
   cleanupWorld();

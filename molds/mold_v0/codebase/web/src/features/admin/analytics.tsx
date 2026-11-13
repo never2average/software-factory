@@ -121,7 +121,7 @@ const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(un
 // ---------- filters in the URL ----------
 
 const LISTS = [
-  { key: 'user', label: 'User' }, { key: 'account', label: 'Account' }, { key: 'product', label: 'Product' }, { key: 'tool', label: 'Tool' }, { key: 'client', label: 'Client' },
+  { key: 'user', label: 'User' }, { key: 'account', label: 'Account' }, { key: 'product', label: 'Product' }, { key: 'tool', label: 'Tool' }, { key: 'client', label: 'Agent' },
   { key: 'plan', label: 'Plan' }, { key: 'sub_status', label: 'Subscription' }, { key: 'stage', label: 'Stage' }
 ] as const;
 type ListKey = (typeof LISTS)[number]['key'];
@@ -319,7 +319,7 @@ const KINDS: { id: ErrorKind; label: string }[] = [{ id: 'tool', label: 'Tool ca
 /** Where Health's errors come from in this build: agent sessions and onboardings only with the session engine (mold_v0-270: else no choice is offered). */
 const HEALTH_KINDS = sessionEngine() ? KINDS : KINDS.filter((k) => k.id === 'tool');
 const SECTIONS = {
-  analytics: [['summary', 'Summary'], ['growth-daily', 'Growth by day'], ['growth-weekly', 'Growth by week'], ['growth-funnel', 'Activation funnel'], ['daily', 'Daily'], ['tools', 'Tool adoption'], ['clients', 'Clients'], ['accounts', 'Accounts'], ['retention', 'Retention']],
+  analytics: [['summary', 'Summary'], ['growth-daily', 'Growth by day'], ['growth-weekly', 'Growth by week'], ['growth-funnel', 'Activation funnel'], ['daily', 'Daily'], ['tools', 'Tool adoption'], ['clients', 'Agents'], ['accounts', 'Accounts'], ['retention', 'Retention']],
   health: [['health-summary', 'Summary'], ['errors-tool', 'Tool call errors (all)'], ['errors-session', 'Agent session failures (all)'], ['errors-onboarding', 'Onboarding failures (all)']]
 } as const;
 const pause = () => new Promise((r) => setTimeout(r, 150)); // browsers drop back-to-back downloads
@@ -608,7 +608,7 @@ function AnalyticsBody({ a, match }: { a: Analytics; match: (r: object) => boole
           <Box title='People per tool' description='How many people call each tool.'>
             <RankBars data={top(tools, (t) => Number(t.people)).map((t) => ({ name: t.name, value: Number(t.people) }))} color='var(--chart-3)' format={num} mono empty='No tool calls in this period.' />
           </Box>
-          <Box title='Clients' description='AI clients that connected.'>
+          <Box title='Agents' description='Agents that connected.'>
         {a.clients.length ? (
           <ul className='grid gap-3'>
             {a.clients.map((c) => (
@@ -783,7 +783,7 @@ function GrowthRows({ g }: { g: Growth }) {
             </ChartContainer>
           ) : <Empty>No tool calls in these weeks.</Empty>}
         </Box>
-        <Box title='Client mix over time' description="Tool calls per week by the AI client of the caller's latest connection; the top five, the rest as Other.">
+        <Box title='Client mix over time' description="Tool calls per week by the agent of the caller's latest connection; the top five, the rest as Other.">
           {g.client_mix.clients.length ? (
             <ChartContainer config={mixConfig} className='aspect-auto h-[240px] w-full'>
               <BarChart data={weekly} margin={{ left: 0, right: 8, top: 8 }}>
@@ -860,7 +860,7 @@ function trendBuckets(rows: readonly { trend: number | null; at_risk: boolean }[
 const ERROR_TABLE: Record<ErrorKind, { label: string; render: (r: ErrorRow) => ReactNode; className?: string }[]> = {
   tool: [
     { label: 'Call', render: (r) => <Mono>{r.name || r.method}</Mono> },
-    { label: 'Client', render: (r) => <span className='text-muted-foreground text-xs'>{r.client ?? ''}</span> },
+    { label: 'Agent', render: (r) => <span className='text-muted-foreground text-xs'>{r.client ?? ''}</span> },
     { label: 'Time', render: (r) => <span className='text-xs whitespace-nowrap'>{ms(r.ms)}</span> }
   ],
   session: [

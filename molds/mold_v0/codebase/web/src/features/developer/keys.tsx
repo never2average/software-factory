@@ -63,7 +63,7 @@ export function KeysTab({ offer }: { offer: Offer }) {
       <RecordView<DevKey>
         id='app-developer-keys' compact noun='keys' properties rows={data?.data ?? []} rowKey={(k) => String(k.id)} cols={cols} loading={!data}
         searchText={(k) => `${k.name} ${k.key_prefix} ${k.scopes.join(' ')} ${k.state}`} searchPlaceholder='Search keys' defaultSort={[{ key: 'state', dir: 'asc' }]}
-        filters={<span className='text-muted-foreground text-xs'>Keys for your own servers to call this app&apos;s API (version {offer.api_version}). Not for AI clients: those use your personal API keys.</span>}
+        filters={<span className='text-muted-foreground text-xs'>Keys for your own servers to call this app&apos;s API (version {offer.api_version}). Not for agents: those use your personal API keys.</span>}
         primary={<Allowed need='manage'><Button size='sm' onClick={() => setMaking(true)} data-new-key=''>New key</Button></Allowed>}
         actions={(k) => (k.state !== 'active' ? [] : [
           lock({ label: 'Rotate', onSelect: () => setRotating(k) }, 'manage'),

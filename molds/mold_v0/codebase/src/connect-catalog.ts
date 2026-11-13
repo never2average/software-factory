@@ -1,5 +1,5 @@
 /**
- * How to add the product to each AI client (its name and MCP server name are the profile's, mold_v0-060): the chat
+ * How to add the product to each agent (its name and MCP server name are the profile's, mold_v0-060): the chat
  * apps, the coding agents (the same harness ids as harnesses/registry.json, so the setup page can order them by real-world usage share), and editors. Each entry gives
  * the one way in that client supports best: a one-click install link, a CLI command, a config file snippet, or UI steps.
  *

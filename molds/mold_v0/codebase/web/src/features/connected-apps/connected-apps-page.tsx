@@ -1,10 +1,10 @@
 'use client';
 /**
- * /app/connected-apps (mold_v0-087): each person's own connected apps, the AI apps signed in to /mcp.
+ * /app/connected-apps (mold_v0-087): each person's own connected apps, the agents signed in to /mcp.
  * Built-in sign-in: the list (GET /api/oauth/grants, src/mcp-oauth.ts), across the person's workspaces, as the standard
  * list (mold_v0-298: RecordView: search, the row's ⋯ menu with Revoke, which asks first, and the side panel).
  * Hosted sign-in provider: the provider keeps the connections and has no API to list them, so (mold_v0-298) the page lists
- * the AI apps most recently seen working in this workspace as the person (GET /api/app/setup `clients`), with when each was
+ * the agents most recently seen working in this workspace as the person (GET /api/app/setup `clients`), with when each was
  * last seen, how to disconnect one and a ⋯ Remove from this list; and links to the person's account at the provider.
  * Words and rules: ./model.ts.
  */
@@ -52,9 +52,9 @@ function Identity({ app }: { app: ConnectedApp }) {
   );
 }
 
-/** The primary action of both lists: the setup steps for connecting an AI app (mold_v0-298). */
+/** The primary action of both lists: the setup steps for connecting an agent (mold_v0-298). */
 const ConnectButton = () => (
-  <a href={CONNECT_URL} className={buttonVariants({ size: 'sm' })}><Icons.plug aria-hidden='true' /><span className='max-sm:sr-only'>Connect an AI app</span></a>
+  <a href={CONNECT_URL} className={buttonVariants({ size: 'sm' })}><Icons.plug aria-hidden='true' /><span className='max-sm:sr-only'>Connect an agent</span></a>
 );
 
 function BuiltinConnectedApps() {
@@ -128,7 +128,7 @@ function BuiltinConnectedApps() {
 }
 
 /**
- * Under the hosted sign-in provider (mold_v0-298): the AI apps seen working in this workspace as this person, from the
+ * Under the hosted sign-in provider (mold_v0-298): the agents seen working in this workspace as this person, from the
  * usage log the Setup page reads, with when each was last seen; a row's panel says how to disconnect it. The note above
  * says why there is no Revoke here, and links to the person's sign-in account.
  */

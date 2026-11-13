@@ -3,7 +3,7 @@
  * pack.json `journeys` (src/host.ts JourneysConfig; one pack's per build). Off (zero packs, or no pack declares it)
  * nothing of it is served: no route, no page, no seeding, no progress kept.
  *
- * A journey is a real use case as a pipeline a customer replicates in their AI client, one prompt at a time: each stage
+ * A journey is a real use case as a pipeline a customer replicates in their agent, one prompt at a time: each stage
  * names the prompt to paste (its placeholders filled with the account's own values: the host pack's `journeys.values`
  * hook), the tools that complete it and what the person will see. What it keeps, in the shell's own tables
  * (sql/migrations/0026_journeys_and_tips.sql):

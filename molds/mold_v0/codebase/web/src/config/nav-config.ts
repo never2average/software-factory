@@ -121,7 +121,7 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
       items: [
         { title: 'Billing', url: '/app/billing', icon: 'billing', shortcut: ['g', 'b'], items: [] },
         { title: 'Profile', url: '/app/profile', icon: 'account', items: [] },
-        // The AI apps each person signed in to /mcp, with Revoke (mold_v0-087); hideable (console.hide: connected-apps).
+        // The agents each person signed in to /mcp, with Revoke (mold_v0-087); hideable (console.hide: connected-apps).
         { title: 'Connected apps', url: '/app/connected-apps', icon: 'plug', items: [] }
       ]
     }

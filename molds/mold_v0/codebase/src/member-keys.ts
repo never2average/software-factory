@@ -49,7 +49,7 @@ export class KeyError extends Error { constructor(message: string, public status
 
 /** What a person is told when member keys are off (mold_v0-099): how to connect instead. */
 export const keysOffMessage = (publicUrl: string) =>
-  `API keys are turned off for ${PROFILE.name}: connect your AI client to ${publicUrl.replace(/\/$/, "")}/mcp and sign in when it asks (OAuth).`;
+  `API keys are turned off for ${PROFILE.name}: connect your agent to ${publicUrl.replace(/\/$/, "")}/mcp and sign in when it asks (OAuth).`;
 
 export interface KeyRow {
   id: number; name: string; key_prefix: string; kind: "member" | "person" | "account"; user_id: string | null;

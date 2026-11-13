@@ -10,7 +10,7 @@ import type { AccountsMode, HeroSection, LandingBlock, LandingLink } from './lan
 export const SIGN_UP: LandingLink = { label: 'Get started', href: '/auth/sign-up' };
 export const REQUEST: LandingLink = { label: 'Request access', href: '/request-access' };
 export const SIGN_IN: LandingLink = { label: 'Sign in', href: '/app' };
-export const INSTALL: LandingLink = { label: 'Connect an AI client', href: '/install' };
+export const INSTALL: LandingLink = { label: 'Connect an agent', href: '/install' };
 /** The two-call page's defaults (mold_v0-168, src/landing.ts: the first product's buttons): the account button's two states and the other call's words. */
 export const ACCOUNT_SIGN_IN: LandingLink = { label: 'Sign in', href: '/auth/sign-in' };
 export const ACCOUNT_OPEN: LandingLink = { label: 'Open dashboard', href: '/app' };
@@ -47,7 +47,7 @@ export interface SiteCtas {
   signIn: LandingLink;
   /** For someone already signed in, in place of both. */
   open: LandingLink;
-  /** The install pages: connecting an AI client. */
+  /** The install pages: connecting an agent. */
   install: LandingLink;
 }
 

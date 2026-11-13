@@ -284,7 +284,7 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
     const [what, arg = ""] = doneWhen.split(":", 2) as [string, string?];
     switch (what) {
       case "workspace": return fill("nothing to do: the {workspace} exists");
-      case "connected": return `${fill("connect an AI client to this {workspace}")} (the console's Setup page, ${at("")}, shows how)`;
+      case "connected": return `${fill("connect an agent to this {workspace}")} (the console's Setup page, ${at("")}, shows how)`;
       case "first_call": return fill("call any of this {workspace}'s tools");
       case "tool": return `call ${arg}`;
       case "record": {

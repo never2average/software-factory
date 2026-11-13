@@ -153,7 +153,7 @@ const CLIENT_TOP = 5;
  *   weekly          per week: accounts and people with a tool call, tool calls, calls per active person, and the %
  *                   change in calls vs the week before
  *   stickiness      per day: distinct people with a tool call that day / in the 30 days to that day (DAU/MAU)
- *   client_mix      tool calls per week by AI client family (split_part(client, ' ', 1)). Tool calls carry no client, so
+ *   client_mix      tool calls per week by agent family (split_part(client, ' ', 1)). Tool calls carry no client, so
  *                   each call counts for the client of its caller's latest handshake (same account and person) before
  *                   it, else "unknown"; the top 5 families over the window, the rest as Other
  *   sims_weekly     the session engine's runs created per week, completed vs the rest (account, product and user

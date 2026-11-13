@@ -45,7 +45,7 @@ export interface HeroSection {
   /** Up to 3 more links under the calls to action (the app's own: its repository, its docs). */
   links?: LandingLink[];
   visual?: LandingVisual;
-  /** Text badges, named logos, or (with neither) the logos of the AI clients the build offers. */
+  /** Text badges, named logos, or (with neither) the logos of the agents the build offers. */
   strip?: { title?: string; label?: string; items?: string[]; logos?: { logo: string; label: string }[]; note?: string };
 }
 export interface ProblemSection extends Head { type: 'problem'; visual?: LandingVisual; points?: (LandingItem & { icon?: IconName })[] }
@@ -99,7 +99,7 @@ export interface RequestPage {
   form?: { submit?: string; message_label?: string; fields?: string[]; more?: { label: string; fields?: string[] }; done?: { title: string; steps?: string[] } };
 }
 
-/** An AI client the build's install pages offer (src/connect-catalog.ts id, its short name, its group). */
+/** An agent the build's install pages offer (src/connect-catalog.ts id, its short name, its group). */
 export interface LandingClient { id: string; name: string; group: 'chat' | 'agent' | 'editor' }
 
 /**

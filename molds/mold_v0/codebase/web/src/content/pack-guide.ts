@@ -74,8 +74,8 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
   switch (t.kind) {
     case 'overview': {
       // A home tab (mold_v0-134): the shell's sections it includes come first, in its order (mold_v0-172: the checklist
-      // stays, beside the connection to your AI client).
-      const parts: string[] = (t.include ?? []).map((x) => (x === 'setup' ? 'your setup checklist and how to connect your AI client' : 'the records due soon'));
+      // stays, beside the connection to your agent).
+      const parts: string[] = (t.include ?? []).map((x) => (x === 'setup' ? 'your setup checklist and how to connect your agent' : 'the records due soon'));
       if (t.charts.length) parts.push(`charts: ${list(t.charts)}`);
       const text = parts.join('; ');
       return text ? sentence(text.charAt(0).toUpperCase() + text.slice(1)) : 'The overview charts.';
@@ -86,7 +86,7 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
     case 'credentials': return fill('The keys and tokens your {runs} use to reach your own systems.');
     case 'schedules': return fill('When {runs} start by themselves, for your {workspace}.');
     case 'notices': return 'Records whose due date is near.';
-    case 'setup': return 'Connect your AI client and follow the setup checklist.';
+    case 'setup': return 'Connect your agent and follow the setup checklist.';
     case 'usage': return fill('{Tool_calls} and spend, per {member} and per {run}.');
     case 'billing': return "Your plan and this month's spend.";
     case 'profile': return 'Your own profile.';
@@ -135,7 +135,7 @@ function toolsMarkdown(d: PackGuideData, catalog: Catalog): string {
   const prompts = catalog.prompts.length
     ? `## Slash commands\n\n${d.prompts_intro ?? PROMPTS_INTRO}\n\n${catalog.prompts.map((p) => `- \`/${p.name}\`: ${p.summary}`).join('\n')}`
     : '';
-  return [`Your AI client calls these for you; you rarely name them. They are grouped by what they reach.`,
+  return [`Your agent calls these for you; you rarely name them. They are grouped by what they reach.`,
     ...(catalog.tools.length ? tables : [fill('This {workspace} offers no tools yet.')]), prompts].filter(Boolean).join('\n\n');
 }
 
@@ -143,7 +143,7 @@ function startMarkdown(d: PackGuideData, shell: ShellTexts, setupPage: string): 
   const parts = [shell.connect(setupPage)];
   if (d.onboarding.length) {
     const ask = d.get_started.length
-      ? ` Not sure what is next? Type *"Get me started"* in your AI client: it calls ${list(d.get_started.map(code))}, which says which step is next and what to type for it.`
+      ? ` Not sure what is next? Type *"Get me started"* in your agent: it calls ${list(d.get_started.map(code))}, which says which step is next and what to type for it.`
       : '';
     parts.push(`## Your first steps\n\nThe **${setupPage}** page lists these steps and ticks each one off by itself, from what really happens in your ${fill('{workspace}')}.${ask}\n\n` +
       d.onboarding.map((st, i) => `${i + 1}. **${para(st.label)}**.${st.help ? ` ${sentence(st.help)}` : ''} You can type: *"${para(st.prompt ?? `Help me with the next step: ${st.label}.`)}"*`).join('\n'));
@@ -170,10 +170,10 @@ function recordsMarkdown(d: PackGuideData): string {
       : '';
     const due = a.due ? `\n\nWhen a record's **${a.due.field}** is ${a.due.within_days ? `within ${a.due.within_days} days` : 'today'}, it shows in the notices and a daily email lists it.` : '';
     const fields = `| Field | What it holds |\n|---|---|\n${a.fields.map((f) => `| ${cell(f.label)}${f.required ? ' (required)' : ''} | ${cell(f.help ? `${sentence(f.help)} ${fieldKind(f)}.` : `${fieldKind(f)}.`)} |`).join('\n')}`;
-    const tools = a.tools.length ? `\n\nFrom your AI client: ${list(a.tools.map(code))}.` : '';
+    const tools = a.tools.length ? `\n\nFrom your agent: ${list(a.tools.map(code))}.` : '';
     return `## ${a.label}\n\n${a.description ? `${sentence(a.description)} ` : ''}${where}${lc}${due}${tools}\n\n${fields}`;
   };
-  return [fill('Records are what {product} keeps for you, in areas. Open an area from the sidebar to see its records, and open one record to see every field and the records it links to. Your AI client reads the same records.'),
+  return [fill('Records are what {product} keeps for you, in areas. Open an area from the sidebar to see its records, and open one record to see every field and the records it links to. Your agent reads the same records.'),
     ...d.areas.map(area)].join('\n\n');
 }
 
@@ -181,9 +181,9 @@ function runsMarkdown(d: PackGuideData): string {
   const tool = (op: string) => d.tools.filter((t) => t.op === op).map((t) => code(t.name));
   const kinds = d.kinds.map((k) => [`## ${k.label}`, k.description ? sentence(k.description) : '',
     k.credentials.length ? `It uses: ${list(k.credentials.map((c) => `**${c}**`))} (set on **Settings › Credentials**).` : '',
-    k.report !== null ? fill(`It writes a report${k.report ? ` (**${k.report}**)` : ''}, which you read on **Reports** or from your AI client once the {run} has succeeded.`) : '',
+    k.report !== null ? fill(`It writes a report${k.report ? ` (**${k.report}**)` : ''}, which you read on **Reports** or from your agent once the {run} has succeeded.`) : '',
     k.approval ? fill(`It starts only after a **${k.approval}** {run} has succeeded and was approved.`) : '',
-    `Start it from your AI client: ${code(k.start)}.`].filter(Boolean).join('\n\n'));
+    `Start it from your agent: ${code(k.start)}.`].filter(Boolean).join('\n\n'));
   const follow = [
     tool('run_status').length ? fill(`- Ask how a {run} is doing (${list(tool('run_status'))}): queued, running, succeeded, failed or cancelled.`) : '',
     tool('list_runs').length ? fill(`- List your {workspace}'s {runs}, newest first (${list(tool('list_runs'))}).`) : '',
@@ -203,7 +203,7 @@ function runsMarkdown(d: PackGuideData): string {
     ? fill(`## Credentials\n\nA {run} reaches your own systems only with what you give it on **Settings › Credentials**. A value is stored encrypted (only its last 4 characters are ever shown again) and given only to the {runs} that use it.\n\n`) +
       d.credentials.map((c) => `- **${c.label}** (${BOUND[c.bound_to]!(c.area)})${c.help ? `: ${sentence(c.help)}` : '.'}`).join('\n')
     : '';
-  return [fill(`A {run} is work {product} does for your {workspace} in the background. Ask your AI client to start one${d.schedules.length ? ' (or let a schedule start it)' : ''}, then follow it until it ends.`),
+  return [fill(`A {run} is work {product} does for your {workspace} in the background. Ask your agent to start one${d.schedules.length ? ' (or let a schedule start it)' : ''}, then follow it until it ends.`),
     follow, kinds.length ? fill(`These are the {runs} you can start:`) : '', ...kinds, schedules, credentials].filter(Boolean).join('\n\n');
 }
 

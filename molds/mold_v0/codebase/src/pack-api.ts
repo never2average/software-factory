@@ -890,7 +890,7 @@ export function clockProblems(a: { scope: string; fields: z.output<typeof field>
  * Where an area's rows come from (mold_v0-222):
  *   staff        platform staff by hand: the staff record pages' New, Edit, Override and Import, /api/admin/data, the
  *                admin MCP (a shared area; a workspace area only through a write tool the pack made admin_only)
- *   people       the workspace's own people and their AI clients by hand: the tab's create form, the data API, the
+ *   people       the workspace's own people and their agents by hand: the tab's create form, the data API, the
  *                generated create, update and move tools (a workspace area whose writes are not withheld)
  *   repository   the area's `repository`: its index, or its live API
  *   intake       the company email's intake (the pack's `email.intake.area`): one record per message
@@ -2277,7 +2277,7 @@ export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
 export const TAB_INCLUDES = ["setup", "notices"] as const;
 /**
- * The cards of a home tab's right column (mold_v0-172), below the "Connect your AI client" card, in order:
+ * The cards of a home tab's right column (mold_v0-172), below the "Connect your agent" card, in order:
  *   journeys       the journey picker: "Get set up" (the setup steps, every build's) and the build's journeys
  *                  (mold_v0-175: pack.json journeys adds its own; with none the picker has Get set up alone)
  *   notices        the records due soon, as a short list (needs a due-date area; the tab then also includes notices)
@@ -2297,9 +2297,9 @@ export const RAIL_MAX = 2, HOME_HEADLINE_MAX = 4;
  * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
  * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
  * src/landing.ts) or an `action`:
- *   setup               the Setup page (/app), where the person connects an AI client and follows the onboarding steps
+ *   setup               the Setup page (/app), where the person connects an agent and follows the onboarding steps
  *   onboarding:<step>   one of this pack's onboarding steps, on the Setup page
- *   run:<kind>          one of this pack's job kinds: started from an AI client, so the action leads to the Setup page
+ *   run:<kind>          one of this pack's job kinds: started from an agent, so the action leads to the Setup page
  * Plain text, shown as text, on one line; no braces (the build's word placeholders are the shell's: a pack writes its own
  * words). Anything left out gets the shell's default, made from the area's label, the build's words and its onboarding
  * (src/metric-spec.ts tabEmpty).
@@ -2766,7 +2766,7 @@ export const ONBOARDING_HOW = /^(tool|credential|record|run):[a-z][a-z0-9_]{0,63
 /**
  * An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events,
  * and the pack's generated `<prefix>_get_started` MCP tool (mold_v0-105, src/mcp-tools.ts): the next step not done,
- * how to do it, and `prompt`, the words the person can type in their AI client to do it (default: built from the label).
+ * how to do it, and `prompt`, the words the person can type in their agent to do it (default: built from the label).
  */
 export const OnboardingStepSchema = z.object({
   id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
@@ -3031,7 +3031,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
       for (const k of [...(a.job_kind ? [a.job_kind] : []), ...(a.job_kinds ?? [])]) {
         const kind = ownKinds.find((x) => x?.name === k);
         if (!kind) problems.push(at(`${where}: job kind ${k} is not one this pack declares`));
-        else if (a.kind === "start_run" && kind.approval) problems.push(at(`${where}: job kind ${k} waits for an approval of its preview: start it from an AI client with that approval`));
+        else if (a.kind === "start_run" && kind.approval) problems.push(at(`${where}: job kind ${k} waits for an approval of its preview: start it from an agent with that approval`));
       }
     }
     if (a.kind === "new_schedule") {

@@ -95,7 +95,7 @@ function neutralSections(): LandingSection[] {
       loop_label: 'Ask again',
       steps: [
         { title: fill('Open your {account}'), body: fill('Sign up and open your {workspace} in the console.') },
-        { title: 'Connect a client', body: 'Follow the install page for your AI client. It signs you in or gives you a key.' },
+        { title: 'Connect a client', body: 'Follow the install page for your agent. It signs you in or gives you a key.' },
         { title: 'Ask your assistant', body: fill('Ask it to use {product}. It reads your {workspace} and starts {runs} for you.') },
         { title: 'Review the results', body: fill('What it did is kept in your {workspace}, where your {members} can review it.') }
       ]
@@ -104,14 +104,14 @@ function neutralSections(): LandingSection[] {
       type: 'proof',
       title: 'Everything your assistant needs, in one place',
       items: [
-        { title: 'Your assistant, connected', body: fill('Add {product} to the AI clients your team already uses. The install page gives the exact steps for each one.') },
+        { title: 'Your assistant, connected', body: fill('Add {product} to the agents your team already uses. The install page gives the exact steps for each one.') },
         { title: 'Agents that report back', body: fill('Start {runs} from your assistant or the console, follow them while they work and read their results when they finish.') },
         { title: fill('Your {workspace} is yours'), body: fill("Each {workspace}'s records, files, {keys} and {runs} are its own. No other {workspace} can read them.") }
       ]
     },
     {
       type: 'where_you_work',
-      lead: fill('Add {product} to the AI clients your team uses. The install page gives the exact steps for each one.'),
+      lead: fill('Add {product} to the agents your team uses. The install page gives the exact steps for each one.'),
       clients: clientsFor(undefined).map((c) => c.id),
       visual: {
         type: 'chat',
@@ -127,7 +127,7 @@ function neutralSections(): LandingSection[] {
       type: 'faq',
       items: [
         { question: fill('What is {product}?'), answer: fill("{product} is a service your AI assistant connects to over MCP. It keeps your {workspace}'s records, files and {runs}, and gives your assistant tools to use them.") },
-        { question: 'Which AI clients work with it?', answer: `Any client that speaks MCP${names.length ? `, such as ${list(names)}` : ''}. The install page has the steps for each.` },
+        { question: 'Which agents work with it?', answer: `Any client that speaks MCP${names.length ? `, such as ${list(names)}` : ''}. The install page has the steps for each.` },
         { question: fill('Who can see my {workspace}?'), answer: fill("Only its {members}. Each {workspace}'s records, files, {keys} and {runs} are its own, and no other {workspace} can read them.") },
         { question: 'How do I start?', answer: fill('Open your {account}, connect a client from the install page, then ask your assistant to use {product}.') }
       ]
@@ -323,7 +323,7 @@ function Hero({ id, hero, ctas, foot }: { id: string; hero: ReturnType<typeof he
                 {strip.items.map((c, i) => <li key={i}>{c}</li>)}
               </ul>
             ) : (
-              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : (strip.label ?? 'AI clients')} className='text-foreground/60 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>
+              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : (strip.label ?? 'Agents')} className='text-foreground/60 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>
                 {logos.map((c) => (
                   <li key={c.logo} className='flex items-center gap-2'>
                     {'client' in c ? <ClientLogo id={c.logo} size={18} aria-hidden='true' /> : <AgentLogo id={c.logo} size={18} aria-hidden='true' />}{c.label}
@@ -546,7 +546,7 @@ function WhereYouWork({ p, s, ctas }: { p: Placed; s: WhereYouWorkSection; ctas:
   const clients = s.clients || !s.visual ? clientsFor(s.clients) : [];
   const grid = clients.length ? (
     <div className='min-w-0'>
-      <ul aria-label='AI clients' className='grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3'>
+      <ul aria-label='Agents' className='grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3'>
         {clients.map((c) => (
           <li key={c.id} className='bg-card flex min-w-0 items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium'>
             <ClientLogo id={c.id} size={20} aria-hidden='true' className='shrink-0' /><span className='min-w-0 break-words'>{c.name}</span>

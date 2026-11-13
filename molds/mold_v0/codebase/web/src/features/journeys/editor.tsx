@@ -96,7 +96,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
       <SheetContent side='right' showCloseButton={false} className='gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl'>
         <div className='flex items-center gap-2 border-b px-6 py-3'>
           <SheetTitle className='text-muted-foreground text-sm font-normal'>{d.isNew ? jw('New {guide}') : jw('Edit {guide}')}</SheetTitle>
-          <SheetDescription className='sr-only'>Stages a customer follows in their AI client; a stage is done when one of its tools runs, or when the customer marks it.</SheetDescription>
+          <SheetDescription className='sr-only'>Stages a customer follows in their agent; a stage is done when one of its tools runs, or when the customer marks it.</SheetDescription>
           <span className='text-muted-foreground ml-auto hidden text-xs sm:inline'>⌘↵ to save</span>
           <Button variant='ghost' size='sm' onClick={close}>Cancel</Button>
           <Gate need='library'><Button size='sm' onClick={submit} disabled={save.isPending}>{save.isPending ? 'Saving…' : d.isNew ? jw('Create {guide}') : 'Save'}</Button></Gate>
@@ -149,7 +149,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
                       <Input value={st.title} onChange={(e) => setStage(i, { title: e.target.value })} placeholder='Title, e.g. Read results by agent' aria-label='Stage title' maxLength={120} className={bad(missing('title', i))} />
                       <div className='grid gap-1.5'>
                         <div className='flex items-center justify-between'>
-                          <span className='text-muted-foreground text-xs leading-none'>Prompt the customer pastes into their AI client</span>
+                          <span className='text-muted-foreground text-xs leading-none'>Prompt the customer pastes into their agent</span>
                           <span className='flex gap-1'>{TOKENS().map((t) => (
                             <button key={t} type='button' title={`Insert ${t}`} onClick={() => setStage(i, { prompt: `${st.prompt}${st.prompt && !st.prompt.endsWith(' ') ? ' ' : ''}${t}` })}
                               className='text-muted-foreground hover:text-foreground rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none'>{t}</button>

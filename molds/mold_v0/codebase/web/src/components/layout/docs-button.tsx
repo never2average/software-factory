@@ -24,7 +24,7 @@ export function DocsButton() {
   );
 }
 
-/** Admin only, beside Docs: connect an AI client to the admin MCP server (/admin/connect). */
+/** Admin only, beside Docs: connect an agent to the admin MCP server (/admin/connect). */
 export function McpButton() {
   const pathname = useConsolePathname();
   const { area } = useNav();
@@ -32,7 +32,7 @@ export function McpButton() {
   const active = pathname === '/admin/connect';
   return (
     <Button variant={active ? 'secondary' : 'outline'} className={cn(TOP_BAR_CONTROL, TOP_BAR_LABELLED)} aria-current={active ? 'page' : undefined}
-      render={<Link href='/admin/connect' aria-label='Connect an AI client to the admin MCP' />}>
+      render={<Link href='/admin/connect' aria-label='Connect an agent to the admin MCP' />}>
       <Icons.plug /> <span className='hidden md:inline'>MCP</span>
     </Button>
   );

@@ -160,7 +160,7 @@ function Setup({ created, one, onDone }: { created: Created; one: string; onDone
         <code className='bg-muted rounded px-2 py-1 font-mono text-sm break-all'>{created.key}</code>
         <CopyButton text={created.key} label='Copy' />
       </div>
-      <NativeSelect value={client} onChange={(e) => setClient(e.target.value)} aria-label='Client' className='w-full'>
+      <NativeSelect value={client} onChange={(e) => setClient(e.target.value)} aria-label='Agent' className='w-full'>
         {created.setup.clients.map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.client}{x.auth === 'oauth' ? ' (signs in instead)' : ''}</NativeSelectOption>)}
       </NativeSelect>
       {c && (

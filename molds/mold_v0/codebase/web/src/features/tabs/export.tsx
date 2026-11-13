@@ -80,7 +80,7 @@ export function useExportCsv({ url, area, name, rows, areas }: ExportProps): { i
     try {
       const { csv, count, more } = await exportCsv(url, area, rows, keys ? new Set(keys) : null);
       downloadText(`${name}-${today()}.csv`, '\ufeff' + csv, 'text/csv;charset=utf-8');
-      toast.success(`${count} record${count === 1 ? '' : 's'} exported${more ? ` (the first ${EXPORT_MAX}; ask your AI client to export the rest with the export tool)` : ''}.`);
+      toast.success(`${count} record${count === 1 ? '' : 's'} exported${more ? ` (the first ${EXPORT_MAX}; ask your agent to export the rest with the export tool)` : ''}.`);
     } catch (e) {
       toast.error(`The export failed: ${(e as Error).message}`);
     } finally { setBusy(false); }

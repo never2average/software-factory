@@ -1,8 +1,8 @@
-// One setup checklist (mold_v0-146): the shell's setup steps (joining, connecting an AI client, its tools, a first
+// One setup checklist (mold_v0-146): the shell's setup steps (joining, connecting an agent, its tools, a first
 // question; src/app.ts setup, or a host pack's own) and the packs' onboarding steps (src/onboarding.ts) as one ordered
 // list, so a home tab and the Setup page never show two checklists that ask the same thing.
 //
-// Order: the shell's steps first (an AI client is how most pack steps are done), then the packs' steps in their
+// Order: the shell's steps first (an agent is how most pack steps are done), then the packs' steps in their
 // declared order. A pack step whose condition is one the shell measures (`workspace`, `connected`, `first_call`:
 // /api/onboarding `covers`) takes that shell step's place: the shell's step is dropped, and the shell steps after it
 // follow the pack's step. So a pack places the connection where it wants it by declaring a step `done_when: connected`.
