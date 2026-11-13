@@ -1,6 +1,6 @@
 'use client';
 // Small helpers shared by the portal pages: data loading keyed by the active Clerk organization, spend meter,
-// copy buttons, relative times, loading and error states.
+// copy buttons, dates (one rule: When, dateLabel), loading and error states.
 import { useAuth } from '@/lib/auth';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
 import { cn } from '@/lib/utils';
-import { relative, usd } from '@/lib/display-format';
+import { usd } from '@/lib/display-format';
+import { dateWords } from '@/features/records/detail-layout';
 
 /** Load on mount and whenever the active organization (or `deps`) changes; `reload` re-runs, keeping the old data meanwhile. */
 export function useOrgLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
@@ -40,9 +41,33 @@ export function CopyButton({ text, label = 'Copy', className, variant = 'outline
   );
 }
 
-export function When({ d }: { d: string | Date | null | undefined }) {
-  if (!d) return <span className='text-muted-foreground'>never</span>;
-  return <span title={new Date(d).toLocaleString()}>{relative(d)}</span>;
+/** Within this many days a date reads relative ("3 hours ago", "yesterday", "in 2 days"); further off, as a day. */
+const RELATIVE_DAYS = 7;
+const DAY_MS = 86_400_000;
+
+/**
+ * mold_v0-298: the console's one date rule, for lists and panels alike: within 7 days relative words ("2 hours ago",
+ * "yesterday", "in 3 days"), else the day ("12 Nov 2026"); `exact` is the full date (and time, in the viewer's own zone) for a hover, `iso` the
+ * machine value. The words and the exact form are the record panel's (features/records/detail-layout.ts dateWords).
+ * Null when the value is not a date.
+ */
+export function dateLabel(v: unknown, now = Date.now()): { text: string; exact: string; iso: string } | null {
+  const w = dateWords(v instanceof Date ? v.toISOString() : v, now);
+  if (!w) return null;
+  const t = Date.parse(w.iso.length === 10 ? `${w.iso}T00:00:00Z` : w.iso);
+  const near = Math.abs(t - now) < RELATIVE_DAYS * DAY_MS;
+  // The hover reads in the viewer's own time (as it did before mold_v0-298); a day alone stays that day.
+  const exact = w.iso.length === 10 ? w.absolute
+    : new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return { text: near ? w.relative : w.absolute.replace(/,.*$/, ''), exact, iso: w.iso };
+}
+
+/** A date by the rule above, the full date on hover and to a screen reader (<time>); "never" when there is none. */
+export function When({ d, never = 'never' }: { d: string | Date | null | undefined; never?: string }) {
+  if (!d) return <span className='text-muted-foreground'>{never}</span>;
+  const l = dateLabel(d);
+  if (!l) return <span>{String(d)}</span>;
+  return <time dateTime={l.iso} title={l.exact} className='whitespace-nowrap'>{l.text}</time>;
 }
 
 /** Spend against a cap; no cap = a plain line. */

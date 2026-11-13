@@ -1,4 +1,5 @@
-export const usd = (n: unknown) => `$${Number(n || 0).toFixed(2)}`;
+// mold_v0-298: thousands separators ("$1,000.00"), as money(); en-US so the dollar sign leads on every screen.
+export const usd = (n: unknown) => (Number(n) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const money = (cents: number | null | undefined, currency?: string) =>
   cents == null ? '' : (cents / 100).toLocaleString(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase(), maximumFractionDigits: 0 });
 export const num = (n: unknown) => Number(n || 0).toLocaleString();

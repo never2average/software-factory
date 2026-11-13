@@ -25,16 +25,6 @@
    "label": "Insights",
    "items": [
     {
-     "title": "Usage",
-     "url": "/app/usage",
-     "icon": "chartLine",
-     "shortcut": [
-      "g",
-      "u"
-     ],
-     "items": []
-    },
-    {
      "title": "Activity",
      "url": "/app/activity",
      "icon": "chartLine",

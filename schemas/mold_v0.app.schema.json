@@ -3527,6 +3527,11 @@
                                         "due_soon"
                                       ]
                                     },
+                                    "fact": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 7
+                                    },
                                     "all": {
                                       "minItems": 1,
                                       "maxItems": 6,
@@ -3619,6 +3624,11 @@
                                               "overdue",
                                               "due_soon"
                                             ]
+                                          },
+                                          "fact": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 7
                                           }
                                         },
                                         "additionalProperties": false
@@ -3716,6 +3726,11 @@
                                               "overdue",
                                               "due_soon"
                                             ]
+                                          },
+                                          "fact": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 7
                                           }
                                         },
                                         "additionalProperties": false
@@ -3833,6 +3848,11 @@
                                 "due_soon"
                               ]
                             },
+                            "fact": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 7
+                            },
                             "all": {
                               "minItems": 1,
                               "maxItems": 6,
@@ -3925,6 +3945,11 @@
                                       "overdue",
                                       "due_soon"
                                     ]
+                                  },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
                                   }
                                 },
                                 "additionalProperties": false
@@ -4022,6 +4047,11 @@
                                       "overdue",
                                       "due_soon"
                                     ]
+                                  },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
                                   }
                                 },
                                 "additionalProperties": false
@@ -4337,6 +4367,11 @@
                                           "due_soon"
                                         ]
                                       },
+                                      "fact": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 7
+                                      },
                                       "all": {
                                         "minItems": 1,
                                         "maxItems": 6,
@@ -4429,6 +4464,11 @@
                                                 "overdue",
                                                 "due_soon"
                                               ]
+                                            },
+                                            "fact": {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 7
                                             }
                                           },
                                           "additionalProperties": false
@@ -4526,6 +4566,11 @@
                                                 "overdue",
                                                 "due_soon"
                                               ]
+                                            },
+                                            "fact": {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 7
                                             }
                                           },
                                           "additionalProperties": false
@@ -4712,6 +4757,11 @@
                                       "due_soon"
                                     ]
                                   },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
+                                  },
                                   "all": {
                                     "minItems": 1,
                                     "maxItems": 6,
@@ -4804,6 +4854,11 @@
                                             "overdue",
                                             "due_soon"
                                           ]
+                                        },
+                                        "fact": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 7
                                         }
                                       },
                                       "additionalProperties": false
@@ -4901,6 +4956,11 @@
                                             "overdue",
                                             "due_soon"
                                           ]
+                                        },
+                                        "fact": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 7
                                         }
                                       },
                                       "additionalProperties": false
@@ -4915,6 +4975,307 @@
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "when": {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "equals": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "not_in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "empty": {
+                              "type": "boolean"
+                            },
+                            "before": {
+                              "type": "string",
+                              "const": "today"
+                            },
+                            "after": {
+                              "type": "string",
+                              "const": "today"
+                            },
+                            "within_days": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 3650
+                            },
+                            "clock": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "is": {
+                              "type": "string",
+                              "enum": [
+                                "overdue",
+                                "due_soon"
+                              ]
+                            },
+                            "fact": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 7
+                            },
+                            "all": {
+                              "minItems": 1,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "any": {
+                              "minItems": 1,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -5129,6 +5490,11 @@
                                       "due_soon"
                                     ]
                                   },
+                                  "fact": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 7
+                                  },
                                   "all": {
                                     "minItems": 1,
                                     "maxItems": 6,
@@ -5221,6 +5587,11 @@
                                             "overdue",
                                             "due_soon"
                                           ]
+                                        },
+                                        "fact": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 7
                                         }
                                       },
                                       "additionalProperties": false
@@ -5318,6 +5689,11 @@
                                             "overdue",
                                             "due_soon"
                                           ]
+                                        },
+                                        "fact": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 7
                                         }
                                       },
                                       "additionalProperties": false
@@ -8456,7 +8832,7 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "pattern": "^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62})$"
+                  "pattern": "^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62}|recent:[a-z][a-z0-9_]{1,62})$"
                 }
               },
               "filter": {
@@ -15680,6 +16056,9 @@
                       "minLength": 1,
                       "maxLength": 400,
                       "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "optional": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -15704,6 +16083,9 @@
                       "minLength": 1,
                       "maxLength": 400,
                       "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "optional": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -15728,6 +16110,9 @@
                       "minLength": 1,
                       "maxLength": 400,
                       "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "optional": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false

@@ -143,7 +143,12 @@ try {
   // its own use, never from a pack's samples (src/pack-api.ts refuses those), so the lane world makes them itself.
   const { seedWorkspace } = await import(pathToFileURL(path.join(import.meta.dirname, "seed.mts")).href);
   const own = await seedWorkspace(org.orgId, lane);
-  if (own.records || own.runs) console.log(`lane world: ${own.records} sample record(s) in the workspace's own areas, ${own.runs} sample run(s) with ${own.results} result(s)${own.skipped.length ? `; not seeded: ${own.skipped.join("; ")}` : ""}`);
+  // mold_v0-298: always said, zero rows included (a lane that grades only empty lists must say so), with each area left
+  // empty and why, and each shared area given placeholder rows so another could be seeded.
+  console.log(`lane world: ${own.records} sample record(s) in the workspace's own areas, ${own.runs} sample run(s) with ${own.results} result(s)`);
+  for (const f of own.filled ?? []) console.log(`lane world: placeholder rows: ${f}`);
+  for (const x of own.skipped) console.log(`lane world: not seeded (its lists are graded empty): ${x}`);
+  if (!own.records && !own.runs) console.log("lane world: warning: nothing was seeded, so every workspace list is graded empty");
 
   // 5. The console, killed with this process even if this process is killed outright.
   const pdeath = "import ctypes,os,signal,sys; ctypes.CDLL(None).prctl(1, signal.SIGTERM); os.execvp(sys.argv[1], sys.argv[1:])";

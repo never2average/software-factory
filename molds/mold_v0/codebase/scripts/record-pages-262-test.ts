@@ -113,13 +113,13 @@ try {
     const open = (xs: any[]) => xs.find((x) => x.kind === "open_url");
     const one = open(await acts("build-01"));
     assert.deepEqual([one.id, one.label, one.url, one.disabled], ["open_url.artifact", "Open artifact", "https://artifacts.example.com/build-01.zip", null], "the field's address");
-    const two = open(await acts("build-02"));
-    assert.deepEqual([two.url, two.disabled], [null, "No artifact is set on this record."], "an empty field: disabled, with why");
+    // mold_v0-298: an empty field offers no action (it was disabled, with why).
+    assert.equal(open(await acts("build-02")), undefined, "an empty field: the action is not offered");
     const viewer = await http.signIn(A, "viewer");
     assert.equal(open((await get(viewer, "/api/records/_page/builds/build-01")).body.actions).url, "https://artifacts.example.com/build-01.zip", "a viewer may follow it (it changes nothing)");
     const pa = readFileSync(path.join(WEB, "features", "records", "page-actions.tsx"), "utf8");
     assert.match(pa, /a\.kind === 'open_url'\) return void \(a\.url && window\.open\(a\.url, '_blank', 'noopener,noreferrer'\)\)/, "the page opens it in a new tab, without the opener");
-    ok("external links: an open_url action answers its field's http(s) address, disabled with why when it holds none; a viewer may follow it; opened in a new tab without the opener");
+    ok("external links: an open_url action answers its field's http(s) address, hidden when it holds none; a viewer may follow it; opened in a new tab without the opener");
   }
 
   // ---------- 4. conditional sections, Linked records, chips ----------

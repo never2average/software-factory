@@ -37,7 +37,7 @@ import { adminApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { ErrorState, FormRow, LoadingCards, When, fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { ToolbarAction } from '@/features/tabs/tab-action';
+import { EmptyState } from '@/features/tabs/empty';
 
 export type Area = 'app' | 'admin';
 type Phase = 'starting' | 'working' | 'waiting' | 'parked' | 'waking' | 'paused' | 'awaiting_approval' | 'stopped' | 'failed' | 'archived';
@@ -50,7 +50,7 @@ interface Session {
   pause_requested: boolean; stop_requested: boolean; pending_request: Request | null; created_at: string; last_activity_at: string; ended_at: string | null;
   archived_at: string | null; pruned: boolean; can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
   /** mold_v0-287: whether this person may change its budget (and why not), and the least it may be set to. */
-  budget_change: { allowed: boolean; why: string | null; floor_usd: number };
+  budget_change: { allowed: boolean; why: string | null; floor_usd: number; /** mold_v0-298: why not, as a code (an older server: absent). */ why_code?: 'ended' | 'child' | 'role' | null };
   /** mold_v0-261: the agent profile and the version it froze, and the record it was started from. */
   profile?: { id: string; name: string; version: number } | null;
   record?: { area: string; key: string } | null;
@@ -153,17 +153,19 @@ function AgentList({ area }: { area: Area }) {
   </PageContainer>);
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
-    { key: 'ref', label: 'Number', type: 'text', keep: true, value: (s) => s.ref, render: (s) => <span className='font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span> },
-    { key: 'title', label: 'Session', title: true, keep: true, type: 'text', className: 'min-w-56', value: (s) => s.title,
+    // mold_v0-298: on a phone the list shows the session, its status and its last activity (max-sm:hidden on the rest), so
+    // nothing is cut.
+    { key: 'ref', label: 'Number', type: 'text', className: 'max-sm:hidden', value: (s) => s.ref, render: (s) => <span className='font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span> },
+    { key: 'title', label: 'Session', title: true, type: 'text', className: 'min-w-40 sm:min-w-56', value: (s) => s.title,
       render: (s) => <span className='leading-snug font-medium'>{s.title}</span> },
-    { key: 'phase', label: 'Status', type: 'select', keep: true, options: Object.entries(PHASE_WORDS).map(([value, label]) => ({ value, label })), value: (s) => s.phase, render: (s) => <PhaseBadge s={s} /> },
-    ...(area === 'admin' ? [{ key: 'workspace', label: 'Workspace', type: 'text' as const, value: (s: Session) => s.workspace?.slug ?? '', render: (s: Session) => <span className='font-mono text-xs'>{s.workspace?.slug}</span> }] : []),
-    { key: 'started_by', label: 'Started by', type: 'text', value: (s) => s.started_by ?? '', render: (s) => <span className='break-all'>{s.mine ? 'You' : s.started_by}</span> },
-    { key: 'waiting_on', label: 'Waiting on', type: 'text', value: (s) => (s.pending_request ? askWords(s.pending_request) : ''),
+    { key: 'phase', label: 'Status', type: 'select', options: Object.entries(PHASE_WORDS).map(([value, label]) => ({ value, label })), value: (s) => s.phase, render: (s) => <PhaseBadge s={s} /> },
+    ...(area === 'admin' ? [{ key: 'workspace', label: 'Workspace', type: 'text' as const, className: 'max-sm:hidden', value: (s: Session) => s.workspace?.slug ?? '', render: (s: Session) => <span className='font-mono text-xs'>{s.workspace?.slug}</span> }] : []),
+    { key: 'started_by', label: 'Started by', type: 'text', className: 'max-sm:hidden', value: (s) => s.started_by ?? '', render: (s) => <span className='break-all'>{s.mine ? 'You' : s.started_by}</span> },
+    { key: 'waiting_on', label: 'Waiting on', type: 'text', className: 'max-sm:hidden', value: (s) => (s.pending_request ? askWords(s.pending_request) : ''),
       render: (s) => (s.pending_request ? <span className='text-amber-700 dark:text-amber-300'>{askWords(s.pending_request)}</span> : '') },
-    { key: 'spent', label: 'Spent', type: 'number', value: (s) => s.spent_usd, render: (s) => <span className='tabular-nums'>{usd(s.spent_usd)} <span className='text-muted-foreground'>of {usd(s.budget_usd)}</span></span> },
-    { key: 'activity', label: 'Last activity', type: 'date', keep: true, value: (s) => s.last_activity_at, render: (s) => <When d={s.last_activity_at} /> },
-    { key: 'wakes', label: 'Runs', type: 'number', value: (s) => s.wakes, render: (s) => String(s.wakes) }
+    { key: 'spent', label: 'Spent', type: 'number', className: 'max-sm:hidden', value: (s) => s.spent_usd, render: (s) => <span className='tabular-nums'>{usd(s.spent_usd)} <span className='text-muted-foreground'>of {usd(s.budget_usd)}</span></span> },
+    { key: 'activity', label: 'Last activity', type: 'date', value: (s) => s.last_activity_at, render: (s) => <When d={s.last_activity_at} /> },
+    { key: 'wakes', label: 'Runs', type: 'number', className: 'max-sm:hidden', value: (s) => s.wakes, render: (s) => String(s.wakes) }
   ];
   const n = (ps: Phase[]) => rows.filter((s) => ps.includes(s.phase)).length;
   const spent = rows.reduce((t, s) => t + s.spent_usd, 0);
@@ -181,8 +183,12 @@ function AgentList({ area }: { area: Area }) {
         ]} />}
         searchText={(s) => `${s.ref} ${s.title} ${PHASE_WORDS[s.phase]} ${s.started_by ?? ''} ${s.workspace?.slug ?? ''} ${s.pending_request ? askWords(s.pending_request) : ''}`}
         searchPlaceholder='Search sessions'
-        toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='Start a session' icon={<Icons.add />} onClick={() => setStarting(true)} /></div> : undefined}
-        empty={<p className='text-muted-foreground text-sm'>{area === 'app' ? (data?.can_start ? 'No sessions yet: Start a session gives the agent its first message.' : 'No sessions yet. A member of this workspace can start one.') : 'No workspace has started a session yet.'}</p>}
+        toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><StartButton onClick={() => setStarting(true)} /></div> : undefined}
+        // mold_v0-298: the shell's empty state (a title, a sentence) with the way to start one inside it, where this person may.
+        empty={<EmptyState id={`${area}-agent-empty`} empty={{ title: 'No sessions yet', cta: null,
+            text: area === 'app' ? (data?.can_start ? 'A session is the agent working on one task you give it. Start one and tell it what to do.' : 'A session is the agent working on one task. A member of this workspace who may use the agent can start one.')
+              : 'No workspace has started a session yet. Sessions show here once someone starts one.' }}
+          action={area === 'app' && data?.can_start ? <Button size='sm' onClick={() => setStarting(true)} data-agent-empty-start=''><Icons.add />Start a session</Button> : undefined} />}
         detail={() => null}
         actions={(s) => budget.items(s)}
       />
@@ -197,6 +203,26 @@ function AgentList({ area }: { area: Area }) {
 }
 
 type Call = ReturnType<typeof api>;
+
+/**
+ * Start a session, the list's primary button (mold_v0-298): the search row's toolbar action (data-toolbar-action, the
+ * label its accessible name and title), with a short word beside the icon on a phone ("Start") instead of a bare +.
+ */
+function StartButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button type='button' onClick={onClick} aria-label='Start a session' title='Start a session' data-toolbar-action='' className='ml-auto shrink-0'>
+      <Icons.add /><span className='sm:hidden'>Start</span><span className='hidden sm:inline'>Start a session</span>
+    </Button>
+  );
+}
+
+/** Why this person may not change a session's budget, in a few words (mold_v0-298: from the server's code, never its sentence). */
+function budgetBlocked(c: Session['budget_change']): string | undefined {
+  if (c.allowed) return undefined;
+  // An older server sends no code: a neutral word rather than a guess.
+  const code = c.why_code;
+  return code === 'role' ? 'Owner or billing only' : code === 'child' ? 'Set on the main session' : code === 'ended' ? 'Session ended' : 'Not allowed';
+}
 
 /**
  * Start a session: the console's one modal dialog (mold_v0-249, the operator's exception to the full-card rule). The
@@ -305,11 +331,11 @@ function useBudgetDialogs(call: Call, onChange: () => unknown): BudgetDialogs {
     try { await call('POST', `/${s.id}/budget`, { by_usd: n, reason: `Added $${n} from the session's menu` }); toast.success(`Added $${n}`); await changed(); }
     catch (e) { fail(e); } finally { setBusy(false); }
   };
-  const hint = (s: Session, n: number) => !s.budget_change.allowed ? (s.budget_change.why?.startsWith('Needs') ? 'Owner or billing only' : 'Session ended') : s.budget_usd + n > s.ceiling_usd + 1e-9 ? `Limit is ${usd(s.ceiling_usd)}` : undefined;
+  const hint = (s: Session, n: number) => !s.budget_change.allowed ? budgetBlocked(s.budget_change) : s.budget_usd + n > s.ceiling_usd + 1e-9 ? `Limit is ${usd(s.ceiling_usd)}` : undefined;
   const items = (s: Session): RowAction[] => [
     { label: 'Add $5', icon: <Icons.coin />, disabled: busy || !!hint(s, 5), hint: hint(s, 5), onSelect: () => void add(s, 5) },
     { label: 'Add $10', icon: <Icons.coin />, disabled: busy || !!hint(s, 10), hint: hint(s, 10), onSelect: () => void add(s, 10) },
-    { label: 'Set budget…', icon: <Icons.coin />, disabled: !s.budget_change.allowed, hint: !s.budget_change.allowed ? (s.budget_change.why?.startsWith('Needs') ? 'Owner or billing only' : 'Session ended') : undefined, onSelect: () => setDialog({ kind: 'set', s }) },
+    { label: 'Set budget…', icon: <Icons.coin />, disabled: !s.budget_change.allowed, hint: budgetBlocked(s.budget_change), onSelect: () => setDialog({ kind: 'set', s }) },
     { label: 'Spending by run', icon: <Icons.history />, onSelect: () => setDialog({ kind: 'spending', s }) },
   ];
   const close = (o: boolean) => { if (!o) setDialog(null); };

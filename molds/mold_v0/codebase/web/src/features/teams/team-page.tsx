@@ -176,8 +176,9 @@ export function TeamPage({ id }: { id: string }) {
         </Card>
 
         <Tabs value={tab.id} onValueChange={(v) => void setAsked(v === TABS[0].id ? null : String(v))} className='w-full gap-4'>
-          <div className='max-w-full overflow-x-auto pb-1.5' data-tab-strip-room=''>
-            <TabsList variant='line' className='flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
+          {/* mold_v0-298: on a phone a long strip wraps to a second line rather than clip its last tab (as Settings). */}
+          <div className='max-w-full pb-1.5' data-tab-strip-room=''>
+            <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
               {TABS.map((t) => <TabsTrigger key={t.id} value={t.id} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
             </TabsList>
           </div>

@@ -4,11 +4,14 @@ import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
 import { settingsGroups, settingsTabUrl } from '@/config/settings';
-import { useBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
+import { useBreadcrumbLeaf, useBreadcrumbTitleAt } from '@/lib/breadcrumb-leaf';
+import { placeOfEntry, useActiveNavEntry } from '@/hooks/use-active-nav-entry';
+import { usePageNotFound } from '@/lib/page-not-found';
 
 type BreadcrumbItem = {
   title: string;
-  link: string;
+  /** None for a sidebar group's name (mold_v0-298): a heading, no page of its own. */
+  link?: string;
   /** Shown on a phone too, where only the last crumb is otherwise (mold_v0-290: it is the way back from an open session). */
   keep?: boolean;
 };
@@ -22,8 +25,8 @@ const TITLES: Record<string, string> = {
 const routeMapping: Record<string, BreadcrumbItem[]> = {};
 
 /**
- * A pack's page or tab by its address (mold_v0-132: /app/<id>, flat): its own label, so the trail reads "Account /
- * Home", not the id. A tab that opens a shell page (Usage, Billing) is named by the tab too; /app stays Account.
+ * A pack's page or tab by its address (mold_v0-132: /app/<id>, flat): its own label, so the trail reads "<group> /
+ * Home", not the id. A tab that opens a shell page (Usage, Billing) is named by the tab too; /app is named by its sidebar entry (mold_v0-298).
  */
 const PACK_TITLES = new Map<string, string>([
   ...packPages.map((p) => [p.url, p.title] as [string, string]),
@@ -40,11 +43,20 @@ const decode = (s: string) => { try { return decodeURIComponent(s); } catch { re
 
 const AGENT_PAGE = /^\/(app|admin)\/agent$/;
 
-export function useBreadcrumbs() {
+/**
+ * The trail of the page being drawn. `search` is the page's query (useNavSearch, drawn by the caller), so the group named
+ * first is the group of the entry the sidebar lights (mold_v0-298: the same hook, the same groups, address and rule).
+ */
+export function useBreadcrumbs(search = '') {
   const pathname = useConsolePathname();
   const leaf = useBreadcrumbLeaf();
+  const ownTitle = useBreadcrumbTitleAt(pathname);
+  const notFound = usePageNotFound();
+  const { groups, activeUrl } = useActiveNavEntry(search);
 
-  const breadcrumbs = useMemo(() => {
+  const breadcrumbs = useMemo((): BreadcrumbItem[] => {
+    // mold_v0-298: a 404 has no trail (the address is no page, so nothing to name and nowhere it sits).
+    if (notFound) return [];
     // Check if we have a custom mapping for this exact path
     if (routeMapping[pathname]) {
       return routeMapping[pathname];
@@ -67,10 +79,20 @@ export function useBreadcrumbs() {
         link: path
       }];
     });
+    // mold_v0-298: the trail starts at the page's place in the sidebar, not at the area ("Account", "Admin"): the area's
+    // own crumb goes, the group's name leads (a heading, no link; none when the group has no name or is named like the
+    // entry), and the area's home is named by its entry ("Overview"). A page outside the sidebar starts at its own name.
+    const place = placeOfEntry(groups, activeUrl);
+    let trail = crumbs.slice(1);
+    if (!trail.length) trail = place ? [{ title: place.title, link: place.url }] : crumbs.slice(0, 1);
+    // A page that names its own crumb (a record's page: the record's title, not the key in the address).
+    if (ownTitle && trail.length) trail = [...trail.slice(0, -1), { ...trail.at(-1)!, title: ownTitle }];
     // mold_v0-290: an open session is the trail's last level, its short number; the page before it links back to the list.
-    if (leaf && AGENT_PAGE.test(pathname) && crumbs.length) return [...crumbs.slice(0, -1), { ...crumbs.at(-1)!, keep: true }, { title: leaf, link: `${pathname}#${leaf}` }];
-    return crumbs;
-  }, [pathname, leaf]);
+    if (leaf && AGENT_PAGE.test(pathname) && trail.length) trail = [...trail.slice(0, -1), { ...trail.at(-1)!, keep: true }, { title: leaf, link: `${pathname}#${leaf}` }];
+    // The group's name only where the sidebar shows it as a heading (placeOfEntry), and never twice in a row.
+    const group = place?.group;
+    return group && group !== trail[0]?.title ? [{ title: group }, ...trail] : trail;
+  }, [pathname, leaf, ownTitle, notFound, groups, activeUrl]);
 
   return breadcrumbs;
 }

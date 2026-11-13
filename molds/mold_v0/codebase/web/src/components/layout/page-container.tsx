@@ -69,6 +69,11 @@ export default function PageContainer({
 
   // No visible title or description above a page (operator rule, mold_v0-272): the page's name stays for screen
   // readers and the breadcrumb says where you are; actions keep their own row.
+  // mold_v0-298, the one rule for pageTitle: it is the page's heading for screen readers, never drawn. The name a person
+  // sees is the top bar's last crumb (web/src/hooks/use-breadcrumbs.tsx: the sidebar's words, or the page's own through
+  // useBreadcrumbTitle, as a record's page names its record). A list passes no pageTitle at all (it starts with its
+  // cards or its search row: scripts/record-pages-test.ts checks); every other page passes one, so it has a heading.
+  // A visible title would repeat the crumb right above it.
   return (
     <div className={cn('flex min-w-0 w-full flex-1 flex-col', compact ? 'px-2 pt-1 pb-2 md:px-3 md:pt-2' : 'px-4 pt-2 pb-4 md:px-6 md:pt-4')}>
       {pageTitle && <h1 className='sr-only'>{pageTitle}</h1>}

@@ -307,6 +307,12 @@ export function checkViews(b: BuildViews): string[] {
   for (const t of b.tabs) {
     const p = t.pack, w = `tab ${t.id}`;
     if (b.tabs.some((x) => x !== t && x.pack === p && x.id === t.id)) at(p, `${w} is declared twice`);
+    // mold_v0-298: a home tab's recent:<area> card lists the newest records of one of the build's areas.
+    for (const r of t.rail ?? []) {
+      if (!r.startsWith("recent:")) continue;
+      const ra = area(r.slice(7));
+      if (!ra) at(p, `${w}: rail ${r}: ${r.slice(7)} is not a record area of this build`);
+    }
     if ((b.pages?.[p] ?? []).includes(t.id)) at(p, `${w}: its id is also a page of the pack (both would be /app/${t.id})`);
     if (t.kind === "area" && !t.areas) {
       const a = area(t.area!);
@@ -521,6 +527,19 @@ const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0]!.toLowerCase() +
  * A runs or reports tab ("No <its label> yet.", the label the page is titled with): start one from the AI client, and a
  * link to the Setup page. Other kinds have none (null).
  */
+/**
+ * mold_v0-298: what a tab that narrows its area calls its records. A label that already names them ("Open requests") or
+ * reads as a noun of its own (a plural word such as "Fixes", or several words) stands alone; a single other word ("Open",
+ * "Closed") qualifies the area's own noun: "Open requests".
+ */
+export function subsetLabel(tab: string, area: string): string {
+  const t = tab.trim(), lt = t.toLowerCase(), la = area.trim().toLowerCase();
+  if (!la || lt === la) return t || area;
+  if (lt.includes(la) || lt.includes(singularOf(area).toLowerCase())) return t;
+  if (/\s/.test(t) || /[^s]s$/i.test(t) || /ies$/i.test(t)) return t;
+  return `${t} ${lowerFirst(area.trim())}`;
+}
+
 export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "kinds">, o: { addable: (area: string) => boolean; fill: (text: string) => string }): ResolvedEmpty | null {
   if (t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") return null;
   const { fill } = o;
@@ -533,7 +552,9 @@ export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "ki
     // A merged tab (mold_v0-135) is emptied by its own area, the first: the one that brings its rows first.
     const own = tabArea(t) ?? "";
     const a = b.areas.find((x) => x.name === own);
-    const label = a?.label ?? own;
+    // mold_v0-298: a tab that narrows its area (`filter`, as several in-page tabs of a sections tab over one area do) is
+    // named by its own label: "No open requests yet.", never the whole area's "No requests yet." on each of them.
+    const label = t.filter && t.label ? subsetLabel(t.label, a?.label ?? own) : (a?.label ?? own);
     const title = `No ${lowerFirst(label)} yet.`;
     const step = (b.steps ?? []).filter((s) => s.done_when === `record:${own}`).sort((x, y) => Number(y.pack === t.pack) - Number(x.pack === t.pack))[0];
     if (step) d = { title, text: stepText(step), cta: stepCta(step) };

@@ -24,8 +24,14 @@ export interface SetupEmailText { subject: string; body: string; clients: string
 export const MAX_EMAIL_CLIENTS = 5;
 const GROUPS: [ConnectClient['group'], string][] = [['chat', 'Chat apps'], ['agent', 'Coding agents'], ['editor', 'Editors']];
 
-/** A URL with its secret masked: a key or token in the query, a key in the path. */
-export const maskUrl = (url: string) => url.replace(/([?&](?:key|token|k)=)[^&]+/i, '$1••••••••').replace(/(oct_[A-Za-z0-9]{4})[A-Za-z0-9_-]+/, '$1••••••••');
+/**
+ * A URL with its secret masked: a key or token in the query, a key in the path, any key-shaped word (mold_v0-298: not
+ * tied to one build's key prefix; the same masking as portal/setup.tsx maskConnectionUrl).
+ */
+export const maskUrl = (url: string) => url
+  .replace(/([?&#](?:key|api_key|apikey|token|access_token|secret|k)=)[^&#]+/gi, '$1••••••••')
+  .replace(/(\/mcp\/)([^/?#]{12,})/i, '$1••••••••')
+  .replace(/\b([A-Za-z][A-Za-z0-9]{1,11}_[A-Za-z0-9_-]{4})[A-Za-z0-9_-]{12,}/g, '$1••••••••');
 
 /** The connection URL in a box: copy it; when it holds a key, show or hide it (hidden at first). */
 export function UrlField({ url, secret, className }: { url: string; secret: boolean; className?: string }) {

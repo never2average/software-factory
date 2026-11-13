@@ -191,9 +191,12 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         // mold_v0-256: a field linking to several areas opens the area its value belongs to, not the first declared.
         const ls = areaLinks(area).filter((y) => y.field === x.field).filter((y) => { const t = findArea(y.area); return !!t && may(t, "read", actor); });
         if (!ls.length) continue;
+        // mold_v0-298: no link set, no action (a button that can never work is noise); set but not found, disabled with why.
+        const lv = record.data[x.field!];
+        if (lv == null || lv === "" || (Array.isArray(lv) && !lv.length)) continue;
         const found = await linkedRecord(opts.org ?? null, area, x.field!, record, actor);
         const f = area.fields.find((y) => y.name === x.field);
-        out.push({ ...base, label: x.label ?? `Open ${(f?.label ?? x.field!).toLowerCase()}`, disabled: unavailable ?? (found ? null : `No ${(f?.label ?? x.field!).toLowerCase()} is set on this record.`),
+        out.push({ ...base, label: x.label ?? `Open ${(f?.label ?? x.field!).toLowerCase()}`, disabled: unavailable ?? (found ? null : `The linked ${(f?.label ?? x.field!).toLowerCase()} can't be found, or you can't open it.`),
           target: found ? { area: found.area, key: found.key } : null });
         break;
       }
@@ -205,8 +208,9 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const f = area.fields.find((y) => y.name === x.field);
         if (!f || f.encrypted) continue;
         const v = record.data[x.field!];
+        if (v == null || (typeof v === "string" && v.trim() === "")) continue; // mold_v0-298: nothing set, no action
         const url = typeof v === "string" && /^https?:\/\/[^\s]+$/i.test(v.trim()) && URL.canParse(v.trim()) ? v.trim() : null;
-        out.push({ ...base, label: x.label ?? `Open ${f.label.toLowerCase()}`, disabled: unavailable ?? (url ? null : `No ${f.label.toLowerCase()} is set on this record.`), url });
+        out.push({ ...base, label: x.label ?? `Open ${f.label.toLowerCase()}`, disabled: unavailable ?? (url ? null : `This record's ${f.label.toLowerCase()} is not a web address.`), url });
         break;
       }
       case "start_agent": {

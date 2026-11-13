@@ -34,7 +34,8 @@ function TabBody({ tab }: { tab: SettingsTabSpec }) {
   // The Team page and the person's API keys (mold_v0-280): kinds of the generated list only when a pack's team or keys
   // tab is declared inside Settings; each the shell's own page's body.
   if ((tab.kind as string) === 'team') return <TeamPanel />;
-  if ((tab.kind as string) === 'keys') return <KeysPanel />;
+  // mold_v0-298: the keys page under the tab's own label (one name: the strip's and the page's).
+  if ((tab.kind as string) === 'keys') return <KeysPanel label={tab.label} />;
   switch (tab.kind) {
     case 'credentials': return <CredentialsTab />;
     case 'email': return <EmailTab />;
@@ -71,9 +72,9 @@ export function SettingsPage({ group = null }: { group?: string | null }) {
         <div className='flex w-full flex-col'><TabBody tab={tab} /></div>
       ) : (
         <Tabs value={tab.id} onValueChange={(v) => setTab(String(v))} className='w-full gap-4'>
-          {/* On a phone a long strip wraps to a second line rather than scroll out of sight. */}
-          <div className='max-w-full overflow-x-auto pb-1.5' data-tab-strip-room=''>
-            <TabsList variant='line' className='flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-settings-tabs=''>
+          {/* mold_v0-298: on a phone a long strip wraps to a second line rather than clip its last tab out of sight. */}
+          <div className='max-w-full pb-1.5' data-tab-strip-room=''>
+            <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto' data-settings-tabs=''>
               {tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className='h-7 flex-none px-0'>{t.label}</TabsTrigger>)}
             </TabsList>
           </div>

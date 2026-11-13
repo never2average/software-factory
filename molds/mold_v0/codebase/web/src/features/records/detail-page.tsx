@@ -44,7 +44,7 @@ import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
   BADGE_CLASS, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
-  isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
+  isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
   type RelatedData, type RunsData
@@ -58,7 +58,7 @@ import { linesOf } from './log-lines';
 import { LogViewer } from './log-viewer';
 import { FormHost } from '@/features/tabs/tab-action';
 import { areaFieldLabel, findRecordArea } from './registry';
-import { Chips, chipValues, FieldValue, fieldText, refTarget, type RecordRow } from './record-pages';
+import { Chips, chipValues, FieldValue, fieldText, refTarget, refWords, type RecordRow } from './record-pages';
 import { inheritedVisibility, ShareButton, VisibilityBadge, visibilityOf } from '@/features/teams/visibility';
 
 type Links = { field: string; area: string; records: { key: string; title: string | null }[] }[];
@@ -134,7 +134,8 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, u
     : <span className='tabular-nums'>{numberWords(v, unit)}</span>;
   // mold_v0-256: an address in a fact wraps at its slashes (never inside a word), a piece too long for its box truncated.
   if (relative && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
-  return <span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
+  // mold_v0-298: a block (FieldValue may draw a log's table), still inline-sized beside a fact's label.
+  return <span className='block whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
 }
 
 /**
@@ -539,7 +540,9 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   headerActions?: ReactNode;
 }) {
   const [asked, setAsked] = useQueryState(tabParam);
-  const tab = openTab(layout, asked);
+  // mold_v0-298: the tabs whose condition holds on this record; ti stays the declared index (sectionKey matches the server's).
+  const tabs = shownTabs(layout, record.data, record.clocks);
+  const tab = openTab(layout, asked, tabs);
   const first = tab === layout.tabs[0];
   const ti = layout.tabs.indexOf(tab);
   // mold_v0-254: the page's actions and the open tab's related lists and runs, a workspace's; mold_v0-271: a staff page's
@@ -566,15 +569,15 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   return (
     <FormHost card={withActions && card ? <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div> : null} panel={panel}>
       <LaidOutBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} provenance={provenance} where={where}
-        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} headerActions={headerActions} />
+        credentials={credentials} tabs={tabs} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} headerActions={headerActions} />
     </FormHost>
   );
 }
 
 /** The laid-out page itself: the header, the notices, the tabs and their sections. */
-function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare, headerActions }: {
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tabs, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare, headerActions }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
-  provenance?: { by: string | null } | null; where: string; credentials: ReactNode; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
+  provenance?: { by: string | null } | null; where: string; credentials: ReactNode; /** mold_v0-298: the tabs shown for this record */ tabs: DetailLayout['tabs']; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
   page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
   headerActions?: ReactNode;
 }) {
@@ -586,12 +589,16 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
-  const title = titleField && !isEmptyValue(record.data[titleField.name]) ? String(record.data[titleField.name]) : record.title || record.key;
+  // mold_v0-298: the title field in words (a reference's record title, an option's label), as the breadcrumb says it.
+  const tv = titleField ? record.data[titleField.name] : undefined;
+  const title = titleField && !isEmptyValue(tv)
+    ? (refTarget(area, titleField) && record.ref_titles?.[titleField.name] ? refWords(tv, record.ref_titles[titleField.name]) : fieldText(titleField, tv, record.key)) || record.title || record.key
+    : record.title || record.key;
   const subtitle = field(h.subtitle);
   // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
     .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden : !!x.f));
-  const notices = shownNotices(layout, record.data, record.clocks);
+  const notices = shownNotices(layout, record.data, record.clocks, page.data?.facts); // mold_v0-298: a notice may test a computed fact
   const added = h.creator !== false && provenance?.by ? ADDED_BY[provenance.by] ?? provenance.by : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
@@ -668,11 +675,12 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
         );
       })}
 
-      {layout.tabs.length > 1 ? (
-        <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(layout.tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
-          <div className='max-w-full overflow-x-auto pb-1.5' data-tab-strip-room=''>
-            <TabsList variant='line' className='flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
-              {layout.tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
+      {tabs.length > 1 ? (
+        <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
+          {/* mold_v0-298: on a phone a long strip wraps to a second line rather than clip its last tab (as Settings). */}
+          <div className='max-w-full pb-1.5' data-tab-strip-room=''>
+            <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
+              {tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
             </TabsList>
           </div>
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>

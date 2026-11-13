@@ -461,9 +461,9 @@ export function refusal(o: Awaited<ReturnType<typeof overview>>, code: LimitCode
       return new LimitError(`You've used your ${$(me!.limit_usd!)} for ${month} (${$(me!.spent)} spent). ${askAdmins(o.admins, true)}`, 403,
         info(me!.cap_usd != null ? "you" : "account", me!.limit_usd, me!.spent));
     case "team_budget":
-      return new LimitError(`The ${t!.name} team has used its ${$(t!.budget_usd!)} for ${month}. ${askAdmins(o.admins, true)}`, 403, info("team", t!.budget_usd, t!.spent));
+      return new LimitError(`The ${t!.name} budget group has used its ${$(t!.budget_usd!)} for ${month}. ${askAdmins(o.admins, true)}`, 403, info("team", t!.budget_usd, t!.spent));
     case "rest_pot":
-      return new LimitError(`The shared ${$(o.rest.budget_usd)} for people outside a team budget is used up for ${month}. ${askAdmins(o.admins, true)}`, 403,
+      return new LimitError(`The shared ${$(o.rest.budget_usd)} for people outside a budget group is used up for ${month}. ${askAdmins(o.admins, true)}`, 403,
         info("account", o.rest.budget_usd, o.rest.spent));
     default: // buffer
       return new LimitError(`Your account has reached the part of its allowance available for launches (${$(acc.launchable_usd)} of ${$(acc.cap_usd)}). ` +
@@ -488,7 +488,7 @@ export interface RunCheck {
 /** "You have 2 runs running; you can have 2 at once …" (the app's run noun): the refusal for runs at once. */
 export function runsAtOnceError(running: number, maxRuns: number, setBy: "you" | "team" | "account" | null, admins: { name: string }[]) {
   return new LimitError(`You have ${running} ${fill(running === 1 ? "{run}" : "{runs}")} running; you can have ${maxRuns} at once ` +
-    `(set for ${setBy === "you" ? "you" : setBy === "team" ? "your team" : "the account"}). Wait for one to finish. ${askAdmins(admins, false)}`, 429,
+    `(set for ${setBy === "you" ? "you" : setBy === "team" ? "your budget group" : "the account"}). Wait for one to finish. ${askAdmins(admins, false)}`, 429,
     { code: "runs_at_once", set_by: setBy ?? undefined, admins, limit_usd: null, left_usd: null });
 }
 
@@ -732,41 +732,41 @@ const teamWords = (t: { budget_usd: number | null; max_concurrent_runs: number |
 export async function saveTeam(orgId: number, actor: Actor, t: { id?: unknown; name?: unknown; budget_usd?: unknown; max_concurrent_runs?: unknown }) {
   const has = (k: keyof typeof t) => t[k] !== undefined;
   const name = String(t.name ?? "").trim().slice(0, 60);
-  if ((!t.id || has("name")) && !name) throw new LimitError("A team needs a name");
+  if ((!t.id || has("name")) && !name) throw new LimitError("A budget group needs a name");
   const db = await getDb();
   try {
     if (t.id) {
       const sets: string[] = [], vals: unknown[] = [orgId, Number(t.id)];
       const set = (col: string, v: unknown) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
       if (has("name")) set("name", name);
-      if (has("budget_usd")) set("budget_usd", money(t.budget_usd, "Team budget"));
+      if (has("budget_usd")) set("budget_usd", money(t.budget_usd, "Group budget"));
       if (has("max_concurrent_runs")) set("max_concurrent_runs", count(t.max_concurrent_runs, RUNS));
       await db.transaction(async (tx) => {
         await lockRules(tx, orgId);
         const cols = "id, name, budget_usd, max_concurrent_runs";
         const read = (sql: string, params: unknown[]) => tx.query<Team>(sql, params).then((r) => r.map((x) => ({ ...x, id: Number(x.id), budget_usd: num(x.budget_usd), max_concurrent_runs: num(x.max_concurrent_runs) })));
         const [before] = await read(`SELECT ${cols} FROM usage_teams WHERE org_id = $1 AND id = $2 FOR UPDATE`, vals.slice(0, 2));
-        if (!before) throw new LimitError("No such team", 404);
+        if (!before) throw new LimitError("No such budget group", 404);
         if (!sets.length) return;
         const [after] = await read(`UPDATE usage_teams SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2 RETURNING ${cols}`, vals);
         await logChange(tx, orgId, actor, [
-          ...(before.name !== after!.name ? [`Renamed team ${before.name} to ${after!.name}`] : []),
+          ...(before.name !== after!.name ? [`Renamed budget group ${before.name} to ${after!.name}`] : []),
           ...diff(`${after!.name} budget`, before.budget_usd, after!.budget_usd, (v) => usdWord(v)),
           ...diff(`${after!.name} runs at once`, before.max_concurrent_runs, after!.max_concurrent_runs, (v) => countWord(v, "account setting")),
         ], { team: before }, { team: after });
       });
       return { id: Number(t.id) };
     }
-    const vals = [orgId, name, money(t.budget_usd, "Team budget"), count(t.max_concurrent_runs, RUNS)] as const;
+    const vals = [orgId, name, money(t.budget_usd, "Group budget"), count(t.max_concurrent_runs, RUNS)] as const;
     return await db.transaction(async (tx) => {
       await lockRules(tx, orgId);
       const [r] = await tx.query<{ id: number }>("INSERT INTO usage_teams (org_id, name, budget_usd, max_concurrent_runs) VALUES ($1, $2, $3, $4) RETURNING id", [...vals]);
       const after = { id: Number(r!.id), name, budget_usd: vals[2], max_concurrent_runs: vals[3] };
-      await logChange(tx, orgId, actor, [`Added team ${name} (${teamWords(after)})`], null, { team: after });
+      await logChange(tx, orgId, actor, [`Added budget group ${name} (${teamWords(after)})`], null, { team: after });
       return { id: after.id };
     });
   } catch (e) {
-    if (/unique|duplicate/i.test((e as Error).message)) throw new LimitError(`There is already a team called ${name}`, 409);
+    if (/unique|duplicate/i.test((e as Error).message)) throw new LimitError(`There is already a budget group called ${name}`, 409);
     throw e;
   }
 }
@@ -778,10 +778,10 @@ export async function deleteTeam(orgId: number, actor: Actor, id: number) {
     const [t] = await tx.query<Team & { people: number }>(
       `SELECT id, name, budget_usd, max_concurrent_runs, (SELECT count(*) FROM usage_members m WHERE m.org_id = $1 AND m.team_id = $2) AS people
          FROM usage_teams WHERE org_id = $1 AND id = $2`, [orgId, id]);
-    if (!t) throw new LimitError("No such team", 404);
+    if (!t) throw new LimitError("No such budget group", 404);
     await tx.query("DELETE FROM usage_teams WHERE org_id = $1 AND id = $2", [orgId, id]);
     const team = { id: Number(t.id), name: t.name, budget_usd: num(t.budget_usd), max_concurrent_runs: num(t.max_concurrent_runs) }, people = Number(t.people);
-    await logChange(tx, orgId, actor, [`Removed team ${t.name} (${teamWords(team)}${people ? `; ${people} ${people === 1 ? "person" : "people"} moved to Everyone else` : ""})`],
+    await logChange(tx, orgId, actor, [`Removed budget group ${t.name} (${teamWords(team)}${people ? `; ${people} ${people === 1 ? "person" : "people"} moved to Everyone else` : ""})`],
       { team, people }, null);
   });
 }
@@ -793,7 +793,7 @@ export async function setMember(org: { orgId: number; slug: string }, actor: Act
   if (!person) throw new LimitError("Not an active member of this account", 404);
   const db = await getDb();
   if (m.team_id != null && m.team_id !== "" && !(await db.query("SELECT 1 FROM usage_teams WHERE org_id = $1 AND id = $2", [org.orgId, Number(m.team_id)])).length)
-    throw new LimitError("No such team", 404);
+    throw new LimitError("No such budget group", 404);
   // Read under the rules lock, so only the fields sent change: a plan's reset or another admin's save made meanwhile stays.
   await db.transaction(async (tx) => {
     await lockRules(tx, org.orgId);
@@ -809,13 +809,13 @@ export async function setMember(org: { orgId: number; slug: string }, actor: Act
     };
     const before = { team_id: cur?.team_id ?? null, cap_usd: cur?.cap_usd ?? null, adjust_usd: cur?.adjust_usd ?? 0, can_run: cur?.can_run ?? null,
       max_concurrent_runs: cur?.max_concurrent_runs ?? null };
-    const teamName = (id: number | null) => (id == null ? "Everyone else" : teams.find((t) => t.id === id)?.name ?? "a removed team");
+    const teamName = (id: number | null) => (id == null ? "Everyone else" : teams.find((t) => t.id === id)?.name ?? "a removed budget group");
     const parts = [
-      ...diff("team", before.team_id, next.team_id, teamName),
+      ...diff("budget group", before.team_id, next.team_id, teamName),
       ...diff("own limit", before.cap_usd, next.cap_usd, (v) => usdWord(v)),
       ...diff("adjustment", before.adjust_usd, next.adjust_usd, (v) => usdWord(v)),
       ...diff("can launch:", before.can_run, next.can_run, (v) => (v == null ? "account setting" : v ? "yes" : "no")),
-      ...diff("runs at once", before.max_concurrent_runs, next.max_concurrent_runs, (v) => countWord(v, "team or account setting")),
+      ...diff("runs at once", before.max_concurrent_runs, next.max_concurrent_runs, (v) => countWord(v, "group or account setting")),
     ];
     await tx.query(
       `INSERT INTO usage_members (org_id, user_id, team_id, cap_usd, adjust_usd, can_run, max_concurrent_runs) VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -852,7 +852,7 @@ function applyDraft(saved: Saved, d: Draft, cap: number | null, names: Map<strin
   const teams = saved.teams.map((t) => ({ ...t }));
   for (const tb of (d.team_budgets ?? []) as { id?: unknown; budget_usd?: unknown }[]) {
     const t = teams.find((x) => x.id === Number(tb?.id));
-    if (!t) throw new LimitError("No such team", 422);
+    if (!t) throw new LimitError("No such budget group", 422);
     let v: number | null = null;
     try { v = money(tb.budget_usd, `${t.name} budget`); } catch (e) { bad(e); }
     parts.push(...diff(`${t.name} budget`, t.budget_usd, v, (x) => usdWord(x)));
@@ -863,8 +863,8 @@ function applyDraft(saved: Saved, d: Draft, cap: number | null, names: Map<strin
   const removed = new Set(((d.remove_teams ?? []) as unknown[]).map(Number));
   for (const id of removed) {
     const t = teams.find((x) => x.id === id);
-    if (!t) throw new LimitError("No such team", 422);
-    parts.push(`Removed team ${t.name}`);
+    if (!t) throw new LimitError("No such budget group", 422);
+    parts.push(`Removed budget group ${t.name}`);
   }
   const rows = new Map([...saved.rows].map(([k, r]) => [k, { ...r }]));
   const who = (id: string) => names.get(id) || id;
@@ -889,14 +889,14 @@ function applyDraft(saved: Saved, d: Draft, cap: number | null, names: Map<strin
 type Shape = ReturnType<typeof shape>;
 type Warning = { code: "over_allocated" | "rest_zero" | "empty_budgeted_team" | "set_amount_exceeds_budget" | "no_personal_limits"; message: string; team_id?: number | null };
 
-/** Plain-English warnings about a draft; none of them stops a save. */
+/** Plain-English warnings about a draft; none of them stops a save. (mold_v0-298: a usage team is a "budget group" in words.) */
 function warningsOf(o: Shape): Warning[] {
   const $ = (v: number) => usdWord(v);
   const out: Warning[] = [];
   if (o.over_by_usd > 0)
-    out.push({ code: "over_allocated", message: `Team budgets and the buffer are ${$(o.over_by_usd)} more than your ${$(o.budget_usd)} allowance. Lower a team budget or the buffer.` });
+    out.push({ code: "over_allocated", message: `Group budgets and the buffer are ${$(o.over_by_usd)} more than your ${$(o.budget_usd)} allowance. Lower a group budget or the buffer.` });
   if (o.budget_usd > 0 && o.rest.budget_usd === 0 && o.rest.members > 0)
-    out.push({ code: "rest_zero", message: `Nothing is left for the ${o.rest.members} ${o.rest.members === 1 ? "person" : "people"} outside a team budget, so they can't launch.`, team_id: null });
+    out.push({ code: "rest_zero", message: `Nothing is left for the ${o.rest.members} ${o.rest.members === 1 ? "person" : "people"} outside a budget group, so they can't launch.`, team_id: null });
   for (const t of o.teams)
     if (t.budget_usd != null && !t.members) out.push({ code: "empty_budgeted_team", message: `No one is in ${t.name}, so this ${$(t.budget_usd)} sits unused.`, team_id: t.id });
   if (o.policy.mode === "custom" && o.policy.default_cap_usd != null) {
@@ -944,7 +944,7 @@ export async function preview(org: { orgId: number; slug: string }, d: Draft) {
 export async function plan(org: { orgId: number; slug: string }, actor: Actor, d: Draft, version: string | undefined) {
   const want = version?.replace(/^W\//, "").replace(/"/g, "").trim();
   if (!want) throw new LimitError("Send If-Match with the version of the rules you edited (from GET /limits).", 428);
-  if (Array.isArray(d.remove_teams) && d.remove_teams.length) throw new LimitError("Delete a team on Teams; a plan doesn't remove teams.", 422);
+  if (Array.isArray(d.remove_teams) && d.remove_teams.length) throw new LimitError("Delete a budget group on Budget groups; a plan doesn't remove groups.", 422);
   const [cap, names] = await Promise.all([capFor(org.orgId), namesOf(org.slug)]);
   const db = await getDb();
   return db.transaction(async (tx) => {

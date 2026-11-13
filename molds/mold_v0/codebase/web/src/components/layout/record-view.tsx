@@ -26,6 +26,8 @@ import { Icons } from '@/components/icons';
 import { downloadCsv, today, type CsvValue } from '@/lib/csv';
 import { listAskContext, type ListAskContext } from '@/lib/toolbar-actions';
 import { ActionsMenu, ListAskPanel } from '@/components/layout/actions-menu';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyNotice, emptyNoteOf, isEmptyNote, type EmptyNote } from '@/features/status/empty-state';
 import { cn } from '@/lib/utils';
 
 export type { FilterRule, Op, PropType, RecordCol, RecordViewDef, RowAction, SortRule } from '@/components/layout/record-filters';
@@ -82,7 +84,12 @@ export function RecordView<T>({
   canOpen?: (row: T) => boolean;
   /** The row's ⋯ menu: toggles and actions live here, not in the cells. */
   actions?: (row: T) => RowAction[];
-  empty: ReactNode;
+  /**
+   * What the list says with no rows (mold_v0-298): a note (title, a sentence, the next step) or plain words, both drawn as
+   * the console's one empty state (features/status/empty-state.tsx; words are split into a title and the line under it);
+   * any other node is drawn as it is.
+   */
+  empty: ReactNode | EmptyNote;
   noun?: string;
   loading?: boolean;
   initialSize?: number;
@@ -476,9 +483,13 @@ export function RecordView<T>({
             {/* Loading and the empty state fill the whole table area below the headings (operator, 2026-11-08), centred. */}
             {(loading || data.items.length === 0) && (
               <div style={frameW ? { width: frameW } : undefined} className='text-muted-foreground sticky left-0 flex flex-1 items-center justify-center px-6 py-12 text-center text-sm whitespace-normal' data-list-empty={loading ? undefined : ''}>
-                {loading ? 'Loading…' : narrowed ? (
-                  <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='outline' size='xs' onClick={clearAll}>Clear filters</Button>}</span>
-                ) : <div className='max-w-xl'>{empty}</div>}
+                {/* mold_v0-298: loading is skeleton rows, and nothing (none yet, or none matching) the console's one empty state. */}
+                {loading ? <ListLoading /> : narrowed ? (
+                  <EmptyNotice className='w-full max-w-xl' note={{
+                    title: 'Nothing matches.', text: `No ${noun} match the search or filters. Try other words, or clear them to see the whole list.`,
+                    action: <Button variant='outline' size='sm' onClick={clearAll}>Clear filters</Button>
+                  }} />
+                ) : <ListEmpty empty={empty} />}
               </div>
             )}
           </div>
@@ -507,6 +518,26 @@ export function RecordView<T>({
       )}
     </div>
   );
+}
+
+/** mold_v0-298: a list loading: a few skeleton rows in the table's place (as the pages' LoadingCards), read as "Loading". */
+function ListLoading() {
+  return (
+    <div className='flex w-full max-w-3xl flex-col gap-3' role='status' aria-label='Loading'>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className='flex items-center gap-4'>
+          <Skeleton className='h-4 w-2/5' /><Skeleton className='h-4 flex-1' /><Skeleton className='h-4 w-16' />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A list's empty state: a note or plain words as the console's one empty state; any other node as it is. */
+function ListEmpty({ empty }: { empty: ReactNode | EmptyNote }) {
+  if (empty === '' || empty == null || empty === false) return null;
+  const note = isEmptyNote(empty) ? empty : typeof empty === 'string' ? emptyNoteOf(empty) : null;
+  return note ? <EmptyNotice className='w-full max-w-xl' note={note} /> : <div className='max-w-xl'>{empty as ReactNode}</div>;
 }
 
 function MenuItem({ a, sep }: { a: RowAction; sep: boolean }) {

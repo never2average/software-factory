@@ -249,11 +249,14 @@ try {
     const noRail = (what: string, json: unknown, re: RegExp) => { refused(`rail: ${what}`, tryPack(json), re); r++; };
     noRail("on an overview that does not include setup", home({ include: ["notices"], rail: ["notices"] }), /tabs\[0\]\.rail: rail is for a home tab: an overview tab that includes setup/);
     noRail("a card twice", home({ include: ["setup", "notices"], rail: ["notices", "notices"] }), /tabs\[0\]\.rail: a card is listed twice/);
-    noRail("an unknown card", home({ include: ["setup"], rail: ["billing"] }), /tabs\[0\]\.rail\[0\]: one of the shell's cards \(TAB_RAIL\) or chart:<one of the pack's number charts>/);
+    noRail("an unknown card", home({ include: ["setup"], rail: ["billing"] }), /tabs\[0\]\.rail\[0\]: one of the shell's cards \(TAB_RAIL\), chart:<one of the pack's charts> or recent:<a record area>/);
     noRail("three cards", home({ include: ["setup", "notices"], rail: ["notices", "chart:numbers", "journeys"] }), /tabs\[0\]\.rail: Too big/);
     noRail("notices the tab does not include", home({ include: ["setup"], rail: ["notices"] }), /tabs\[0\]\.rail: the notices card is for a tab that includes notices/);
     noRail("a chart the pack does not declare", home({ include: ["setup"], rail: ["chart:nope"] }), /tab home: rail chart:nope: this pack declares no chart nope/);
-    noRail("a chart that is not a number chart", home({ include: ["setup"], rail: ["chart:summary"] }), /tab home: rail chart:summary: a card shows a number chart \(its tiles\); summary is a bar chart/);
+    // mold_v0-298: a bar chart is a rail card too; a recent:<area> card names one of the build's record areas.
+    const barRail = tryPack(home({ include: ["setup"], rail: ["chart:summary"] }));
+    assert.equal(barRail.r.status, 0, `rail chart:summary (a bar chart) builds: ${barRail.r.stderr}`);
+    noRail("a recent card of an area the build lacks", home({ include: ["setup"], rail: ["recent:nope"] }), /tab home: rail recent:nope: nope is not a record area of this build/);
     noRail("charts_title on a tab that is not a home tab", home({ include: ["notices"], charts_title: "Numbers" }), /tabs\[0\]\.charts_title: charts_title is for a home tab with charts/);
     noRail("charts_title on a home tab with no charts", home({ include: ["setup"], charts: undefined, charts_title: "Numbers" }), /tabs\[0\]\.charts_title: charts_title is for a home tab with charts/);
     // Every build has journeys (mold_v0-175): the picker's Get set up, with or without the journeys component.
@@ -308,7 +311,7 @@ try {
       "/app/notices -> /app", "/app/notices/:path* -> /app",
     ], "every redirect takes one hop to the home tab, at /app");
     console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, drawn at /app with its own address and /app/notices redirected there in one hop`);
-    console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);
+    console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared chart, an unknown recent area, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);
   }
 
   // ---------- 2d'. a list tab's primary action (mold_v0-208: tabs[].action) ----------

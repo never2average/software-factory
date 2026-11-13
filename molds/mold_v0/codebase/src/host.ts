@@ -265,7 +265,7 @@ export interface AccountStagesConfig {
 /** The Setup page's own steps, its shell steps' words, its note for those who may not launch and its workflow (src/app.ts setup). */
 export interface SetupConfig {
   steps?: { id: string; label: string; help: string; help_text_only?: string; prompt?: string; optional?: boolean; launch?: boolean; after?: string; done_when: string }[];
-  shell_steps?: Record<string, { label?: string; help?: string; prompt?: string }>;
+  shell_steps?: Record<string, { label?: string; help?: string; prompt?: string; /** mold_v0-298: connected, tools, first_call only */ optional?: boolean }>;
   viewer_note?: string;
   workflow?: { id: string; label: string; tools: string[]; prompt: string }[];
 }

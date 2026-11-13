@@ -4,6 +4,7 @@ import { NavGroup } from '@/types';
 import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 import { featureOn } from './features';
+import { sessionEngine } from '@/features/admin/engine';
 
 /**
  * mold_v0-284: Agent configuration's in-page tabs, with agent_harness on: Configuration (the settings) and Profiles (the
@@ -94,6 +95,9 @@ export function mergeNav(groups: NavGroup[]): NavGroup[] {
   return out;
 }
 
+/** Whether /app/usage only leads on to the Activity page the packs already put in the sidebar (mold_v0-298). */
+const usageLeadsToActivity = !sessionEngine() && usagePortalNav.some((g) => g.items.some((i) => i.url === '/app/activity'));
+
 /** The shell's own /app sidebar (with a host pack's entries among its own), and what the declarative packs add after it. */
 const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
   ...withHostPortalNav([
@@ -104,7 +108,10 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
     {
       label: 'Insights',
       items: [
-        { title: 'Usage', url: '/app/usage', icon: 'chartLine', shortcut: ['g', 'u'], items: [] },
+        // mold_v0-298: without the session engine /app/usage only leads on to /app/activity, so when the packs' Activity
+        // entry is in the sidebar, Activity takes Usage's place (one entry for the page; its own entry below is merged away).
+        usageLeadsToActivity ? { title: 'Activity', url: '/app/activity', icon: 'chartLine' as const, items: [] }
+          : { title: 'Usage', url: '/app/usage', icon: 'chartLine' as const, shortcut: ['g', 'u'] as [string, string], items: [] },
         // mold_v0-260 (flag run_analytics): the workspace's runs broken down (a declared sidebar reaches it from Activity).
         ...(featureOn('run_analytics') ? [{ title: 'Run analytics', url: '/app/run-analytics', icon: 'trendingUp' as const, items: [] }] : [])
       ]
