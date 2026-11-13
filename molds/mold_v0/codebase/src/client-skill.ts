@@ -1,6 +1,6 @@
 /**
  * The client skill's files and zip (mold_v0-144; what it holds and its config: src/client-skill-config.ts). Built from
- * the build's profile, its config (src/client-skill.generated.ts), the address AI clients connect to and what the
+ * the build's profile, its config (src/client-skill.generated.ts), the address agents connect to and what the
  * customer MCP server itself lists (its instructions and tools, asked over an in-memory client as the customer docs'
  * tool table is: scripts/export-mcp-tools.ts). Kept per process and address: the build's tools do not change while it
  * runs. The zip is deterministic: sorted entries, one fixed time, so it changes only when its content does.

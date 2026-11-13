@@ -1,5 +1,5 @@
 'use client';
-// /admin/connect: connect an AI client (Claude Code, Cursor, Claude Desktop) to the admin MCP server (src/admin-mcp.ts,
+// /admin/connect: connect an agent (Claude Code, Cursor, Claude Desktop) to the admin MCP server (src/admin-mcp.ts,
 // /admin/mcp). Clients sign in with Clerk like the customer connector; only platform admins get in, and each tool
 // needs the role its panel button needs. The URL, skills and tools come from GET /mcp, so they match the server.
 import { useState } from 'react';
@@ -40,7 +40,7 @@ export function AdminConnect() {
       {isLoading || !data ? <LoadingCards count={2} /> : (
         <div className='mx-auto flex w-full max-w-3xl flex-col gap-8'>
           <Section title='Connect' action={
-            <div className='flex gap-1' role='tablist' aria-label='Your AI client'>
+            <div className='flex gap-1' role='tablist' aria-label='Your agent'>
               {list.map((x) => (
                 <Button key={x.id} size='xs' role='tab' aria-selected={x.id === c.id} variant={x.id === c.id ? 'secondary' : 'ghost'} onClick={() => setPick(x.id)}><AgentLogo id={x.logo} size={12} aria-hidden='true' />{x.label}</Button>
               ))}

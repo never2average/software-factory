@@ -526,7 +526,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Suspend {suspend?.email}?</DialogTitle>
-            <DialogDescription>Their AI client and this portal stop working for them within a minute. They stay in the account, and you can restore access any time.</DialogDescription>
+            <DialogDescription>Their agent and this portal stop working for them within a minute. They stay in the account, and you can restore access any time.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant='outline' onClick={() => setSuspend(null)}>Keep access</Button>

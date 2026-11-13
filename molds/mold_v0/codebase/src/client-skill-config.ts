@@ -1,5 +1,5 @@
 /**
- * The client skill (mold_v0-144): a skill bundle for AI clients (a folder with SKILL.md, the Agent Skills format Claude,
+ * The client skill (mold_v0-144): a skill bundle for agents (a folder with SKILL.md, the Agent Skills format Claude,
  * Claude Code and other clients load), generated for every build from its own profile and config and served as a zip
  * from the public install page (src/install-pages.ts: /install links it, /install/skill.zip and
  * /downloads/<name>-skill.zip answer it). What it holds (src/client-skill.ts writes it):
@@ -32,7 +32,7 @@
 /** The generated parts' words, each with its neutral default. Placeholders: {product}, {summary}, {url}, {install}. */
 export const CLIENT_SKILL_WORDS = {
   /** The default description (no `description` in the config). */
-  description: "{summary} Use it when the user wants to work with {product} from this AI client. Needs the {product} connector (an MCP server).",
+  description: "{summary} Use it when the user wants to work with {product} from this agent. Needs the {product} connector (an MCP server).",
   /** The default body's headings and table. */
   instructions_heading: "How to work with {product}",
   tools_heading: "Tools",
@@ -41,7 +41,7 @@ export const CLIENT_SKILL_WORDS = {
   no_tools: "The connector lists no tools yet.",
   /** The section after every body: where the connector is. */
   connect_heading: "Connecting {product}",
-  connect_text: "This skill works through the {product} connector, an MCP server at {url}. Add it to your AI client as a custom connector with that address and sign in when the client asks. Each client's steps are at {install}.",
+  connect_text: "This skill works through the {product} connector, an MCP server at {url}. Add it to your agent as a custom connector with that address and sign in when the client asks. Each client's steps are at {install}.",
   tools_link: "Every tool the connector offers, and what it does, is in reference/tools.md.",
   /** reference/tools.md. */
   tools_title: "{product} tools",
@@ -90,7 +90,7 @@ const textProblem = (v: unknown): string | null =>
 export function skillNameProblem(v: unknown): string | null {
   if (typeof v !== "string" || !NAME.test(v) || v.length > 64) return "lowercase letters, digits and single hyphens, up to 64 characters";
   const bad = RESERVED.find((w) => v.includes(w));
-  return bad ? `may not contain "${bad}" (a word AI clients reserve)` : null;
+  return bad ? `may not contain "${bad}" (a word agents reserve)` : null;
 }
 
 /** Every problem of a `client_skill` block as "client_skill.<field>: message"; [] when it is well formed. */

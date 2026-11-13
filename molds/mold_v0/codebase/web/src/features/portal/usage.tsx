@@ -1,5 +1,5 @@
 'use client';
-// /app Usage: the team's own activity (Pick rate, what agents picked, is its own page: src/features/portal/pick-rate.tsx) across every AI client, its simulations and what agents picked, and model spend,
+// /app Usage: the team's own activity (Pick rate, what agents picked, is its own page: src/features/portal/pick-rate.tsx) across every agent, its simulations and what agents picked, and model spend,
 // for everyone or for the people picked in the People filter (server-side). The layout is admin Analytics': one stat
 // strip, then a grid of cells sharing hairlines, two per row at most (components/layout/chart-grid).
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -81,7 +81,7 @@ export function UsagePage() {
   return (
     <PageContainer
       pageTitle='Usage'
-      pageDescription={users.length ? `${users.length === 1 ? 'One person' : `${users.length} people`} on your team, across every AI client.` : 'Your whole team, across every AI client.'}
+      pageDescription={users.length ? `${users.length === 1 ? 'One person' : `${users.length} people`} on your team, across every agent.` : 'Your whole team, across every agent.'}
       pageHeaderAction={
         <div className='flex flex-wrap items-center gap-2'>
           <MultiSelectFilter noun='use cases' icon={<Icons.route />} options={ucOpts} value={useCases} onChange={setUseCases} />
@@ -176,7 +176,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
           <Box title='Workflow adoption' description="Share of each workflow's tools your team called in this period.">
             <RankBars data={(c?.workflow ?? []).map((w) => ({ name: w.label, value: w.total ? Math.round((w.used / w.total) * 100) : 0 }))} label='Tools used' color='var(--chart-3)' format={(v) => `${v}%`} empty='No workflow used yet in this period.' />
           </Box>
-          <Box title='AI clients used' description="Tool calls by the AI client of the caller's latest connection.">
+          <Box title='Agents used' description="Tool calls by the agent of the caller's latest connection.">
             <RankBars data={top(c?.clients ?? [], (x) => x.calls).map((x) => ({ name: x.client, value: x.calls }))} label='Tool calls' color='var(--chart-4)' format={num} mono empty='No tool calls in this period.' />
           </Box>
         </div>

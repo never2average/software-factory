@@ -33,7 +33,7 @@ export const CONSOLE_PAGES = {
   schedules: "/app/schedules",
   notices: "/app/notices",
   files: "/app/files",
-  // Each person's connected apps (mold_v0-087): the AI apps signed in to /mcp, with Revoke (built-in sign-in), or where
+  // Each person's connected apps (mold_v0-087): the agents signed in to /mcp, with Revoke (built-in sign-in), or where
   // the sign-in provider keeps them (Clerk).
   "connected-apps": "/app/connected-apps",
   // Each person's own API keys (mold_v0-007; the sidebar's footer link): hidden (mold_v0-171), the link and the page go;

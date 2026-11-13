@@ -313,7 +313,7 @@ try {
     const cm = await connect(orgOf("design"));
     const schema = JSON.stringify((await cm.client.listTools()).tools.find((t) => t.name === "fixture_teams_create_notes")?.inputSchema ?? {});
     assert.ok(schema.includes("visibility") && !JSON.stringify((await cm.client.listTools()).tools.find((t) => t.name === "fixture_teams_create_places")?.inputSchema ?? {}).includes("visibility"), "create_notes takes visibility; create_places (no visibility) does not");
-    const made = await cm.call("fixture_teams_create_notes", { key: "n-mcp", title: "From an AI client", data: { topic: "plan" }, visibility: { mode: "team", team: "Design" } });
+    const made = await cm.call("fixture_teams_create_notes", { key: "n-mcp", title: "From an agent", data: { topic: "plan" }, visibility: { mode: "team", team: "Design" } });
     assert.ok(!made.isError, JSON.stringify(made.content));
     assert.equal(made.structuredContent.record.visibility.mode, "team");
     await cm.close();

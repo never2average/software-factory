@@ -1,7 +1,7 @@
 'use client';
 // /app/context (mold_v0-142; src/account-context.ts): the account's memory, one page each for the company, a user and a
 // subject (scope `product`), as the build's pack.json `memory` turns them on. Each page shows the memory list, saves to
-// it (Add memory and its docked editor), searches it, and exports or imports it as CSV or JSON. The AI client reads and
+// it (Add memory and its docked editor), searches it, and exports or imports it as CSV or JSON. The agent reads and
 // writes the same memory (pack.json memory.tools). Its words are the build's (memory.words, memory.pages.titles).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';

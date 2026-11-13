@@ -64,7 +64,7 @@ export function ProfileLinks() {
   if (!path.startsWith('/app')) return null;
   const links = [
     ...(keysHref() ? [{ href: keysHref()!, label: 'API keys', what: 'Keys for tools that connect to this workspace as you' }] : []),
-    ...(shown('/app/connected-apps') ? [{ href: '/app/connected-apps', label: 'Connected apps', what: 'AI apps connected to this workspace as you, and how to disconnect one' }] : []),
+    ...(shown('/app/connected-apps') ? [{ href: '/app/connected-apps', label: 'Connected apps', what: 'Agents connected to this workspace as you, and how to disconnect one' }] : []),
   ];
   if (!links.length) return null;
   return (

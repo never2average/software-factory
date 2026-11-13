@@ -265,7 +265,7 @@ cookie reaches it); admin writes authenticated by that cookie carry `X-App-Admin
 
 ## Sign-in
 
-Clerk signs people in everywhere: the portal, the admin panel and the AI client's OAuth on `/mcp`. Which methods are
+Clerk signs people in everywhere: the portal, the admin panel and the agent's OAuth on `/mcp`. Which methods are
 offered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Clerk dashboard, not in the app.
 
 ## Platform admins

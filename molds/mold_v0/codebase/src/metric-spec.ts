@@ -517,14 +517,14 @@ const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0]!.toLowerCase() +
  * A tab's empty state (mold_v0-107): its pack.json `empty` where it says one, the shell's default for the rest. The
  * shell's text is a template in the build's words (`fill`: src/words.ts fillWith with the build's words and name); a
  * pack's own text and labels are put in as they are, never filled. `addable(area)`: the area's create tool is on the
- * customer MCP server (src/mcp-catalog.ts: a workspace area, writable, not withheld), so an AI client can add a record.
+ * customer MCP server (src/mcp-catalog.ts: a workspace area, writable, not withheld), so an agent can add a record.
  * The default for an area tab, in order:
  *   1. an onboarding step that is done when the area has a record (done_when record:<area>): its help, and a link to it
  *   2. a shared (platform) area: the platform adds its records
- *   3. an addable area: ask the AI client to add one, and a link to the Setup page (where a client is connected)
+ *   3. an addable area: ask the agent to add one, and a link to the Setup page (where a client is connected)
  *   4. an area of a pack with job kinds: its runs add them, and a link to the Setup page
  *   5. else: they appear here as they are added
- * A runs or reports tab ("No <its label> yet.", the label the page is titled with): start one from the AI client, and a
+ * A runs or reports tab ("No <its label> yet.", the label the page is titled with): start one from the agent, and a
  * link to the Setup page. Other kinds have none (null).
  */
 /**
@@ -559,11 +559,11 @@ export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "ki
     const step = (b.steps ?? []).filter((s) => s.done_when === `record:${own}`).sort((x, y) => Number(y.pack === t.pack) - Number(x.pack === t.pack))[0];
     if (step) d = { title, text: stepText(step), cta: stepCta(step) };
     else if (a?.scope === "platform") d = { title, text: fill("Every {workspace} shares these. They appear here once they are added for everyone."), cta: null };
-    else if (o.addable(own)) d = { title, text: fill("Ask your AI client to add one. Not connected yet? The Setup page shows how."), cta: SETUP };
+    else if (o.addable(own)) d = { title, text: fill("Ask your agent to add one. Not connected yet? The Setup page shows how."), cta: SETUP };
     else if ((b.kinds ?? []).some((k) => k.pack === a?.pack)) d = { title, text: fill("They appear here as {runs} add them. The Setup page shows how to start one."), cta: SETUP };
     else d = { title, text: fill("They appear here as they are added."), cta: null };
-  } else if (t.kind === "runs") d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your AI client to start one: it shows here while it runs, and after."), cta: SETUP };
-  else d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your AI client to start one: it shows here with its results once it finishes."), cta: SETUP };
+  } else if (t.kind === "runs") d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your agent to start one: it shows here while it runs, and after."), cta: SETUP };
+  else d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your agent to start one: it shows here with its results once it finishes."), cta: SETUP };
   const e = t.empty;
   if (!e) return d;
   let cta = d.cta, text = e.text ?? d.text;
@@ -577,7 +577,7 @@ export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "ki
   } else if (c?.action?.startsWith("run:")) {
     const k = (b.kinds ?? []).find((x) => x.pack === t.pack && x.name === c.action!.slice(4));
     cta = { label: c.label ?? SETUP.label, href: SETUP.href };
-    if (e.text === undefined) text = `Ask your AI client to start “${k?.label ?? c.action.slice(4)}”. Not connected yet? The Setup page shows how.`;
+    if (e.text === undefined) text = `Ask your agent to start “${k?.label ?? c.action.slice(4)}”. Not connected yet? The Setup page shows how.`;
   }
   return { title: d.title, text, cta };
 }

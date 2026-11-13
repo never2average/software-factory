@@ -16,7 +16,7 @@
  *   github_app.setup    the same app: its install comes back with the person's authorization (what the app needs)
  *   github_app.webhook  the same app: the webhook address GitHub holds (GET /app/hook/config with the app's own token)
  *   oauth.<pack>.<name> each credential OAuth provider with a client id in the key vault: <front door>/api/credential-connections/callback
- *   mcp                 AI clients' sign-in: they bring their own return addresses (nothing to register at a provider);
+ *   mcp                 agents' sign-in: they bring their own return addresses (nothing to register at a provider);
  *                       the check is that their sign-in is on the front door (built-in) or that Clerk lets them register
  *
  * THE ANSWERS: pass, fail or unknown, never a guess. Only an answer the provider gives BEFORE anyone signs in, in the
@@ -46,7 +46,7 @@ export interface SignInFlow {
   id: string;
   label: string;
   provider: string;
-  /** The exact address to register at the provider (null: nothing to register, e.g. AI clients). */
+  /** The exact address to register at the provider (null: nothing to register, e.g. Agents). */
   redirect_uri: string | null;
   /** The front-door path the address is made of, so the factory can make it for another front door; null: not on it. */
   path: string | null;
@@ -378,9 +378,9 @@ async function connectionFlows(front: string, since: string, seen: (k: string) =
   return out;
 }
 
-/** AI clients' sign-in on /mcp: their own return addresses; on the front door (built-in) or Clerk lets them register. */
+/** Agents' sign-in on /mcp: their own return addresses; on the front door (built-in) or Clerk lets them register. */
 async function mcpFlow(front: string): Promise<SignInFlow> {
-  const base = { id: "mcp", label: "AI clients' sign-in (MCP)", provider: authProvider() === "clerk" ? "clerk" : "app", redirect_uri: null, path: "/mcp" };
+  const base = { id: "mcp", label: "Agents' sign-in (MCP)", provider: authProvider() === "clerk" ? "clerk" : "app", redirect_uri: null, path: "/mcp" };
   if (authProvider() === "clerk") {
     const { frontendApi } = await import("./clerk.js");
     const fapi = frontendApi();
@@ -390,15 +390,15 @@ async function mcpFlow(front: string): Promise<SignInFlow> {
     return flow({ ...base, where: "Clerk dashboard → Configure → OAuth applications → Settings",
       steps: ["Open https://dashboard.clerk.com and click the application this app signs people in with.", "Click Configure along the top, then OAuth applications on the left, then the Settings tab.",
         "Turn on Dynamic client registration (and Client ID Metadata Documents, if it is there).", "Click Save if a Save button appears."],
-      ...(!j ? { result: "unknown" as const, detail: "Clerk's sign-in server did not say whether AI clients may register" }
-        : on ? { result: "pass" as const, detail: "AI clients register their own return addresses with Clerk: nothing to add for them" }
-        : { result: "fail" as const, detail: "Clerk lets no AI client register itself, so AI clients cannot sign in" }) });
+      ...(!j ? { result: "unknown" as const, detail: "Clerk's sign-in server did not say whether agents may register" }
+        : on ? { result: "pass" as const, detail: "Agents register their own return addresses with Clerk: nothing to add for them" }
+        : { result: "fail" as const, detail: "Clerk lets no agent register itself, so agents cannot sign in" }) });
   }
   const at = origin(mcpUrl()), want = origin(front);
   return flow({ ...base, where: "the factory: domain.py switch, then a redeploy",
-    steps: ["In the factory folder run (it sets the address AI clients connect to, then the deploy applies it):", "    python3 .claude/scripts/domain.py <app> switch", "    python3 .claude/scripts/provision.py <app> --deploy"],
-    ...(at === want ? { result: "pass" as const, detail: `AI clients sign in on ${want}/mcp and bring their own return addresses: nothing to add for them` }
-      : { result: "fail" as const, detail: `AI clients are told to sign in at ${at}, not on the front door ${want}` }) });
+    steps: ["In the factory folder run (it sets the address agents connect to, then the deploy applies it):", "    python3 .claude/scripts/domain.py <app> switch", "    python3 .claude/scripts/provision.py <app> --deploy"],
+    ...(at === want ? { result: "pass" as const, detail: `Agents sign in on ${want}/mcp and bring their own return addresses: nothing to add for them` }
+      : { result: "fail" as const, detail: `Agents are told to sign in at ${at}, not on the front door ${want}` }) });
 }
 
 // ---------------------------------------------------------------- the report: stored, at most an hour old, at most once a minute on demand

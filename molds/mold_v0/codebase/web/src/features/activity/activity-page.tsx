@@ -59,7 +59,7 @@ function useReport<T>(load: (q: string) => Promise<T>, range: DateRange) {
   return state;
 }
 
-/** What people did: runs and their spend, who was active, how often the AI apps called in; per member, the latest runs. */
+/** What people did: runs and their spend, who was active, how often the agents called in; per member, the latest runs. */
 function Plain({ r }: { r: WorkspaceReport }) {
   const w = r.words;
   return (
@@ -134,7 +134,7 @@ function Technical({ r }: { r: WorkspaceReport }) {
             <RankBars data={r.retention.filter((x) => x.rate != null).map((x) => ({ name: `Week of ${x.week}`, value: Math.round((x.rate ?? 0) * 100) }))}
               label='Came back' color='var(--chart-2)' format={(v) => `${v}%`} empty='Not enough weeks of activity yet.' />
           </Box>
-          <Box title='AI apps used' description='Calls by the AI app (and its version) that made them.'>
+          <Box title='Agents used' description='Calls by the agent (and its version) that made them.'>
             <RankBars data={top(r.clients, (c) => c.calls).map((c) => ({ name: c.version ? `${c.name} ${c.version}` : c.name, value: c.calls }))} label='Calls' color='var(--chart-4)' format={num} mono empty='No calls in this period.' />
           </Box>
         </div>
@@ -168,7 +168,7 @@ export function WorkspaceActivityPage() {
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards /> : nothing ? (
         <EmptyState id='activity-empty' empty={{
           title: 'No activity in this period',
-          text: `Activity shows here once an AI app connects to this ${data.words.workspace} or someone starts a ${data.words.run}. Setup shows how to connect one; or pick a longer period above.`,
+          text: `Activity shows here once an agent connects to this ${data.words.workspace} or someone starts a ${data.words.run}. Setup shows how to connect one; or pick a longer period above.`,
           cta: { label: 'Go to Setup', href: '/app' }
         }} />
       ) : (

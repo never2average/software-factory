@@ -42,7 +42,7 @@ export interface HostGuideData {
 
 const cell = (s: string) => s.replace(/\|/g, '\\|');
 /** Connecting a client: the shell's Getting started page, and the generated guide's (./pack-guide.ts) first section. */
-const connectText = (setupPage: string) => `Connect your AI client to this ${fill('{workspace}')}'s MCP server from the **${setupPage}** page: pick your client, follow its
+const connectText = (setupPage: string) => `Connect your agent to this ${fill('{workspace}')}'s MCP server from the **${setupPage}** page: pick your client, follow its
 one step, then press **Test my connection**. ${keysOff ? 'Every client signs in with your account (OAuth): there is no key to copy.' : `Clients that sign in (OAuth) need no key; the others send an API key in a
 header, never in a URL.`} The public install pages at \`/install\` show every client's setup.`;
 /** The data trail (mold_v0-197, profile `audit.data`): its owners read it on Billing's Access log tab (mold_v0-209). */
@@ -99,7 +99,7 @@ function hostPages(h: HostGuideData, catalog: ToolCatalog): { groups: [string, s
   const tools = groupedToolsMarkdown(h.tool_groups, h.prompts_intro, catalog);
   const own = h.pages.some((p) => p.title === h.tools_title);
   const all: GuidePage[] = [...h.pages.map((p) => ({ slug: p.slug, title: p.title, group: p.group, body: p.title === h.tools_title ? [p.body, tools].filter(Boolean).join('\n\n') : p.body })),
-    ...(own ? [] : [{ slug: slugify(h.tools_title), title: h.tools_title, group: 'Reference', body: ['Your AI client calls these for you; you rarely name them.', tools].filter(Boolean).join('\n\n') }])];
+    ...(own ? [] : [{ slug: slugify(h.tools_title), title: h.tools_title, group: 'Reference', body: ['Your agent calls these for you; you rarely name them.', tools].filter(Boolean).join('\n\n') }])];
   const order = [...h.groups, 'Reference'].filter((g, i, xs) => xs.indexOf(g) === i);
   const groups = order.map((g) => [g, all.filter((p) => p.group === g).map((p) => p.title)] as [string, string[]]).filter(([, ts]) => ts.length);
   return { groups, pages: groups.flatMap(([g]) => all.filter((p) => p.group === g)) };

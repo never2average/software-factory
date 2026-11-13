@@ -5,17 +5,17 @@
  *
  * What it keeps, in the shell's own tables (sql/migrations/0025_account_context_memory.sql):
  *  - the company's context (account_context: what it does, who it serves, names it tracks, its own terms, notes for the
- *    AI client), set by the account's owners;
+ *    Agent), set by the account's owners;
  *  - each person's own (user_context: role, focus, interests, answer style, notes), set by that person (or an owner);
  *  - memory (context_memories): short items about the company, one person, or one subject (scope `product`: one of
  *    the account's own, which a host pack's `context.subjects` hook lists, else any name as written), saved on the
- *    /app/context pages or by the AI client.
+ *    /app/context pages or by the agent.
  * The company's and the person's context, with the latest memory, are appended to the MCP server's instructions when a
- * client connects (contextFor; src/http.ts). The AI client saves and searches memory with the two tools pack.json
+ * client connects (contextFor; src/http.ts). The agent saves and searches memory with the two tools pack.json
  * `memory.tools` names (src/account-context-tools.ts). The portal's routes are contextRoutes (src/app.ts), the pages
  * the console's /app/context/<section> (web/src/features/context).
  *
- * Every text it shows or tells the AI client is a word of pack.json `memory.words` (MEMORY_WORDS: each with its neutral
+ * Every text it shows or tells the agent is a word of pack.json `memory.words` (MEMORY_WORDS: each with its neutral
  * default), so a product says it in its own words and the shell in none.
  */
 import type { Request, Response, Router } from "express";
@@ -194,7 +194,7 @@ export async function deleteMemory(orgId: number, id: number) {
   await (await getDb()).query("DELETE FROM context_memories WHERE org_id = $1 AND id = $2", [orgId, id]);
 }
 
-// ---------- what the AI client is told when it connects ----------
+// ---------- what the agent is told when it connects ----------
 
 /**
  * The account's and the person's context and the latest memory, appended to the server's instructions. Empty when
@@ -287,9 +287,9 @@ export function contextRoutes(api: Router, h: PortalHelpers & { perms(res: Respo
     if (!scopeOn(scope)) throw new AppError(SCOPE_ERROR());
     const me = actor(res), admin_ = can(res, "manage"), edit = can(res, "edit");
     const memories = await listMemories(S(res).org, scope, scope === "product" && !req.query.subject ? "" : await memorySubject(res, scope, req.query.subject));
-    // Items saved from chat (the save tool) are by "ai:<user id>": shown as the AI client, editable by that person.
+    // Items saved from chat (the save tool) are by "ai:<user id>": shown as the agent, editable by that person.
     const mineAi = `ai:${S(res).user ?? ""}`;
-    res.json({ memories: memories.map((m) => ({ ...m, created_by: m.created_by?.startsWith("ai:") ? "AI client" : m.created_by?.replace(/^customer:/, "") ?? null,
+    res.json({ memories: memories.map((m) => ({ ...m, created_by: m.created_by?.startsWith("ai:") ? "Agent" : m.created_by?.replace(/^customer:/, "") ?? null,
       can_delete: admin_ || (edit && (m.created_by === me || (!!S(res).user && m.created_by === mineAi))) })), kinds: MEMORY_KINDS, permissions: h.perms(res) });
   });
   api.post("/context/memories", async (req, res) => {

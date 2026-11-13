@@ -122,7 +122,7 @@ try {
     assert.equal(f["reference/terms.md"], "# Terms\n");
     assert.ok(f["reference/tools.md"]!.includes("## `list_items`: List items\n\nLists the items. Then more detail.\n\nReads only.") && f["reference/tools.md"]!.includes("## `add_item`\n\nAdds an item | with a pipe.\n\nChanges something."), f["reference/tools.md"]);
     const plain = skillFiles(null, facts);
-    assert.ok(plain["SKILL.md"]!.startsWith(`---\nname: acme\ndescription: Acme tracks things. Use it when the user wants to work with Acme from this AI client. Needs the Acme connector (an MCP server).\n---\n\n# Acme\n\nAcme tracks things.\n\n## How to work with Acme\n\nCall get_started first.\n\n## Tools\n\n| Tool | What it does |\n|---|---|\n| \`list_items\` | Lists the items. Then more detail. |\n| \`add_item\` | Adds an item \\| with a pipe. |\n\n## Connecting Acme\n\n`), plain["SKILL.md"]);
+    assert.ok(plain["SKILL.md"]!.startsWith(`---\nname: acme\ndescription: Acme tracks things. Use it when the user wants to work with Acme from this agent. Needs the Acme connector (an MCP server).\n---\n\n# Acme\n\nAcme tracks things.\n\n## How to work with Acme\n\nCall get_started first.\n\n## Tools\n\n| Tool | What it does |\n|---|---|\n| \`list_items\` | Lists the items. Then more detail. |\n| \`add_item\` | Adds an item \\| with a pipe. |\n\n## Connecting Acme\n\n`), plain["SKILL.md"]);
     assert.ok(skillFiles(null, { ...facts, tools: [], instructions: "" })["SKILL.md"]!.includes(`## Tools\n\n${CLIENT_SKILL_WORDS.no_tools}`), "no tools: says so");
     ok("the files: frontmatter, the body as given, the connection section on the front door, the tools from the server, the config's files; a generated body without one");
   }

@@ -71,7 +71,7 @@ async function withUsageShares(c: ReturnType<typeof admin.connectInfo>) {
   return { ...c, clients };
 }
 
-/** AI clients that draw a tool's widget under the answer (MCP Apps): a person whose every client is another sees results as text. */
+/** Agents that draw a tool's widget under the answer (MCP Apps): a person whose every client is another sees results as text. */
 const WIDGET_CLIENTS = /claude-ai|claude\.ai|openai|chatgpt/i;
 /** A LIKE pattern for text that starts with `prefix` (its own %, _ and \ taken literally). */
 const startsWith = (prefix: string) => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
@@ -82,7 +82,7 @@ const startsWith = (prefix: string) => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
  *   steps        each placed after a step (`after`, else last), done when the person read a resource whose address starts
  *                with a prefix (`resource:<prefix>`, their widget) or when the account reached one of the session engine's
  *                stages (`stage:<id>`: onboarded, simulated, reported); `optional` ones are not counted; `help_text_only`
- *                is its help for someone whose every AI client shows results as text; `launch` ones (they start work) show
+ *                is its help for someone whose every agent shows results as text; `launch` ones (they start work) show
  *                `viewer_note` instead to someone who may not launch
  *   shell_steps  the shell's steps (joined, connected, tools, first_call) in the product's words; the connection steps
  *                may be `optional` (mold_v0-298: shown, not counted)
@@ -122,8 +122,8 @@ async function setup(s: Session, since?: string) {
   type Step = { id: string; label: string; done: boolean; at: Date | string | null; optional?: true; help: string };
   const steps: Step[] = [
     { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },
-    { id: "connected", ...shellWords("connected", `Add the ${P} connector to your AI client`,
-      `${P} runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
+    { id: "connected", ...shellWords("connected", `Add the ${P} connector to your agent`,
+      `${P} runs inside the agent you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
     { id: "tools", ...shellWords("tools", `Switch the ${P} tools on`,
       `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
     { id: "first_call", ...shellWords("first_call", `Ask ${P} something`, `Your first question checks everything works end to end. Type: "What can ${P} do?"`), done: Boolean(m.first_call), at: m.first_call },
@@ -134,7 +134,7 @@ async function setup(s: Session, since?: string) {
     const after = st.after ? steps.findIndex((x) => x.id === st.after) : -1;
     if (after >= 0) steps.splice(after + 1, 0, step); else steps.push(step);
   }
-  // Every step has a prompt to paste into the AI client: the one it declares, or the one its help names (Type: "…").
+  // Every step has a prompt to paste into the agent: the one it declares, or the one its help names (Type: "…").
   const STEP_PROMPTS: Record<string, string | undefined> = {
     connected: `Is ${P} connected? Tell me what it can do.`, tools: `Which ${P} tools can you use?`,
     ...Object.fromEntries([...Object.entries(cfg.shell_steps ?? {}).map(([id, w]) => [id, w.prompt]), ...own.map((st) => [st.id, st.prompt])].filter(([, x]) => x !== undefined)),
@@ -266,7 +266,7 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
  * The Usage page's charts beyond the cards, for the caller's account only (every query is `WHERE org_id = $1`), with the
  * same people filter ($4) and period ($2..$3) as the rest of /usage. Weeks are ISO weeks (Monday, UTC).
  *   workflow       each workflow group (TOOL_GROUPS): how many of its tools were called, of how many, and the calls
- *   clients        tool calls by AI client family; a call counts for its caller's latest handshake before it
+ *   clients        tool calls by agent family; a call counts for its caller's latest handshake before it
  *   sims_weekly    simulations created per week, completed vs the rest
  *   harnesses      agent sessions of those simulations by harness, and how many completed
  *   spend_by       this month's model spend by person (billing roles: Billing manager, Owner) or else by simulation
@@ -593,7 +593,7 @@ export function appRouter() {
                integrations: { clerk: people().provider === "clerk", stripe: billing.stripeEnabled() } });
   });
   api.get("/setup", async (req, res) => void res.json(await setup(S(res), typeof req.query.since === "string" ? req.query.since : undefined)));
-  // Forget an AI client in your own list (a test script, an old machine): its connections stop counting as a client.
+  // Forget an agent in your own list (a test script, an old machine): its connections stop counting as a client.
   // Only a signed-in person, and only their own events: a caller with no person would reach every keyless event of the
   // account. Logged, since the client name on those events is gone for good.
   api.delete("/clients/:client", async (req, res) => {

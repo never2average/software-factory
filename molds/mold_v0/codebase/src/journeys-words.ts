@@ -26,7 +26,7 @@ export const JOURNEY_WORDS = {
   no_such: "No such {guide}",
   reorder_ids: "ids must be the {guides} in their new order",
   no_such_stage: "No such {guide} stage",
-  stage_by_tools: "This stage is marked done by your AI client's tool calls, not by hand",
+  stage_by_tools: "This stage is marked done by your agent's tool calls, not by hand",
   no_own_use_case: "No such use case on this account",
   remove_own_only: "Only whoever added it, or an account admin, can remove it",
   import_list: "items must be a list of use cases",
@@ -43,7 +43,7 @@ export const JOURNEY_WORDS = {
   help_signed_in: "Sign in as a person to help",
   help_action: "action must be pick, done, release or cancel",
   /** A new use case's step without an expected result. */
-  default_expect: "Your AI client walks you through it.",
+  default_expect: "Your agent walks you through it.",
 } as const;
 export type JourneyWord = keyof typeof JOURNEY_WORDS;
 

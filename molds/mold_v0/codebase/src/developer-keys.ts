@@ -1,6 +1,6 @@
 /**
  * A workspace's API keys for its own servers (mold_v0-193; sql/migrations/0033_developer_surface.sql developer_keys).
- * Beside the MCP keys (src/auth.ts, src/member-keys.ts: `oct_`, for AI clients on /mcp), and never accepted there: these
+ * Beside the MCP keys (src/auth.ts, src/member-keys.ts: `oct_`, for agents on /mcp), and never accepted there: these
  * start `sk_`, answer only on the developer API (/v1), and each holds scopes (src/developer-config.ts BASE_SCOPES).
  *
  *   - shown once: only the sha256 is stored, and the first 9 characters (`sk_` and 6 more) to tell keys apart

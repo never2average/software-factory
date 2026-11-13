@@ -2,7 +2,7 @@
  * The landing block (mold_v0-091, pick and place since mold_v0-122): an app's public landing page at `/`, declared as
  * settings instead of written as code. A declarative pack declares it in pack.json `landing`; the app's own profile.json
  * `landing` comes over it. At most one pack of a build declares one. scripts/gen-packs.mjs checks both with this module and
- * writes the result, with the build's source offer (src/source-offer.ts) and the AI clients its install pages offer, into
+ * writes the result, with the build's source offer (src/source-offer.ts) and the agents its install pages offer, into
  * web/src/config/landing.generated.ts, which the console's `/` renders (web/src/features/site/landing.tsx) in the build's
  * brand (its name, tagline, mark and theme colours). A host pack declares it the same way (mold_v0-138: the first
  * product's own site moved here); one that still names a landing page in its console code (web/src/packs/<id>/index.ts,
@@ -19,7 +19,7 @@
  *                   subheadline, primary_cta (a link, or "account", the default: "Sign in", or "Open dashboard" for
  *                   someone signed in, with an arrow), secondary_cta (default with the account button: "Early access"
  *                   to the request page, outlined), note, a `visual` beside it, and a strip under it: text names in the
- *                   logos' type (`items`), named `logos`, or the logos of the AI clients offered; up to 3 more `links`
+ *                   logos' type (`items`), named `logos`, or the logos of the agents offered; up to 3 more `links`
  *                   {label, href}. With first_screen.calls 1 (FIRST SCREEN below) only primary_cta: one button,
  *                   default "Get started" to the start (sign-up or a request for access, into the console signed in)
  *                   A logos section with no title right after it is drawn as its foot (mold_v0-165: no divider, no
@@ -34,7 +34,7 @@
  *   how_it_works    steps {title, body} drawn as numbered cards (`layout: steps`), a flow (`flow`, the default) or a
  *                   flow that returns to its first step (`loop`, with `loop_label`), under a visual
  *   proof           metrics {value, label, note} and/or items {title, body} under a visual, a note
- *   where_you_work  the AI clients to show (`clients`: ids the build's install pages offer), beside a visual (a chat)
+ *   where_you_work  the agents to show (`clients`: ids the build's install pages offer), beside a visual (a chat)
  *   faq             1 to 15 {question, answer}, an accordion
  *   cta             title, body, primary_cta, secondary_cta (the only type a page may pick more than once, up to 3)
  * Every section but hero and cta may carry `id` (its anchor, a slug), `nav_label` or `nav: false` (its entry in the
@@ -197,7 +197,7 @@ const head = {
   eyebrow: text(60).optional(), title: text(120).optional(), lead: text(600).optional(),
 };
 
-/** A logo the shell draws: an AI client's or agent's id (web/src/features/site/agent-logos.tsx; others get a terminal glyph). */
+/** A logo the shell draws: an agent's or agent's id (web/src/features/site/agent-logos.tsx; others get a terminal glyph). */
 const LogoId = z.string().regex(/^[a-z0-9-]{1,40}$/, "a logo id, such as claude-code or cursor");
 /** An icon the shell draws, by name (web/src/features/site/landing-icons.tsx). */
 export const ICONS = ["eye-off", "git-compare", "code", "search", "message-chatbot", "terminal", "bolt", "shield-check", "chart-bar", "plug",

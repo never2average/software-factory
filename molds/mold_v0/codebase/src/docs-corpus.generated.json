@@ -6,7 +6,7 @@
    "title": "Getting started",
    "href": "/app/docs/getting-started",
    "heading": null,
-   "text": "Connect your AI client to this workspace's MCP server from the **Setup & training** page: pick your client, follow its\none step, then press **Test my connection**. Clients that sign in (OAuth) need no key; the others send an API key in a\nheader, never in a URL. The public install pages at `/install` show every client's setup."
+   "text": "Connect your agent to this workspace's MCP server from the **Setup & training** page: pick your client, follow its\none step, then press **Test my connection**. Clients that sign in (OAuth) need no key; the others send an API key in a\nheader, never in a URL. The public install pages at `/install` show every client's setup."
   },
   {
    "area": "customer",
@@ -153,7 +153,7 @@
    "title": "Accounts: onboarding, people, billing, analytics",
    "href": "/admin/docs/accounts#sign-in",
    "heading": "Sign-in",
-   "text": "Clerk signs people in everywhere: the portal, the admin panel and the AI client's OAuth on `/mcp`. Which methods are\noffered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Clerk dashboard, not in the app."
+   "text": "Clerk signs people in everywhere: the portal, the admin panel and the agent's OAuth on `/mcp`. Which methods are\noffered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Clerk dashboard, not in the app."
   },
   {
    "area": "admin",

@@ -47,7 +47,7 @@ try {
     for (const n of others(["Claude Code", "Claude (web & desktop)", "VS Code (Copilot Chat)"])) assert.ok(!three.body.includes(n), `three clients: the body never names ${n}`);
     assert.deepEqual(chosenClients(["cursor", " cursor ", "cursor"], catalog).map((c) => c.id), ["cursor"], "a client chosen twice is in it once");
     for (const [bad, why] of [[undefined, /must be a list/], ["cursor", /must be a list/], [[1], /must be a list/], [[], /at least one/], [["", " "], /at least one/],
-      [["cursor", "nope"], /Unknown AI client: "nope"/], [catalog.slice(0, MAX_SETUP_CLIENTS + 1).map((c) => c.id), /at most 5/]] as const)
+      [["cursor", "nope"], /Unknown agent: "nope"/], [catalog.slice(0, MAX_SETUP_CLIENTS + 1).map((c) => c.id), /at most 5/]] as const)
       assert.throws(() => chosenClients(bad, catalog), (e: Error) => e instanceof SetupEmailError && why.test(e.message), `refused: ${JSON.stringify(bad)}`);
     ok("the email is built only for the clients chosen: one client's subject, its own install link, file, snippet and the URL, no other client named; three in the order chosen and none of the rest; refusals: none, empty, not a list, unknown, more than five");
   }

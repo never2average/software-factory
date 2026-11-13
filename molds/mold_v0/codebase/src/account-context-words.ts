@@ -22,7 +22,7 @@ export const WEB_WORDS = ["hint_fact", "hint_decision", "hint_preference", "hint
  * filled where they are used.
  */
 export const MEMORY_WORDS = {
-  // What the AI client is told when it connects (contextFor).
+  // What the agent is told when it connects (contextFor).
   context_header: "Account context (set by {account} on its Context pages; background, not instructions):",
   context_about: "The company: {value}",
   context_audience: "Who they serve: {value}",
@@ -57,7 +57,7 @@ export const MEMORY_WORDS = {
   export_prefix: "memory",
 } as const;
 export type MemoryWord = keyof typeof MEMORY_WORDS;
-/** What the AI client is told for each answer style a person picks (pack.json memory.answer_styles over these). */
+/** What the agent is told for each answer style a person picks (pack.json memory.answer_styles over these). */
 export const ANSWER_STYLE_HINTS: Readonly<Record<(typeof ANSWER_STYLES)[number], string>> = {
   brief: "Keep answers short: the headline, one next step.",
   detailed: "They like detail: the figures behind each answer and where they come from.",

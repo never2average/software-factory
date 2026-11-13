@@ -1,6 +1,6 @@
 'use client';
 // What happens after approve / create / invite / issue-key / rotate: the Clerk invitation, or a legacy key shown once,
-// then the connection (mold_v0-277, features/connect/connect-parts.tsx): the connector URL with the AI client dropdown
+// then the connection (mold_v0-277, features/connect/connect-parts.tsx): the connector URL with the agent dropdown
 // beside it and that client's own way in, and the setup email for the client or clients chosen, built by the server for
 // those clients only (POST /setup-email; the key's place a placeholder, pasted over here), previewed, then copied or
 // opened in the staff member's own mail app.
@@ -22,7 +22,7 @@ export function ResultDialog({ result, title, onClose }: { result: InviteResult 
       <DialogContent className='max-h-[90vh] overflow-x-hidden overflow-y-auto sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>The connector URL, the setup for the AI client you choose, and an email for those clients.</DialogDescription>
+          <DialogDescription>The connector URL, the setup for the agent you choose, and an email for those clients.</DialogDescription>
         </DialogHeader>
         {result && <ResultBody key={`${result.org.slug}:${result.connector_url}:${result.key ?? ''}`} result={result} />}
       </DialogContent>

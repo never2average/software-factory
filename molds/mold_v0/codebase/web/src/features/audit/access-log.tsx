@@ -57,7 +57,7 @@ const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { dateStyle:
 const opts = (xs: string[]) => xs.map((value) => ({ value }));
 const f = (name: string, label: string, type: string, extra: Partial<RecordFieldSpec> = {}): RecordFieldSpec => ({ name, label, type, ...extra });
 const RESULTS = opts(['OK', 'Refused', 'Failed', 'Not found']);
-const DOORS: Record<string, string> = { console: 'Console', api: 'API', mcp: 'AI client (MCP)', admin_console: 'Staff console', admin_mcp: 'Staff AI client', run: 'Agent run', system: 'System' };
+const DOORS: Record<string, string> = { console: 'Console', api: 'API', mcp: 'Agent (MCP)', admin_console: 'Staff console', admin_mcp: 'Staff agent', run: 'Agent run', system: 'System' };
 
 /** The Access log as a read-only system area: When (the first column), then Who, What, Workspace (staff) and Result. */
 const accessArea = (fleet: boolean): RecordAreaSpec => ({

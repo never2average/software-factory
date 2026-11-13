@@ -6,7 +6,7 @@
  * connected (GET /api/oauth/grants) and revokes one (POST /api/oauth/grants/<id>/revoke).
  * Hosted sign-in provider: the provider is the authorization server. Its API has no list of a person's OAuth consents or
  * grants (its OAuth application endpoints are the instance's apps; a token is revoked only by presenting it). mold_v0-298:
- * the page lists the AI apps this person was seen connecting from in this workspace (GET /api/app/setup `clients`, from
+ * the page lists the agents this person was seen connecting from in this workspace (GET /api/app/setup `clients`, from
  * the usage log), when each was last seen, and how to disconnect one; and links to the person's account at the provider.
  * No vendor's name in the words.
  */
@@ -22,21 +22,21 @@ export interface ConnectedApp {
   last_used_at: string | null;
 }
 
-/** One AI app seen connecting (GET /api/app/setup `clients`: its name as it introduced itself, and when last seen). */
+/** One agent seen connecting (GET /api/app/setup `clients`: its name as it introduced itself, and when last seen). */
 export interface SeenApp { client: string; last: string }
 
 export const PAGE_TITLE = 'Connected apps';
 export const PAGE_URL = '/app/connected-apps';
 /**
- * mold_v0-298: where the setup steps for connecting an AI app are: the home page's connection card (the Setup page, or
+ * mold_v0-298: where the setup steps for connecting an agent are: the home page's connection card (the Setup page, or
  * a home tab, which draws the same card: web/src/app/app/page.tsx), by its anchor.
  */
 export const CONNECT_URL = '/app#connect';
-export const DESCRIPTION = fill('AI apps you connected and signed in with, such as a chat assistant or a code editor. Each acts as you, with your role, in the {workspace} you chose. Revoke one to sign it out at once.');
+export const DESCRIPTION = fill('Agents you connected and signed in with, such as a chat assistant or a code editor. Each acts as you, with your role, in the {workspace} you chose. Revoke one to sign it out at once.');
 export const EMPTY = {
   title: 'No apps connected',
-  text: fill('When you connect an AI app and sign in, it shows here, with the {workspace} it acts in.'),
-  cta: { label: 'Connect an AI app', href: CONNECT_URL },
+  text: fill('When you connect an agent and sign in, it shows here, with the {workspace} it acts in.'),
+  cta: { label: 'Connect an agent', href: CONNECT_URL },
 };
 
 /** The app's name as the page shows it: its own name, else the address that identifies it, else a plain label. */
@@ -68,15 +68,15 @@ export const revokeQuestion = (a: ConnectedApp) => ({
 // ---------- the hosted sign-in provider ----------
 
 // mold_v0-298: no vendor's name and no product name standing in for one (the neutral build's name is a generic word).
-// The words claim only what holds: a connection is ended in the AI app itself; signing out here does not end it.
+// The words claim only what holds: a connection is ended in the agent itself; signing out here does not end it.
 export const CLERK_NOTE = {
   title: 'Managed by the service you sign in with',
-  text: fill('Your AI apps sign in through the same service you use to sign in here, and that service keeps the connections. So this page shows the AI apps most recently seen working in this {workspace} as you, and when each was last seen.'),
-  disconnect: 'To disconnect an app, open that app and remove this connection in its settings, or sign out of it there. Signing out of this page does not disconnect your AI apps.',
+  text: fill('Your agents sign in through the same service you use to sign in here, and that service keeps the connections. So this page shows the agents most recently seen working in this {workspace} as you, and when each was last seen.'),
+  disconnect: 'To disconnect an app, open that app and remove this connection in its settings, or sign out of it there. Signing out of this page does not disconnect your agents.',
 };
 
 /**
- * How many AI apps the list can show at most: the server answers only the most recently seen (src/app.ts setup(),
+ * How many agents the list can show at most: the server answers only the most recently seen (src/app.ts setup(),
  * `clients`, LIMIT 5). Keep the two the same; at this many the page says the list may not be complete.
  */
 export const SEEN_LIMIT = 5;
@@ -85,14 +85,14 @@ export const seenPartial = (n: number) => (n >= SEEN_LIMIT ? `Showing the ${n} m
 /** Removing an app from this list (DELETE /api/app/clients/<name>): it forgets the name only, it does not disconnect it. */
 export const forgetQuestion = (name: string) => ({
   title: `Remove ${name} from this list?`,
-  text: `${name} is no longer listed here or counted as one of your AI apps. This does not disconnect it: to do that, remove the connection in ${name} itself. If it works here again, it shows again.`,
+  text: `${name} is no longer listed here or counted as one of your agents. This does not disconnect it: to do that, remove the connection in ${name} itself. If it works here again, it shows again.`,
   action: 'Remove',
 });
 
 export const SEEN_EMPTY = {
-  title: 'No AI apps seen yet',
-  text: fill('Once you connect an AI app and it works in this {workspace} as you, it shows here with when it was last seen.'),
-  cta: { label: 'Connect an AI app', href: CONNECT_URL },
+  title: 'No agents seen yet',
+  text: fill('Once you connect an agent and it works in this {workspace} as you, it shows here with when it was last seen.'),
+  cta: { label: 'Connect an agent', href: CONNECT_URL },
 };
 
 /** How to disconnect one app seen connecting, for its side panel. */

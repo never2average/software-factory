@@ -73,7 +73,7 @@ export interface InviteResult {
   key: string | null;
   connector_url: string;
   invitation: { id: string; email: string; state: string; role?: string; expires_at: string | null } | null;
-  /** Every AI client's way in (src/connect-catalog.ts); the setup email is built for the ones chosen (POST /setup-email). */
+  /** Every agent's way in (src/connect-catalog.ts); the setup email is built for the ones chosen (POST /setup-email). */
   clients: ConnectClient[];
   email: { to: string | null };
 }

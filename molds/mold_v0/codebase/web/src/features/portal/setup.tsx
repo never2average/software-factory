@@ -121,7 +121,7 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
 function ConnectionBox({ s, onConnected, className }: { s: Setup; onConnected: () => void; className?: string }) {
   return (
     // mold_v0-298: id 'connect', so the How to connect links (/app#connect) land on this card.
-    <GridCell id='connect' className={cn('scroll-mt-24', className)} title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
+    <GridCell id='connect' className={cn('scroll-mt-24', className)} title='Connect your agent' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the agent you already use.`}>
       <ConnectSteps s={s} onConnected={onConnected} />
     </GridCell>
   );
@@ -170,7 +170,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
   const choose = (id: string) => { setPick(id); try { localStorage.setItem(CLIENT_KEY, id); } catch { /* private mode */ } };
   const c = clients.find((x) => x.id === pick) ?? clients[0];
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
-  // Live connection test: watch for this person's next request from their AI client for up to three minutes.
+  // Live connection test: watch for this person's next request from their agent for up to three minutes.
   // mold_v0-298: a check that keeps failing (the server cannot be reached) stops and says so at once, instead of
   // waiting out the three minutes and blaming the client.
   const stop = () => { if (timer.current) clearInterval(timer.current); timer.current = null; run.current += 1; };
@@ -213,7 +213,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
   return (
       <ol className='flex flex-col gap-4'>
           <NumberedStep n={1} title='Pick your client'>
-            <NativeSelect id='client-pick' aria-label='Your AI client' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
+            <NativeSelect id='client-pick' aria-label='Your agent' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
               {groups.map(([g, label]) => (
                 <NativeSelectOptGroup key={g} label={label}>
                   {clients.filter((x) => x.group === g).map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.client}</NativeSelectOption>)}
@@ -224,7 +224,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
           <NumberedStep n={2} title={c ? `Add ${profile.name} to ${c.client}` : `Add ${profile.name}`}>
             <div className='flex flex-col gap-2'>
               {/* mold_v0-298: say what the URL is for, in plain words. */}
-              <p className='text-muted-foreground text-xs'>This web address (URL) is how your AI client reaches {profile.name}. Add it to your client once and it can use {profile.name} for you in any chat.</p>
+              <p className='text-muted-foreground text-xs'>This web address (URL) is how your agent reaches {profile.name}. Add it to your client once and it can use {profile.name} for you in any chat.</p>
               <div className='bg-background flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5'>
                 <code className='min-w-0 flex-1 truncate font-mono text-xs select-all' title={show ? url : undefined}>{show ? url : masked}</code>
                 {s.connect.secret && (
@@ -425,7 +425,7 @@ function JourneyView({ j, title, onChanged, note }: { j: Journey; title: React.R
 /** Setup as a vertical timeline: every step explained, what is done (and when), what is next, what is optional. */
 /**
  * A step's description (selectable) and, while the step is open, its prompt in a box with one Copy button, to paste
- * into your AI client. A done step shows only its description.
+ * into your agent. A done step shows only its description.
  */
 function StepHelp({ help, done, prompt }: { help: string; done: boolean; prompt: string | null }) {
   const m = help.match(/\s*Type:\s*"(.+?)"\.?\s*(.*)$/);
@@ -504,7 +504,7 @@ function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
 
 /**
  * The one checklist (mold_v0-146): the setup steps and the packs' steps, merged (setup-steps.ts), each with its
- * description and, while open, the words to type in an AI client (mold_v0-172: a pack step's pack.json prompt too).
+ * description and, while open, the words to type in an agent (mold_v0-172: a pack step's pack.json prompt too).
  */
 function Checklist({ steps, title, anchored }: {
   steps: ChecklistStep[]; title: React.ReactNode;
@@ -530,13 +530,13 @@ function TipsSection() {
   useEffect(() => { void load(); }, [load]);
   if (!t || (!t.nudges.length && !t.muted)) return null;
   const setShow = (on: boolean) =>
-    appApi('POST', '/nudges/mute', { muted: !on }).then(() => { toast.success(on ? 'Tips on' : 'Tips off in your AI client'); return load(); }).catch(fail);
+    appApi('POST', '/nudges/mute', { muted: !on }).then(() => { toast.success(on ? 'Tips on' : 'Tips off in your agent'); return load(); }).catch(fail);
   const safe = (l: string) => (/^\/app/.test(l) || /^https:\/\//.test(l) ? l : '#');
   return (
     <Section title={<span className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Tips for you</span>} description={`Suggestions to get more out of ${profile.name}.`}>
       <div className='space-y-3'>
         <label className='flex items-center justify-between gap-3 text-sm'>
-          <span>Show tips in my AI client</span>
+          <span>Show tips in my agent</span>
           <Switch checked={!t.muted} onCheckedChange={(v) => setShow(Boolean(v))} />
         </label>
         {t.nudges.length ? t.nudges.map((n) => (

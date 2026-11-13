@@ -1775,7 +1775,7 @@ const clientSkill = mergeClientSkill(skillPacks.length === 1 ? skillPacks[0].jso
 }
 
 /**
- * The AI clients the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's
+ * The agents the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's
  * install pages offer (src/connect-catalog.ts, narrowed by profile.json install_clients), in the catalog's order, each
  * with its short name ("Claude (web & desktop)" -> "Claude"). A where_you_work section that names a client the install
  * pages do not offer is refused: the page would send people to steps that are not there.
@@ -2825,7 +2825,7 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   "import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
   "/** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
-  "/** The AI clients the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */\n" +
+  "/** The agents the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */\n" +
   `export const landingClients: readonly LandingClient[] = ${json(landingClients)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);

@@ -27,7 +27,7 @@
  * client in src/connect-catalog.ts connects by sign-in; the one entry that only sends a header ("Header-capable
  * clients") is only ever listed with a key, so it is never offered here.
  *
- * The client skill (mold_v0-144, src/client-skill.ts): every build's skill bundle for AI clients, generated from its
+ * The client skill (mold_v0-144, src/client-skill.ts): every build's skill bundle for agents, generated from its
  * profile, its config (pack.json or profile.json `client_skill`) and what its MCP server lists, at the address above.
  *   GET /install/skill.zip    the zip (also at /downloads/<name>-skill.zip); /install offers it, /install.json names it
  *
@@ -177,8 +177,8 @@ const block = (v: { steps: string; command?: string | null; file?: string | null
 
 /** Where the client skill's zip is served (mold_v0-144), and the page section that offers it. */
 export const SKILL_PATH = "/install/skill.zip";
-const skillSection = (name: string) => `<h2>A skill for your AI client</h2>
-<p>The ${esc(name)} skill tells your AI client how to work with ${esc(name)}: what its tools do and when to use them. It works through the connection above.</p>
+const skillSection = (name: string) => `<h2>A skill for your agent</h2>
+<p>The ${esc(name)} skill tells your agent how to work with ${esc(name)}: what its tools do and when to use them. It works through the connection above.</p>
 <p><a href="${SKILL_PATH}" download="${esc(clientSkillFile())}">Download ${esc(clientSkillFile())}</a></p>
 <ul><li>Claude: open Settings, then Capabilities, then Skills, click Upload skill and choose the file.</li>
 <li>Claude Code and other clients that read skill folders: unzip it into the client's skills folder (for Claude Code, ~/.claude/skills).</li></ul>`;
@@ -267,7 +267,7 @@ export function mountInstallPages(app: Express, publicUrl: string) {
 <p>${esc(d.description)}</p><p class="muted">${d.read_only ? "Reads only" : "Changes something"}. Who may call it: ${esc(roleLine(d))}.</p>
 <details><summary>Input</summary><pre>${esc(JSON.stringify(d.input_schema, null, 2))}</pre></details></div>`).join("")).join("");
       send(res, 200, page(`${r.name} tools`, `<p><a href="/install">Connect a client</a></p><h1>${esc(r.name)} tools</h1>
-<p class="muted">What your AI client can do once it is connected to ${esc(r.name)}, and which role in your account may do it. A tool your role may not use is not offered to you.</p>
+<p class="muted">What your agent can do once it is connected to ${esc(r.name)}, and which role in your account may do it. A tool your role may not use is not offered to you.</p>
 <ul>${r.packs.map((p) => `<li><a href="#${esc(p.id)}">${esc(p.name)}</a> (${p.tools.length})</li>`).join("")}</ul>${body}`));
     });
   }
@@ -277,7 +277,7 @@ export function mountInstallPages(app: Express, publicUrl: string) {
       const list = g.clients.filter((c) => c.group === grp);
       return list.length ? `<h2>${esc(GROUPS[grp])}</h2><ul>${list.map((c) => `<li><a href="/install/${esc(c.id)}">${esc(c.client)}</a></li>`).join("")}</ul>` : "";
     }).join("");
-    send(res, 200, page(`Connect ${g.name}`, `<h1>Connect ${esc(g.name)} to your AI client</h1>
+    send(res, 200, page(`Connect ${g.name}`, `<h1>Connect ${esc(g.name)} to your agent</h1>
 <p class="muted">${esc(g.name)} is an MCP server at</p><pre>${esc(g.url)}</pre>
 <p>${"api_keys" in g ? (g.sign_in ? "Every client signs in with your account (OAuth)." : `Sign-in is not set up on this ${esc(g.name)} server yet: ask its admin.`) : g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}${skillSection(g.name)}`));
   });

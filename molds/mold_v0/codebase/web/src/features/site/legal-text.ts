@@ -54,7 +54,7 @@ export const TERMS: LegalDoc = {
       ]
     },
     {
-      heading: 'AI clients and automated work',
+      heading: 'Agents and automated work',
       paragraphs: [
         p('{Product} can be used from AI assistants and other MCP clients, and can carry out {runs} for you. Results produced by automated tools can be incomplete or wrong: check them before you rely on them.'),
         p('You are responsible for the clients you connect and for what they do with the access you give them.')
@@ -111,7 +111,7 @@ export const PRIVACY: LegalDoc = {
       heading: 'What we collect',
       items: [
         p('Your sign-in details: your name, your email address and, if you sign in with another provider, the identifier it gives us.'),
-        p('What you do in {product}: the {workspaces} you belong to, your role, the {runs} you start and the {tool_calls} your AI clients make (which tool, when, and whether it worked).'),
+        p('What you do in {product}: the {workspaces} you belong to, your role, the {runs} you start and the {tool_calls} your agents make (which tool, when, and whether it worked).'),
         p('What you put in: the records, files and settings you and your {members} add, and the results of {runs}.'),
         p('Technical data: network addresses, browser and client type, and error reports.')
       ]

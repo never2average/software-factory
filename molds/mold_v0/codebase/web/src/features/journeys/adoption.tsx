@@ -104,7 +104,7 @@ export function AdoptionPage() {
       return narrowed ? [] : [{ key: `w-${g.id}`, type: 'workflow' as const, name: g.label, detail: 'Workflow · Not tried yet', done: 0, total: g.total, g, person: null }];
     }),
     ...(narrowed ? [] : s.clients.filter((c) => c.last.slice(0, 10) >= range.from && c.last.slice(0, 10) <= range.to)
-      .map((c) => ({ key: `c-${c.client}`, type: 'client' as const, name: c.client, detail: 'AI client', done: 1, total: 1, at: c.last })))
+      .map((c) => ({ key: `c-${c.client}`, type: 'client' as const, name: c.client, detail: 'Agent', done: 1, total: 1, at: c.last })))
   ];
   // Who a row is about: the person on a use case or workflow part (nobody in the range: "Nobody yet"; calls made with a
   // connector key rather than a signed-in person: "Connector key"), you for clients (the list is yours).
@@ -396,7 +396,7 @@ function UseCase({ j, onChanged, note }: { j: Journey; onChanged: () => void; no
                   <CopyButton text={st.prompt} />
                 </div>)}
               <p className='text-muted-foreground text-xs'>
-                {st.manual ? 'Marked by hand.' : `Done when your AI client runs ${st.tools.join(' or ')}.`}{st.done && st.at && <> Done <When d={st.at} />.</>}
+                {st.manual ? 'Marked by hand.' : `Done when your agent runs ${st.tools.join(' or ')}.`}{st.done && st.at && <> Done <When d={st.at} />.</>}
               </p>
               {st.manual && <Allowed need='edit'><Button size='sm' variant={st.done ? 'outline' : 'default'} disabled={busy === st.id} onClick={() => mark(st)}>{st.done ? 'Mark not done' : 'Mark done'}</Button></Allowed>}
             </div>
@@ -421,7 +421,7 @@ function Workflow({ g, note }: { g: Setup['groups'][number]; note: string | null
             <code className='bg-muted min-w-0 flex-1 rounded px-2 py-1.5 text-xs whitespace-pre-wrap'>{g.prompt}</code>
             <CopyButton text={g.prompt} />
           </div>
-          <p className='text-muted-foreground text-xs'>Paste it into your AI client with {profile.name} connected.</p>
+          <p className='text-muted-foreground text-xs'>Paste it into your agent with {profile.name} connected.</p>
         </>)}
       </div>
     </div>
@@ -431,7 +431,7 @@ function Workflow({ g, note }: { g: Setup['groups'][number]; note: string | null
 function Client({ name, at }: { name: string; at: string }) {
   return (
     <dl>
-      <Field label='Client'>{name}</Field>
+      <Field label='Agent'>{name}</Field>
       <Field label='Last connected'><When d={at} /></Field>
       <Field label='Add another'><Link className='text-primary underline-offset-4 hover:underline' href='/app'>Connection string on Setup & training</Link></Field>
     </dl>
@@ -459,7 +459,7 @@ function UseCaseEditor({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         {steps.map((x, i) => (
           <div key={i} className='flex flex-col gap-1.5 border-l-2 pl-3'>
             <Input maxLength={120} placeholder={`Step ${i + 1} title (optional)`} aria-label={`Step ${i + 1} title`} value={x.title} onChange={(e) => setStep(i, 'title', e.target.value)} />
-            <Textarea rows={2} maxLength={600} placeholder='The prompt to type in your AI client' aria-label={`Step ${i + 1} prompt`} value={x.prompt} onChange={(e) => setStep(i, 'prompt', e.target.value)} className='resize-none' />
+            <Textarea rows={2} maxLength={600} placeholder='The prompt to type in your agent' aria-label={`Step ${i + 1} prompt`} value={x.prompt} onChange={(e) => setStep(i, 'prompt', e.target.value)} className='resize-none' />
           </div>
         ))}
         {steps.length < 12 && <Button type='button' variant='ghost' size='sm' className='self-start' onClick={() => setSteps((xs) => [...xs, { title: '', prompt: '' }])}><Icons.add /> Add step</Button>}

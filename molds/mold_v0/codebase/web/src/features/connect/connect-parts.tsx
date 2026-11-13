@@ -1,7 +1,7 @@
 'use client';
 // The connection's parts (mold_v0-277), shared by the customer Overview's Connect card (features/portal/setup.tsx) and
 // the staff console's invite result (features/admin/result-dialog.tsx): the connection URL (copy; show and hide when it
-// holds a key), the AI client dropdown from the client catalogue (src/connect-catalog.ts), the chosen client's own way
+// holds a key), the agent dropdown from the client catalogue (src/connect-catalog.ts), the chosen client's own way
 // in (one-click install, command, config snippet or its settings steps), and the setup email: one client from the
 // dropdown or several by checkbox, its subject and body built by the server for those clients only, previewed first.
 import { useEffect, useId, useState } from 'react';
@@ -12,7 +12,7 @@ import { Icons } from '@/components/icons';
 import { cn } from '@/lib/utils';
 import { CopyButton } from '@/features/portal/shared';
 
-/** One AI client of the catalogue (src/connect-catalog.ts ClientEntry), as the API sends it. */
+/** One agent of the catalogue (src/connect-catalog.ts ClientEntry), as the API sends it. */
 export interface ConnectClient {
   id: string; client: string; group: 'chat' | 'agent' | 'editor'; method: 'ui' | 'cli' | 'config' | 'link'; steps: string;
   command?: string; snippet?: string; file?: string; install_url?: string; verified?: boolean; share?: number | null;
@@ -49,10 +49,10 @@ export function UrlField({ url, secret, className }: { url: string; secret: bool
   );
 }
 
-/** The AI client dropdown: every client of the catalogue, by group. */
+/** The agent dropdown: every client of the catalogue, by group. */
 export function ClientSelect({ clients, value, onChange, id, className }: { clients: ConnectClient[]; value: string | undefined; onChange: (id: string) => void; id?: string; className?: string }) {
   return (
-    <NativeSelect id={id} aria-label='Your AI client' value={value} onChange={(e) => onChange(e.target.value)} className={cn('bg-background w-full', className)} data-connect-client>
+    <NativeSelect id={id} aria-label='Your agent' value={value} onChange={(e) => onChange(e.target.value)} className={cn('bg-background w-full', className)} data-connect-client>
       {GROUPS.map(([g, label]) => {
         const xs = clients.filter((x) => x.group === g);
         return xs.length ? (

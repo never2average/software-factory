@@ -545,8 +545,8 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
               ['Call', (e) => e.name || e.method],
               ['Error', (e) => e.error, 'whitespace-normal leading-snug']
             ]} /> },
-          { id: 'clients', label: 'Clients', content: <List noun='Clients' rows={d.clients} cols={[
-              ['Client', (c) => c.client],
+          { id: 'clients', label: 'Agents', content: <List noun='Agents' rows={d.clients} cols={[
+              ['Agent', (c) => c.client],
               ['Calls', (c) => count(c.n), 'text-right tabular-nums'],
               ['Last', (c) => <When d={c.last} />]
             ]} /> },

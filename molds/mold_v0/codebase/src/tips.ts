@@ -5,7 +5,7 @@
  *
  * A workflow tool (PostHog Workflows: triggers on the events src/telemetry.ts sends, delays, branches, email and Slack
  * steps) is the system of record for which sequences exist and when each step fires. The shell adds the one channel it
- * cannot reach, the person's AI client: a workflow's webhook step (or an admin, by hand) queues a tip here; it is shown
+ * cannot reach, the person's agent: a workflow's webhook step (or an admin, by hand) queues a tip here; it is shown
  * at the end of the next tool answer (at most one a day per person, at most MAX_CHAT_SHOWS times; the tools pack.json
  * tips.always_after names always show it), on /app Setup until it expires or is dismissed, and its showing, dismissal
  * and the person's mute are sent back as events so the workflow can branch on them.

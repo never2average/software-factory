@@ -11,7 +11,7 @@
  *   CLERK_JWT_KEY               optional PEM public key: verify session tokens without calling Clerk (else JWKS)
  *   CLERK_AUTHORIZED_PARTIES    origins allowed in a session token's azp (default: PUBLIC_URL's origin)
  *   CLERK_MCP_AUDIENCE          the /mcp resource URI(s) OAuth tokens must be issued for, comma-separated (default PUBLIC_URL/mcp)
- *   APP_MCP_URL                 where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118): its /mcp comes first in
+ *   APP_MCP_URL                 where agents connect (src/console-url.ts mcpUrl, mold_v0-118): its /mcp comes first in
  *                               mcpAudiences (the resource the metadata names), the list above (or PUBLIC_URL/mcp) after
  *                               it, so tokens issued for the old address are still accepted
  *   APP_OAUTH_AUDIENCE    auto (default), enforce or report: see audienceOk

@@ -9,10 +9,10 @@
 // provider's authorize address (refused for an origin it does not hold). Nothing reaches a real provider.
 //
 // 1. The classifiers: pass, fail and unknown for Google, GitHub and any other provider; nothing they cannot read is a pass.
-// 2. An app on Clerk: its domain, Google and GitHub through Clerk, AI clients' registration; then the front door moves to
+// 2. An app on Clerk: its domain, Google and GitHub through Clerk, agents' registration; then the front door moves to
 //    a domain Clerk does not hold (fail, with Clerk's Domains steps), Google stops listing Clerk's callback (fail, with
 //    the exact address on its own line), Clerk's settings cannot be read (unknown).
-// 3. The built-in sign-in: Google's callback on the front door, pass / fail / unknown; AI clients on the front door.
+// 3. The built-in sign-in: Google's callback on the front door, pass / fail / unknown; Agents on the front door.
 // 4. The platform GitHub App: the callback is unknown from a probe and decided by what came back (an old address: fail;
 //    the front door: pass; an error GitHub sent back with a state this server signed: fail; a forged one: ignored), the
 //    install's authorization, the webhook address GitHub holds.
@@ -177,13 +177,13 @@ try {
   {
     calls.length = 0;
     let fl = await SIC.checkSignIn();
-    assert.deepEqual(fl.map((f) => f.id), ["clerk.domain", "clerk.oauth_google", "clerk.oauth_github", "mcp"], "Clerk's domain, its two social sign-ins that are on (not Apple), AI clients");
+    assert.deepEqual(fl.map((f) => f.id), ["clerk.domain", "clerk.oauth_google", "clerk.oauth_github", "mcp"], "Clerk's domain, its two social sign-ins that are on (not Apple), agents");
     assert.equal(byId(fl, "clerk.domain").result, "pass");
     const cg = byId(fl, "clerk.oauth_google");
     assert.deepEqual([cg.result, cg.redirect_uri, cg.provider], ["pass", `${FAPI}/v1/oauth_callback`, "google"], "Google through Clerk: Clerk's own callback, listed: pass");
     assert.match(cg.detail, /custom credentials \(a production instance/, "a production instance: custom credentials");
     assert.equal(byId(fl, "clerk.oauth_github").result, "unknown", "GitHub through Clerk: unknown (GitHub checks after a sign-in)");
-    assert.equal(byId(fl, "mcp").result, "pass", "AI clients may register with Clerk");
+    assert.equal(byId(fl, "mcp").result, "pass", "Agents may register with Clerk");
     const attempt = calls.find((c) => c.path === "/v1/client/sign_ins")!;
     assert.equal(attempt.headers.origin, FRONT, "the sign-in attempt is started from the front door");
     assert.match(String(attempt.headers.cookie), /^__client=standin-client$/, "with the client cookie Clerk set, and only it");
@@ -212,12 +212,12 @@ try {
 
     clerk.social = false; clerk.backend = false; clerk.registration = false;
     fl = await SIC.checkSignIn();
-    assert.deepEqual(fl.map((f) => [f.id, f.result]), [["clerk.domain", "unknown"], ["clerk.social", "unknown"], ["mcp", "fail"]], "Clerk not readable: unknown, never pass; registration off: AI clients fail");
+    assert.deepEqual(fl.map((f) => [f.id, f.result]), [["clerk.domain", "unknown"], ["clerk.social", "unknown"], ["mcp", "fail"]], "Clerk not readable: unknown, never pass; registration off: Agents fail");
     clerk.social = true; clerk.backend = true; clerk.registration = true;
     clerk.env = "development";
     assert.match(byId(await SIC.checkSignIn(), "clerk.oauth_google").detail, /shared development credentials/, "a development instance: Clerk's shared credentials, said");
     clerk.env = "production";
-    console.log("✓ an app on Clerk: its domain, Google and GitHub through Clerk, AI clients; a new front door Clerk does not hold, an unlisted callback, an unreadable Clerk");
+    console.log("✓ an app on Clerk: its domain, Google and GitHub through Clerk, agents; a new front door Clerk does not hold, an unlisted callback, an unreadable Clerk");
   }
 
   // ---------- 3. the built-in sign-in ----------
@@ -225,17 +225,17 @@ try {
     Object.assign(process.env, { AUTH_PROVIDER: "builtin", GOOGLE_CLIENT_ID: OWN_GOOGLE, GOOGLE_CLIENT_SECRET: `google-secret-${randomBytes(8).toString("hex")}` });
     SECRETS.push(process.env.GOOGLE_CLIENT_SECRET!);
     let fl = await SIC.checkSignIn();
-    assert.deepEqual(fl.map((f) => [f.id, f.result]), [["google", "pass"], ["mcp", "pass"]], "the built-in Google on the front door, listed: pass; AI clients on the front door");
+    assert.deepEqual(fl.map((f) => [f.id, f.result]), [["google", "pass"], ["mcp", "pass"]], "the built-in Google on the front door, listed: pass; Agents on the front door");
     assert.equal(byId(fl, "google").redirect_uri, `${FRONT}/api/auth/google/callback`);
     process.env.APP_CONSOLE_URL = NEW_FRONT;
     fl = await SIC.checkSignIn();
     assert.equal(byId(fl, "google").result, "fail", "after a move Google does not list the new callback: fail");
     assert.ok(byId(fl, "google").steps.includes(`    ${NEW_FRONT}/api/auth/google/callback`));
     process.env.APP_MCP_URL = FRONT;
-    assert.equal(byId(await SIC.checkSignIn(), "mcp").result, "fail", "AI clients told to sign in at the old address: fail");
+    assert.equal(byId(await SIC.checkSignIn(), "mcp").result, "fail", "Agents told to sign in at the old address: fail");
     delete process.env.APP_MCP_URL; process.env.APP_CONSOLE_URL = FRONT;
     noSecret(JSON.stringify(fl), "the built-in flows");
-    console.log("✓ the built-in sign-in: Google's callback on the front door (pass, then fail after a move), AI clients' address");
+    console.log("✓ the built-in sign-in: Google's callback on the front door (pass, then fail after a move), agents' address");
   }
 
   // ---------- 4 and 5. the platform GitHub App and a credential OAuth provider ----------

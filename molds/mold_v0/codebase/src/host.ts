@@ -105,7 +105,7 @@ export interface HostDefinition {
    * The account context and memory component (mold_v0-142; src/account-context.ts, pack.json `memory`): what its
    * `product` scope names. `subjects` lists the account's own (each its key, its name and an id a person may use for
    * it), in the order a person reads them: memory about one of them is kept under its key and shown with its name, a
-   * person's focus must be one of them, and the AI client's save names one by key, name or id. Without the hook any
+   * person's focus must be one of them, and the agent's save names one by key, name or id. Without the hook any
    * name is kept as written.
    */
   context?: {
@@ -237,8 +237,8 @@ export interface TipRecipe {
  * The account context and memory component (mold_v0-142; src/account-context.ts): pack.json `memory`, one pack's per
  * build, which turns it on. `scopes`: whose memory there is (company, user, product), each a page of /app/context;
  * `tools`: the names of its two MCP tools (save, search), none without; `tool_words` and `tool_meta`: their words and
- * the _meta both carry; `words`: the texts it shows and tells the AI client (src/account-context.ts MEMORY_WORDS names
- * each, with its default); `answer_styles`: what the AI client is told for each answer style; `pages`: each page's
+ * the _meta both carry; `words`: the texts it shows and tells the agent (src/account-context.ts MEMORY_WORDS names
+ * each, with its default); `answer_styles`: what the agent is told for each answer style; `pages`: each page's
  * title and old addresses kept working (`aliases`).
  */
 export interface MemoryConfig {

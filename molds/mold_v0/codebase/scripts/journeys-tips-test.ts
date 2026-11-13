@@ -144,7 +144,7 @@ try {
   assert.deepEqual(list1.map((x: any) => x.id), ["first-steps"], "the built-in pipeline, seeded once");
   assert.equal(list1[0].stages[0].prompt, "Remember that {client} prefers email.", "no host hook: placeholders as written");
   assert.equal(list1[0].stages[0].done, false);
-  // A real tool call completes its stage (the member's AI client).
+  // A real tool call completes its stage (the member's agent).
   const mc = await connect({ ...org, userId: sub(member), role: "member" });
   assert.ok(!(await mc.call("remember", { body: "Contoso prefers email." })).isError);
   const list2 = (await call(member, "GET", "/journeys")).body.journeys;
@@ -152,7 +152,7 @@ try {
   assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM journey_progress WHERE org_id = $1 AND source = 'tool'", [org.orgId]))[0]!.n, 1, "and recorded once");
   // Manual stages by hand; a tool's stage refused in the words of the component.
   const toolStage = await call(member, "POST", "/journeys/first-steps/stages/save", { done: true });
-  assert.deepEqual([toolStage.status, toolStage.body.error], [400, "This stage is marked done by your AI client's tool calls, not by hand"]);
+  assert.deepEqual([toolStage.status, toolStage.body.error], [400, "This stage is marked done by your agent's tool calls, not by hand"]);
   assert.equal((await call(viewer, "POST", "/journeys/first-steps/stages/share", { done: true })).status, 403, "viewers read only");
   assert.equal((await call(member, "POST", "/journeys/first-steps/stages/share", { done: true })).status, 204);
   assert.equal((await call(member, "GET", "/journeys")).body.journeys[0].done, 2, "both stages done");
@@ -199,7 +199,7 @@ try {
   assert.equal((await adminCall("owner", "DELETE", "/playbooks/docs-check")).status, 204);
   console.log("✓ on, journeys: seeded once and following the pack, a stage done from a real tool call, manual stages by hand, own use cases (add, import, remove), help requests, the admin's templates with adoption; refusals in the build's words");
 
-  // Tips: the webhook, then the AI client's next answers.
+  // Tips: the webhook, then the agent's next answers.
   const hook = (body: unknown, auth?: string, p = "") => http.req("POST", `/api/journeys/nudges${p}`, auth ? { authorization: auth } : {}, body);
   const wrong = await hook({ org: org.slug, message: "x" }, "Bearer nope");
   assert.deepEqual([wrong.status, (await wrong.json()).error], [401, "Invalid pipeline secret"], "a wrong secret refused, in the build's words");
