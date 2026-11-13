@@ -99,7 +99,9 @@ export interface SessionView {
   pending_request: RequestView | null; created_at: string; last_activity_at: string; ended_at: string | null; archived_at: string | null; pruned: boolean;
   can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
   /** mold_v0-287: whether this person may change its budget (and why not), and the least it may be set to (what it has spent). */
-  budget_change: { allowed: boolean; why: string | null; floor_usd: number };
+  budget_change: { allowed: boolean; why: string | null; floor_usd: number;
+    /** mold_v0-298: why not, as a code the page reads (the words in `why` may change): ended, child (its parent's budget), role; null when allowed. */
+    why_code: "ended" | "child" | "role" | null };
   /** mold_v0-261: the agent profile it started with, its name and the version it froze; null for a session from before. */
   profile: { id: string; name: string; version: number } | null;
   /** mold_v0-261: the record it was started from (a record page's start_agent action), or null. */
@@ -233,7 +235,12 @@ function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: strin
     wakes: r.wakes, crashes: r.crashes, web_calls: r.web_calls, pause_requested: !!r.pause_requested_at, stop_requested: !!r.stop_requested_at,
     pending_request: pending, created_at: iso(r.created_at)!, last_activity_at: iso(r.last_activity_at)!, ended_at: iso(r.ended_at), archived_at: iso(r.archived_at),
     pruned: !!r.pruned_at, can: permissions(r, a),
-    budget_change: { allowed: permissions(r, a).raise, why: closed(r) ? "This session has ended" : isChild(r) ? "A child's budget comes from its parent: change the root session's" : permissions(r, a).raise ? null : "Needs the Billing manager or Owner role", floor_usd: money(committedUsd(r)) },
+    budget_change: (() => {
+      // mold_v0-298: the reason as a code too (why_code), so the page never reads the sentence.
+      const code = closed(r) ? "ended" as const : isChild(r) ? "child" as const : permissions(r, a).raise ? null : "role" as const;
+      const why = code === "ended" ? "This session has ended" : code === "child" ? "This budget comes from its parent: change it on the main session" : code === "role" ? "Needs the Billing manager or Owner role" : null;
+      return { allowed: permissions(r, a).raise, why, why_code: code, floor_usd: money(committedUsd(r)) };
+    })(),
     ...(r.root_id ? { nested: { ref: r.ref, parent_id: r.parent_id, root_id: r.root_id, depth: r.depth, program: r.program_id, carved_usd: money(num(r.carved_usd)), children_spent_usd: money(num(r.children_spent_usd)) } } : {}),
     profile: r.profile_id && r.profile_version ? { id: r.profile_id, name: r.policy?.profile?.name ?? r.profile_id, version: r.profile_version } : null,
     record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null,

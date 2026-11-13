@@ -15,6 +15,8 @@ type Scalar = string | number | boolean;
 export interface DetailLeafCondition {
   field?: string; equals?: Scalar; in?: Scalar[]; not_in?: Scalar[]; empty?: boolean;
   before?: 'today'; after?: 'today'; within_days?: number; clock?: string; is?: 'overdue' | 'due_soon';
+  /** mold_v0-298: a notice's test of a computed header fact (its index in header.facts). */
+  fact?: number;
 }
 export interface DetailCondition extends DetailLeafCondition { all?: DetailLeafCondition[]; any?: DetailLeafCondition[] }
 /** A record's clocks as the page has them (./clocks.tsx ClockView): each one's state. */
@@ -61,7 +63,7 @@ export interface DetailActionSpec {
   /** mold_v0-261: a start_agent action's agent profile and first message (a template filled from the record). */
   profile?: string; first_message?: string;
 }
-export interface DetailTab { label: string; sections: DetailSection[] }
+export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
 export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition }
 export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed }
@@ -93,9 +95,20 @@ const same = (a: unknown, b: Scalar) => a === b || (typeof a !== 'object' && a !
  * of its values; mold_v0-256: a date by its UTC day against today's (before, after, within N days), a clock's state
  * (overdue, due soon), all or any of several tests.
  */
-export function conditionHolds(when: DetailCondition, data: Record<string, unknown>, clocks: ClockStates = null, now = Date.now()): boolean {
-  if (when.all) return when.all.every((c) => conditionHolds(c, data, clocks, now));
-  if (when.any) return when.any.some((c) => conditionHolds(c, data, clocks, now));
+export function conditionHolds(when: DetailCondition, data: Record<string, unknown>, clocks: ClockStates = null, now = Date.now(), facts?: Record<string, unknown> | null): boolean {
+  if (when.all) return when.all.every((c) => conditionHolds(c, data, clocks, now, facts));
+  if (when.any) return when.any.some((c) => conditionHolds(c, data, clocks, now, facts));
+  // mold_v0-298: a computed header fact (a count, or the newest related record's value); still loading or hidden: false.
+  if (when.fact !== undefined) {
+    const a = facts?.[String(when.fact)] as ComputedFact | undefined;
+    if (!a || a.hidden) return false;
+    const fv = a.value, fvs = Array.isArray(fv) ? fv : [fv];
+    if (when.empty !== undefined) return (a.op === 'count' ? fv === 0 : isEmptyValue(fv)) === when.empty;
+    if (when.equals !== undefined) return fvs.some((x) => same(x, when.equals!));
+    if (when.in) return fvs.some((x) => when.in!.some((y) => same(x, y)));
+    if (when.not_in) return !isEmptyValue(fv) && !fvs.some((x) => when.not_in!.some((y) => same(x, y)));
+    return false;
+  }
   if (when.clock) { const c = clocks?.[when.clock]; return !!c && (when.is === 'overdue' ? c.status === 'overdue' || c.overdue === true : c.status === 'due_soon'); }
   const v = when.field ? data[when.field] : undefined;
   const values = Array.isArray(v) ? v : [v];
@@ -112,12 +125,17 @@ export function conditionHolds(when: DetailCondition, data: Record<string, unkno
   return false;
 }
 /** The notices to show, in their declared order. */
-export const shownNotices = (layout: DetailLayout, data: Record<string, unknown>, clocks: ClockStates = null) => (layout.notices ?? []).filter((n) => conditionHolds(n.when, data, clocks));
+export const shownNotices = (layout: DetailLayout, data: Record<string, unknown>, clocks: ClockStates = null, facts?: Record<string, unknown> | null) =>
+  (layout.notices ?? []).filter((n) => conditionHolds(n.when, data, clocks, Date.now(), facts));
 
 /** A tab's address (?tab=<id>): the same as the build's (src/pack-api.ts detailTabId). */
 export const tabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'tab';
 /** The open tab: the one the address names, else the first. */
-export const openTab = (layout: DetailLayout, asked: string | null | undefined) => layout.tabs.find((t) => tabId(t.label) === asked) ?? layout.tabs[0]!;
+/** The tabs shown for this record (mold_v0-298: a tab's `when` holds; the first always). */
+export const shownTabs = (layout: DetailLayout, data: Record<string, unknown>, clocks: ClockStates = null) =>
+  layout.tabs.filter((t, i) => i === 0 || !t.when || conditionHolds(t.when, data, clocks));
+/** The open tab: the one asked for among `tabs` (the shown ones, else all), else the first. */
+export const openTab = (layout: DetailLayout, asked: string | null | undefined, tabs: DetailTab[] = layout.tabs) => tabs.find((t) => tabId(t.label) === asked) ?? tabs[0]!;
 
 /** A section's field groups (its `fields` are one group with no heading). */
 export const sectionGroups = (s: DetailSection): DetailGroup[] => s.groups ?? [{ fields: s.fields ?? [] }];

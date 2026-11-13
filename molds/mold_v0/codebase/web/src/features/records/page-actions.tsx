@@ -221,14 +221,17 @@ export function usePageActionsBar(host: ActionHost, actions: readonly PageAction
     card, panel,
     bar: (
       // mold_v0-262: wraps inside the header at any width (it never keeps its one-line width, which clipped More at 390 px).
-      <div className='flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end' data-page-actions='' aria-busy={loading || undefined}>
+      // mold_v0-298: on a phone one row: the primary action fills it, the secondary ones move into More.
+      <div className='flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end max-sm:flex-nowrap max-sm:[&>[data-primary]]:min-w-0 max-sm:[&>[data-primary]]:flex-1' data-page-actions='' aria-busy={loading || undefined}>
         {primary && <ActionButton a={primary} primary busy={busy === primary.id} take={take} />}
-        {secondary.map((a) => <ActionButton key={a.id} a={a} busy={busy === a.id} take={take} />)}
+        {!!secondary.length && <span className='contents max-sm:hidden'>{secondary.map((a) => <ActionButton key={a.id} a={a} busy={busy === a.id} take={take} />)}</span>}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button type='button' variant='outline' size='sm' data-page-more='' aria-label='More actions' />}>
             <Icons.dots aria-hidden data-icon='inline-start' />More
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end' className='w-64' data-page-more-menu=''>
+            {!!secondary.length && <DropdownMenuGroup className='sm:hidden' data-page-more-secondary=''>{secondary.map((a) => <ActionItem key={a.id} a={a} take={take} />)}</DropdownMenuGroup>}
+            {!!secondary.length && <DropdownMenuSeparator className='sm:hidden' />}
             {!!rest.length && <DropdownMenuGroup>{rest.map((a) => <ActionItem key={a.id} a={a} take={take} />)}</DropdownMenuGroup>}
             {!!rest.length && <DropdownMenuSeparator />}
             <DropdownMenuGroup>

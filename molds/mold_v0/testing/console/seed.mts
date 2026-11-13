@@ -9,6 +9,8 @@
 //            its records; json, person, file and optional url fields are left empty (mold_v0-256: a required url field
 //            gets https://example.com/<area>/<n>, so an area with one is seeded too). Written as a repository's rows are
 //            (src/record-areas.ts writeFromRepository, source "lane:samples"), so read-only and sealed areas take them.
+//            mold_v0-298: referenced areas first (whatever the chain), and a shared area with no samples that a required
+//            reference points at gets a few placeholder rows; an area still left empty is listed with the reason.
 //   runs     a few runs of the build's job kinds, finished, failed and running, each over a workspace asset record
 //            when the kind reads one (targets.asset), with results against the shared check samples; written straight
 //            into the throwaway database as the platform (the runs engine's own rows), ids run_lane_<n>.
@@ -58,7 +60,10 @@ export function valueOf(f: Field, n: number, i: number, keysOf: (area: string) =
   }
 }
 
-export async function seedWorkspace(orgId: number, lane: string): Promise<{ records: number; runs: number; results: number; skipped: string[] }> {
+/** A reference or link field and the area it points at (not the area itself). */
+const refsOf = (a: Area) => a.fields.filter((f) => (f.type === "reference" || f.type === "link") && !!f.to);
+
+export async function seedWorkspace(orgId: number, lane: string): Promise<{ records: number; runs: number; results: number; skipped: string[]; filled: string[] }> {
   const imp = (rel: string) => import(pathToFileURL(path.join(lane, rel)).href);
   const ra = await imp("src/record-areas.ts");
   const { getDb } = await imp("src/db.ts");
@@ -68,23 +73,92 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   for (const a of areas) if (a.scope === "platform" && a.samples?.length) seeded.set(a.name, a.samples.map((x) => x.key));
   const keysOf = (name: string) => seeded.get(name) ?? [];
   const areaNamed = (field: string) => areas.find((a) => [field, `${field}s`, `${field}es`].includes(a.name) && seeded.has(a.name))?.name ?? null;
-  const out = { records: 0, runs: 0, results: 0, skipped: [] as string[] };
-
-  // Areas whose references are all to areas already seeded go first; the rest after, in declaration order.
+  const out = { records: 0, runs: 0, results: 0, skipped: [] as string[], filled: [] as string[] };
+  const byName = new Map(areas.map((a) => [a.name, a]));
   const own = areas.filter((a) => a.scope === "workspace" && a.repo?.kind !== "http_api");
-  const order = [...own].sort((x, y) => Number(x.fields.some((f) => f.to && own.some((o) => o.name === f.to))) - Number(y.fields.some((f) => f.to && own.some((o) => o.name === f.to))));
-  for (const a of order) {
-    const ops = Array.from({ length: SAMPLES }, (_, n) => {
+  const isOwn = (name: string) => own.some((o) => o.name === name);
+
+  // mold_v0-298: the areas are seeded referenced-first (a depth-first walk of their reference and link fields), so an
+  // area that points at another workspace area finds its rows, however long the chain. A required reference to a shared
+  // area with no samples gets a few placeholder rows there first (written as 4b writes the samples), so the area that
+  // needs them is seeded too; whatever still cannot be seeded is named in `skipped` with the reason (world.mts prints it).
+  const state = new Map<string, "doing" | "done" | "failed">();
+  const why = new Map<string, string>(); // an area that has no rows, and why
+
+  /** A shared area with no samples: a few placeholder rows, so a workspace area's required reference has a target. */
+  async function fillShared(t: Area, depth: number): Promise<void> {
+    if (seeded.has(t.name) || state.has(t.name)) return;
+    state.set(t.name, "doing");
+    if (t.repo?.kind === "http_api") { state.set(t.name, "failed"); why.set(t.name, "it is read live from an outside service, so the lane world cannot write rows to it"); return; }
+    for (const f of refsOf(t)) if (f.required && f.to !== t.name) await ensure(f.to!, depth + 1);
+    const n = Math.min(3, SAMPLES);
+    const ops = Array.from({ length: n }, (_, i) => {
       const data: Record<string, unknown> = {};
-      a.fields.forEach((f, i) => { const v = valueOf(f, n, i, keysOf, areaNamed, a.name); if (v !== undefined) data[f.name] = v; });
-      return { op: "put", area: a.name, key: `${a.name.replace(/_/g, "-")}-${n + 1}`, title: `${singular(a.label)} ${n + 1}`, data };
+      t.fields.forEach((f, j) => { const v = valueOf(f, i, j, keysOf, areaNamed, t.name); if (v !== undefined) data[f.name] = v; });
+      return { key: `${t.name.replace(/_/g, "-")}-lane-${i + 1}`, title: `${singular(t.label)} ${i + 1}`, data };
     });
+    try {
+      for (const o of ops) await ra.putPlatform(null, t.name, o.key, { title: o.title, version: null, data: o.data }, "put", { source: SOURCE, fingerprint: `lane-placeholder:${o.key}` });
+      seeded.set(t.name, ops.map((o) => o.key));
+      state.set(t.name, "done");
+      out.filled.push(`${t.name} (a shared area with no samples): ${ops.length} placeholder row(s), so the areas that must point at one could be seeded`);
+    } catch (e) {
+      state.set(t.name, "failed");
+      why.set(t.name, `placeholder rows were refused: ${(e as Error).message.slice(0, 160)}`);
+    }
+  }
+
+  /** Make sure area `name` has rows before something points at it (a workspace area seeded, a shared one filled). */
+  async function ensure(name: string, depth: number): Promise<void> {
+    if (depth > 12) { if (!seeded.has(name)) why.set(name, "its chain of references is too long (over 12 areas deep) to seed in order"); return; }
+    const t = byName.get(name);
+    if (!t) { why.set(name, "no area of that name is in this build"); return; }
+    if (isOwn(name)) await seedArea(t, depth);
+    else if (t.scope === "platform") await fillShared(t, depth);
+    else if (!seeded.has(name)) why.set(name, t.repo?.kind === "http_api" ? "it is read live from an outside service" : `the lane world does not write ${t.scope} areas`);
+  }
+
+  async function seedArea(a: Area, depth = 0): Promise<void> {
+    if (state.has(a.name)) return; // done, failed, or being seeded further up this chain (a loop of references)
+    state.set(a.name, "doing");
+    for (const f of refsOf(a)) {
+      if (f.to === a.name) continue;
+      // A shared area with samples has rows already; one without gets placeholders only when the field needs a value.
+      const t = byName.get(f.to!);
+      if (t && !isOwn(t.name) && seeded.has(t.name)) continue;
+      if (t && !isOwn(t.name) && !f.required) continue;
+      await ensure(f.to!, depth + 1);
+    }
+    const keys = Array.from({ length: SAMPLES }, (_, n) => `${a.name.replace(/_/g, "-")}-${n + 1}`);
+    // A required reference to the area itself names an earlier row of the same batch (the first row, the first).
+    const self = (name: string) => (name === a.name ? keys : keysOf(name));
+    const ops = keys.map((key, n) => {
+      const data: Record<string, unknown> = {};
+      a.fields.forEach((f, i) => {
+        const selfRef = f.to === a.name && (f.type === "reference" || f.type === "link");
+        const v = selfRef && !f.required ? undefined : valueOf(f, selfRef ? Math.max(n - 1, 0) : n, i, selfRef ? self : keysOf, areaNamed, a.name);
+        if (v !== undefined) data[f.name] = v;
+      });
+      return { op: "put", area: a.name, key, title: `${singular(a.label)} ${n + 1}`, data };
+    });
+    // Required references with nothing to point at: said with the reason, rather than a bare refusal from the store.
+    const unmet = refsOf(a).filter((f) => f.required && f.to !== a.name && !keysOf(f.to!).length)
+      .map((f) => `its required ${f.name} points at ${f.to}, which has no rows (${why.get(f.to!) ?? (state.get(f.to!) === "doing" ? "the two areas point at each other" : "it has no samples")})`);
     try {
       await ra.writeFromRepository(orgId, a.pack, SOURCE, ops, new Map(ops.map((o) => [`${o.area}\u0000${o.key}`, `lane:${o.key}`])));
       seeded.set(a.name, ops.map((o) => o.key));
       out.records += ops.length;
-    } catch (e) { out.skipped.push(`${a.name}: ${(e as Error).message.slice(0, 200)}`); }
+      state.set(a.name, "done");
+    } catch (e) {
+      state.set(a.name, "failed");
+      why.set(a.name, unmet.length ? unmet.join("; ") : (e as Error).message.slice(0, 200));
+    }
   }
+
+  for (const a of own) await seedArea(a);
+  // A loop of references: an area refused while the other was half-way is tried once more, now that the rest have rows.
+  for (const a of own) if (state.get(a.name) === "failed") { state.delete(a.name); why.delete(a.name); await seedArea(a); }
+  for (const a of own) if (!seeded.has(a.name)) out.skipped.push(`${a.name}: ${why.get(a.name) ?? "not seeded"}`);
 
   // Runs of the build's job kinds: finished, failed and running, newest first, over a workspace asset when the kind reads one.
   const { jobKinds } = await imp("src/runs.ts");
@@ -130,7 +204,7 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   return out;
 }
 
-/** Remove what seedWorkspace wrote (its records by their source, its runs by their ids), for the empty states. */
+/** Remove what seedWorkspace wrote (its records by their source, its runs by their ids, its placeholders), for the empty states. */
 export async function unseedWorkspace(orgId: number, lane: string): Promise<number> {
   const imp = (rel: string) => import(pathToFileURL(path.join(lane, rel)).href);
   const { getDb } = await imp("src/db.ts");
@@ -139,6 +213,9 @@ export async function unseedWorkspace(orgId: number, lane: string): Promise<numb
   return asPlatform(async () => {
     const r = await db.query("DELETE FROM workspace_records WHERE org_id = $1 AND source = $2 RETURNING key", [orgId, SOURCE]);
     const x = await db.query("DELETE FROM runs WHERE org_id = $1 AND id LIKE 'run_lane_%' RETURNING id", [orgId]);
-    return (r as unknown[]).length + (x as unknown[]).length;
+    // mold_v0-298: the placeholder rows written to shared areas with no samples, by their own fingerprint
+    // (lane-placeholder:<key>); world.mts 4b's real samples (fingerprint lane:<key>) stay, whatever their keys.
+    const p = await db.query("DELETE FROM platform_records WHERE source = $1 AND fingerprint LIKE 'lane-placeholder:%' RETURNING key", [SOURCE]);
+    return (r as unknown[]).length + (x as unknown[]).length + (p as unknown[]).length;
   });
 }

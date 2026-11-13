@@ -2,15 +2,19 @@
 // /app Billing: this month (plan, spend against the cap; for a member, their own budget and the rules in
 // plain words; for an admin, a banner from 80% of the allowance or when the pace runs out) above its tabs, each held in
 // ?tab= (people, the default, teams, rules, access-log). People: one
-// searchable table of who is in the account, their role, access, team, limit, what is left and what limits them (invite,
-// roles, limits and suspension in each row's ⋯ menu; "own settings only" narrows it to the exceptions). Teams: a
-// searchable table of team budgets (deleting one first shows what it changes). Budget rules (admins): one table of the
-// rules that matter (the allowance, how people share it, the buffer, who can launch, run limits, team budgets and
-// people's own settings), who set each and when; each row's Edit saves through the endpoint that owns that rule, which
-// checks it. Access log (mold_v0-209; the workspace's owners, only where the profile turns audit.data on): the audit
-// trails on the records table (features/audit/access-log.tsx); it was its own page until then, now gone.
-// Plans and cards are Stripe's; people are Clerk's.
+// searchable table of who is in the account, their role, access, budget group, limit, what is left and what limits them
+// (Invite in the search row; roles, limits and suspension in each row's ⋯ menu; "own settings only" narrows it to the
+// exceptions). mold_v0-298: when a pack puts the Team page inside Settings, people are managed there alone: Billing has
+// no People tab and links to Settings' tab instead. Budget groups (tab id teams; "teams" in the data, named budget groups
+// on screen so they never read as Settings › Teams, who sees records): a searchable table of group budgets (deleting one
+// first shows what it changes). Budget rules (admins): one table of the rules that matter (the allowance, how people
+// share it, the buffer, who can launch, run limits, group budgets and people's own settings), who set each and when;
+// each row's Edit saves through the endpoint that owns that rule, which checks it. Adding and editing open in the side
+// panel beside the list (mold_v0-289's way). Access log (mold_v0-209; the workspace's owners, only where the profile
+// turns audit.data on): the audit trails on the records table (features/audit/access-log.tsx).
+// Plans and cards are the payment provider's; people are the sign-in provider's.
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
@@ -29,11 +33,14 @@ import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { WorkspaceAccessLog } from '@/features/audit/access-log';
 import { dataTrailOn } from '@/features/audit/config';
 import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type AccountRoleInfo } from './role';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { profile } from '@/config/profile.generated';
 import { fill } from '@/lib/vocabulary';
 import { text } from '@/lib/texts';
 import { IdentityName } from '@/components/identity-avatar';
+import { EmptyState } from '@/features/tabs/empty';
+import { ToolbarAction } from '@/features/tabs/tab-action';
+import { settingsTabs } from '@/config/pack-nav.generated';
+import { settingsTabUrl } from '@/config/settings';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
@@ -45,7 +52,7 @@ interface Billing { enabled: boolean; customer: boolean; subscription: Sub | nul
 interface RunCharges { enabled: boolean; currency: string;
   month: { currency: string; charged: number; credited: number; net: number; runs: number; charged_runs: number; pending: number }[];
   recent: { id: string; run_id: string; kind: 'charge' | 'credit'; job_kind: string; run_status: string; currency: string; amount: number; reason: string | null; created_at: string }[] }
-/** Credits for personas and tasks the platform accepted into its library: from Stripe's balance transactions, plus accepted ones Stripe hasn't taken yet. */
+/** Credits for personas and tasks the platform accepted into its library: from the payment provider's balance transactions, plus accepted ones it hasn't taken yet. */
 interface Contributions { credits: { id: string; amount_usd: number; description: string | null; created: string; submission_id: string }[]; total_usd: number; error: string | null;
   pending: { id: string; kind: 'persona' | 'task'; title: string; credit_usd: number; decided_at: string | null }[] }
 interface Usage {
@@ -92,6 +99,12 @@ function Block({ id, title, action, children }: { id?: string; title: string; ac
   );
 }
 
+/** Settings' team tab, when a pack puts the Team page inside Settings (mold_v0-280): its label, address and roles. */
+function peopleInSettings(): { label: string; url: string; roles: string[] | null } | null {
+  const t = settingsTabs.find((x) => (x.kind as string) === 'team');
+  return t ? { label: t.label, url: settingsTabUrl(t.id) ?? '/app/settings', roles: (t as { roles?: string[] }).roles ?? null } : null;
+}
+
 const urlParam = (k: string) => (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get(k));
 const BILLING_TABS = ['people', 'teams', 'rules', 'access-log'];
 /** The open tab in the address (?tab=<id>; People, the first, has none), so a reload or a shared link opens it again. */
@@ -107,7 +120,7 @@ export function BillingPage() {
   const { data: b, error } = useOrgLoad(() => appApi<Billing>('GET', '/billing'));
   const { data: u } = useOrgLoad(() => appApi<Usage>('GET', '/billing/usage'));
   const { data: t, reload: reloadTeam } = useOrgLoad(() => appApi<Team>('GET', '/team'));
-  const { data: l, reload: reloadLimits } = useOrgLoad(() => appApi<Limits>('GET', '/limits'));
+  const { data: l, error: limitsError, reload: reloadLimits } = useOrgLoad(() => appApi<Limits>('GET', '/limits'));
   const reload = () => { reloadTeam(); reloadLimits(); };
   // ?tab=people&filter=exceptions opens People with everyone who has their own settings.
   // (The tabs only render once billing has loaded, in the browser, so reading the URL here can't mismatch the server's HTML.)
@@ -116,25 +129,45 @@ export function BillingPage() {
   const setTab = (v: string) => { setTabState(v); tabToUrl(v); };
   const { role, loaded: roleLoaded } = useAccountRole();
   const logTab = dataTrailOn() && role === 'owner';
-  // Until /me answers, an asked-for Access log waits (it shows nothing); then a person who may not read it gets People.
-  const shown = tab === 'access-log' && !logTab && (roleLoaded || !dataTrailOn()) ? 'people' : tab;
+  // mold_v0-298: people are managed in one place. With the Team page inside Settings, a viewer who can open that tab has
+  // no People tab here: Billing links to Settings, and Budget groups is the first tab. A viewer that Settings' tab is not
+  // shown to (say a billing manager while the tab is for owners) keeps People here, so Edit limits stays in reach.
+  const elsewhere = peopleInSettings();
+  const seesElsewhere = !!elsewhere && (!elsewhere.roles || (roleLoaded && role !== null && elsewhere.roles.includes(role)));
+  const peopleHere = !elsewhere || (roleLoaded && !seesElsewhere);
+  const first = peopleHere ? 'people' : 'teams';
+  // Until /me answers, an asked-for Access log waits (it shows nothing); then a person who may not read it gets the first tab.
+  // mold_v0-298: likewise Budget rules (?tab=rules, where /app/limits leads) for someone who may not change them, and People
+  // when it lives in Settings.
+  // Budget rules waits for /limits (a loading card), and falls back if it fails.
+  const shown = (tab === 'access-log' && !logTab && (roleLoaded || !dataTrailOn())) || (tab === 'rules' && (limitsError || (l && !l.can_manage))) || (tab === 'people' && !peopleHere) ? first : tab;
+  // mold_v0-298: a single tab left (a plain member with People in Settings) shows no tab strip.
+  const tabCount = (peopleHere ? 1 : 0) + 1 + (l?.can_manage ? 1 : 0) + (logTab ? 1 : 0);
   const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>(() => (urlParam('filter') === 'exceptions' ? 'exceptions' : 'all'));
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !b ? <LoadingCards count={3} /> : (
         <div className='flex w-full flex-col gap-6'>
           <ThisMonth b={b} u={u ?? undefined} l={l ?? undefined} />
-          {/* People, Teams, Budget rules and Access log as tabs: the tables get the full width and height they need. */}
+          {/* People, Budget groups, Budget rules and Access log as tabs: the tables get the full width and height they need. */}
           <Tabs value={shown} onValueChange={(v) => setTab(String(v))} className='gap-4'>
-            <TabsList variant='line' className='gap-6 p-0'>
-              <TabsTrigger value='people' className='flex-none px-0'>People</TabsTrigger>
-              <TabsTrigger value='teams' className='flex-none px-0'>Teams</TabsTrigger>
-              {l?.can_manage && <TabsTrigger value='rules' className='flex-none px-0'>Budget rules</TabsTrigger>}
-              {logTab && <TabsTrigger value='access-log' className='flex-none px-0'>Access log</TabsTrigger>}
-            </TabsList>
-            <TabsContent value='people'><People t={t ?? undefined} l={l ?? undefined} reload={reload} filter={peopleFilter} setFilter={setPeopleFilter} /></TabsContent>
-            <TabsContent value='teams'>{l ? <Teams l={l} reload={reload} /> : <LoadingCards count={1} />}</TabsContent>
+            <div className='flex flex-wrap items-center justify-between gap-x-6 gap-y-2'>
+              {tabCount > 1 ? <TabsList variant='line' className='gap-6 p-0'>
+                {peopleHere && <TabsTrigger value='people' className='flex-none px-0'>People</TabsTrigger>}
+                <TabsTrigger value='teams' className='flex-none px-0'>Budget groups</TabsTrigger>
+                {l?.can_manage && <TabsTrigger value='rules' className='flex-none px-0'>Budget rules</TabsTrigger>}
+                {logTab && <TabsTrigger value='access-log' className='flex-none px-0'>Access log</TabsTrigger>}
+              </TabsList> : <h2 className='text-base leading-none font-semibold'>Budget groups</h2>}
+              {elsewhere && seesElsewhere && (
+                <Link href={elsewhere.url} className='text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline' data-billing-people-link=''>
+                  People and invites: Settings › {elsewhere.label}
+                </Link>
+              )}
+            </div>
+            {peopleHere && <TabsContent value='people'><People t={t ?? undefined} l={l ?? undefined} reload={reload} filter={peopleFilter} setFilter={setPeopleFilter} /></TabsContent>}
+            <TabsContent value='teams'>{l ? <Teams l={l} reload={reload} people={peopleHere ? 'People' : elsewhere && seesElsewhere ? `Settings › ${elsewhere.label}` : null} /> : <LoadingCards count={1} />}</TabsContent>
             {l?.can_manage && <TabsContent value='rules'><Rules l={l as AdminLimits} b={b} reload={reload} /></TabsContent>}
+            {!l && tab === 'rules' && <TabsContent value='rules'><LoadingCards count={1} /></TabsContent>}
             {dataTrailOn() && <TabsContent value='access-log'><WorkspaceAccessLog /></TabsContent>}
           </Tabs>
         </div>
@@ -168,7 +201,8 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
   const pct = (v: number) => (cap ? Math.min(100, (v / cap) * 100) : 0);
   const over = !!u && cap > 0 && u.projected_usd > cap;
   return (
-    <Block title='' action={b.enabled && b.can_manage && b.customer
+    // mold_v0-298: the summary has its heading.
+    <Block title='This month' action={b.enabled && b.can_manage && b.customer
       ? <Button variant='outline' size='sm' disabled={busy !== null} onClick={() => go('/billing/portal')}>{busy ? <Icons.spinner className='animate-spin' /> : <Icons.creditCard />} Manage billing</Button> : undefined}>
       {s && ['past_due', 'unpaid'].includes(s.status) && <Alert variant='destructive'><Icons.warning /><AlertDescription>The last payment failed. {fill('Update the card to keep running {runs}.')}</AlertDescription></Alert>}
       {l?.can_manage && l.alert && <UsageBanner a={l.alert} />}
@@ -187,14 +221,16 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
       {cap > 0 && u && (
         <div className='relative'>
           <div className='bg-muted h-2.5 overflow-hidden rounded-full'><div className={cn('h-full rounded-full', pct(u.spent_usd) >= 100 ? 'bg-destructive' : pct(u.spent_usd) >= 80 ? 'bg-amber-500' : 'bg-primary')} style={{ width: `${pct(u.spent_usd)}%` }} /></div>
-          <div className={cn('absolute -top-1 h-4.5 w-0.5 rounded', over ? 'bg-destructive' : 'bg-foreground/50')} style={{ left: `calc(${pct(u.projected_usd)}% - 1px)` }} title={`Projected ${usd(u.projected_usd)}`} />
+          {/* mold_v0-298: the month-end marker only once there is a projection (no stray mark at 0%). */}
+          {u.projected_usd > 0 && <div className={cn('absolute -top-1 h-4.5 w-0.5 rounded', over ? 'bg-destructive' : 'bg-foreground/50')} style={{ left: `calc(${pct(u.projected_usd)}% - 1px)` }} title={`Projected ${usd(u.projected_usd)} by month end`} />}
         </div>
       )}
       {u && (
         <p className='text-muted-foreground flex flex-wrap gap-x-5 gap-y-1 text-xs leading-none'>
           <span className={cn(over && 'text-destructive')}>Projected {usd(u.projected_usd)} by month end</span>
-          <span>{usd(u.metered_usd)} metered{u.meter.enabled ? ' to Stripe' : ''} · {u.sessions.finished} sessions</span>
-          {u.in_flight_usd > 0 && <span>{usd(u.in_flight_usd)} in flight · {u.sessions.running} running</span>}
+          {/* mold_v0-298: plain words, no payment provider's name. */}
+          <span>{usd(u.metered_usd)} of usage {u.meter.enabled ? 'billed' : 'recorded'} · {plural(u.sessions.finished, 'finished session')}</span>
+          {u.in_flight_usd > 0 && <span>{usd(u.in_flight_usd)} on {plural(u.sessions.running, 'session')} still running</span>}
           <span>Day {Math.ceil(u.period.elapsed_days)} of {u.period.days}</span>
         </p>
       )}
@@ -226,7 +262,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
   );
 }
 
-/** "Credits from contributions": what accepted library contributions took off the next invoices (Stripe customer balance). */
+/** "Credits from contributions": what accepted library contributions took off the next invoices (the customer's balance at the payment provider). */
 function ContributionCredits({ c }: { c: Contributions }) {
   if (!c.credits.length && !c.pending.length) return null;
   return (
@@ -251,7 +287,7 @@ function ContributionCredits({ c }: { c: Contributions }) {
           </li>
         ))}
       </ul>
-      {c.error && <p className='text-muted-foreground text-xs'>Stripe could not list the credits just now.</p>}
+      {c.error && <p className='text-muted-foreground text-xs'>The payment provider could not list the credits just now.</p>}
     </section>
   );
 }
@@ -307,7 +343,8 @@ function YourBudget({ m, l, you }: { m: LimitMember; l: Limits; you: You }) {
   const team = l.teams.find((x) => x.id === m.team_id);
   const details = [
     // The budget they draw on, unless the headline already is it (no personal limit).
-    team && team.budget_usd != null ? (m.limit_usd != null ? `Team ${team.name}: ${usd(team.left_usd ?? 0)} left` : `Team ${team.name}`) : team ? `Team ${team.name}` : '',
+    // mold_v0-298: a budget group (not Settings' teams).
+    team && team.budget_usd != null ? (m.limit_usd != null ? `Budget group ${team.name}: ${usd(team.left_usd ?? 0)} left` : `Budget group ${team.name}`) : team ? `Budget group ${team.name}` : '',
     m.effective_max_concurrent != null ? `${m.running} of ${m.effective_max_concurrent} running` : m.running ? `${m.running} running` : '',
     `up to ${plural(you.max_sessions, 'session')}${you.max_run_usd != null ? ` and ${usd(you.max_run_usd)}` : ''} per run`,
     reset ? `resets ${reset}` : ''
@@ -337,6 +374,8 @@ type PersonRow =
   | { kind: 'member'; key: string; m: Member; lim: LimitMember | undefined }
   | { kind: 'invite'; key: string; x: Invite };
 type PeopleFilter = 'all' | 'exceptions';
+/** What People's side panel shows (mold_v0-298): Invite, a person's limits, or what each role can do. */
+type PeoplePanel = { kind: 'invite' } | { kind: 'limits'; m: Member; lim: LimitMember } | { kind: 'roles' } | null;
 
 /** A person's own settings, in words ("own limit $150.00", "can't launch"); none: they follow the defaults. Budget rules' rows and People's filter. */
 function exceptionWords(m: LimitMember, p: Policy) {
@@ -347,13 +386,13 @@ function exceptionWords(m: LimitMember, p: Policy) {
     ...(m.max_concurrent_runs != null ? [plural(m.max_concurrent_runs, 'run') + ' at once'] : [])
   ];
 }
-const SOURCE_WORD = { you: 'own', team: 'team', account: 'account' } as const;
+const SOURCE_WORD = { you: 'own', team: 'group', account: 'account' } as const;
 
 function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefined; l: Limits | undefined; reload: () => void; filter?: PeopleFilter; setFilter?: (f: PeopleFilter) => void }) {
-  const [inviting, setInviting] = useState(false);
-  const [editing, setEditing] = useState<{ m: Member; lim: LimitMember } | null>(null);
+  // mold_v0-298: Invite, Edit limits and the roles' help open in the side panel beside the list, one at a time.
+  const [panel, setPanel] = useState<PeoplePanel>(null);
   const [suspend, setSuspend] = useState<Member | null>(null);
-  const { lock, roles } = useAccountRole();
+  const { lock, roles, can } = useAccountRole();
   if (!t) return <LoadingCards count={1} />;
   // The team (invite, roles, suspension) is the owners'; Edit limits is Budget rules (owners and billing managers).
   const manage = t.can_manage, budget = !!l?.can_manage, mode = l?.policy.mode ?? 'pool';
@@ -375,7 +414,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
     ];
     const { m, lim } = r, self = m.user_id === t.me, active = m.status === 'active', now = roleOf(m);
     return [
-      ...(lim ? [lock({ label: 'Edit limits', icon: <Icons.gauge />, onSelect: () => setEditing({ m, lim }) }, 'budget')] : []),
+      ...(lim ? [lock({ label: 'Edit limits', icon: <Icons.gauge />, onSelect: () => setPanel({ kind: 'limits', m, lim }) }, 'budget')] : []),
       ...(self ? [] : [
         ...roles.filter((x) => x.id !== now).map((x, i) => lock({ label: `Make ${x.label.toLowerCase()}`, icon: <Icons.teams />, separator: i === 0 && !!lim,
           onSelect: () => act(appApi('POST', `/team/members/${encodeURIComponent(m.id)}/role`, { role: x.id }), `${m.email} is now ${/^[aeiou]/i.test(x.label) ? 'an' : 'a'} ${x.label.toLowerCase()}`) }, 'team')),
@@ -392,12 +431,16 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       render: (r) => r.kind === 'invite' ? (<IdentityName email={r.x.email}>
         <span className='font-medium'>{r.x.email}</span>
         <div className='text-muted-foreground mt-1 text-xs leading-none'>sent <When d={r.x.created_at} /></div>
+        <div className='mt-1 sm:hidden'><Badge variant={statusOf(r) === 'Invited' ? 'outline' : 'destructive'}>{statusOf(r)}</Badge></div>
       </IdentityName>) : (<IdentityName id={r.m.user_id} name={r.m.name} email={r.m.email}>
         <span className='font-medium'>{r.m.name || r.m.email}</span>
         {r.m.user_id === t.me && <span className='text-muted-foreground ml-2 text-xs'>you</span>}
-        {r.m.name && <span className='text-muted-foreground ml-2 text-xs'>{r.m.email}</span>}
+        {r.m.name && <span className='text-muted-foreground ml-2 text-xs max-sm:hidden'>{r.m.email}</span>}
+        {/* mold_v0-298: on a phone Role is folded away, so a state other than Active shows here. */}
+        {statusOf(r) !== 'Active' && <div className='mt-1 sm:hidden'><Badge variant='destructive'>{statusOf(r)}</Badge></div>}
       </IdentityName>) },
-    { key: 'role', label: 'Role', className: 'w-36', type: 'select', value: (r) => ACCOUNT_ROLE_LABEL[roleOf(r.kind === 'invite' ? r.x : r.m)],
+    // mold_v0-298: on a phone Person, Spend this month and ⋯ stay in view; Role and Budget group fold away (a row's panel has them).
+    { key: 'role', label: 'Role', className: 'w-36 max-sm:hidden', type: 'select', value: (r) => ACCOUNT_ROLE_LABEL[roleOf(r.kind === 'invite' ? r.x : r.m)],
       // The status badge under the role, only when it isn't Active (Status itself is off by default).
       render: (r) => { const x = roleOf(r.kind === 'invite' ? r.x : r.m), st = statusOf(r); return (<>
         <span className={x === 'owner' ? '' : 'text-muted-foreground'} title={roles.find((y) => y.id === x)?.help}>{ACCOUNT_ROLE_LABEL[x]}</span>
@@ -405,9 +448,9 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       </>); } },
     { key: 'status', label: 'Status', className: 'w-36', type: 'select', hidden: true, value: statusOf,
       render: (r) => <Badge variant={statusOf(r) === 'Active' ? 'secondary' : statusOf(r) === 'Invited' ? 'outline' : 'destructive'}>{statusOf(r)}</Badge> },
-    { key: 'team', label: 'Team', className: 'w-36', type: 'select', value: (r) => (r.kind === 'member' ? teamName(r.lim?.team_id) ?? 'No team' : 'No team'),
+    { key: 'team', label: 'Budget group', className: 'w-36 max-sm:hidden', type: 'select', value: (r) => (r.kind === 'member' ? teamName(r.lim?.team_id) ?? 'No group' : 'No group'),
       render: (r) => <span className='text-muted-foreground'>{r.kind === 'member' ? teamName(r.lim?.team_id) ?? '—' : '—'}</span> },
-    { key: 'spend', label: 'Spend this month', className: 'w-56', type: 'number', value: (r) => (r.kind === 'member' ? r.lim?.spent ?? 0 : 0),
+    { key: 'spend', label: 'Spend this month', className: 'w-56 max-sm:w-auto', type: 'number', value: (r) => (r.kind === 'member' ? r.lim?.spent ?? 0 : 0),
       // Line 1: the bar (or "· shared budget" with no own limit); line 2: what is left and, when one applies, the limit that binds (red when blocked).
       render: (r) => {
         if (r.kind === 'invite' || !r.lim) return <span className='text-muted-foreground'>—</span>;
@@ -432,7 +475,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       } },
     { key: 'tokens', label: 'Tokens', className: 'w-28', type: 'number', hidden: true, value: (r) => (r.kind === 'member' && r.lim ? Number(r.lim.tokens_in) + Number(r.lim.tokens_out) : 0),
       render: (r) => <span className='text-xs tabular-nums'>{r.kind === 'member' && r.lim ? num(Number(r.lim.tokens_in) + Number(r.lim.tokens_out)) : '—'}</span> },
-    // The one that applies (the most specific: their own, their team's, the account's) and where it comes from: "2 · team".
+    // The one that applies (the most specific: their own, their team's, the account's) and where it comes from: "2 · group".
     { key: 'runs', label: 'Runs at once', className: 'w-36', hidden: true, render: (r) => r.kind === 'invite' || !r.lim ? <span className='text-muted-foreground'>—</span> : (
       <span className='text-xs tabular-nums'>
         {r.lim.effective_max_concurrent == null ? <span className='text-muted-foreground'>no limit</span>
@@ -447,23 +490,38 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
   return (
     <div className='flex flex-col gap-3'>
       {t.error && <Alert variant='destructive'><AlertDescription>{t.error}</AlertDescription></Alert>}
+      {filtered && (
+        <div className='flex min-h-8 flex-wrap items-center gap-2 text-sm'>
+          <Badge variant='secondary'>Own settings only</Badge>
+          <span className='text-muted-foreground'>People with their own limit, adjustment, launch access or runs at once.</span>
+          <Button variant='ghost' size='xs' className='text-muted-foreground' onClick={() => setFilter?.('all')}>Show everyone</Button>
+        </div>
+      )}
       <RecordView compact id='billing-people' rows={rows} rowKey={(r) => r.key} cols={cols} noun='people' properties detail={() => null}
         searchText={(r) => (r.kind === 'invite' ? r.x.email : `${r.m.name ?? ''} ${r.m.email ?? ''} ${teamName(r.lim?.team_id) ?? ''}`)}
-        searchPlaceholder='Search people by name, email or team'
-        filters={<>
-          {budget && (
-            <Button variant={filtered ? 'secondary' : 'outline'} size='sm' aria-pressed={!!filtered} onClick={() => setFilter?.(filtered ? 'all' : 'exceptions')}
-              title='People with their own limit, adjustment, launch access or runs at once'>
-              Own settings only
-            </Button>)}
-          <RolesHelp roles={roles} />
-        </>}
+        // mold_v0-298: short enough for a phone; "Own settings only" and the roles' help fold into the Actions menu.
+        searchPlaceholder='Search people'
+        primaryMenu={[
+          ...(budget && setFilter ? [{ label: filtered ? 'Show everyone' : 'Own settings only', icon: <Icons.gauge />,
+            onSelect: () => setFilter(filtered ? 'all' : 'exceptions') }] : []),
+          ...(roles.length ? [{ label: 'What each role can do', icon: <Icons.teams />, onSelect: () => setPanel({ kind: 'roles' }) }] : [])
+        ]}
         views={[{ id: 'all', label: 'Everyone' }, { id: 'active', label: 'Active', match: (r) => statusOf(r) === 'Active' }, { id: 'invited', label: 'Invited', match: (r) => r.kind === 'invite' },
           { id: 'suspended', label: 'Suspended', match: (r) => statusOf(r) === 'Suspended' }]}
-        primary={<Allowed need='team'><Button onClick={() => setInviting(true)}><Icons.add /> Invite</Button></Allowed>}
-        actions={manage || budget ? actions : undefined} exportName='people' empty={filtered ? 'Nobody has their own settings.' : 'Nobody here yet.'} />
-      {inviting && <InviteDialog roles={roles} onClose={() => setInviting(false)} onSent={reload} />}
-      {editing && l && <LimitsDialog m={editing.m} lim={editing.lim} l={l} mode={mode} onClose={() => setEditing(null)} onSaved={reload} />}
+        // mold_v0-298: Invite is the search row's primary button, its form in the side panel (as New team, New API token).
+        // The wrapper holds the row's right edge, so the button stays there when Allowed disables it (and wraps it for the reason).
+        toolbarAction={<span className='ml-auto inline-flex shrink-0'><Allowed need='team'><Button type='button' onClick={() => setPanel({ kind: 'invite' })} aria-label='Invite' title='Invite' data-toolbar-action=''
+          className='max-sm:w-8 max-sm:px-0'><Icons.add /><span className='hidden sm:inline'>Invite</span></Button></Allowed></span>}
+        sidePanel={panel?.kind === 'invite' ? { key: 'invite', title: 'Invite someone', onClose: () => setPanel(null), body: <InviteForm roles={roles} onClose={() => setPanel(null)} onSent={reload} /> }
+          : panel?.kind === 'limits' && l ? { key: `limits:${panel.m.user_id}`, title: `Limits for ${panel.m.name || panel.m.email}`, onClose: () => setPanel(null),
+            body: <LimitsForm m={panel.m} lim={panel.lim} l={l} mode={mode} onClose={() => setPanel(null)} onSaved={reload} /> }
+          : panel?.kind === 'roles' ? { key: 'roles', title: 'What each role can do', onClose: () => setPanel(null), body: <RoleLines roles={roles} /> }
+          : null}
+        actions={manage || budget ? actions : undefined} exportName='people'
+        // mold_v0-298: the shared empty state, naming the next step.
+        empty={filtered
+          ? <EmptyState id='billing-people-empty' empty={{ title: 'Nobody has their own settings', text: 'Everyone follows the budget rules. Edit limits on a person\'s row gives them their own.', cta: null }} />
+          : <EmptyState id='billing-people-empty' empty={{ title: 'Nobody here yet', text: can('team') ? 'Invite adds someone by email: they get a link and join with the role you pick.' : 'The account\'s owners invite people by email.', cta: null }} />} />
       <Dialog open={!!suspend} onOpenChange={(o) => !o && setSuspend(null)}>
         <DialogContent>
           <DialogHeader>
@@ -490,26 +548,31 @@ function Allowance({ spent, cap }: { spent: number; cap: number }) {
   );
 }
 
-/** A person's or invitation's account role (older servers sent only Clerk's admin / member). */
+/** A person's or invitation's account role (older servers sent only the sign-in provider's admin / member). */
 const roleOf = (x: { role?: string; account_role?: AccountRole }): AccountRole => x.account_role ?? (x.role === 'admin' ? 'owner' : 'member');
 
-/** What each role can do, one line each, next to Invite. */
-function RolesHelp({ roles }: { roles: AccountRoleInfo[] }) {
-  if (!roles.length) return null;
-  return (
-    <Popover>
-      <PopoverTrigger render={<Button variant='ghost' size='sm' className='text-muted-foreground' />}>Roles</PopoverTrigger>
-      <PopoverContent align='end' className='w-80'><RoleLines roles={roles} /></PopoverContent>
-    </Popover>
-  );
-}
+/** What each role can do, one line each: the Invite form, and the panel from People's Actions menu. */
 const RoleLines = ({ roles, on }: { roles: AccountRoleInfo[]; on?: string }) => (
   <dl className='grid gap-2 text-sm'>
     {roles.map((r) => <div key={r.id} className={cn(on && on !== r.id && 'text-muted-foreground')}><dt className='font-medium'>{r.label}</dt><dd className='text-muted-foreground text-xs'>{r.help}</dd></div>)}
   </dl>
 );
 
-function InviteDialog({ roles, onClose, onSent }: { roles: AccountRoleInfo[]; onClose: () => void; onSent: () => void }) {
+/**
+ * A form in the side panel beside a list (mold_v0-298, as mold_v0-289's New team and New API token): what it does in a
+ * sentence, its fields, then the submit and Cancel.
+ */
+function PanelForm({ about, onSubmit, submit, onClose, children }: { about?: React.ReactNode; onSubmit: (e: React.FormEvent) => void; submit: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <form onSubmit={onSubmit} className='flex flex-col gap-4'>
+      {about && <p className='text-muted-foreground text-sm'>{about}</p>}
+      {children}
+      <div className='flex flex-wrap gap-2'>{submit}<Button type='button' variant='outline' onClick={onClose}>Cancel</Button></div>
+    </form>
+  );
+}
+
+function InviteForm({ roles, onClose, onSent }: { roles: AccountRoleInfo[]; onClose: () => void; onSent: () => void }) {
   const [email, setEmail] = useState(''), [role, setRole] = useState('member'), [busy, setBusy] = useState(false);
   const send = (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true);
@@ -517,21 +580,18 @@ function InviteDialog({ roles, onClose, onSent }: { roles: AccountRoleInfo[]; on
       .then(() => { toast.success(`Invitation sent to ${email.trim()}`); onSent(); onClose(); }).catch(fail).finally(() => setBusy(false));
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className='sm:max-w-md'>
-        <form onSubmit={send} className='grid gap-4'>
-          <DialogHeader><DialogTitle>Invite someone</DialogTitle><DialogDescription>They get an email and join this account with the role you pick when they accept.</DialogDescription></DialogHeader>
-          <div className='flex gap-2'>
-            <Input autoFocus type='email' required placeholder='name@company.com' value={email} onChange={(e) => setEmail(e.target.value)} aria-label='Email' />
-            <NativeSelect value={role} onChange={(e) => setRole(e.target.value)} aria-label='Role' className='w-40'>
-              {(roles.length ? roles : [{ id: 'member', label: 'Member', help: '' }]).map((r) => <NativeSelectOption key={r.id} value={r.id}>{r.label}</NativeSelectOption>)}
-            </NativeSelect>
-          </div>
-          <RoleLines roles={roles} on={role} />
-          <DialogFooter><Button type='button' variant='outline' onClick={onClose}>Cancel</Button><Button type='submit' disabled={busy || !email.trim()}>Send invitation</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <PanelForm about='They get an email and join this account with the role you pick when they accept.' onSubmit={send} onClose={onClose}
+      submit={<Button type='submit' disabled={busy || !email.trim()}><Icons.send /> Send invitation</Button>}>
+      <label className='grid gap-1.5 text-sm'>Email
+        <Input autoFocus type='email' required placeholder='name@example.com' value={email} onChange={(e) => setEmail(e.target.value)} />
+      </label>
+      <label className='grid gap-1.5 text-sm'>Role
+        <NativeSelect value={role} onChange={(e) => setRole(e.target.value)} className='w-full'>
+          {(roles.length ? roles : [{ id: 'member', label: 'Member', help: '' }]).map((r) => <NativeSelectOption key={r.id} value={r.id}>{r.label}</NativeSelectOption>)}
+        </NativeSelect>
+      </label>
+      <RoleLines roles={roles} on={role} />
+    </PanelForm>
   );
 }
 
@@ -543,7 +603,7 @@ const runWord = (v: boolean | null) => (v == null ? 'default' : v ? 'yes' : 'no'
  * runs at once (empty: their team's or the account's). Only what was changed is sent, so opening and saving never pins
  * a default onto the person.
  */
-function LimitsDialog({ m, lim, l, mode, onClose, onSaved }: { m: Pick<Member, 'user_id' | 'name' | 'email'>; lim: LimitMember; l: Limits; mode: Mode; onClose: () => void; onSaved: () => void }) {
+function LimitsForm({ m, lim, l, mode, onClose, onSaved }: { m: Pick<Member, 'user_id' | 'name' | 'email'>; lim: LimitMember; l: Limits; mode: Mode; onClose: () => void; onSaved: () => void }) {
   const init = { team: lim.team_id == null ? '' : String(lim.team_id), run: runWord(lim.own_can_run ?? null), limit: lim.cap_usd == null ? 'default' : 'own', cap: str(lim.cap_usd),
     adjust: lim.adjust_usd ? String(lim.adjust_usd) : '', conc: str(lim.max_concurrent_runs) };
   const [f, setF] = useState(init);
@@ -567,38 +627,32 @@ function LimitsDialog({ m, lim, l, mode, onClose, onSaved }: { m: Pick<Member, '
       .then(() => { toast.success('Limits saved'); onSaved(); onClose(); }).catch(fail);
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className='sm:max-w-md'>
-        <form onSubmit={save} className='grid gap-4'>
-          <DialogHeader><DialogTitle>Limits for {m.name || m.email}</DialogTitle>
-            <DialogDescription>Spent {usd(lim.spent)} this month{lim.limit_usd != null ? ` of ${usd(lim.limit_usd)}` : ''}{lim.left_usd != null ? `, ${usd(lim.left_usd)} left` : ''}.</DialogDescription></DialogHeader>
-          <label className='grid gap-1.5 text-sm'>Monthly limit
-            <NativeSelect value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value })} className='w-full'>
-              <NativeSelectOption value='default'>Use the default ({byDefault})</NativeSelectOption>
-              <NativeSelectOption value='own'>Own limit</NativeSelectOption>
-            </NativeSelect>
-          </label>
-          {f.limit === 'own' && <label className='grid gap-1.5 text-sm'>Own limit ($ a month)<Input type='number' inputMode='decimal' required min={0} step={0.01} value={f.cap} onChange={(e) => setF({ ...f, cap: e.target.value })} /></label>}
-          {mode === 'even' && <label className='grid gap-1.5 text-sm'>Adjustment on top of equal share (± $)<Input type='number' inputMode='decimal' step={0.01} value={f.adjust} onChange={(e) => setF({ ...f, adjust: e.target.value })} placeholder='0' /></label>}
-          <label className='grid gap-1.5 text-sm'>Team
-            <NativeSelect value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })} className='w-full'>
-              <NativeSelectOption value=''>No team</NativeSelectOption>
-              {l.teams.map((x) => <NativeSelectOption key={x.id} value={String(x.id)}>{x.name}</NativeSelectOption>)}
-            </NativeSelect>
-          </label>
-          <label className='grid gap-1.5 text-sm'>{fill('Can launch {runs}')}
-            <NativeSelect value={f.run} onChange={(e) => setF({ ...f, run: e.target.value })} className='w-full'>
-              <NativeSelectOption value='default'>Use the account setting ({p.new_members_can_run ? 'everyone can launch' : 'only people allowed'})</NativeSelectOption>
-              <NativeSelectOption value='yes'>Yes</NativeSelectOption>
-              <NativeSelectOption value='no'>No</NativeSelectOption>
-            </NativeSelect>
-          </label>
-          <label className='grid gap-1.5 text-sm'>Runs at once<Input type='number' inputMode='numeric' min={1} step={1} value={f.conc} onChange={(e) => setF({ ...f, conc: e.target.value })}
-            placeholder={`Use team or account setting (${runsDefault ?? 'no limit'})`} /></label>
-          <DialogFooter><Button type='button' variant='outline' onClick={onClose}>Cancel</Button><Button type='submit'>Save limits</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <PanelForm about={`Spent ${usd(lim.spent)} this month${lim.limit_usd != null ? ` of ${usd(lim.limit_usd)}` : ''}${lim.left_usd != null ? `, ${usd(lim.left_usd)} left` : ''}.`}
+      onSubmit={save} onClose={onClose} submit={<Button type='submit'>Save limits</Button>}>
+      <label className='grid gap-1.5 text-sm'>Monthly limit
+        <NativeSelect value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value })} className='w-full'>
+          <NativeSelectOption value='default'>Use the default ({byDefault})</NativeSelectOption>
+          <NativeSelectOption value='own'>Own limit</NativeSelectOption>
+        </NativeSelect>
+      </label>
+      {f.limit === 'own' && <label className='grid gap-1.5 text-sm'>Own limit ($ a month)<Input type='number' inputMode='decimal' required min={0} step={0.01} value={f.cap} onChange={(e) => setF({ ...f, cap: e.target.value })} /></label>}
+      {mode === 'even' && <label className='grid gap-1.5 text-sm'>Adjustment on top of equal share (± $)<Input type='number' inputMode='decimal' step={0.01} value={f.adjust} onChange={(e) => setF({ ...f, adjust: e.target.value })} placeholder='0' /></label>}
+      <label className='grid gap-1.5 text-sm'>Budget group
+        <NativeSelect value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })} className='w-full'>
+          <NativeSelectOption value=''>No group</NativeSelectOption>
+          {l.teams.map((x) => <NativeSelectOption key={x.id} value={String(x.id)}>{x.name}</NativeSelectOption>)}
+        </NativeSelect>
+      </label>
+      <label className='grid gap-1.5 text-sm'>{fill('Can launch {runs}')}
+        <NativeSelect value={f.run} onChange={(e) => setF({ ...f, run: e.target.value })} className='w-full'>
+          <NativeSelectOption value='default'>Use the account setting ({p.new_members_can_run ? 'everyone can launch' : 'only people allowed'})</NativeSelectOption>
+          <NativeSelectOption value='yes'>Yes</NativeSelectOption>
+          <NativeSelectOption value='no'>No</NativeSelectOption>
+        </NativeSelect>
+      </label>
+      <label className='grid gap-1.5 text-sm'>Runs at once<Input type='number' inputMode='numeric' min={1} step={1} value={f.conc} onChange={(e) => setF({ ...f, conc: e.target.value })}
+        placeholder={`Use the group or account setting (${runsDefault ?? 'no limit'})`} /></label>
+    </PanelForm>
   );
 }
 
@@ -614,15 +668,15 @@ const MODE_WORDS: Record<Mode, string> = { pool: 'Shared pool: anyone can use th
 const MODE_OPTIONS: { id: Mode; label: string }[] = [{ id: 'pool', label: 'Shared pool' }, { id: 'even', label: 'Split evenly' }, { id: 'custom', label: 'Custom caps' }];
 
 function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => void }) {
-  const [policyEdit, setPolicyEdit] = useState<PolicyEdit | null>(null);
-  const [teamEdit, setTeamEdit] = useState<LimitTeam | null>(null);
-  const [personEdit, setPersonEdit] = useState<LimitMember | null>(null);
+  // mold_v0-298: a row's Edit opens in the side panel beside the list, one at a time.
+  const [edit, setEdit] = useState<{ kind: 'policy'; e: PolicyEdit } | { kind: 'team'; t: LimitTeam } | { kind: 'person'; m: LimitMember } | null>(null);
+  const close = () => setEdit(null);
   const { lock } = useAccountRole();
   const p = l.policy, ch = l.changed ?? {};
   const who = (k: string) => ch[k] ?? null;
   const policyRow = (field: PolicyField, rule: string, value: string, applies: string, kind: PolicyEdit['kind'], hint: string): RuleRow => {
     const c = who(`policy.${field}`);
-    return { key: `policy.${field}`, rule, value, applies, by: c?.by_name ?? 'Default', at: c?.at ?? null, edit: () => setPolicyEdit({ field, rule, kind, hint }) };
+    return { key: `policy.${field}`, rule, value, applies, by: c?.by_name ?? 'Default', at: c?.at ?? null, edit: () => setEdit({ kind: 'policy', e: { field, rule, kind, hint } }) };
   };
   const max = l.server_max_sessions;
   const rows: RuleRow[] = [
@@ -636,14 +690,14 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
     policyRow('new_members_can_run', 'New members can launch', p.new_members_can_run ? 'Yes' : 'No', 'Everyone', 'bool',
       "No stops everyone who hasn't been allowed individually, including people already here."),
     policyRow('max_concurrent_runs', 'Runs at once (per person)', p.max_concurrent_runs == null ? 'No limit' : String(p.max_concurrent_runs), 'Each person', 'count',
-      fill('Whole {runs} running at once. Teams and people can set their own; the most specific one wins.')),
+      fill('Whole {runs} running at once. Budget groups and people can set their own; the most specific one wins.')),
     policyRow('max_sessions_per_run', 'Sessions per run', p.max_sessions_per_run == null ? `${profile.name}'s maximum${max ? ` (${max})` : ''}` : String(p.max_sessions_per_run), fill('Each {run}'), 'count',
       `${fill('Agent sessions per {run}')}, adaptive runs included.${max ? ` ${profile.name}'s maximum is ${max}.` : ''}`),
     policyRow('max_run_usd', 'Spend cap per run', p.max_run_usd == null ? 'No limit' : usd(p.max_run_usd), fill('Each {run}'), 'money',
       'Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish.'),
     ...l.teams.filter((t) => t.budget_usd != null || t.max_concurrent_runs != null).map((t): RuleRow => {
       const c = who(`team:${t.id}`);
-      return { key: `team:${t.id}`, rule: t.budget_usd != null ? 'Team budget' : 'Team settings', applies: `${t.name} team`, by: c?.by_name ?? 'Default', at: c?.at ?? null, edit: () => setTeamEdit(t),
+      return { key: `team:${t.id}`, rule: t.budget_usd != null ? 'Group budget' : 'Group settings', applies: `${t.name} (budget group)`, by: c?.by_name ?? 'Default', at: c?.at ?? null, edit: () => setEdit({ kind: 'team', t }),
         value: [t.budget_usd == null ? "No budget (shares Everyone else's)" : `${usd(t.budget_usd)} a month`, ...(t.max_concurrent_runs != null ? [`${plural(t.max_concurrent_runs, 'run')} at once per person`] : [])].join(' · ') };
     }),
     ...l.members.flatMap((m): RuleRow[] => {
@@ -651,7 +705,7 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
       if (!words.length) return [];
       const c = who(`member:${m.user_id}`);
       return [{ key: `member:${m.user_id}`, rule: 'Own settings', value: words.join(' · '), applies: m.name || m.email || m.user_id, by: c?.by_name ?? 'Default', at: c?.at ?? null,
-        edit: () => setPersonEdit(m),
+        edit: () => setEdit({ kind: 'person', m }),
         reset: () => appApi('PUT', `/limits/members/${encodeURIComponent(m.user_id)}`, { cap_usd: null, adjust_usd: 0, can_run: null, max_concurrent_runs: null })
           .then(() => { toast.success('Back to the defaults'); reload(); }).catch(fail) }];
     })
@@ -673,21 +727,21 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
     ...(r.edit ? [lock({ label: 'Edit', icon: <Icons.edit />, onSelect: r.edit }, 'budget')] : []),
     ...(r.reset ? [lock({ label: 'Reset to defaults', icon: <Icons.close />, separator: true, onSelect: r.reset }, 'budget')] : [])
   ];
-  const person = personEdit && { user_id: personEdit.user_id, name: personEdit.name ?? null, email: personEdit.email ?? null };
+  const sidePanel = edit?.kind === 'policy' ? { key: `policy:${edit.e.field}`, title: edit.e.rule, onClose: close, body: <PolicyForm e={edit.e} l={l} b={b} onClose={close} onSaved={reload} /> }
+    : edit?.kind === 'team' ? { key: `team:${edit.t.id}`, title: `Edit budget group ${edit.t.name}`, onClose: close, body: <TeamForm team={edit.t} onClose={close} onSaved={reload} /> }
+    : edit?.kind === 'person' ? { key: `member:${edit.m.user_id}`, title: `Limits for ${edit.m.name || edit.m.email || edit.m.user_id}`, onClose: close,
+      body: <LimitsForm m={{ user_id: edit.m.user_id, name: edit.m.name ?? null, email: edit.m.email ?? null }} lim={edit.m} l={l} mode={p.mode} onClose={close} onSaved={reload} /> }
+    : null;
   return (
-    <>
-      <RecordView compact id='billing-rules' rows={rows} rowKey={(r) => r.key} cols={cols} noun='rules'
-        searchText={(r) => `${r.rule} ${r.value} ${r.applies} ${r.by}`} searchPlaceholder='Search rules'
-        actions={actions} exportName='budget-rules' empty='No rules.' />
-      {policyEdit && <PolicyDialog e={policyEdit} l={l} b={b} onClose={() => setPolicyEdit(null)} onSaved={reload} />}
-      {teamEdit && <TeamDialog team={teamEdit} onClose={() => setTeamEdit(null)} onSaved={reload} />}
-      {personEdit && person && <LimitsDialog m={person} lim={personEdit} l={l} mode={p.mode} onClose={() => setPersonEdit(null)} onSaved={reload} />}
-    </>
+    <RecordView compact id='billing-rules' rows={rows} rowKey={(r) => r.key} cols={cols} noun='rules'
+      searchText={(r) => `${r.rule} ${r.value} ${r.applies} ${r.by}`} searchPlaceholder='Search rules'
+      actions={actions} exportName='budget-rules' sidePanel={sidePanel}
+      empty={<EmptyState id='billing-rules-empty' empty={{ title: 'No rules yet', text: 'The account\'s rules show here once its allowance loads.', cta: null }} />} />
   );
 }
 
 /** One account rule: PUT /limits/policy with just that field (the server checks it, as everywhere). */
-function PolicyDialog({ e, l, b, onClose, onSaved }: { e: PolicyEdit; l: AdminLimits; b: Billing; onClose: () => void; onSaved: () => void }) {
+function PolicyForm({ e, l, b, onClose, onSaved }: { e: PolicyEdit; l: AdminLimits; b: Billing; onClose: () => void; onSaved: () => void }) {
   const p = l.policy, cur = p[e.field];
   const [v, setV] = useState(e.kind === 'bool' ? (cur ? 'yes' : 'no') : e.kind === 'mode' ? String(cur) : e.field === 'reserve_usd' && !cur ? '' : str(cur as number | null));
   const [cap, setCap] = useState(str(p.default_cap_usd));
@@ -703,28 +757,23 @@ function PolicyDialog({ e, l, b, onClose, onSaved }: { e: PolicyEdit; l: AdminLi
   const placeholder = e.field === 'reserve_usd' ? '0.00' : e.field === 'max_sessions_per_run' ? (l.server_max_sessions ? String(l.server_max_sessions) : '') : 'no limit';
   const allowance = b.budget_usd > 0 ? ` Your allowance is ${usd(b.budget_usd)} a month.` : '';
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className='sm:max-w-md'>
-        <form onSubmit={save} className='grid gap-4'>
-          <DialogHeader><DialogTitle>{e.rule}</DialogTitle><DialogDescription>{e.hint}{e.kind === 'money' ? allowance : ''} Changes apply right away to this month&apos;s spend.</DialogDescription></DialogHeader>
-          {e.kind === 'mode' ? (
-            <NativeSelect value={v} onChange={(x) => setV(x.target.value)} aria-label={e.rule} className='w-full'>
-              {MODE_OPTIONS.map((m) => <NativeSelectOption key={m.id} value={m.id}>{m.label}</NativeSelectOption>)}
-            </NativeSelect>
-          ) : e.kind === 'bool' ? (
-            <NativeSelect value={v} onChange={(x) => setV(x.target.value)} aria-label={e.rule} className='w-full'>
-              <NativeSelectOption value='yes'>Yes, everyone on the account</NativeSelectOption>
-              <NativeSelectOption value='no'>No, only people allowed individually</NativeSelectOption>
-            </NativeSelect>
-          ) : (
-            <Input autoFocus type='number' inputMode={e.kind === 'money' ? 'decimal' : 'numeric'} min={e.kind === 'money' ? 0 : 1} step={e.kind === 'money' ? 0.01 : 1}
-              value={v} onChange={(x) => setV(x.target.value)} placeholder={placeholder} aria-label={e.rule} required={e.field === 'default_cap_usd'} />
-          )}
-          {needCap && <label className='grid gap-1.5 text-sm'>Default cap per person ($ a month)<Input type='number' inputMode='decimal' required min={0.01} step={0.01} value={cap} onChange={(x) => setCap(x.target.value)} /></label>}
-          <DialogFooter><Button type='button' variant='outline' onClick={onClose}>Cancel</Button><Button type='submit' disabled={busy}>Save</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <PanelForm about={<>{e.hint}{e.kind === 'money' ? allowance : ''} Changes apply right away to this month&apos;s spend.</>} onSubmit={save} onClose={onClose}
+      submit={<Button type='submit' disabled={busy}>Save</Button>}>
+      {e.kind === 'mode' ? (
+        <NativeSelect value={v} onChange={(x) => setV(x.target.value)} aria-label={e.rule} className='w-full'>
+          {MODE_OPTIONS.map((m) => <NativeSelectOption key={m.id} value={m.id}>{m.label}</NativeSelectOption>)}
+        </NativeSelect>
+      ) : e.kind === 'bool' ? (
+        <NativeSelect value={v} onChange={(x) => setV(x.target.value)} aria-label={e.rule} className='w-full'>
+          <NativeSelectOption value='yes'>Yes, everyone on the account</NativeSelectOption>
+          <NativeSelectOption value='no'>No, only people allowed individually</NativeSelectOption>
+        </NativeSelect>
+      ) : (
+        <Input autoFocus type='number' inputMode={e.kind === 'money' ? 'decimal' : 'numeric'} min={e.kind === 'money' ? 0 : 1} step={e.kind === 'money' ? 0.01 : 1}
+          value={v} onChange={(x) => setV(x.target.value)} placeholder={placeholder} aria-label={e.rule} required={e.field === 'default_cap_usd'} />
+      )}
+      {needCap && <label className='grid gap-1.5 text-sm'>Default cap per person ($ a month)<Input type='number' inputMode='decimal' required min={0.01} step={0.01} value={cap} onChange={(x) => setCap(x.target.value)} /></label>}
+    </PanelForm>
   );
 }
 
@@ -735,24 +784,30 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** What a limit is called beside a person or budget: "Their limit" (to a member, "Your limit"), "Mobile budget". */
 function limitedWord(c: LimitCode | null | undefined, teams: { id: number; name: string }[], teamId?: number | null, person = 'Their limit') {
   if (!c) return null;
-  const team = teams.find((t) => t.id === teamId)?.name ?? 'Team';
+  const team = teams.find((t) => t.id === teamId)?.name ?? 'Group';
   const words: Record<LimitCode, string> = { no_allowance: 'No allowance', account_cap: 'Allowance', budget_error: 'Allowance', launch_access: "Can't launch",
     person_limit: person, team_budget: `${team} budget`, rest_pot: 'Everyone else', buffer: 'Buffer', runs_at_once: 'Runs at once', run_sessions: 'Sessions per run' };
   return words[c];
 }
 
-/** Teams as one full table: budget used against the team cap, what is left, runs at once, people. Add, edit and delete (admins). */
-function Teams({ l, reload }: { l: Limits; reload: () => void }) {
-  // undefined: closed; null: adding a team.
+/**
+ * Budget groups (the data's teams; mold_v0-298: named budget groups on screen, so they never read as Settings › Teams,
+ * who sees records) as one full table: budget used against the group's cap, what is left, runs at once, people. Add and
+ * edit in the side panel beside the list, delete after a preview (admins). `people`: where people are put in a group
+ * (Billing's People, Settings' team tab, or null when this viewer has neither).
+ */
+function Teams({ l, reload, people }: { l: Limits; reload: () => void; people: string | null }) {
+  // undefined: closed; null: adding a group.
   const [edit, setEdit] = useState<LimitTeam | null | undefined>(undefined);
   const [removing, setRemoving] = useState<LimitTeam | null>(null);
   const manage = l.can_manage;
+  const close = () => setEdit(undefined);
   const cols: RecordCol<LimitTeam>[] = [
-    { key: 'team', label: 'Team', keep: true, type: 'text', value: (x) => x.name, render: (x) => <span className='font-medium'>{x.name}</span> },
-    // Line 1: the bar (or "· no team cap"); line 2: what is left (amber when it limits the team's people).
-    { key: 'budget', label: 'Spent', className: 'w-72', type: 'number', value: (x) => x.spent,
+    { key: 'team', label: 'Budget group', keep: true, type: 'text', value: (x) => x.name, render: (x) => <span className='font-medium'>{x.name}</span> },
+    // Line 1: the bar (or "· no group cap"); line 2: what is left (amber when it limits the group's people).
+    { key: 'budget', label: 'Spent', className: 'w-72 max-sm:w-auto', type: 'number', value: (x) => x.spent,
       render: (x) => (<>
-        {x.budget_usd == null ? <span className='text-xs tabular-nums'>{usd(x.spent)} <span className='text-muted-foreground'>· no team cap</span></span> : <Allowance spent={x.spent} cap={x.budget_usd} />}
+        {x.budget_usd == null ? <span className='text-xs tabular-nums'>{usd(x.spent)} <span className='text-muted-foreground'>· no group cap</span></span> : <Allowance spent={x.spent} cap={x.budget_usd} />}
         {x.left_usd != null && <div className={cn('text-muted-foreground mt-1 text-xs leading-none tabular-nums', x.limited_by && 'text-amber-700 dark:text-amber-400')}
           title={x.limited_by ? 'Limits its people (90% or more used)' : undefined}>{usd(x.left_usd)} left</div>}
       </>) },
@@ -761,28 +816,33 @@ function Teams({ l, reload }: { l: Limits; reload: () => void }) {
     { key: 'left', label: 'Left', className: 'w-28', type: 'number', hidden: true, value: (x) => x.left_usd ?? undefined,
       render: (x) => <span className={cn('text-xs tabular-nums', x.limited_by && 'text-amber-700 dark:text-amber-400')} title={x.limited_by ? 'Limits its people (90% or more used)' : undefined}>
         {x.left_usd == null ? <span className='text-muted-foreground'>—</span> : usd(x.left_usd)}</span> },
-    { key: 'conc', label: <span title='Per person'>Runs at once</span>, name: 'Runs at once, per person', className: 'w-32', type: 'number', value: (x) => x.max_concurrent_runs ?? undefined,
+    { key: 'conc', label: <span title='Per person'>Runs at once</span>, name: 'Runs at once, per person', className: 'w-32 max-sm:hidden', type: 'number', value: (x) => x.max_concurrent_runs ?? undefined,
       render: (x) => <span className='text-xs tabular-nums'>{x.max_concurrent_runs ?? <span className='text-muted-foreground' title='Account default'>—</span>}</span> },
     { key: 'people', label: 'People', className: 'w-20', type: 'number', value: (x) => x.members, render: (x) => <span className={cn('text-xs tabular-nums', !x.members && 'text-muted-foreground')}>{x.members}</span> }
   ];
+  const where = people ? ` Put people in a group with Edit limits on their row in ${people}.` : '';
   return (
     <>
-      <RecordView compact id='billing-teams-v2' rows={l.teams} rowKey={(x) => String(x.id)} cols={cols} noun='teams'
-        searchText={(x) => x.name} searchPlaceholder='Search teams'
-        primary={manage ? <Button onClick={() => setEdit(null)}><Icons.add /> Add team</Button> : undefined}
+      <RecordView compact id='billing-teams-v2' rows={l.teams} rowKey={(x) => String(x.id)} cols={cols} noun='budget groups'
+        searchText={(x) => x.name} searchPlaceholder='Search budget groups'
+        // mold_v0-298: Add budget group is the search row's primary button; adding and editing open in the side panel.
+        toolbarAction={manage ? <ToolbarAction label='Add budget group' icon={<Icons.add />} onClick={() => setEdit(null)} /> : undefined}
+        sidePanel={edit === undefined ? null : { key: edit ? `team:${edit.id}` : 'new-budget-group', title: edit ? `Edit budget group ${edit.name}` : 'Add a budget group', onClose: close,
+          body: <TeamForm team={edit} onClose={close} onSaved={reload} /> }}
         actions={manage ? (x) => [
-          { label: 'Edit team', icon: <Icons.edit />, onSelect: () => setEdit(x) },
-          { label: 'Delete team', icon: <Icons.trash />, destructive: true, separator: true, onSelect: () => setRemoving(x) }
+          { label: 'Edit budget group', icon: <Icons.edit />, onSelect: () => setEdit(x) },
+          { label: 'Delete budget group', icon: <Icons.trash />, destructive: true, separator: true, onSelect: () => setRemoving(x) }
         ] : undefined}
-        exportName='teams' empty='No teams: everyone shares the account cap. Put people in teams from their row on People (Edit limits).' />
-      {edit !== undefined && <TeamDialog team={edit} onClose={() => setEdit(undefined)} onSaved={reload} />}
+        exportName='budget-groups'
+        empty={<EmptyState id='billing-teams-empty' empty={{ title: 'No budget groups yet',
+          text: `Everyone shares the account's allowance. A budget group sets money aside for some people.${manage ? ' Add budget group makes one.' : ''}${where}`, cta: null }} />} />
       {removing && <DeleteTeam team={removing} l={l} onClose={() => setRemoving(null)} onDeleted={reload} />}
     </>
   );
 }
 
-/** Add a team (null), or edit one: an edit sends only what changed, so a rename can't put back a budget someone saved meanwhile. Teams and Budget rules. */
-function TeamDialog({ team, onClose, onSaved }: { team: LimitTeam | null; onClose: () => void; onSaved: () => void }) {
+/** Add a budget group (null), or edit one: an edit sends only what changed, so a rename can't put back a budget someone saved meanwhile. Budget groups and Budget rules, in the side panel. */
+function TeamForm({ team, onClose, onSaved }: { team: LimitTeam | null; onClose: () => void; onSaved: () => void }) {
   const was = team ? { name: team.name, budget: str(team.budget_usd), conc: str(team.max_concurrent_runs) } : null;
   const [f, setF] = useState(was ?? { name: '', budget: '', conc: '' });
   const save = (e: React.FormEvent) => {
@@ -790,25 +850,20 @@ function TeamDialog({ team, onClose, onSaved }: { team: LimitTeam | null; onClos
     const body = { ...(!was || f.name !== was.name ? { name: f.name } : {}), ...(!was || f.budget !== was.budget ? { budget_usd: orNull(f.budget) } : {}),
       ...(!was || f.conc !== was.conc ? { max_concurrent_runs: orNull(f.conc) } : {}) };
     (team ? appApi('PUT', `/limits/teams/${team.id}`, body) : appApi('POST', '/limits/teams', body))
-      .then(() => { toast.success(team ? 'Team saved' : 'Team added'); onSaved(); onClose(); }).catch(fail);
+      .then(() => { toast.success(team ? 'Budget group saved' : 'Budget group added'); onSaved(); onClose(); }).catch(fail);
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className='sm:max-w-md'>
-        <form onSubmit={save} className='grid gap-4'>
-          <DialogHeader><DialogTitle>{team ? 'Edit team' : 'Add a team'}</DialogTitle><DialogDescription>This budget is set aside for the team and is the most it can spend. Leave it empty and the team shares Everyone else&apos;s.</DialogDescription></DialogHeader>
-          <label className='grid gap-1.5 text-sm'>Name<Input required autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
-          <label className='grid gap-1.5 text-sm'>Monthly budget ($)<Input type='number' min={0} step={0.01} value={f.budget} onChange={(e) => setF({ ...f, budget: e.target.value })} placeholder='no cap' /></label>
-          <label className='grid gap-1.5 text-sm'>Runs at once, per person<Input type='number' min={1} step={1} value={f.conc} onChange={(e) => setF({ ...f, conc: e.target.value })} placeholder='account default' /></label>
-          <DialogFooter><Button type='button' variant='outline' onClick={onClose}>Cancel</Button><Button type='submit'>{team ? 'Save team' : 'Add team'}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <PanelForm about="This budget is set aside for the group and is the most its people can spend. Leave it empty and the group shares Everyone else's."
+      onSubmit={save} onClose={onClose} submit={<Button type='submit'>{team ? 'Save' : <><Icons.add /> Add budget group</>}</Button>}>
+      <label className='grid gap-1.5 text-sm'>Name<Input required autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
+      <label className='grid gap-1.5 text-sm'>Monthly budget ($)<Input type='number' min={0} step={0.01} value={f.budget} onChange={(e) => setF({ ...f, budget: e.target.value })} placeholder='no cap' /></label>
+      <label className='grid gap-1.5 text-sm'>Runs at once, per person<Input type='number' min={1} step={1} value={f.conc} onChange={(e) => setF({ ...f, conc: e.target.value })} placeholder='account default' /></label>
+    </PanelForm>
   );
 }
 
 /**
- * Before a team is deleted: what it changes, from the preview (the server's allocate() with the team gone). Its people
+ * Before a budget group is deleted: what it changes, from the preview (the server's allocate() with the team gone). Its people
  * move to Everyone else, their limits there, its budget going back, and who would be blocked right away.
  */
 function DeleteTeam({ team, l, onClose, onDeleted }: { team: LimitTeam; l: Limits; onClose: () => void; onDeleted: () => void }) {
@@ -831,18 +886,18 @@ function DeleteTeam({ team, l, onClose, onDeleted }: { team: LimitTeam; l: Limit
   ];
   const remove = () => {
     setBusy(true);
-    appApi('DELETE', `/limits/teams/${team.id}`).then(() => { toast.success('Team deleted'); onDeleted(); onClose(); }).catch(fail).finally(() => setBusy(false));
+    appApi('DELETE', `/limits/teams/${team.id}`).then(() => { toast.success('Budget group deleted'); onDeleted(); onClose(); }).catch(fail).finally(() => setBusy(false));
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className='sm:max-w-md'>
         <DialogHeader>
-          <DialogTitle>Delete team {team.name}?</DialogTitle>
+          <DialogTitle>Delete budget group {team.name}?</DialogTitle>
           <DialogDescription>{!pv && !failed ? 'Working out what changes…' : failed ? "We couldn't work out what changes. Its people move to Everyone else." : lines.join(' ')}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant='outline' onClick={onClose}>Keep team</Button>
-          <Button variant='destructive' disabled={busy || (!pv && !failed)} onClick={remove}>{blocked ? `Delete and block ${blocked}` : 'Delete team'}</Button>
+          <Button variant='outline' onClick={onClose}>Keep it</Button>
+          <Button variant='destructive' disabled={busy || (!pv && !failed)} onClick={remove}>{blocked ? `Delete and block ${blocked}` : 'Delete budget group'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

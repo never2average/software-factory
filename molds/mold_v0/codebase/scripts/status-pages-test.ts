@@ -343,7 +343,8 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     const rewritten = html.search(/_not-found/);
     assert.equal(rewritten, -1, `${url}: the server's HTML names /_not-found (drawn for the rewritten route, not ${url}): ${html.slice(Math.max(0, rewritten - 300), rewritten + 100).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")}`);
     const trail = /<nav aria-label="breadcrumb"[\s\S]*?<\/nav>/.exec(html)?.[0]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    if (url.startsWith("/app/") || url.startsWith("/admin/")) assert.ok(trail && trail.startsWith(url.startsWith("/app/") ? "Account" : "Admin"), `${url}: the trail drawn for the address (got ${JSON.stringify(trail)})`);
+    // mold_v0-298: a 404 has no trail (the address is no page, so there is nothing to name and nowhere it sits).
+    if (url.startsWith("/app/") || url.startsWith("/admin/")) assert.equal(trail, undefined, `${url}: a 404 has no trail (mold_v0-298), got ${JSON.stringify(trail)}`);
   }
   ok("unknown addresses: the site's, sign-in's and every portal and admin route (pages, packs, records, docs, host pages) are a 404 with the not-found page, inside the area's shell where there is one; drawn on the server (in the page's HTML, its links with it)");
 

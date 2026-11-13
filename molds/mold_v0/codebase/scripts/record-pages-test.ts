@@ -467,7 +467,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(tab, /const creds = forSettings\(credentialsOf\(data\.fields\)\);/, "and lists only those (a group as one row)");
   assert.doesNotMatch(tab, /filters=|Open a credential to set, replace or clear it/, "no caption beside the search row");
   assert.doesNotMatch(tab, /label: 'Bound to'/, "no Bound to column");
-  assert.match(tab, /if \(opened && data\.can_manage\) return <CredentialCard /, "Set, Replace and Clear: the full card in the list's place");
+  // mold_v0-298: the form opens in the list's side panel, not in the list's place.
+  assert.match(tab, /const panel = opened && openedState && data\.can_manage \?[\s\S]*?body: <CredentialCard panel /, "Set, Replace and Clear: the form in the list's side panel");
+  assert.match(tab, /sidePanel=\{panel\}/);
   const detail = /export function RecordDetailBody\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
   // mold_v0-260: also a tenant area's record while credential_sets is on (off: an asset's alone, as before); the card as wide as the page's others.
   assert.match(detail, /const credentials = useRecordCredentials\(area, recordKey, base === 'app' && \(area\.role === 'asset' \|\| featureOn\('credential_sets'\)\), featureOn\('record_pages'\) && !!layoutOf\(area\)\);/, "a record's page reads its credentials (a workspace's page only)");

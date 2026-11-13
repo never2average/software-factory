@@ -106,8 +106,9 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
             {tipsOn() && <TipsSection />}
           </div>
           {/* The rail: Due soon and a home tab's cards, one cell each, a line between them (a card with nothing to show
-              draws nothing). On a wide screen it fills down to the steps' end, so it is drawn even when empty there. */}
-          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3 lg:min-h-0 lg:overflow-hidden')} data-home-rail>
+              draws nothing). On a wide screen it fills down to the steps' end, so it is drawn even when empty there; cards taller
+              than the steps scroll inside it rather than being cut off (mold_v0-298). */}
+          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain')} data-home-rail>
             {rail === undefined ? due : rail.map((x) => (x === 'journeys' ? due : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
         </>)}
@@ -119,43 +120,87 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
 /** The connection string, the grid's first cell beside the steps: copy it, then prove the client reaches the server. */
 function ConnectionBox({ s, onConnected, className }: { s: Setup; onConnected: () => void; className?: string }) {
   return (
-    <GridCell className={className} title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
+    // mold_v0-298: id 'connect', so the How to connect links (/app#connect) land on this card.
+    <GridCell id='connect' className={cn('scroll-mt-24', className)} title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
       <ConnectSteps s={s} onConnected={onConnected} />
     </GridCell>
   );
 }
 
+/** Where the picked client is remembered in this browser (mold_v0-298: a neutral name; the old one is read once and moved). */
+const CLIENT_KEY = 'connect_client';
+const OLD_CLIENT_KEY = 'oct_client';
+function savedClient(): string | null {
+  try {
+    const now = localStorage.getItem(CLIENT_KEY);
+    if (now) return now;
+    const old = localStorage.getItem(OLD_CLIENT_KEY);
+    if (old) { localStorage.setItem(CLIENT_KEY, old); localStorage.removeItem(OLD_CLIENT_KEY); }
+    return old;
+  } catch { return null; /* private mode */ }
+}
+
+/**
+ * The connection URL with any key in it hidden (mold_v0-298: not tied to one build's key prefix). Hidden: the value of a
+ * key/token/secret query parameter, a path segment after /mcp/ (the legacy URLs that carry the key), and any key-shaped
+ * word (a short prefix, an underscore, then a long random part), which keeps its first four characters after the prefix.
+ */
+export function maskConnectionUrl(url: string): string {
+  return url
+    .replace(/([?&#](?:key|api_key|apikey|token|access_token|secret|k)=)[^&#]+/gi, '$1••••••••')
+    .replace(/(\/mcp\/)([^/?#]{12,})/i, '$1••••••••')
+    .replace(/\b([A-Za-z][A-Za-z0-9]{1,11}_[A-Za-z0-9_-]{4})[A-Za-z0-9_-]{12,}/g, '$1••••••••');
+}
+
+/** Polls of the connection test that may fail in a row before it stops and says it could not check (mold_v0-298). */
+const TEST_MISSES = 3;
+
 /** Pick a client, add the connection URL to it, test it: the panel's three steps. */
 function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void }) {
   const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const run = useRef(0); // which test is current; a late answer from an earlier test is ignored (mold_v0-298)
   const clients = s.connect.clients;
   // The client to show: the last one picked here, else one this person already connected from, else Claude.
   const [pick, setPick] = useState<string>(() => {
-    try { const saved = localStorage.getItem('oct_client'); if (saved && clients.some((c) => c.id === saved)) return saved; } catch { /* private mode */ }
+    const saved = savedClient(); if (saved && clients.some((c) => c.id === saved)) return saved;
     const seen = s.clients.map((x) => x.client.toLowerCase());
     return clients.find((c) => seen.some((x) => x.includes(c.id.replace('-cli', '')) || x.includes(c.client.toLowerCase().split(' ')[0])))?.id ?? clients[0]?.id ?? 'claude';
   });
-  const choose = (id: string) => { setPick(id); try { localStorage.setItem('oct_client', id); } catch { /* private mode */ } };
+  const choose = (id: string) => { setPick(id); try { localStorage.setItem(CLIENT_KEY, id); } catch { /* private mode */ } };
   const c = clients.find((x) => x.id === pick) ?? clients[0];
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
-  // Live connection test: watch for this person's next connector request for up to three minutes.
+  // Live connection test: watch for this person's next request from their AI client for up to three minutes.
+  // mold_v0-298: a check that keeps failing (the server cannot be reached) stops and says so at once, instead of
+  // waiting out the three minutes and blaming the client.
+  const stop = () => { if (timer.current) clearInterval(timer.current); timer.current = null; run.current += 1; };
   const test = () => {
     if (timer.current) return;
     appApi<{ since: string }>('POST', '/setup/test').then(({ since }) => {
+      const id = ++run.current;
       const until = Date.now() + 180_000;
+      let misses = 0;
       setLive({ kind: 'wait', text: `Waiting for your client… Open a new chat and type: "Get me started with ${profile.name}."` });
       timer.current = setInterval(() => {
+        // Only the check itself counts as a miss: an error after it (onConnected) is not a failed check.
         appApi<Setup>('GET', `/setup?since=${encodeURIComponent(since)}`).then((r) => {
+          if (run.current !== id) return; // this test stopped (or a newer one started) while the check was on its way
+          misses = 0;
           if (r.live) {
-            clearInterval(timer.current!); timer.current = null;
+            stop();
             setLive({ kind: 'ok', text: `Connected${r.live.client ? ` from ${r.live.client}` : ''}. You're all set.` });
-            onConnected();
+            setTimeout(onConnected, 0);
           } else if (Date.now() > until) {
-            clearInterval(timer.current!); timer.current = null;
+            stop();
             setLive({ kind: 'bad', text: `Nothing arrived yet. Check the URL, that you signed in when your client asked, and that the ${profile.name} tools are switched on; then try again.` });
           }
-        }).catch(() => {});
+        }, () => {
+          if (run.current !== id) return;
+          misses += 1;
+          if (misses < TEST_MISSES) return; // one slow or dropped check is not a verdict
+          stop();
+          setLive({ kind: 'bad', text: `We could not check your connection just now: ${profile.name} did not answer. Check your internet connection, wait a moment, then press Test my connection again.` });
+        });
       }, 3000);
     }).catch(fail);
   };
@@ -164,7 +209,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
   const [show, setShow] = useState(!s.connect.secret);
   // Already connected (a client reached us before, or the test just passed): the test button is then secondary.
   const connected = live?.kind === 'ok' || s.clients.length > 0;
-  const masked = url.replace(/([?&](?:key|token|k)=)[^&]+/i, '$1••••••••').replace(/(oct_[A-Za-z0-9]{4})[A-Za-z0-9_-]+/, '$1••••••••');
+  const masked = maskConnectionUrl(url);
   return (
       <ol className='flex flex-col gap-4'>
           <NumberedStep n={1} title='Pick your client'>
@@ -178,6 +223,8 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
           </NumberedStep>
           <NumberedStep n={2} title={c ? `Add ${profile.name} to ${c.client}` : `Add ${profile.name}`}>
             <div className='flex flex-col gap-2'>
+              {/* mold_v0-298: say what the URL is for, in plain words. */}
+              <p className='text-muted-foreground text-xs'>This web address (URL) is how your AI client reaches {profile.name}. Add it to your client once and it can use {profile.name} for you in any chat.</p>
               <div className='bg-background flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5'>
                 <code className='min-w-0 flex-1 truncate font-mono text-xs select-all' title={show ? url : undefined}>{show ? url : masked}</code>
                 {s.connect.secret && (

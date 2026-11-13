@@ -20,7 +20,7 @@ import { useRepositories } from '@/features/admin/repositories';
 import { EmptyState } from '@/features/tabs/empty';
 import { cn } from '@/lib/utils';
 import { recordEmptyText, repoOf } from './empty';
-import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
+import { ErrorState, LoadingCards, useOrgLoad, When } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useExportCsv } from '@/features/tabs/export';
 import { useImportAction } from './workspace-import';
@@ -34,8 +34,11 @@ import { useRecordCredentials } from '@/features/credentials/record-credentials'
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
-import { LINKED_PARAM, columnUnit, layoutOf, numberWords, parseLinked } from './detail-layout';
-import { LaidOutRecord } from './detail-page';
+import { LINKED_PARAM, badgeColor, columnUnit, layoutOf, numberWords, optionWords, parseLinked } from './detail-layout';
+import { LaidOutRecord, ToneBadge } from './detail-page';
+import { EntriesTable } from './record-detail-entries';
+import { entriesLine, entriesText, entriesView, entryObjects } from '@/lib/record-entries';
+import { useBreadcrumbTitle } from '@/lib/breadcrumb-leaf';
 import { RowCreateMenu } from './row-create';
 import { PANEL_TAB_PARAM } from '@/lib/split-panel';
 import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilityRule, type RecordVisibility } from '@/features/teams/visibility';
@@ -91,7 +94,8 @@ const optionLabel = (f: RecordFieldSpec, v: unknown) => {
 };
 /**
  * A field's value as the list and the peek show it: an option's label, Yes / No, a date, lists joined; a json value
- * one readable line (mold_v0-240; `recordKey` hides a value repeating the record's own key).
+ * one readable line (mold_v0-240; `recordKey` hides a value repeating the record's own key). A log keeps every entry
+ * here, for search, filters and CSV; a list's cell draws logCell's short line instead (mold_v0-298).
  */
 export function fieldText(f: RecordFieldSpec | undefined, v: unknown, recordKey?: string): string {
   if (v == null || v === '') return '';
@@ -102,12 +106,26 @@ export function fieldText(f: RecordFieldSpec | undefined, v: unknown, recordKey?
     const names = (Array.isArray(v) ? v : [v]).map((x) => (x && typeof x === 'object' ? String((x as { name?: unknown; path?: unknown }).name ?? (x as { path?: unknown }).path ?? '') : String(x))).filter(Boolean);
     return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0] ?? '';
   }
+  // mold_v0-298: a log or timeline (a list of entries, or JSON lines): every entry in words; JSON lines that are no log,
+  // in words as any json value.
+  if (!f || f.type === 'json' || f.type === 'text' || Array.isArray(v)) {
+    const log = entriesView(v);
+    if (log) return entriesText(log);
+    const docs = !isDocument(v) ? entryObjects(v) : null;
+    if (docs) return jsonLine(docs, recordKey);
+  }
   if (isDocument(v)) return jsonLine(v, recordKey);
   if (Array.isArray(v)) return v.map((x) => fieldText(f, x, recordKey)).filter(Boolean).join(', ');
   if (f?.type === 'enum') return optionLabel(f, v);
   if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10);
   return cell(v, recordKey);
+}
+/** A list cell's short line for a log or timeline (mold_v0-298): how many entries and the latest; null for anything else. */
+function logCell(f: RecordFieldSpec | undefined, v: unknown): string | null {
+  if (v == null || v === '' || f?.encrypted || f?.type === 'file' || !(!f || f.type === 'json' || f.type === 'text' || Array.isArray(v))) return null;
+  const log = entriesView(v);
+  return log ? entriesLine(log) : null;
 }
 /** The filter-only column of an area with a clock: any of its clocks overdue (mold_v0-217). */
 const OVERDUE_COL = '_overdue';
@@ -154,6 +172,9 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
     ))
   };
   const hidden = new Set([...(source?.hidden ?? []), ...extra.filter((n) => !area.list_columns.includes(n))]);
+  // mold_v0-298: on an area whose records have a laid-out page, an enum cell is the badge that page and its related
+  // lists draw (its layout's colour, else neutral), so a status reads the same in the list and in the open record.
+  const layout = featureOn('record_pages') && !source ? layoutOf(area) : null;
   const fields = [...area.list_columns, ...hidden].map((name): RecordCol<RecordRow> => {
     const f = area.fields.find((x) => x.name === name);
     const type = (f && !f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
@@ -177,15 +198,22 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         }
         const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
+        if (layout && f?.type === 'enum' && !f.encrypted && r.data[name] != null && r.data[name] !== '') return (
+          <span className='flex flex-wrap gap-1' data-enum-cell={name}>
+            {(Array.isArray(r.data[name]) ? r.data[name] as unknown[] : [r.data[name]]).map((x) => <ToneBadge key={String(x)} color={badgeColor(layout, name, x)}>{optionWords(f, x)}</ToneBadge>)}
+          </span>
+        );
         // mold_v0-289: a number with its field's or its page's unit ($0.42, 5m 0s), a date on one line.
         const unit = type === 'number' ? (f as { unit?: string } | undefined)?.unit ?? columnUnit(area, name) : undefined;
         if (unit && r.data[name] != null) return <span className='tabular-nums'>{moneyOr(r.data[name], unit)}</span>;
-        const t = fieldText(f, r.data[name], r.key);
+        // mold_v0-298: a date as the console says dates (relative when near, the day otherwise; the exact time on hover).
+        if (type === 'date' && !f?.encrypted && typeof r.data[name] === 'string' && r.data[name] !== '') return <When d={r.data[name] as string} />;
+        const t = logCell(f, r.data[name]) ?? fieldText(f, r.data[name], r.key);
         return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums', type === 'date' && 'whitespace-nowrap')}>{t}</span> : dash;
       }
     };
   });
-  const updated: RecordCol<RecordRow> = { key: '_updated', label: 'Updated', type: 'date', hidden: true, value: (r) => r.updated_at, render: (r) => r.updated_at.slice(0, 10) };
+  const updated: RecordCol<RecordRow> = { key: '_updated', label: 'Updated', type: 'date', hidden: true, value: (r) => r.updated_at, render: (r) => <When d={r.updated_at} /> }; // mold_v0-298: the console's date words
   // mold_v0-191: each clock's deadline and status (./clocks); mold_v0-217: whether any is overdue, a filter only (?overdue=1).
   const overdue: RecordCol<RecordRow>[] = area.clocks?.length
     ? [{ key: OVERDUE_COL, label: 'Overdue', type: 'boolean', hidden: true, keep: false, csv: false, peek: false, value: (r) => isOverdue(r), render: (r) => (isOverdue(r) ? 'Yes' : 'No') }] : [];
@@ -243,6 +271,14 @@ export function FieldValue({ area, base, f, v, recordKey, titles }: { area: Reco
   if (f.type === 'repository' && typeof v === 'string' && REPOSITORY_NAME.test(v)) return (
     <a className='break-all font-mono text-xs underline-offset-4 hover:underline' href={`https://github.com/${v}`} target='_blank' rel='noopener noreferrer nofollow' data-repository-link=''>{v}</a>
   );
+  // mold_v0-298: a log or timeline (a list of entries, or JSON lines in a list or a text) as a compact table of time,
+  // level or status, message and source, the value as stored behind Show raw; JSON lines that are no log, as any json.
+  if (!f.encrypted && f.type !== 'file') {
+    const log = entriesView(v);
+    if (log) return <EntriesTable view={log} raw={v} label={f.label} />;
+    const docs = !isDocument(v) ? entryObjects(v) : null;
+    if (docs) return <JsonValue v={docs} recordKey={recordKey} empty={dash} />;
+  }
   if (!f.encrypted && f.type !== 'file' && isDocument(v)) return <JsonValue v={v} recordKey={recordKey} empty={dash} />;
   return <>{fieldText(f, v, recordKey) || dash}</>;
 }
@@ -319,7 +355,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           const v = raw(r);
           if (!relatedValues.data && !relatedValues.error) return <span className='bg-muted inline-block h-3 w-8 animate-pulse rounded' aria-busy='true' />;
           if (v == null || v === '') return dash;
-          return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : fieldText(f, v, r.key)}</span>;
+          return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : logCell(f, v) ?? fieldText(f, v, r.key)}</span>;
         }
       };
     });
@@ -436,6 +472,14 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
 export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin'; inPanel?: boolean }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
+  // mold_v0-298: the top bar's last crumb names the record (its page's title), not its key from the address; not from a
+  // list's panel, whose address is the list's.
+  const titleField = featureOn('record_pages') ? layoutOf(area)?.header?.title : undefined;
+  // The title field in words, as a list's cell reads it: a reference's record title, an option's label, a date.
+  const tf = titleField ? area.fields.find((x) => x.name === titleField) : undefined;
+  const tv = titleField && data ? data.record.data[titleField] : undefined;
+  const named = (tv != null && tv !== '' && !tf?.encrypted ? (refTarget(area, tf) && data?.record.ref_titles?.[titleField!] ? refWords(tv, data.record.ref_titles[titleField!]) : fieldText(tf, tv, data?.record.key)) : '') || data?.record.title;
+  useBreadcrumbTitle(!inPanel ? named || null : null);
   // mold_v0-260 (flag credential_sets): a tenant area's records have credentials too (the server says which: 404 otherwise).
   const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), featureOn('record_pages') && !!layoutOf(area));
   if (credentials.card) return <>{credentials.card}</>;
@@ -472,7 +516,7 @@ export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { a
                 </Field>
               )}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
-                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} titles={data.record.ref_titles?.[f.name]} recordKey={data.record.key} /></span></Field>
+                <Field key={f.name} label={f.label}><div className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} titles={data.record.ref_titles?.[f.name]} recordKey={data.record.key} /></div></Field>
               ))}
             </dl>
             <RecordDocuments area={area} base={base} recordKey={data.record.key} />

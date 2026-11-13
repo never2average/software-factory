@@ -272,6 +272,46 @@ export function ChartTiles({ chart, results, compact = false }: { chart: PackCha
   return ms.length !== chart.metrics.length ? <Skeleton className='h-24 w-full' /> : <Tiles ms={ms} compact={compact} />;
 }
 
+/**
+ * A chart's body alone (no cell around it), of any type (mold_v0-298): a home tab's rail card (pack.json rail
+ * chart:<name>), a column narrower than a charts grid's cell. A number chart is its tiles two a row; a table chart its
+ * table; any other its plot with its legend and, as a grid cell has, a Show table button (the plot's full alternative)
+ * and the frame's note ("Largest groups shown."), or "Nothing to show yet." while its metrics count no rows. It scrolls
+ * inside its own height, so a short rail never cuts it off.
+ */
+export function ChartBody({ chart, results }: { chart: PackChartSpec; results: Map<string, MetricResult> }) {
+  const [asTable, setAsTable] = useState(chart.type === 'table');
+  if (chart.type === 'number') return <ChartTiles chart={chart} results={results} compact />;
+  const rs = chart.metrics.map((n) => results.get(n));
+  const failed = rs.find((r): r is { name: string; error: string; status: number } => !!r && 'error' in r);
+  if (failed) return <p className='text-muted-foreground text-sm'>{failed.error}</p>;
+  const ms = rs.filter(isAnswer);
+  if (ms.length !== chart.metrics.length) return <Skeleton className='h-40 w-full' />;
+  if (ms.every((m) => m.rows === 0)) return <p className='text-muted-foreground py-6 text-center text-sm'>Nothing to show yet.</p>;
+  const f = frameOf(chart, ms);
+  const toggle = chart.type !== 'table' && (
+    <Button variant='ghost' size='sm' className='h-7 self-start px-2 text-xs' aria-pressed={asTable} onClick={() => setAsTable(!asTable)}>
+      {asTable ? 'Show chart' : 'Show table'}
+    </Button>
+  );
+  return (
+    <div className='flex max-h-80 flex-col gap-2 overflow-y-auto overscroll-contain'>
+      {f.note && <p className='text-muted-foreground text-xs'>{f.note}</p>}
+      {asTable ? (
+        <DataTable caption={chart.title} unit={f.unit} head={[f.time ? 'Period' : 'Group', ...f.series.map((s) => s.label)]}
+          rows={f.categories.map((c, i) => ({ label: c, values: f.series.map((s) => s.values[i] ?? null) }))} />
+      ) : (
+        <figure className='flex flex-col gap-2' role='img' aria-label={summary(chart, f)}>
+          <Legend items={f.series.length > 1 ? f.series.map((s) => ({ label: s.label, color: s.color }))
+            : chart.palette === 'ordinal' && f.series[0]!.colors ? f.categories.map((c, i) => ({ label: c, color: f.series[0]!.colors![i]! })) : []} />
+          <div aria-hidden><Plot chart={chart} f={f} /></div>
+        </figure>
+      )}
+      {toggle}
+    </div>
+  );
+}
+
 /** One chart in a grid cell: its title, the plot or the table, and a button between the two. */
 export function ChartCell({ chart, results, width }: { chart: PackChartSpec; results: Map<string, MetricResult>; width?: number }) {
   const [asTable, setAsTable] = useState(chart.type === 'table');

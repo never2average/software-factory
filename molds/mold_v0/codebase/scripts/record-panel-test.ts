@@ -55,7 +55,8 @@ const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
   const rv = src("components/layout/record-view.tsx"), dp = src("components/layout/detail-panel.tsx"), sp = src("features/tabs/side-panel.tsx");
   assert.match(rv, /\{current && detail && \(\s*<RecordPanel /, "RecordView: the open record is the panel beside the list");
   assert.doesNotMatch(rv, /if \(current && detail\) return/, "never the list replaced by the record");
-  assert.match(rv, /onClick=\{detail \? \(e\) => \{ if \(\(e\.target as HTMLElement\)\.closest\('a\[href\]'\)\) return; openRow\(k\); \}/, "a row click opens its panel (a link in a cell stays a link)");
+  // RecordView names "a row this list can open" `can` (detail given, or a side panel of the caller's).
+  assert.match(rv, /onClick=\{can \? \(e\) => \{ if \(\(e\.target as HTMLElement\)\.closest\('a\[href\]'\)\) return; openRow\(k\); \}/, "a row click opens its panel (a link in a cell stays a link)");
   assert.match(rv, /useQueryStates\(\{ \[DETAIL_PARAM\]: parseAsString, \[PANEL_PARAM\]: parseAsString, \[PANEL_TAB_PARAM\]: parseAsString \}, \{ history: 'replace'/, "the open row in the address, replaced (Back leaves the list)");
   const controls = /data-slot='detail-panel-controls'>([\s\S]*?)<\/div>/.exec(dp)?.[1] ?? "";
   assert.match(controls, /data-testid='detail-panel-expand'/);

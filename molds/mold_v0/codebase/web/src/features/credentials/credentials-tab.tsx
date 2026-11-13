@@ -5,9 +5,11 @@
 // a group of fields set together: an access key id and its secret), the GitHub connection, or the on-premises runner.
 // A credential that belongs to one record (one per record, or one per record and environment) is never here: it is on
 // that record's own page (features/credentials/record-credentials.tsx). Opening a row shows its details card in the
-// customer's words (what it is for, how to get it, what works without it, its status, when it was set and last used);
-// Set, Replace and Clear open a full card in the list's place (./credential-card.tsx). A value is typed once, hidden,
-// sent once and never shown again (owners see only its last 4 characters); everyone else sees which are set.
+// customer's words (what it is for, how to get it, what works without it, its status, when it was set and last used).
+// mold_v0-298: Set, Replace and Clear are in each row's ⋯ menu (and its details), and the search row's primary action
+// sets the next missing one; each opens the form in the list's side panel (./credential-card.tsx `panel`), the list
+// staying in view. A value is typed once, hidden, sent once and never shown again (owners see only its last 4
+// characters); everyone else sees which are set.
 //
 // mold_v0-241: below the workspace's own rows, one row per record whose credentials are its own (each application):
 // its title, what they are for, its status in words ("All set", "2 missing", "Optional only"), when one last changed,
@@ -17,14 +19,16 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { Icons } from '@/components/icons';
-import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
 import { StatStrip } from '@/components/layout/section';
 import { Button } from '@/components/ui/button';
 import { ErrorState, LoadingCards, When, useOrgLoad } from '@/features/portal/shared';
 import { GITHUB_PURPOSE, GithubAppSection, githubCall, useGithubOutcome } from './github-app-section';
 import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
 import { RUNNER_PURPOSE, RunnersSection, runnersCall } from './runners-section';
-import { CredentialCard, CredentialFacts, credentialsCall, useCredentialCard } from './credential-card';
+import { CredentialCard, CredentialFacts, credentialCardTitle, credentialsCall, useCredentialCard } from './credential-card';
+import { EmptyState } from '@/features/tabs/empty';
+import { ToolbarAction } from '@/features/tabs/tab-action';
 import { credentialsOf, forSettings, recordCredentialsHref, recordPurpose, recordSummary, settingsCounts, stateIn, type AreaRecord, type Credential, type CredField, type CredValue, type SlotState, type Status, type Unit } from './model';
 import { who } from '@/features/settings/words';
 import { singular } from '@/features/tabs/run-rows';
@@ -114,8 +118,38 @@ export function CredentialsTab() {
   // The workspace's own rows first, then one per record.
   const rows = [...rowsOf(creds, data, oauth, github, runners), ...recordRowsOf(records)];
   const opened = card.open ? creds.find((c) => c.id === card.open!.id) : null;
-  if (opened && data.can_manage) return <CredentialCard c={opened} state={stateIn(opened, data.values, null, null)} mode={card.open!.mode} back='the list' forWhat='For the whole workspace'
-    asset={null} environment={null} environments={null} onClose={card.close} onDone={reload} entry={card.open!.entry} />;
+  // mold_v0-298: Set, Replace and Clear open in the side panel beside the list (?credential=<id>&do=set|clear keeps it).
+  const openedState = opened ? stateIn(opened, data.values, null, null) : null;
+  const panel = opened && openedState && data.can_manage ? {
+    key: `credential:${opened.id}:${card.open!.mode}:${card.open!.entry ?? ''}`, title: credentialCardTitle(opened, openedState, card.open!.mode, card.open!.entry), onClose: card.close,
+    body: <CredentialCard panel c={opened} state={openedState} mode={card.open!.mode} back='the list' forWhat='For the whole workspace'
+      asset={null} environment={null} environments={null} onClose={card.close} onDone={reload} entry={card.open!.entry} />
+  } : null;
+  const show = (c: Credential, mode: 'set' | 'clear', entry: string | null = null) => card.show(c.id, mode, null, entry);
+  // A credential row's ⋯ menu (owners): Set or Replace, and Clear once set; one with several values, Add.
+  const rowActions = (r: Row): RowAction[] => {
+    if (r.kind === 'record') return r.href ? [{ label: 'Open its Credentials card', icon: <Icons.externalLink />, href: r.href }] : [];
+    if (r.kind !== 'credential' || !data.can_manage) return [];
+    const c = r.credential!, st = r.state!;
+    if (c.entries) {
+      const full = st.values.filter((v) => !!v.entry).length >= c.entries.max;
+      return [{ label: `Add ${c.entries.label.toLowerCase()}`, icon: <Icons.add />, disabled: full, onSelect: () => show(c, 'set') }];
+    }
+    // mold_v0-298: the row's status (Set while its OAuth connection is active, with no value stored) names the verb;
+    // Clear only while a value is stored (a connection is disconnected in its details panel).
+    const stored = st.status === 'Set' || st.partial;
+    return [
+      { label: stored || r.status === 'Set' ? 'Replace' : 'Set', icon: <Icons.edit />, onSelect: () => show(c, 'set') },
+      ...(stored ? [{ label: 'Clear', icon: <Icons.trash />, destructive: true, onSelect: () => show(c, 'clear') }] : [])
+    ];
+  };
+  // The primary action (owners): set the next workspace credential that is not set, a required one first.
+  // A row is unset by its own status (an OAuth-connected credential is set), with no value stored either.
+  const unset = rows.filter((r) => r.kind === 'credential' && r.state && r.status !== 'Set' && r.state.status !== 'Set' && !r.state.values.length);
+  const next = data.can_manage ? unset.find((r) => r.status === 'Missing' && r.required) ?? unset[0] ?? null : null;
+  // mold_v0-298: the empty state's next step: the first area whose records hold their own credentials, when there is one.
+  const firstArea = (data.record_areas ?? []).map((a) => recordAreas.find((x) => x.name === a)).find((x) => !!x);
+  const emptyNext = firstArea ? { label: `Open ${firstArea.label}`, href: `/app/records/${encodeURIComponent(firstArea.name)}` } : null;
   // The cards count credentials, not rows: a record's row counts each of its credentials (each environment's apart).
   const n = settingsCounts(rows.flatMap((r) => r.units ?? [{ status: r.status, required: r.required, changed_at: r.changed_at }]));
   return (
@@ -124,6 +158,9 @@ export function CredentialsTab() {
       // mold_v0-278: every row opens its panel beside the list (?id=); a record's row says its credentials are on the
       // record's page, Open in its own page (and the panel's link) taking you there.
       pageHref={(r) => r.href ?? null}
+      actions={rowActions}
+      toolbarAction={next ? <ToolbarAction label={next.status === 'Missing' ? 'Set a missing credential' : 'Set a credential'} icon={<Icons.add />} onClick={() => show(next.credential!, 'set')} /> : undefined}
+      sidePanel={panel}
       rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
       summary={<StatStrip quad items={[
         { label: 'Set', value: n.set, said: `${n.set} set` },
@@ -133,7 +170,7 @@ export function CredentialsTab() {
       ]} />}
       searchText={(r) => `${r.name} ${r.purpose} ${r.words ?? r.status} ${r.changed_by ?? ''}`}
       searchPlaceholder='Search credentials'
-      empty={<p className='text-muted-foreground text-sm'>Nothing for the whole workspace needs a credential. One that belongs to a single record is on that record&apos;s own page.</p>}
+      empty={<EmptyState id='settings-credentials-empty' empty={{ title: 'No credentials to set', text: 'Nothing for the whole workspace needs a credential. One that belongs to a single record is set on that record\'s own page, in its Credentials card.', cta: emptyNext }} />}
       detailTitle={(r) => r.name}
       detail={(r) => r.kind === 'record' ? (
           <div className='flex flex-col items-start gap-3' data-record-credentials-link=''>
@@ -148,16 +185,18 @@ export function CredentialsTab() {
 }
 
 const COLUMNS: RecordCol<Row>[] = [
-  { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-48', value: (r) => r.name, render: (r) => <span className='leading-snug font-medium'>{r.name}</span> },
-  { key: 'purpose', label: 'What it is for', type: 'text', className: 'min-w-64 max-w-md', value: (r) => r.purpose, render: (r) => <span className='text-muted-foreground line-clamp-2 text-sm'>{r.purpose}</span> },
+  // mold_v0-298: the status second, beside the name, so a phone shows it without scrolling sideways.
+  { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-40', value: (r) => r.name, render: (r) => <span className='leading-snug font-medium'>{r.name}</span> },
   { key: 'status', label: 'Status', type: 'select', keep: true, options: [{ value: 'Set', label: 'Set' }, { value: 'Missing', label: 'Missing' }, { value: 'Optional', label: 'Optional' }],
-    value: (r) => r.status, render: (r) => <span className={r.status === 'Missing' && r.required ? 'text-destructive' : undefined}>{r.words ?? r.status}</span> },
-  { key: 'changed', label: 'Set', type: 'date', value: (r) => r.changed_at, render: (r) => (r.changed_at ? <When d={r.changed_at} /> : <span className='text-muted-foreground'>Not yet</span>) },
+    value: (r) => r.status, render: (r) => <span className={r.status === 'Missing' && r.required ? 'text-destructive font-medium' : undefined}>{r.words ?? r.status}</span> },
+  { key: 'purpose', label: 'What it is for', type: 'text', className: 'min-w-64 max-w-md', value: (r) => r.purpose, render: (r) => <span className='text-muted-foreground line-clamp-2 text-sm'>{r.purpose}</span> },
+  // mold_v0-298: "Set on" (a date), never "Set" beside a status that reads Set.
+  { key: 'changed', label: 'Set on', type: 'date', value: (r) => r.changed_at, render: (r) => (r.changed_at ? <When d={r.changed_at} /> : <span className='text-muted-foreground'>Not yet</span>) },
   { key: 'used', label: 'Last used', type: 'date', value: (r) => r.used_at, render: (r) => (r.used_at ? <When d={r.used_at} /> : <span className='text-muted-foreground'>Not yet</span>) },
   { key: 'by', label: 'Set by', type: 'text', value: (r) => r.changed_by, render: (r) => r.changed_by ?? '' }
 ];
 
-/** A workspace credential's details card: its facts, then Set or Replace and Clear (owners), each a full card. */
+/** A workspace credential's details card: its facts, then Set or Replace and Clear (owners), each in the side panel. */
 function CredentialDetails({ c, state, canManage, open, oauth }: { c: Credential; state: SlotState; canManage: boolean; open: (mode: 'set' | 'clear', entry?: string) => void; oauth?: ReactNode }) {
   const set = state.status === 'Set' || state.partial;
   // mold_v0-260 (flag credential_sets): several labelled values, each replaced or removed on its own.

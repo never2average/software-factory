@@ -3,11 +3,14 @@
 // each record whose due date falls within its area's window, and emails the workspace's owners a list of them.
 // The same list is a section of a home tab (mold_v0-134: an overview tab's include: notices), where /app/notices leads,
 // or a card of its right column (mold_v0-172: pack.json rail notices).
+// mold_v0-298: due dates read in words like Posted ("in 3 days", the date on hover), and a notice opened beside the list
+// says what it is about and why, with Open record and Dismiss.
 import { useState } from 'react';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Badge } from '@/components/ui/badge';
-import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { EmptyState } from '@/features/tabs/empty';
 import { exportRowsItem } from '@/features/tabs/export';
 import { Button } from '@/components/ui/button';
@@ -16,6 +19,7 @@ import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/por
 import { GridCell } from '@/features/portal/grid-cell';
 import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
+import { relativeDue } from '@/features/records/due-soon-card';
 
 interface Notice {
   id: string; kind: 'due' | 'clock'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
@@ -32,6 +36,17 @@ async function call<T>(method: string, path = ''): Promise<T> {
   if (!res.ok) throw httpError(res.status, json);
   return json;
 }
+
+/** Today's date as the server writes a due date (YYYY-MM-DD), in the person's own calendar. */
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+/** A due date (YYYY-MM-DD) as the person reads it: the full date. */
+const dueDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+/** mold_v0-298: a due date in words ("tomorrow", "in 3 days", "2 days ago"), the full date on hover; as Posted reads. */
+function DueWhen({ on, className }: { on: string; className?: string }) {
+  const iso = on.slice(0, 10);
+  return <time className={cn('whitespace-nowrap', className)} dateTime={iso} title={dueDate(iso)}>{relativeDue(iso, todayIso())}</time>;
+}
+const recordHref = (n: Notice) => `/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`;
 
 const DESCRIPTION = 'Records due soon in this workspace. Checked once a day; owners also get them by email.';
 
@@ -59,9 +74,9 @@ function NoticesList({ limit, label }: { limit?: number; label?: string }) {
         <TableBody>
           {shown.map((n) => (
             <TableRow key={n.id}>
-              <TableCell className='font-mono text-sm'>{n.due_on}</TableCell>
+              <TableCell className='text-sm'><DueWhen on={n.due_on} /></TableCell>
               <TableCell>
-                <a className='underline-offset-4 hover:underline' href={`/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`}>{n.title ?? n.key}</a>
+                <a className='underline-offset-4 hover:underline' href={recordHref(n)}>{n.title ?? n.key}</a>
                 {n.emailed && <Badge variant='secondary' className='ml-2'>emailed</Badge>}
               </TableCell>
               <TableCell>{n.area_label}</TableCell>
@@ -89,7 +104,6 @@ function NoticesList({ limit, label }: { limit?: number; label?: string }) {
 export function NoticesPage() {
   const { data, error, reload } = useOrgLoad(() => call<{ notices: Notice[] }>('GET'));
   const dismiss = (n: Notice) => call('POST', `/${n.id}/dismiss`).then(() => { toast.success('Dismissed'); return reload(); }).catch(fail);
-  const href = (n: Notice) => `/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`;
   const cols: RecordCol<Notice>[] = [
     {
       key: 'record', label: 'Record', title: true, keep: true, type: 'text', className: 'min-w-56', value: (n) => n.title ?? n.key,
@@ -100,7 +114,7 @@ export function NoticesPage() {
         </span>
       )
     },
-    { key: 'due', label: 'Due', type: 'date', keep: true, value: (n) => n.due_on, render: (n) => <span className='font-mono text-sm'>{n.due_on}</span> },
+    { key: 'due', label: 'Due', type: 'date', keep: true, value: (n) => n.due_on, render: (n) => <DueWhen on={n.due_on} /> },
     { key: 'area', label: 'Area', type: 'select', value: (n) => n.area_label, render: (n) => n.area_label },
     // mold_v0-191: a clock's reminder or escalation step, in words; a due-date notice says it is due soon.
     { key: 'what', label: 'What', type: 'text', value: (n) => n.what ?? 'Due soon', render: (n) => <span className='line-clamp-2'>{n.what ?? 'Due soon'}</span> },
@@ -124,11 +138,34 @@ export function NoticesPage() {
           }} /></div>}
           actions={(n) => [{ label: 'Dismiss', onSelect: () => void dismiss(n) }]}
           detailTitle={(n) => n.title ?? n.key}
-          pageHref={(n) => href(n)}
-          detail={(n) => <Button variant='ghost' size='sm' onClick={() => void dismiss(n)}>Dismiss<span className='sr-only'> {n.title ?? n.key}</span></Button>}
+          pageHref={(n) => recordHref(n)}
+          detail={(n) => <NoticeDetail n={n} onDismiss={() => void dismiss(n)} />}
         />
       )}
     </PageContainer>
+  );
+}
+
+/**
+ * A notice beside the list (mold_v0-298): under its properties, why it was posted (its due date, or a clock's step) and
+ * whether owners were emailed, then Open record and Dismiss.
+ */
+function NoticeDetail({ n, onDismiss }: { n: Notice; onDismiss: () => void }) {
+  const name = n.title ?? n.key;
+  return (
+    <div className='flex flex-col gap-4' data-notice-detail=''>
+      <dl>
+        <Field label='Why'>
+          {n.what ?? <>Its due date, {dueDate(n.due_on.slice(0, 10))}, comes within the {n.area_label} reminder window.</>}
+        </Field>
+        <Field label='Email'>{n.emailed ? 'Sent in the daily email about records due soon.' : 'Not emailed yet.'}</Field>
+      </dl>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button size='sm' nativeButton={false} render={<a href={recordHref(n)} />}>Open record<span className='sr-only'> {name}</span></Button>
+        <Button variant='outline' size='sm' onClick={onDismiss}>Dismiss<span className='sr-only'> {name}</span></Button>
+      </div>
+      <p className='text-muted-foreground text-xs'>Dismissing hides this notice for everyone in the workspace; the record itself is not changed.</p>
+    </div>
   );
 }
 
@@ -160,10 +197,10 @@ export function DueSoonCard() {
           <ul className='flex flex-col gap-0.5' aria-label='Due soon'>
             {shown.map((n) => (
               <li key={n.id}>
-                <a href={`/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`}
+                <a href={recordHref(n)}
                   className='hover:bg-muted/60 flex items-center gap-3 rounded-lg px-3 py-2 text-sm'>
                   <span className='min-w-0 flex-1 truncate font-medium'>{n.title ?? n.key}</span>
-                  <span className='text-muted-foreground shrink-0 font-mono text-xs'>{n.due_on}</span>
+                  <DueWhen on={n.due_on} className='text-muted-foreground shrink-0 text-xs' />
                 </a>
               </li>
             ))}

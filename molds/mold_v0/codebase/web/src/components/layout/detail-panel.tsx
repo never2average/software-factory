@@ -9,8 +9,8 @@
 //
 // The header: the title on the left; on the right only the labelled Expand / Collapse and the "⋯" actions menu (every
 // other action of the record as labelled items, "Open in its own page" among them when the record has a page). Close is
-// a round ✕ on the card's top-right corner (aria-label "Close panel", tooltip "Close (Esc)"); below lg it sits top
-// right in the header row.
+// a round ✕ on the card's top-right corner (aria-label "Close panel", tooltip "Close (Esc)"). mold_v0-298: below lg the
+// panel has one close control, "Back to list" (no ✕ beside it), and the header is one row: Back, then the ⋯ menu.
 //
 // One record panel at a time: opening one closes any other (claimPanel), and a create or edit form's side panel
 // (features/tabs/side-panel.tsx) closes it as it opens. An editor with unsaved changes (usePanelGuard, or anything
@@ -340,7 +340,7 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
       <section ref={panelRef} aria-label={name} data-slot='detail-panel' data-testid='detail-panel' data-row={rowKey} data-expanded={expanded || undefined}
         className='relative flex h-full min-h-0 w-full flex-col lg:pt-3.5 lg:pr-3.5'>
         <div className='bg-background text-foreground flex min-h-0 w-full flex-1 flex-col overflow-hidden text-sm lg:rounded-lg lg:border lg:shadow-sm' data-slot='detail-panel-card'>
-          <div className='flex shrink-0 items-start gap-2 border-b py-2.5 pl-3 max-lg:flex-wrap max-lg:pr-14 md:pl-4 lg:pr-5' data-slot='detail-panel-header'>
+          <div className='flex shrink-0 items-start gap-2 border-b py-2.5 pl-3 max-lg:flex-wrap max-lg:pr-[max(0.75rem,env(safe-area-inset-right))] md:pl-4 lg:pr-5' data-slot='detail-panel-header'>
             <Button variant='ghost' size='sm' className='-ml-1 shrink-0 lg:hidden' onClick={close} data-testid='detail-panel-back'>
               <IconArrowLeft aria-hidden /> Back to list
             </Button>
@@ -365,8 +365,9 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
           </div>
         </div>
         <Button variant='outline' size='icon'
-          className={cn('bg-background text-muted-foreground hover:text-foreground absolute z-10 rounded-full shadow-sm',
-            'top-2 right-[max(0.75rem,env(safe-area-inset-right))] size-9 lg:top-0 lg:right-0 lg:size-7 [&_svg]:size-4')}
+          // mold_v0-298: a wide screen's close; on a phone "Back to list" is the one close control.
+          className={cn('bg-background text-muted-foreground hover:text-foreground absolute z-10 rounded-full shadow-sm max-lg:hidden',
+            'top-0 right-0 size-7 [&_svg]:size-4')}
           aria-label='Close panel' title='Close (Esc)' onClick={close} data-panel-action='close' data-testid='detail-panel-close'>
           <IconX aria-hidden />
         </Button>

@@ -114,8 +114,9 @@ try {
     assert.equal(running["start_run.rebuild"].disabled, "A build that is still going can't be re-run: cancel it first, or wait for it to end.", "Re-run disabled while the build is going, with its reason");
     assert.deepEqual(running.move.moves.filter((x: any) => !x.disabled).map((x: any) => x.to), ["passed", "failed", "cancelled"], "a running build: the moves out of Running");
     const orphan = byId(await page(member, "builds", "build-08"));
-    assert.equal(orphan["link.project"].disabled, "No project is set on this record.");
-    ok("a build's actions by role: a member's Re-run (primary, its input pre-filled), Open project, Edit, Move, Copy link; the owner's also Delete; a viewer's Open project and Copy link; each disabled one with its reason (Re-run while going, Move from Failed for a member, no project)");
+    // mold_v0-298: no project set, so no Open project (it was disabled, with why).
+    assert.equal(orphan["link.project"], undefined, "no project set: no Open project");
+    ok("a build's actions by role: a member's Re-run (primary, its input pre-filled), Open project, Edit, Move, Copy link; the owner's also Delete; a viewer's Open project and Copy link; each disabled one with its reason (Re-run while going, Move from Failed for a member); no Open project when none is set");
   }
 
   // ---------- 3. the API enforces the same ----------

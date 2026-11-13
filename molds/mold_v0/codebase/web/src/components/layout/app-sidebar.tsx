@@ -18,7 +18,7 @@ import {
 import { UserAvatarProfile } from '@/components/user-avatar-profile';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useClerk, useUser } from '@/lib/auth';
-import { useFilteredNavGroups } from '@/hooks/use-nav';
+import { useActiveNavEntry, useNavSearch } from '@/hooks/use-active-nav-entry';
 import Link from 'next/link';
 import { useConsolePathname } from '@/lib/console-path';
 import * as React from 'react';
@@ -27,18 +27,7 @@ import { OrgSwitcher } from '../org-switcher';
 import { useNav } from './nav-context';
 import { BrandMark } from '@/components/brand';
 import { profile } from '@/config/profile.generated';
-import { hiddenConsoleUrls, settingsTabs } from '@/config/pack-nav.generated';
-import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
-import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
-
-/**
- * Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link; a build that hides
- * the page (console.hide: ["keys"], mold_v0-171) loses the link and the page, the keys themselves unchanged.
- */
-/** mold_v0-280: the person's API keys are a tab of Settings (a pack's keys tab declared inside: settings). */
-const keysInSettings = settingsTabs.some((t) => (t.kind as string) === 'keys');
-const memberKeysOn = (profile as Readonly<Record<string, unknown>>).member_keys !== false && !hiddenConsoleUrls.includes('/app/keys');
 
 /** Platform admins (platform staff) get a switch between the customer portal and /admin; nobody else sees it. */
 function usePlatformAdmin(area: string) {
@@ -53,14 +42,6 @@ function usePlatformAdmin(area: string) {
   return is;
 }
 
-/** The page's query, read below a Suspense boundary (useSearchParams), so the sidebar renders the same on the server. */
-function SearchProbe({ onChange }: { onChange: (search: string) => void }) {
-  const params = useSearchParams();
-  const search = params?.toString() ?? '';
-  React.useEffect(() => onChange(search), [search, onChange]);
-  return null;
-}
-
 /** An active entry stands out (mold_v0-213): the brand's colour behind it, its words in it (mold_v0-216: no bar at its edge). */
 const ACTIVE = 'data-active:bg-primary/10 data-active:text-primary data-active:font-semibold dark:data-active:bg-primary/20 data-active:hover:bg-primary/15 data-active:hover:text-primary';
 
@@ -69,19 +50,15 @@ export default function AppSidebar() {
   const { isOpen } = useMediaQuery();
   const { user } = useUser();
   const { signOut } = useClerk();
-  const { area, groups } = useNav();
+  const { area } = useNav();
   const canSwitch = usePlatformAdmin(area);
-  const filteredGroups = useFilteredNavGroups(groups);
-  // A declared sidebar that lists API keys (mold_v0-133, a keys tab) has it in its group: not again in the footer; nor
-  // when a keys tab puts the page inside Settings (mold_v0-280: Settings' tab is its one place).
-  const keysInNav = keysInSettings || groups.some((g) => g.items.some((i) => i.url === '/app/keys'));
   const base = area === 'admin' ? '/admin' : '/app';
   // Exactly one entry is active (mold_v0-213, src/lib/active-nav.ts): the page's own, or the one it belongs to (a
-  // record's page its list's, an in-page tab or a filter its page's, a sub-page its module's); the area's home only on itself.
-  const [search, setSearch] = React.useState('');
-  const footer = [...(area === 'portal' && memberKeysOn && !keysInNav ? ['/app/keys'] : []), `${base}/profile`];
-  const urls = React.useMemo(() => navUrls(filteredGroups, footer), [filteredGroups, footer.join(' ')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const activeUrl = activeNavUrl(search ? `${pathname}?${search}` : pathname, urls, navOptions(area === 'admin' ? 'admin' : 'portal'));
+  // record's page its list's, an in-page tab or a filter its page's, a sub-page its module's); the area's home only on
+  // itself; none on a 404. mold_v0-298: worked out in one hook the top bar's trail shares, so both name the same place.
+  const [search, searchProbe] = useNavSearch();
+  const { groups: filteredGroups, urls, footer, activeUrl } = useActiveNavEntry(search);
+  const keysInFooter = footer.includes('/app/keys');
   const active = (url: string) => url === activeUrl;
   // The footer's Profile is lit only when the sidebar has no Profile entry of its own (one entry lit, never two).
   const profileInNav = urls.slice(0, urls.length - footer.length).includes(`${base}/profile`);
@@ -109,7 +86,7 @@ export default function AppSidebar() {
           <OrgSwitcher />
         )}
       </SidebarHeader>
-      <React.Suspense fallback={null}><SearchProbe onChange={setSearch} /></React.Suspense>
+      {searchProbe}
       <SidebarContent className='overflow-x-hidden'>
         {filteredGroups.map((group) => (
           <SidebarGroup key={group.label || 'ungrouped'} className='py-0 group-data-[collapsible=icon]:py-1.5'>
@@ -193,7 +170,7 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
-          {area === 'portal' && memberKeysOn && !keysInNav && (
+          {keysInFooter && (
             // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are, unless the profile
             // turns member keys off (mold_v0-099).
             <SidebarMenuItem>

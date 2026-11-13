@@ -4,9 +4,11 @@
  *
  * Built-in sign-in: the server is the authorization server for /mcp (src/mcp-oauth.ts), so it lists each app a person
  * connected (GET /api/oauth/grants) and revokes one (POST /api/oauth/grants/<id>/revoke).
- * Clerk: Clerk is the authorization server. Its Backend API has no list of a person's OAuth consents or grants (its OAuth
- * applications endpoints are the instance's apps; a token is revoked only by presenting it), so the page says where the
- * connections are kept and how to end one, and links to the person's account at Clerk.
+ * Hosted sign-in provider: the provider is the authorization server. Its API has no list of a person's OAuth consents or
+ * grants (its OAuth application endpoints are the instance's apps; a token is revoked only by presenting it). mold_v0-298:
+ * the page lists the AI apps this person was seen connecting from in this workspace (GET /api/app/setup `clients`, from
+ * the usage log), when each was last seen, and how to disconnect one; and links to the person's account at the provider.
+ * No vendor's name in the words.
  */
 import { fill } from '../../lib/vocabulary';
 
@@ -20,13 +22,21 @@ export interface ConnectedApp {
   last_used_at: string | null;
 }
 
+/** One AI app seen connecting (GET /api/app/setup `clients`: its name as it introduced itself, and when last seen). */
+export interface SeenApp { client: string; last: string }
+
 export const PAGE_TITLE = 'Connected apps';
 export const PAGE_URL = '/app/connected-apps';
-export const DESCRIPTION = fill('AI apps you signed in to {product}, such as Claude, ChatGPT or VS Code. Each acts as you, with your role, in the {workspace} you chose. Revoke one to sign it out at once.');
+/**
+ * mold_v0-298: where the setup steps for connecting an AI app are: the home page's connection card (the Setup page, or
+ * a home tab, which draws the same card: web/src/app/app/page.tsx), by its anchor.
+ */
+export const CONNECT_URL = '/app#connect';
+export const DESCRIPTION = fill('AI apps you connected and signed in with, such as a chat assistant or a code editor. Each acts as you, with your role, in the {workspace} you chose. Revoke one to sign it out at once.');
 export const EMPTY = {
   title: 'No apps connected',
-  text: fill('When you connect an AI app to {product} and sign in, it shows here, with the {workspace} it acts in.'),
-  cta: { label: 'How to connect an app', href: '/app' },
+  text: fill('When you connect an AI app and sign in, it shows here, with the {workspace} it acts in.'),
+  cta: { label: 'Connect an AI app', href: CONNECT_URL },
 };
 
 /** The app's name as the page shows it: its own name, else the address that identifies it, else a plain label. */
@@ -41,6 +51,13 @@ export const appIdentity = (a: ConnectedApp): { verified: true; host: string; ur
     ? { verified: true, host: a.client.id_host, url: a.client.url }
     : { verified: false, note: 'Not verified: the app gave this name itself' };
 
+/** What an app may do, in plain words (its OAuth scopes; mold_v0-298: no raw scope name shown). */
+const SCOPE_WORDS: Record<string, string> = { mcp: 'Use your tools as you', offline_access: 'Stay signed in until you revoke it' };
+export const scopeWords = (scope: string[]) => {
+  const words = [...new Set((scope.length ? scope : ['mcp']).map((s) => SCOPE_WORDS[s] ?? 'Other access it asked for'))];
+  return words.join(', ');
+};
+
 export const revokeQuestion = (a: ConnectedApp) => ({
   title: `Revoke ${appName(a)}?`,
   // The workspace's name is the person's data: never passed through fill (a brace in it is not a placeholder).
@@ -48,19 +65,48 @@ export const revokeQuestion = (a: ConnectedApp) => ({
   action: 'Revoke',
 });
 
-// ---------- Clerk ----------
+// ---------- the hosted sign-in provider ----------
 
+// mold_v0-298: no vendor's name and no product name standing in for one (the neutral build's name is a generic word).
+// The words claim only what holds: a connection is ended in the AI app itself; signing out here does not end it.
 export const CLERK_NOTE = {
-  title: 'Managed by your sign-in provider',
-  text: fill('{product} signs people in with Clerk, and the AI apps you connect sign in through Clerk too. Clerk keeps those connections, and does not let {product} list them here.'),
-  disconnect: fill('To disconnect an app, remove {product} in that app\'s own settings (in Claude: Settings, then Connectors).'),
+  title: 'Managed by the service you sign in with',
+  text: fill('Your AI apps sign in through the same service you use to sign in here, and that service keeps the connections. So this page shows the AI apps most recently seen working in this {workspace} as you, and when each was last seen.'),
+  disconnect: 'To disconnect an app, open that app and remove this connection in its settings, or sign out of it there. Signing out of this page does not disconnect your AI apps.',
 };
 
 /**
- * The person's account page at Clerk (the Account Portal), from the console's publishable key: `pk_test_`/`pk_live_` and
- * the Frontend API's host in base64 with a trailing `$`. A development instance's host `<slug>.clerk.accounts.dev` has
- * its portal at `<slug>.accounts.dev`; a production instance's `clerk.<domain>` at `accounts.<domain>`. null when the
- * key says neither (a proxied or unusual set-up): the page then links to the profile.
+ * How many AI apps the list can show at most: the server answers only the most recently seen (src/app.ts setup(),
+ * `clients`, LIMIT 5). Keep the two the same; at this many the page says the list may not be complete.
+ */
+export const SEEN_LIMIT = 5;
+export const seenPartial = (n: number) => (n >= SEEN_LIMIT ? `Showing the ${n} most recently seen. Older ones are not listed.` : null);
+
+/** Removing an app from this list (DELETE /api/app/clients/<name>): it forgets the name only, it does not disconnect it. */
+export const forgetQuestion = (name: string) => ({
+  title: `Remove ${name} from this list?`,
+  text: `${name} is no longer listed here or counted as one of your AI apps. This does not disconnect it: to do that, remove the connection in ${name} itself. If it works here again, it shows again.`,
+  action: 'Remove',
+});
+
+export const SEEN_EMPTY = {
+  title: 'No AI apps seen yet',
+  text: fill('Once you connect an AI app and it works in this {workspace} as you, it shows here with when it was last seen.'),
+  cta: { label: 'Connect an AI app', href: CONNECT_URL },
+};
+
+/** How to disconnect one app seen connecting, for its side panel. */
+export const disconnectSteps = (name: string) => [
+  `Open ${name} and go to its settings, where it lists the tools and services it is connected to.`,
+  'Find this connection and remove it, or sign out of it there.',
+  `Once it is removed, ${name} stops using your tools here. To use it again, connect it again from the setup steps.`,
+];
+
+/**
+ * The person's account page at the hosted provider (its account portal), from the console's publishable key:
+ * `pk_test_`/`pk_live_` and the provider's sign-in host in base64 with a trailing `$`. A development host has its portal
+ * one label up (`<slug>.accounts.dev`); a production host's portal is `accounts.<domain>`. null when the key says neither
+ * (a proxied or unusual set-up): the page then links to the profile.
  */
 export function clerkAccountUrl(publishableKey: string | undefined | null): string | null {
   const m = /^pk_(?:test|live)_([A-Za-z0-9+/_-]+={0,2})$/.exec(publishableKey ?? '');
@@ -76,8 +122,8 @@ export function clerkAccountUrl(publishableKey: string | undefined | null): stri
   return null;
 }
 
-/** Where the Clerk note's link goes, and what it says. */
+/** Where the note's account link goes, and what it says (mold_v0-298: no vendor's name). */
 export const clerkAccountLink = (publishableKey: string | undefined | null) => {
   const url = clerkAccountUrl(publishableKey);
-  return url ? { href: url, label: 'Open your account at Clerk', external: true } : { href: '/app/profile', label: 'Open your profile', external: false };
+  return url ? { href: url, label: 'Open your sign-in account', external: true } : { href: '/app/profile', label: 'Open your profile', external: false };
 };

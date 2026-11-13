@@ -37,12 +37,13 @@ import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { RecordTableView } from '@/features/records/record-pages';
 import { InPageTabs } from './in-page-tabs';
 import { BoardColumns, TimelineList, type Page } from './board';
-import { ChartCell, ChartTiles, type MetricResult } from './charts';
+import { ChartBody, ChartCell, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
 import { useExportCsv } from './export';
 import { ActionsMenu } from '@/components/layout/actions-menu';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
+import { RecentRecordsCard } from './recent-records-card';
 import { RunsTable } from './runs';
 import { TabSparklines } from './sparklines';
 import { FormHost, useTabAction } from './tab-action';
@@ -103,9 +104,10 @@ function OverviewTab({ tab }: { tab: PackTabSpec }) {
 }
 
 /**
- * A number chart as a card of the home page's right column (mold_v0-172: pack.json rail chart:<name>): its tiles, two
- * a row, and a link to the pack's overview tab that shows it beside the other charts, when there is one. Hidden from a
- * role that may not read one of its metrics, as on that tab.
+ * A chart as a card of the home page's right column (mold_v0-172: pack.json rail chart:<name>): a number chart's tiles,
+ * two a row; since mold_v0-298 any other chart too (its plot or table, ./charts.tsx ChartBody), so a home tab draws the
+ * charts it names in its rail. A link to the pack's overview tab that shows it beside the other charts, when there is
+ * one. Hidden from a role that may not read one of its metrics, as on that tab.
  */
 function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec }) {
   const charts = useMemo(() => [chart], [chart]);
@@ -115,7 +117,7 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
   const more = packTabs.find((t) => t.pack === home.pack && t.kind === 'overview' && t.id !== home.id && t.charts.includes(chart.name));
   return (
     <GridCell title={chart.title} icon={<Icons.chartBar />} description={chart.description ?? undefined}>
-      {error ? <ErrorState error={error} /> : <ChartTiles chart={chart} results={results} compact />}
+      {error ? <ErrorState error={error} /> : <ChartBody chart={chart} results={results} />}
       {more && <Link href={more.url} className='text-primary self-start text-xs font-medium hover:underline'>Open {more.label}</Link>}
     </GridCell>
   );
@@ -124,7 +126,7 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
 /**
  * The build's home (mold_v0-134, mold_v0-172): an overview tab that includes setup draws the Setup page's layout, the
  * same for every build. Its rail's cards follow the connection card (journeys: the Due soon card, mold_v0-207; notices,
- * chart:<name>); nothing follows the checklist (mold_v0-216: the notices are on the Due soon card and /app/notices). Its `charts` (and charts_title) are not
+ * chart:<name> of any chart type, recent:<area> the newest records of an area, mold_v0-298); nothing follows the checklist (mold_v0-216: the notices are on the Due soon card and /app/notices). Its `charts` (and charts_title) are not
  * drawn (mold_v0-207: the home page has no charts grid; a pack that lists them stays valid, its metrics still drive the
  * headline row, the list tabs' cards and the rail's number cards). It has no title of its own (the Setup page has
  * none): its sections name themselves. It is drawn at /app itself (mold_v0-175, web/src/app/app/page.tsx).
@@ -150,7 +152,7 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
       const found = packCharts.find((y) => y.pack === tab.pack && y.name === x.slice(6));
       const c = found && once(found);
       if (c) cards[x] = <ChartCard chart={c} home={tab} />;
-    }
+    } else if (x.startsWith('recent:')) cards[x] = <RecentRecordsCard area={x.slice(7)} />;
   }
   // No notices section under the checklist (mold_v0-216): the Due soon card and the Notices page show them.
   return <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined} />;
@@ -209,6 +211,8 @@ const VIEW_LABELS = { table: 'Table', board: 'Board', timeline: 'Timeline' } as 
 
 function AreaTab({ tab }: { tab: PackTabSpec }) {
   const area = useMemo(() => viewArea(tab), [tab]);
+  // mold_v0-298: a tab that narrows its one area (pack.json `filter`) keeps the area's record noun in its list (the first
+  // column, the search box: a tab label such as "Open" is no noun); its empty state names the subset (src/metric-spec.ts tabEmpty).
   const src = useMemo(() => area && { area, url: tabRecordsUrl(tab, area), rows: (p: Page) => withSource(tab, p) }, [tab, area]);
   const views = (tab.views ?? ['table', 'detail']).filter((v): v is 'table' | 'board' | 'timeline' => v !== 'detail');
   const detail = (tab.views ?? ['table', 'detail']).includes('detail');

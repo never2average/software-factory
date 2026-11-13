@@ -15,8 +15,8 @@
 // stand-in for @clerk/nextjs, molds/mold_v0/testing/console/clerk-standin), only this page:
 // 4. builtin: the list (a verified app by its address, a registered one marked not verified, the workspace, the dates),
 //    Revoke asks first, then the row goes and the app's token stops on /mcp; the empty state once none is left.
-//    clerk: the "managed by your sign-in provider" note, the link to the person's account at Clerk (from the build's
-//    publishable key), and no call to the built-in list.
+//    clerk: the "managed by the service you sign in with" note, the link to the person's sign-in account (from the
+//    build's publishable key), the AI apps seen (mold_v0-298), no Revoke, and no call to the built-in list.
 // 5. axe (testing/accessibility/vendor/axe.min.js): no serious or critical WCAG A/AA violation, dark and light; at 390
 //    and 1280 px nothing scrolls sideways.
 import assert from "node:assert/strict";
@@ -293,7 +293,7 @@ async function browserChecks(w: World) {
     await p.locator(ready).first().waitFor({ timeout: 20000 });
     return { c, p, status: res?.status() ?? 0, asked };
   };
-  /** The trail at the top reads "Account / Connected apps" (web/src/hooks/use-breadcrumbs.tsx), not the address. */
+  /** The trail at the top starts at the sidebar group and ends at "Connected apps" (web/src/hooks/use-breadcrumbs.tsx, mold_v0-298), not the address. */
   const trail = async (p: any) => (await p.locator("[data-slot='breadcrumb-page']").first().innerText()).trim();
 
   // ---------- 5. axe, light and dark; two widths ----------
@@ -336,18 +336,23 @@ async function browserChecks(w: World) {
     try {
       assert.equal(r.status, 200);
       const note = r.p.locator("[data-connected-apps='provider']");
-      assert.match(await note.innerText(), /Managed by your sign-in provider/);
-      assert.match(await note.innerText(), /Clerk/);
-      const link = note.getByRole("link", { name: /Open your account at Clerk/ });
+      // mold_v0-298: the note names no vendor.
+      assert.match(await note.innerText(), /Managed by the service you sign in with/);
+      const link = note.getByRole("link", { name: /Open your sign-in account/ });
       assert.equal(await link.getAttribute("href"), `https://${DEV_HOST.replace(".clerk.accounts.dev", ".accounts.dev")}/user`, "the person's account at Clerk, from the build's key");
       assert.equal(await link.getAttribute("target"), "_blank");
       assert.equal(await note.getByRole("link", { name: "Your profile" }).getAttribute("href"), "/app/profile");
-      assert.equal(await r.p.locator("table").count(), 0, "no list");
+      // mold_v0-298: the AI apps seen are listed (no Revoke: the sign-in service holds their sign-ins), or the empty note.
+      const seen = r.p.locator("[data-connected-apps-seen]");
+      await seen.waitFor();
+      const seenText = await seen.innerText();
+      assert.ok((await seen.locator("table").count()) > 0 || /No AI apps seen yet/.test(seenText), `the AI apps seen, or the empty note: ${seenText.slice(0, 300)}`);
+      assert.equal(await r.p.getByRole("button", { name: /^Revoke/ }).count(), 0, "no Revoke");
       assert.deepEqual(r.asked, [], "the page never asks the built-in list");
       assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
     } finally { await r.c.close(); }
-    ok("the page (clerk): the managed-by-your-sign-in-provider note, the link to the person's account at Clerk and their profile; no list, and the built-in list never asked");
+    ok("the page (clerk): the managed-by-the-service-you-sign-in-with note, the link to the person's sign-in account and their profile; the AI apps seen, no Revoke, and the built-in list never asked");
   } else {
     const r = await open();
     try {
@@ -361,8 +366,10 @@ async function browserChecks(w: World) {
       assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
       // Revoke asks first; Cancel changes nothing.
-      const row = rows.filter({ hasText: "Test Connector" });
-      await row.getByRole("button", { name: /Revoke/ }).click();
+      // mold_v0-298: rows are the standard list's; Revoke is in the row's ⋯ menu.
+      const row = r.p.locator("tr[data-row-key]").filter({ hasText: "Test Connector" });
+      const revokeFrom = async (x: any) => { await x.getByRole("button", { name: "Row actions" }).click(); await r.p.getByRole("menuitem", { name: "Revoke" }).click(); };
+      await revokeFrom(row);
       const dialog = r.p.getByRole("alertdialog");
       await dialog.waitFor();
       assert.match(await dialog.innerText(), /Revoke Test Connector\?/);
@@ -370,7 +377,7 @@ async function browserChecks(w: World) {
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await dialog.waitFor({ state: "hidden" });
       assert.equal(await w.rpc(w.tokens.dcr), 200, "cancelled: still connected");
-      await row.getByRole("button", { name: /Revoke/ }).click();
+      await revokeFrom(row);
       await r.p.getByRole("alertdialog").getByRole("button", { name: "Revoke" }).click();
       await r.p.waitForFunction(() => document.querySelectorAll("[data-connected-app]").length === 1, null, { timeout: 15000 });
       assert.equal(await w.rpc(w.tokens.dcr), 401, "revoked from the page: the app's token stops on /mcp");
@@ -378,7 +385,7 @@ async function browserChecks(w: World) {
       assert.equal(await w.rpc(w.tokens.other), 200, "another person's app is untouched");
       if (SHOTS) await r.p.screenshot({ path: path.join(SHOTS, `${PROVIDER}-connected-apps-after-revoke.png`), fullPage: true });
       // The last one: the empty state.
-      await r.p.locator("[data-connected-app]").getByRole("button", { name: /Revoke/ }).click();
+      await revokeFrom(r.p.locator("tr[data-row-key]"));
       await r.p.getByRole("alertdialog").getByRole("button", { name: "Revoke" }).click();
       await r.p.locator("[data-connected-apps='empty']").waitFor({ timeout: 15000 });
       assert.match(await r.p.locator("[data-connected-apps='empty']").innerText(), /No apps connected/);

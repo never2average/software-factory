@@ -93,7 +93,9 @@ try {
   {
     const base = built("shell-plain", ["fixture_tracker"]);
     const before = urls(probe(base).portalNav);
-    assert.ok(["/app/activity", "/app/usage", "/app/billing", "/app/profile"].every((u) => before.includes(u)), `the shell's sidebar has them: ${before.join(" ")}`);
+    assert.ok(["/app/activity", "/app/billing", "/app/profile"].every((u) => before.includes(u)), `the shell's sidebar has them: ${before.join(" ")}`);
+    // mold_v0-298: without the session engine /app/usage only leads to /app/activity, so it is not a second entry for it.
+    assert.ok(!before.includes("/app/usage"), `no Usage entry beside Activity: ${before.join(" ")}`);
     const copy = built("shell-hide", ["fixture_tracker"], (_id, j) => { j.console = { hide: ["activity"] }; }, { console: { hide: ["usage", "billing"] } });
     const p = probe(copy);
     assert.deepEqual(p.hiddenConsoleUrls, ["/app/activity", "/app/usage", "/app/billing"], "the pack's and the profile's, joined");

@@ -1064,6 +1064,8 @@ export function conditionHolds(when: DetailCondition, data: Record<string, unkno
   if (when.all) return when.all.every((c) => conditionHolds(c, data, clocks, now));
   if (when.any) return when.any.some((c) => conditionHolds(c, data, clocks, now));
   if (when.clock) { const c = clocks?.[when.clock]; return !!c && (when.is === "overdue" ? c.status === "overdue" || c.overdue === true : c.status === "due_soon"); }
+  // mold_v0-298: a test of a computed header fact is the page's (only a notice may make one); the server never holds it.
+  if (when.fact !== undefined) return false;
   const v = when.field ? data[when.field] : undefined;
   const empty = v == null || v === "" || (Array.isArray(v) && !v.length);
   const values = Array.isArray(v) ? v : [v];
@@ -1096,6 +1098,8 @@ const DetailLeafConditionSchema = z.object({
   within_days: z.number().int().min(0).max(3650).optional(),
   clock: name.optional(),
   is: z.enum(CLOCK_TESTS).optional(),
+  /** mold_v0-298: a notice's test of a computed header fact (its index in header.facts): empty, equals, in or not_in on its value (a count, or the newest record's value). */
+  fact: z.number().int().min(0).max(7).optional(),
 }).strict();
 export const DetailConditionSchema = DetailLeafConditionSchema.extend({
   all: z.array(DetailLeafConditionSchema).min(1).max(6).optional(),
@@ -1108,9 +1112,20 @@ type LeafCondition = z.output<typeof DetailLeafConditionSchema>;
  * live_when, a computed fact's where): each test names a field the area has (never an encrypted one; a date test a date
  * field; an enum's values its options) or one of its clocks, and makes one test; all or any lists such tests, alone.
  */
-export function conditionIssues(fields: readonly { name: string; type?: string; encrypted?: boolean; options?: unknown }[], clocks: readonly { name: string }[], w: DetailCondition, of = "the area"): string[] {
+export function conditionIssues(fields: readonly { name: string; type?: string; encrypted?: boolean; options?: unknown }[], clocks: readonly { name: string }[], w: DetailCondition, of = "the area",
+  /** mold_v0-298: the header's facts, where a test of a computed fact may be made (a notice's condition); else none may. */
+  facts?: readonly { computed?: unknown }[]): string[] {
   const out: string[] = [];
   const leaf = (c: LeafCondition) => {
+    if (c.fact !== undefined) {
+      const extra = (["field", "clock", "is", "before", "after", "within_days"] as const).filter((k) => c[k] !== undefined);
+      const ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => c[k] !== undefined);
+      if (!facts) out.push("a test of a computed fact (fact) is only for a notice: the page has the fact's value, the server does not");
+      else if (!facts[c.fact]?.computed) out.push(`fact ${c.fact} is not a computed fact of the header (header.facts[${c.fact}] with computed)`);
+      if (extra.length) out.push(`a fact's test names the fact alone: it has no ${extra.join(" or ")}`);
+      if (ops.length !== 1) out.push(`a fact's test is one of empty, equals, in or not_in (it has ${ops.length ? ops.join(" and ") : "none"})`);
+      return;
+    }
     if (c.clock !== undefined || c.is !== undefined) {
       const extra = (["field", ...CONDITION_TESTS] as const).filter((k) => c[k] !== undefined);
       if (c.clock === undefined || c.is === undefined) out.push("a clock's test names the clock and what it is (is: overdue or due_soon)");
@@ -1130,7 +1145,7 @@ export function conditionIssues(fields: readonly { name: string; type?: string; 
   };
   const lists = (["all", "any"] as const).filter((k) => w[k] !== undefined);
   if (lists.length) {
-    const rest = (["field", "clock", "is", ...CONDITION_TESTS] as const).filter((k) => w[k] !== undefined);
+    const rest = (["field", "clock", "is", "fact", ...CONDITION_TESTS] as const).filter((k) => w[k] !== undefined);
     if (lists.length > 1) out.push("a condition is all of its tests or any of them, not both");
     if (rest.length) out.push(`a condition with ${lists[0]} has its tests inside it: no ${rest.join(" or ")} beside it`);
     for (const k of lists) for (const c of w[k]!) leaf(c);
@@ -1218,8 +1233,11 @@ export const DetailSectionSchema = z.object({
    */
   when: DetailConditionSchema.optional(),
 }).strict();
-/** A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. */
-export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12) }).strict();
+/**
+ * A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. mold_v0-298: `when`, the tab
+ * only while this condition holds on the record (the notices' condition language); the first tab is always shown.
+ */
+export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12), when: DetailConditionSchema.optional() }).strict();
 /** A banner above the tabs while its condition holds on the record: its tone, an optional title and its words. */
 export const DetailNoticeSchema = z.object({
   when: DetailConditionSchema,
@@ -1251,13 +1269,14 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *              it is, each a choice; only the transitions this person's role may make
  *   edit       the record's edit form (a full card in the page's place)
  *   delete     delete the record, after a confirmation
- *   link       open the record its link or reference field `field` names
+ *   link       open the record its link or reference field `field` names; hidden while the field is empty (mold_v0-298)
  *   copy_link  copy the page's address
  *   start_agent (mold_v0-261, flag agent_harness) start a workspace agent session with the agent profile `profile` (the
  *              pack's own, or "default"), its first message `first_message` filled from the record ({{key}}, {{title}},
  *              {{<field>}}); the session links back to the record and shows in its runs section
  *   open_url   (mold_v0-262) open the web address the record's url field (or text field holding one) `field` holds, in
- *              a new tab ("Open live app", "Open docs"); disabled, with why, while the field holds no http(s) address
+ *              a new tab ("Open live app", "Open docs"); hidden while the field is empty (mold_v0-298); disabled, with why,
+ *              while it holds no http(s) address
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1351,7 +1370,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
   /** A condition on this area's fields and clocks (mold_v0-256: conditionIssues), each problem with its path. */
   const clocksOf = (a as { clocks?: { name: string }[] }).clocks ?? [];
   const condition = (w: DetailCondition, ...path: (string | number)[]) => {
-    for (const m of conditionIssues(a.fields, clocksOf, w)) bad(m, ...path, ...(/^\S+ is (not one of the area's fields|encrypted)/.test(m) && !w.all && !w.any ? ["field"] : []));
+    // mold_v0-298: a notice may test a computed header fact.
+    for (const m of conditionIssues(a.fields, clocksOf, w, "the area", path[0] === "notices" ? d.header?.facts ?? [] : undefined)) bad(m, ...path, ...(/^\S+ is (not one of the area's fields|encrypted)/.test(m) && !w.all && !w.any ? ["field"] : []));
   };
   const h = d.header;
   if (h?.title) shown(h.title, "the title", "header", "title");
@@ -1385,6 +1405,9 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
   for (const [ti, t] of d.tabs.entries()) {
     if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
     if (!t.sections.length) bad(`tab ${t.label} is empty: a tab has at least one section`, "tabs", ti, "sections");
+    // mold_v0-298: a tab shown only while its condition holds; the first tab is the page's default, so always shown.
+    if (t.when && ti === 0) bad(`tab ${t.label} is the first tab, which is always shown: move its condition to its sections`, "tabs", ti, "when");
+    else if (t.when) condition(t.when, "tabs", ti, "when");
     for (const [si, s] of t.sections.entries()) {
       // mold_v0-262: a section shown only while its condition holds: one over the area's own fields and clocks.
       if (s.when) condition(s.when, "tabs", ti, "sections", si, "when");
@@ -2258,11 +2281,14 @@ export const TAB_INCLUDES = ["setup", "notices"] as const;
  *   journeys       the journey picker: "Get set up" (the setup steps, every build's) and the build's journeys
  *                  (mold_v0-175: pack.json journeys adds its own; with none the picker has Get set up alone)
  *   notices        the records due soon, as a short list (needs a due-date area; the tab then also includes notices)
- *   chart:<name>   one of the pack's number charts as a card of its tiles, with a link to the tab that shows it beside
- *                  the other charts (another overview tab of the pack listing it), when there is one
+ *   chart:<name>   one of the pack's charts as a card: a number chart's tiles, and since mold_v0-298 any other chart's
+ *                  plot or table (so a home tab draws the charts it wants; its `charts` list alone is not drawn), with a
+ *                  link to the tab that shows it beside the other charts (another overview tab of the pack listing it)
+ *   recent:<area>  (mold_v0-298) the newest records of one of the build's record areas, each opening its record, with a
+ *                  link to the area's tab: what a home page lists when its "recent" things are records, not runs
  * Left out: the journey picker (the Setup page's own layout: every build has Get set up, mold_v0-175).
  */
-export const TAB_RAIL = /^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62})$/;
+export const TAB_RAIL = /^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62}|recent:[a-z][a-z0-9_]{1,62})$/;
 /** mold_v0-260 (flag overview_cards): the home tab's own cards: the workspace's latest runs, the records that need attention. */
 export const HOME_CARDS = ["recent_runs", "attention"] as const;
 /** A home tab's rail past this many cards, a fifth headline number or one of HOME_CARDS asks for overview_cards (mold_v0-260). */
@@ -2420,7 +2446,7 @@ export const TabSchema = z.object({
   charts: z.array(name).max(12).optional(),
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
   // mold_v0-260 (flag overview_cards): also recent_runs and attention, up to 4 cards.
-  rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL) or chart:<one of the pack's number charts>")).min(1).max(4).optional(),
+  rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL), chart:<one of the pack's charts> or recent:<a record area>")).min(1).max(4).optional(),
   /** An area tab's own narrowing of its one area's rows (mold_v0-175): a list filter, {field: value} or {field: {op: value}}. */
   filter: z.record(z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "a field of the area (or key, title, updated_at)"), z.unknown())
     .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
@@ -2977,12 +3003,12 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const c of p.charts ?? []) for (const m of c?.metrics ?? []) if (!metricNames.has(m)) problems.push(at(`chart ${c.name} shows metric ${m}, which this pack does not declare`));
   const chartNames = new Set((p.charts ?? []).map((c) => c?.name));
   for (const t of p.tabs ?? []) for (const c of t?.charts ?? []) if (!chartNames.has(c)) problems.push(at(`tab ${t.id} shows chart ${c}, which this pack does not declare`));
-  // A home tab's chart card (mold_v0-172): one of this pack's number charts (tiles), drawn small in the right column.
+  // A home tab's chart card (mold_v0-172): one of this pack's charts, drawn small in the right column (mold_v0-298: any
+  // type, not only a number chart's tiles). A recent:<area> card's area is checked with the build (src/metric-spec.ts).
   for (const t of p.tabs ?? []) for (const r of t?.rail ?? []) {
     if (typeof r !== "string" || !r.startsWith("chart:")) continue;
     const c = (p.charts ?? []).find((x) => x?.name === r.slice(6));
     if (!c) problems.push(at(`tab ${t.id}: rail ${r}: this pack declares no chart ${r.slice(6)}`));
-    else if (c.type !== "number") problems.push(at(`tab ${t.id}: rail ${r}: a card shows a number chart (its tiles); ${c.name} is a ${c.type} chart`));
   }
   // A sections tab's in-page tabs (mold_v0-175): this pack's own area tabs, each in one sections tab at most.
   const inSections = new Map<string, string>();

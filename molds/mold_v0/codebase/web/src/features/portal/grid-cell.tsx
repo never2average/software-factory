@@ -5,9 +5,9 @@
 import { cn } from '@/lib/utils';
 
 /** A titled cell of the home page's grid: its padding and heading; the lines are the grid's. */
-export function GridCell({ title, icon, description, className, children, action }: { title: string; icon?: React.ReactNode; description?: React.ReactNode; className?: string; children: React.ReactNode; /** Beside the title, at its right (mold_v0-207: View all). */ action?: React.ReactNode }) {
+export function GridCell({ id, title, icon, description, className, children, action }: { /** An anchor to link to (mold_v0-298: /app#connect). */ id?: string; title: string; icon?: React.ReactNode; description?: React.ReactNode; className?: string; children: React.ReactNode; /** Beside the title, at its right (mold_v0-207: View all). */ action?: React.ReactNode }) {
   return (
-    <section className={cn('flex min-w-0 flex-col gap-3 p-4', className)}>
+    <section className={cn('flex min-w-0 flex-col gap-3 p-4', className)} id={id}>
       <div>
         <div className='flex items-center justify-between gap-2'>
           <h2 className='flex items-center gap-2 text-sm font-semibold tracking-tight'>{icon && <span className='text-primary [&_svg]:size-4'>{icon}</span>}{title}</h2>

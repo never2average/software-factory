@@ -100,6 +100,12 @@ const stepId = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letter
  * not (`viewer_note`, with `launch` on the step), and the `workflow`: the tool groups that make up using it fully.
  */
 const ShellStepWords = z.object({ label: plain(120).optional(), help: plain(600).optional(), prompt: plain(400).optional() }).strict();
+/**
+ * mold_v0-298: the connection steps (connected, tools, first_call) may also be `optional`: shown, not counted in the
+ * progress (a product used mostly in the console). To move them, a pack step with done_when connected/first_call takes
+ * the shell step's place (src/onboarding.ts).
+ */
+const ShellConnectStepWords = ShellStepWords.extend({ optional: z.boolean().optional() }).strict();
 const SetupSchema = z.object({
   $comment: z.string().max(2000).optional(),
   steps: z.array(z.object({
@@ -108,7 +114,7 @@ const SetupSchema = z.object({
     optional: z.boolean().optional(), launch: z.boolean().optional(), after: stepId.optional(),
     done_when: z.string().regex(/^(resource:[a-z][a-z0-9+.-]*:\/\/[^\s]{0,200}|stage:[a-z][a-z0-9_]{1,30})$/, "resource:<address prefix> (ui://...) or stage:<id>"),
   }).strict()).max(12).optional(),
-  shell_steps: z.object(Object.fromEntries(["joined", "connected", "tools", "first_call"].map((id) => [id, ShellStepWords.optional()]))).strict().optional(),
+  shell_steps: z.object({ joined: ShellStepWords.optional(), ...Object.fromEntries(["connected", "tools", "first_call"].map((id) => [id, ShellConnectStepWords.optional()])) }).strict().optional(),
   viewer_note: plain(300).optional(),
   workflow: z.array(z.object({
     id: stepId, label: plain(80),

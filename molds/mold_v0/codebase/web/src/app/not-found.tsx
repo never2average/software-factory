@@ -4,6 +4,7 @@ import { PortalFrame } from '@/components/layout/portal-frame';
 import { StatusPage } from '@/features/status/status-page';
 import { PATH_HEADER } from '@/features/status/server';
 import { ConsolePathProvider } from '@/lib/console-path';
+import { NotFoundProvider } from '@/lib/page-not-found';
 import { NOT_FOUND_AREA_HEADER } from '@/lib/console-routes';
 import AdminNotFound from './admin/not-found';
 import PortalNotFound from './app/not-found';
@@ -24,7 +25,8 @@ export default async function NotFound() {
   const area = h.get(NOT_FOUND_AREA_HEADER);
   const asked = h.get(PATH_HEADER)?.split(/[?#]/)[0];
   const path = asked && asked.startsWith('/') && !asked.startsWith('//') ? asked : null;
-  return <ConsolePathProvider path={path}>{page(area)}</ConsolePathProvider>;
+  // mold_v0-298: the frame knows it is a 404 from its first paint: no trail, no lit sidebar entry.
+  return <ConsolePathProvider path={path}><NotFoundProvider>{page(area)}</NotFoundProvider></ConsolePathProvider>;
 }
 
 function page(area: string | null) {

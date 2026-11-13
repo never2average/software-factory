@@ -1,34 +1,26 @@
 'use client';
 // Profile under the built-in sign-in (mold_v0-004): your name, your address, how you sign in, and ending sessions
 // (other devices, or everywhere including this one). The API server keeps it all (src/builtin-auth.ts).
-import { useState } from 'react';
+// mold_v0-298: the name saves with its own Save (a Saved tick after), and the page links to your API keys and connected apps.
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { IdentityAvatar } from '@/components/identity-avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { authPost, useBuiltinSession } from '@/lib/auth/builtin-client';
+import { NameField, ProfileLinks } from './profile-parts';
 
 const fail = (e: unknown) => toast.error((e as Error)?.message ?? 'Something went wrong');
 
 export function BuiltinProfileViewPage() {
   const { loaded, session, reload } = useBuiltinSession();
-  const [name, setName] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const user = session?.signed_in ? session.user : null;
   if (!loaded || !user) return <PageContainer pageTitle='Profile'><Skeleton className='h-40 max-w-xl' /></PageContainer>;
 
   const full = [user.first_name, user.last_name].filter(Boolean).join(' ');
-  const value = name ?? full;
-  const saveName = () => {
-    const v = value.trim();
-    if (v === full) return setName(null);
-    const [first, ...rest] = v.split(/\s+/);
-    setBusy(true);
-    authPost('/profile', { first_name: first ?? '', last_name: rest.join(' ') }).then(reload).then(() => { toast.success('Name saved'); setName(null); }).catch(fail).finally(() => setBusy(false));
-  };
+  const saveName = (first: string, last: string) =>
+    authPost('/profile', { first_name: first, last_name: last }).then(reload).then(() => { toast.success('Name saved'); }, (e) => { fail(e); throw e; });
   const others = () => authPost<{ ended: number }>('/sign-out/others')
     .then((r) => toast.success(r.ended ? `Signed out of ${r.ended} other device${r.ended === 1 ? '' : 's'}` : 'No other devices were signed in'))
     .catch(fail);
@@ -41,8 +33,7 @@ export function BuiltinProfileViewPage() {
         <div className='flex items-center gap-4'>
           <IdentityAvatar className='size-16' textClassName='text-xl' id={user.id} name={full} email={user.email} />
           <div className='min-w-0 flex-1 space-y-1.5'>
-            <Input value={value} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-              placeholder='Your name' aria-label='Your name' maxLength={120} disabled={busy} className='h-9 text-base font-medium' />
+            <NameField full={full} save={saveName} />
             <p className='text-muted-foreground truncate px-3 text-sm leading-none'>{email}</p>
           </div>
         </div>
@@ -75,6 +66,7 @@ export function BuiltinProfileViewPage() {
             <dt className='text-muted-foreground'>Everywhere</dt>
             <dd><Button variant='outline' size='sm' onClick={everywhere}>Sign out everywhere</Button></dd>
           </div>
+          <ProfileLinks />
         </dl>
       </div>
     </PageContainer>

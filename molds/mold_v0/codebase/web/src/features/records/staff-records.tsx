@@ -40,6 +40,7 @@ import { ImportRecordsForm } from './staff-import';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useVisibilityInput, type RecordVisibility } from '@/features/teams/visibility';
 import { featureOn } from '@/config/features';
+import { useBreadcrumbTitle } from '@/lib/breadcrumb-leaf';
 import { layoutOf } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
 import { ownsDatabase, RecordResources } from './record-resources';
@@ -202,6 +203,8 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
   // mold_v0-271 (flag record_pages): a shared area with a layout is laid out here as on a workspace's page, with its
   // related lists and computed facts of shared areas and staff's own Edit and Remove in its header.
   const layout = featureOn('record_pages') ? layoutOf(area) : null;
+  // mold_v0-298: the top bar's last crumb names the record, not its key from the address.
+  useBreadcrumbTitle(data?.record.title || null);
   if (layout) return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (

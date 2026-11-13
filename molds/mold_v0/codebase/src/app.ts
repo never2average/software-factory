@@ -84,7 +84,8 @@ const startsWith = (prefix: string) => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
  *                stages (`stage:<id>`: onboarded, simulated, reported); `optional` ones are not counted; `help_text_only`
  *                is its help for someone whose every AI client shows results as text; `launch` ones (they start work) show
  *                `viewer_note` instead to someone who may not launch
- *   shell_steps  the shell's steps (joined, connected, tools, first_call) in the product's words
+ *   shell_steps  the shell's steps (joined, connected, tools, first_call) in the product's words; the connection steps
+ *                may be `optional` (mold_v0-298: shown, not counted)
  *   workflow     the tool groups that make up using it fully: per group, how many of its tools the account has called
  *                (coverage, and the next group nobody has used, with the prompt that starts it)
  * and a plain-language fix for each recent error from the packs' pack.json mcp.error_hints.
@@ -115,7 +116,9 @@ async function setup(s: Session, since?: string) {
     `/* tenant: who = org_id = $1, the session's account */ SELECT at, name, error FROM mcp_events WHERE ${who} AND NOT ok ORDER BY at DESC LIMIT 5`, args);
   const stageAt = own.some((st) => st.done_when.startsWith("stage:")) ? admin.engineStagesAt(await admin.accountFacts(s.slug)) : {};
   const textOnly = clients.length > 0 && clients.every((c) => !WIDGET_CLIENTS.test(c.client));
-  const shellWords = (id: string, label: string, help: string) => ({ label: cfg.shell_steps?.[id]?.label ?? label, help: cfg.shell_steps?.[id]?.help ?? help });
+  // mold_v0-298: a connection step the product marks optional is shown but not counted.
+  const shellWords = (id: string, label: string, help: string) => ({ label: cfg.shell_steps?.[id]?.label ?? label, help: cfg.shell_steps?.[id]?.help ?? help,
+    ...(id !== "joined" && cfg.shell_steps?.[id]?.optional ? { optional: true as const } : {}) });
   type Step = { id: string; label: string; done: boolean; at: Date | string | null; optional?: true; help: string };
   const steps: Step[] = [
     { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },

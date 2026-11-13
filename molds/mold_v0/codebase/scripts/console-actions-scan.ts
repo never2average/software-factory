@@ -29,7 +29,7 @@ export const ALLOW: [string, string, string][] = [
   ["features/admin/account-agent-icon.tsx", "Replace' : 'Upload'", "a form's image field (an account's agent icon)"],
   ["features/agent/recipes-page.tsx", "data-recipe-new-version", "a recipe's own New version, inside its record panel"],
   ["features/admin/keyvault.tsx", "Import ${rows.length} key", "the import dialog's own submit, inside the dialog Actions ▾ opened"],
-  ["features/workspace-files/files-page.tsx", "download />}>Download", "one file of a workspace's stored files, downloaded from its own view"],
+  ["features/files/files-page.tsx", "download />}>Download", "one stored file, downloaded from inside its version's side panel"],
   ["components/layout/record-view.tsx", "Export selected", "the selection bar's bulk action (the ticked rows), shown only while rows are ticked"],
 ];
 

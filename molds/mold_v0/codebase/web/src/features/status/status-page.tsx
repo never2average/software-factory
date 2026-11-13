@@ -14,6 +14,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useConsolePathname } from '@/lib/console-path';
+import { useMarkNotFound } from '@/lib/page-not-found';
 import { useId, type ReactNode } from 'react';
 import { BrandLogo, BrandMark } from '@/components/brand';
 import { Icons } from '@/components/icons';
@@ -46,6 +47,9 @@ type Action = { key: string; label: string; href?: string; onClick?: () => void;
 export function StatusPage({ kind, area: areaProp, frame = 'inline', level, role, email, staff, onRetry, detail }: StatusPageProps) {
   const router = useRouter();
   const pathname = useConsolePathname();
+  // mold_v0-298: while a page's 404 is shown (a page of its own: the areas' not-found pages, level 1, or a full frame),
+  // the frame around it has no trail and no lit sidebar entry. A data hook's 404 inside a page or a panel is not marked.
+  useMarkNotFound(kind === 'not_found' && (level === 1 || frame === 'full'));
   const area = areaProp ?? areaOf(pathname);
   const t = statusText(kind, { role, email, area });
   const id = useId();
