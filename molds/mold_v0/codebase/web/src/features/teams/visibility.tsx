@@ -182,11 +182,12 @@ export function useVisibilityInput(area: Pick<RecordAreaSpec, 'name'> | null, cu
   };
 }
 
-/** The list's Visibility column, filtered in the Filter menu ("Visibility is Private") or by ?visibility=. */
+/** The list's Visibility column, filtered in the Filter menu ("Visibility is Private") or by ?visibility=. mold_v0-301: hidden
+ * until shown from the Properties menu (most records are the whole workspace's; the column pushed wide lists off screen). */
 export function visibilityColumn<T extends { visibility?: RecordVisibility }>(rows: readonly T[]): RecordCol<T> {
   const values = [...new Set(['Workspace', ...rows.map((r) => visibilityWords(r.visibility)), 'Private'])];
   return {
-    key: 'visibility', label: 'Seen by', type: 'select', options: values.map((v) => ({ value: v })),
+    key: 'visibility', label: 'Seen by', type: 'select', hidden: true, options: values.map((v) => ({ value: v })),
     value: (r) => visibilityWords(r.visibility), render: (r) => <VisibilityBadge v={r.visibility} />
   };
 }

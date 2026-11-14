@@ -57,10 +57,12 @@ const IN_PAGE_AREAS = new Map<string, BreadcrumbItem[]>([
   ...sectionParents.flatMap((parent) => (parent.sections ?? []).flatMap((id) => {
     const sub = packTabs.find((t) => t.pack === parent.pack && t.id === id);
     const areas = sub ? tabAreas(sub).filter((a) => !entryAreas.has(a)) : [];
-    return areas.map((a) => [`/app/records/${a}`, [{ title: parent.label, link: parent.url }, { title: sub!.label, link: sub!.url }]] as [string, BreadcrumbItem[]]);
+    // mold_v0-301: a sub-tab named like its parent (Applications › Applications) is one crumb, never the word twice.
+    const same = (x: string, y: string) => x.trim().toLowerCase() === y.trim().toLowerCase();
+    return areas.map((a) => [`/app/records/${a}`, same(sub!.label, parent.label) ? [{ title: parent.label, link: sub!.url }] : [{ title: parent.label, link: parent.url }, { title: sub!.label, link: sub!.url }]] as [string, BreadcrumbItem[]]);
   })),
   ...recordGroupEntries.flatMap((g) => (g.inPageTabs ?? []).filter((t) => t.area).map((t) =>
-    [`/admin/records/${t.area}`, [{ title: g.title, link: g.url }, { title: t.label, link: `${g.url}?tab=${t.id}` }]] as [string, BreadcrumbItem[]]))
+    [`/admin/records/${t.area}`, g.title.trim().toLowerCase() === t.label.trim().toLowerCase() ? [{ title: g.title, link: `${g.url}?tab=${t.id}` }] : [{ title: g.title, link: g.url }, { title: t.label, link: `${g.url}?tab=${t.id}` }]] as [string, BreadcrumbItem[]]))
 ].reverse()); // the first tab that shows an area names it (a Map keeps the last of a key)
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 
