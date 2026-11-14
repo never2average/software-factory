@@ -324,7 +324,7 @@ export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ def
  * start it, its instructions, model, budget, ceiling, turns, web, tools and files. `opts.record` (the server's own, from a
  * record page's start_agent action; never from a request's body) links it to that record.
  */
-export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string } } = {}): Promise<SessionDetail> {
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string }; permitProgram?: string } = {}): Promise<SessionDetail> {
   needOn();
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
@@ -387,6 +387,8 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   // mold_v0-291: with nested runs on (and the workspace's tools, which carry them), a session may spawn children.
   const nested = (policy.workspace && await nestedModule()) || null;
   if (nested) await nested.prepareRootPolicy(policy, id, prof.id);
+  // mold_v0-303: a person's program start may spawn that one program (src/program-start.ts personStart, a "permit").
+  if (nested && policy.nested && opts.permitProgram) policy.nested.permit_program = opts.permitProgram;
   await tx(async (q) => {
     // Its short number: the workspace's counter, taken under that row's lock in the transaction that inserts the session.
     const [n] = await q.query<{ last_number: number }>(

@@ -432,7 +432,12 @@ await item("7. a prompt and a name are redacted", async () => {
   await finish(root.c, "parked");
 });
 
+// The cap as a profile sets it (mold_v0-303: 32 by default, up to 256): 8 here.
 await item("8. a machine's steps count against the tree's cap", async () => {
+  N.setNestedRunsForTest({ max_children: 8 });
+  try { await eightCapMachine(); } finally { N.setNestedRunsForTest(null); }
+});
+async function eightCapMachine() {
   await program("fans-wide", "Fans wide", { outputs: { type: "object" }, inputs: { type: "object" }, machine: { max_transitions: 2, max_children: 20, states: [{ id: "fan", entry: true, prompt: "x", inputs: { it: "item" }, foreach: { from: "$inputs.items", as: "item", max: 12, join: "all" } }], transitions: [] } });
   const root = await rootWake();
   const m = await N.spawnChild(root.ctx, { program: "fans-wide", inputs: { items: Array.from({ length: 9 }, (_, i) => i) }, budget_usd: 3 });
@@ -442,16 +447,20 @@ await item("8. a machine's steps count against the tree's cap", async () => {
   const r = await handleRow(m.handle);
   assert.equal(r.status, "error"); assert.match(r.error, /8 children/);
   await finish(root.c, "parked");
-});
+}
 
 await item("8. a prompt child is refused once steps have filled the tree", async () => {
+  N.setNestedRunsForTest({ max_children: 8 });
+  try { await eightCapPrompt(); } finally { N.setNestedRunsForTest(null); }
+});
+async function eightCapPrompt() {
   await program("eight-steps", "Eight", { outputs: { type: "object" }, inputs: { type: "object" }, machine: { max_transitions: 2, max_children: 20, states: [{ id: "fan", entry: true, prompt: "x", budget_usd: 0.1, inputs: { it: "item" }, foreach: { from: "$inputs.items", as: "item", max: 12, join: "all" } }], transitions: [] } });
   const root = await rootWake();
   const m = await N.spawnChild(root.ctx, { program: "eight-steps", inputs: { items: Array.from({ length: 8 }, (_, i) => i) }, budget_usd: 3 });
   await assert.rejects(N.spawnChild(root.ctx, { prompt: "one more", budget_usd: 0.2 }), /8 children/);
   await N.cancelChild(root.ctx, m.handle);
   await finish(root.c, "parked");
-});
+}
 
 await item("9. a person demoted below launching cannot spawn", async () => {
   const root = await rootWake();

@@ -92,7 +92,8 @@ export type ProfileUpload = z.output<typeof ProfileUploadSchema>;
 export const RECIPE_ID = /^[a-z][a-z0-9-]{1,39}$/;
 export const ProfileRecipeSchema = z.object({
   id: z.string().regex(RECIPE_ID, "a recipe's id (lowercase letters, digits and -)"),
-  version: z.number().int().min(1).nullable(),
+  /** mold_v0-303: absent reads as null (its latest), as a pack's profile names one. */
+  version: z.number().int().min(1).nullable().default(null),
 }).strict();
 export type ProfileRecipe = z.output<typeof ProfileRecipeSchema>;
 
@@ -159,9 +160,63 @@ export const PackAgentProfileSchema = z.object({
   keys: z.array(z.object({ kind: z.literal("workspace"), name: z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>") }).strict()).max(PROFILE_LIMITS.keys).optional(),
   governance: GovernanceSchema.omit({ exceptions: true }).optional(),
   purpose: z.enum(AGENT_PURPOSES).optional(),
+  /**
+   * 4. mold_v0-303: workspace recipes its sessions get in their working directory (a pack's own `recipes`, or one staff
+   * keep), each its id and optionally a version (absent: its latest when a session starts).
+   */
+  recipes: z.array(ProfileRecipeSchema).max(10, "at most 10 recipes").optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type PackAgentProfile = z.output<typeof PackAgentProfileSchema>;
+
+// ---------------------------------------------------------------- recipes a pack declares (mold_v0-303)
+
+/** A file's place in a recipe a pack declares: as a version's (src/recipes.ts RECIPE_FILE_PATH), never under .recipe-proposal. */
+export const PACK_RECIPE_PATH = /^(?!\/)(?!\.recipe-proposal(?:\/|$))(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+){0,15}$/;
+export const PACK_RECIPE_LIMITS = { files: 200, file_bytes: 512 * 1024, bytes: 4 * 1024 * 1024 } as const;
+/**
+ * One file of a recipe a pack declares (mold_v0-303): its path in the session's working directory and its text, inline
+ * in pack.json: `content` (a SKILL.md, a script, any text) or `json` (a JSON Schema, a config: written as indented JSON).
+ * `executable` makes it a program in the session's scratch (a script). Exactly one of content or json.
+ */
+export const PackRecipeFileSchema = z.object({
+  path: z.string().max(400).regex(PACK_RECIPE_PATH, "a path inside the session's working directory (relative, no . or .. segment, not under .recipe-proposal)"),
+  content: z.string().max(PACK_RECIPE_LIMITS.file_bytes).optional(),
+  json: z.unknown().optional(),
+  executable: z.boolean().optional(),
+}).strict().refine((f) => (f.content !== undefined) !== (f.json !== undefined), "a file gives its text as content (a string) or json (a value), exactly one");
+/**
+ * A workspace recipe a pack declares (pack.json `recipes`, mold_v0-303; src/recipes.ts syncDeclaredRecipes): an id, a
+ * name, a description and its files. Brought in as staff's are kept: version 1 the first time, the next version when the
+ * pack's files or words change, never over a change staff made to it (theirs stands).
+ */
+export const PackRecipeSchema = z.object({
+  id: z.string().regex(RECIPE_ID, "an id: lowercase letters, digits and -, 2 to 40, starting with a letter"),
+  name: z.string().trim().min(1).max(80),
+  description: z.string().max(500).optional(),
+  files: z.array(PackRecipeFileSchema).min(1, "a recipe holds at least one file").max(PACK_RECIPE_LIMITS.files),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type PackRecipe = z.output<typeof PackRecipeSchema>;
+/** A declared file's bytes: its content as UTF-8, or its json indented (with a final newline). */
+export const packRecipeText = (f: { content?: string; json?: unknown }): string => (f.content !== undefined ? f.content : `${JSON.stringify(f.json, null, 2)}\n`);
+/** What a declared recipe says wrongly that its shape cannot: a path twice, a file and a folder, too many bytes. */
+export function packRecipeProblems(r: PackRecipe): string[] {
+  const out: string[] = [];
+  const paths = r.files.map((f) => f.path.toLowerCase());
+  if (new Set(paths).size !== paths.length) out.push("files: two files have one path");
+  const folder = paths.find((p) => paths.some((q) => q !== p && q.startsWith(`${p}/`)));
+  if (folder) out.push(`files: ${folder} is a file and a folder`);
+  let total = 0;
+  for (const f of r.files) {
+    if (f.json !== undefined && (() => { try { return JSON.stringify(f.json) === undefined; } catch { return true; } })()) { out.push(`files ${f.path}: json is not a JSON value`); continue; }
+    const n = Buffer.byteLength(packRecipeText(f));
+    if (n > PACK_RECIPE_LIMITS.file_bytes) out.push(`files ${f.path}: ${n} bytes, at most ${PACK_RECIPE_LIMITS.file_bytes} inline`);
+    total += n;
+  }
+  if (total > PACK_RECIPE_LIMITS.bytes) out.push(`files: ${total} bytes in all, at most ${PACK_RECIPE_LIMITS.bytes} inline (staff upload larger files)`);
+  return out;
+}
 
 /** A governance policy as stored: its web policy's domains normalized (each read as its host, once, sorted). */
 export function normalizeGovernance(g: Governance | null | undefined): { governance: Governance | null; problems: string[] } {

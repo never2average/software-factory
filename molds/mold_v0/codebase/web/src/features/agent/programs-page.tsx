@@ -4,7 +4,12 @@
 // the guardian's decisions about the candidates they produced. The standard list (four cards, the search row with New
 // program, the table), a row opening its panel: its definition, versions and the decisions and promoted versions.
 // A program's configuration is one JSON document, checked by the server: a keyword it cannot enforce is refused there.
-import { useState, type ReactNode } from 'react';
+// mold_v0-303: the edit form uploads a staff-supplied acceptance test (its cases, its scorer and anything they need):
+// each file goes up through the agent profiles' upload routes and lands in acceptance.test.files with its id and sha256,
+// so nobody copies upload ids by hand (a pack declares a test by naming a recipe instead: acceptance.test.recipe).
+// A pending harness_policy proposal is accepted or declined here; a mold version's patch is copied or downloaded.
+import { useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import { useQueryState } from 'nuqs';
 import { useQueryClient } from '@tanstack/react-query';
 import { PageFrame } from '@/components/layout/page-container';
@@ -23,6 +28,7 @@ import { useAdmin, useAdminAction } from '@/features/admin/lib';
 import { Gate, useAdminRole } from '@/features/admin/role';
 import { ToneBadge } from '@/features/records/detail-page';
 import { ToolbarAction } from '@/features/tabs/tab-action';
+import { uploadFile } from './recipes-page';
 
 // ---------------------------------------------------------------- the shapes (src/programs.ts, src/nested-runs.ts)
 
@@ -199,12 +205,39 @@ function ChampionCard({ c, can, onChanged }: { c: Champion; can: boolean; onChan
   const rollback = useAdminAction(() => adminApi('POST', `/program-champions/${enc(c.id)}/rollback`, { reason: why }), { success: 'Rolled back' });
   const apply = useAdminAction(() => adminApi('POST', `/program-champions/${enc(c.id)}/apply`, { ref }), { success: 'Recorded' });
   const live = c.status === 'champion';
+  // mold_v0-303 (M4): a harness_policy version proposed to its agent profile waits for staff to accept or decline it.
+  const [proposalWhy, setProposalWhy] = useState('');
+  const decide = useAdminAction((decision: 'accept' | 'decline') => adminApi('POST', `/program-champions/${enc(c.id)}/proposal`, { decision, reason: proposalWhy }), { success: 'Recorded' });
+  const pendingPolicy = c.target.kind === 'harness_policy' && !c.applied_at && /\(pending\)$/.test(c.applied_ref ?? '');
+  // A mold's version leaves the app only as a patch a person applies and opens a pull request with.
+  const patch = useAdminAction(() => adminApi<{ patch: string; version: number; target: { id: string } }>('GET', `/program-champions/${enc(c.id)}/patch`));
+  const copyPatch = () => patch.mutate(undefined, { onSuccess: (r) => void navigator.clipboard.writeText(r.patch).then(() => toast.success('Patch copied'), () => toast.error('The patch could not be copied: use Download')) });
+  const downloadPatch = () => patch.mutate(undefined, { onSuccess: (r) => {
+    const url = URL.createObjectURL(new Blob([r.patch], { type: 'text/x-diff' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `${r.target.id}-version-${r.version}.patch`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } });
   return (
     <ListCard title={`${c.target.kind.replace('_', ' ')} ${c.target.id}: version ${c.version}`} aside={<span className='flex items-center gap-2'><ToneBadge color={CHAMPION[c.status]!.color}>{CHAMPION[c.status]!.label}</ToneBadge><When d={c.created_at} /></span>}>
       <div className='flex flex-col gap-3 px-6 py-4 text-sm'>
         <p className='text-muted-foreground text-xs'>Improvement {pct(c.metrics.lift)}{c.workspace ? ` · from ${c.workspace}` : ''}</p>
         {c.applied_at && <p className='text-xs'>Applied by {c.applied_by}{c.applied_ref ? `: ${c.applied_ref}` : ''}</p>}
         {c.rollback_reason && <p className='text-xs'>Rolled back: {c.rollback_reason}</p>}
+        {pendingPolicy && can && <div className='flex flex-col gap-2 border-t pt-3' data-policy-proposal=''>
+          <p className='text-xs'>This policy is proposed to the agent profile {c.target.id}: accept it to save it as the profile&apos;s next version.</p>
+          <Input value={proposalWhy} onChange={(x) => setProposalWhy(x.target.value)} placeholder='Why (kept with the decision)' aria-label='Why accept or decline' />
+          <div className='flex gap-2'>
+            <Button size='sm' disabled={!proposalWhy.trim() || decide.isPending} onClick={() => decide.mutate('accept', { onSuccess: onChanged })}>Accept</Button>
+            <Button size='sm' variant='outline' disabled={!proposalWhy.trim() || decide.isPending} onClick={() => decide.mutate('decline', { onSuccess: onChanged })}>Decline</Button>
+          </div>
+        </div>}
+        {c.target.kind === 'mold' && can && <div className='flex flex-wrap items-center gap-2 border-t pt-3' data-mold-patch=''>
+          <span className='text-muted-foreground text-xs'>What this version changes, as a patch for a pull request:</span>
+          <Button size='sm' variant='outline' disabled={patch.isPending} onClick={copyPatch}>Copy patch</Button>
+          <Button size='sm' variant='outline' disabled={patch.isPending} onClick={downloadPatch} data-mold-patch-download=''>Download patch</Button>
+        </div>}
         {live && can && <div className='flex flex-col gap-2 border-t pt-3'>
           {!c.applied_at && <div className='flex items-center gap-2'>
             <Input value={ref} onChange={(x) => setRef(x.target.value)} placeholder={c.target.kind === 'recipe' ? 'A note (optional)' : 'What was applied, and where'} aria-label='What was applied' />
@@ -237,6 +270,29 @@ function ProgramModal({ program, onClose, onSaved }: { program: Detail | null; o
   const qc = useQueryClient();
   let parsed: unknown = null, invalid = false;
   try { parsed = JSON.parse(config); } catch { invalid = true; }
+  const [uploading, setUploading] = useState<string | null>(null);
+  const testInput = useRef<HTMLInputElement>(null);
+  /** Upload the chosen files as the acceptance test's: each one in acceptance.test.files (a path named again replaced). */
+  const addTestFiles = async (list: FileList | null) => {
+    if (!list?.length || invalid || !parsed || typeof parsed !== 'object') return;
+    const c = parsed as { acceptance?: { test?: { files?: { path: string }[]; recipe?: unknown; cases_path?: string } } };
+    if (!c.acceptance) { toast.error('Add an acceptance rule first (acceptance: metric, direction, surface, target).'); return; }
+    const test = { ...(c.acceptance.test ?? {}) } as { files?: { id: string; path: string; bytes: number; sha256: string; executable: boolean }[]; recipe?: unknown; cases_path?: string };
+    const files = [...(test.files ?? [])];
+    try {
+      for (const f of Array.from(list)) {
+        setUploading(`${f.name} 0%`);
+        const u = await uploadFile(f, (n) => setUploading(`${f.name} ${n}%`));
+        const at = files.findIndex((x) => x.path === f.name);
+        const entry = { id: u.id, path: f.name, bytes: u.bytes, sha256: u.sha256, executable: u.executable };
+        if (at >= 0) files[at] = entry; else files.push(entry);
+      }
+      delete test.recipe;
+      const next = { ...c, acceptance: { ...c.acceptance, test: { ...test, files, ...(test.cases_path ? {} : { cases_path: files[0]!.path }) } } };
+      setConfig(JSON.stringify(next, null, 2));
+      toast.success(`${list.length === 1 ? 'The file is' : `${list.length} files are`} in the test: say its cases_path, candidate_command and scorer_command, then Save`);
+    } catch (e) { toast.error((e as Error).message); } finally { setUploading(null); }
+  };
   const save = useAdminAction(() => program
     ? adminApi('PUT', `${BASE}/${enc(program.id)}`, { version: program.version, name, description, config: parsed, note })
     : adminApi('POST', BASE, { name, description, config: parsed, note }), { success: 'Saved' });
@@ -249,6 +305,13 @@ function ProgramModal({ program, onClose, onSaved }: { program: Detail | null; o
           <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder='What it is for' aria-label='Description' />
           <Textarea value={config} onChange={(e) => setConfig(e.target.value)} rows={16} className='font-mono text-xs' aria-label='Configuration' spellCheck={false} />
           {invalid && <p className='text-destructive text-xs'>That is not valid JSON yet.</p>}
+          <div className='flex flex-wrap items-center gap-2'>
+            <input ref={testInput} type='file' multiple className='sr-only' tabIndex={-1} aria-label='Choose the test files' onChange={(e) => { void addTestFiles(e.target.files); e.target.value = ''; }} />
+            <Button type='button' variant='outline' size='sm' disabled={invalid || !!uploading} onClick={() => testInput.current?.click()} data-program-test-upload=''>
+              <Icons.upload aria-hidden data-icon='inline-start' />Upload test files
+            </Button>
+            <span className='text-muted-foreground text-xs' aria-live='polite'>{uploading ? `Uploading ${uploading}` : 'The held-out cases and the scorer: kept by staff, never shown to an agent.'}</span>
+          </div>
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder='What changed (optional)' aria-label='What changed' />
         </div>
         <DialogFooter>

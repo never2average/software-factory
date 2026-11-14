@@ -14,6 +14,9 @@
  *                                       its label, as the console's Export CSV writes them (src/record-export.ts)
  *   reveal_<area>                       a workspace area with encrypted fields (mold_v0-194): their values, for the
  *                                       roles allowed to reveal them, each reveal in the data trail
+ *   read_<area>_files                   an area with a file field or a document-previewing URL field (mold_v0-303):
+ *                                       a record's files, or one file's contents (src/record-files.ts agentRecordFiles),
+ *                                       while the document_preview flag is on (Reserved.documents)
  *   create_<area>, update_<area>        a workspace area whose rows are not read from files or an API
  *   move_<area>                         such an area with a lifecycle
  *   get_metrics                         the pack's metrics (mold_v0-063), computed for the caller's workspace
@@ -30,7 +33,7 @@ import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
 import { AgentJobKindSchema, CredentialSchema, isFieldUrl, REPOSITORY_NAME, URL_MAX, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
-export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
+export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "files" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete";
 
 export interface GeneratedTool {
@@ -76,6 +79,11 @@ export interface Reserved {
   record_inputs?: boolean;
   /** mold_v0-260: the flag credential_sets is on: a kind naming a tenant-bound credential takes `target_tenant`. */
   tenants?: boolean;
+  /**
+   * mold_v0-303: the flag document_preview is on and the binder handles op "files" (src/mcp-tools.ts catalogOptions and
+   * handle: src/record-files.ts agentRecordFiles): areas with files get read_<area>_files. Absent: none (opt in).
+   */
+  documents?: boolean;
 }
 
 const MAX_NAME = 64;
@@ -305,6 +313,20 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
           input: {
             key: recordKey(`The ${label} record's key`),
             fields: z.array(z.enum(encrypted.map((f) => f.name) as [string, ...string[]])).min(1).max(encrypted.length).optional().describe("Which encrypted fields (default: every one you may reveal)"),
+          },
+          annotations: READ });
+      // mold_v0-303 (M11): a record's stored files and previewed documents, read as the console's cards are. Left out
+      // (not refused) where its name would be longer than MCP clients take, so no existing build is broken by it.
+      const fileFields = a.fields.filter((f) => f.type === "file" || (f as { preview?: string }).preview === "document");
+      if (fileFields.length && reserved.documents === true && n("read", `${a.name}_files`).length <= MAX_NAME)
+        add({ generated: n("read", `${a.name}_files`), op: "files", door: "workspace", area: a.name, action: "read", admin_needs: "read",
+          title: `${label}: read files`,
+          description: `The files and documents one ${label} record holds (${whose}; ${fileFields.map((f) => `${f.name} (${plain(f.label, 40)})`).join(", ")}). ` +
+            `Without file: the list, each with its id, name, type, size and what reading it gives. With file (an id from the list): its contents: text and web pages as text, ` +
+            `images and PDFs as an image or a document (at most 2 MB); other types are download only, in the console. Each read is recorded as the console's preview is.`,
+          input: {
+            key: recordKey(`The ${label} record's key`),
+            file: z.string().regex(/^[a-z][a-z0-9_]{0,63}:[1-9][0-9]{0,3}$/, "a file's id from the list, like attachment:1").optional().describe("The file to read: its id from the list (default: list them)"),
           },
           annotations: READ });
       if (!shared && !readOnly) {

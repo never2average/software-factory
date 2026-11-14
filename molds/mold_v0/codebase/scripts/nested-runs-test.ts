@@ -151,7 +151,7 @@ try {
     assert.equal(M.machineStep(pm, M.machineBegin(pm, {}, "fail_fast").run, {}, { state: "a", entry: 1, index: 0, status: "error", error: "x" }, "fail_fast").run.status, "error");
 
     // The acceptance rule (src/program-acceptance.ts).
-    const rule: AcceptanceT = { metric: "score", direction: "maximize", min_lift: 0.05, floors: [{ metric: "safety", min: 0.9 }], surface: ["src/**"], target: { kind: "recipe", id: "kit" }, test: { files: [], sha256: "", cases_path: "c", candidate_command: ["x"], scorer_command: ["x"], timeout_seconds: 30 } };
+    const rule: AcceptanceT = { metric: "score", direction: "maximize", min_lift: 0.05, floors: [{ metric: "safety", min: 0.9 }], surface: ["src/**"], target: { kind: "recipe", id: "kit" }, test: { files: [{ id: "upl_fixture", path: "c", bytes: 1, sha256: "0".repeat(64), executable: false }], sha256: "0".repeat(64), cases_path: "c", candidate_command: ["x"], scorer_command: ["x"], timeout_seconds: 30 } };
     const cases = (b0: number, c0: number, floor = 1): MeasuredCase[] => Array.from({ length: 12 }, (_, i) => ({ id: String(i), baseline: b0 + (i % 3) * 0.01, candidate: c0 + (i % 3) * 0.01, floors: { safety: floor } }));
     const seed = Acc.seedOf("e1");
     const decide = (m: Measurement | null, extra: Partial<Parameters<typeof Acc.decideAcceptance>[1]> = {}, a = rule) => Acc.decideAcceptance(a, { measured: m, offSurfacePaths: [], hasBest: true, seed, ...extra });
@@ -296,7 +296,9 @@ try {
     await finish(c1);
     assert.equal((await N.collect(root.ctx, { handles: [h1.handle] })).children[0]!.spent_usd, 0.5, "a child's cost includes its own children's");
 
-    // The child cap is the tree's: 8 children in all, whichever level started them. Six more bring it to 8.
+    // The child cap is the tree's: 8 children in all (as the profile sets it here; mold_v0-303: 32 by default), whichever
+    // level started them. Six more bring it to 8.
+    N.setNestedRunsForTest({ max_children: 8 });
     const open: Awaited<ReturnType<typeof N.spawnChild>>[] = [];
     for (let i = 0; i < 6; i++) open.push(await N.spawnChild(root.ctx, { prompt: `c${i}`, budget_usd: 0.2 }));
     await assert.rejects(N.spawnChild(root.ctx, { prompt: "one too many", budget_usd: 0.2 }), /started its 8 children/);
@@ -311,6 +313,7 @@ try {
     const dbRunning = await db.query("SELECT 1 FROM harness_children WHERE org_id = $1 AND root_id = $2 AND status = 'running' AND kind <> 'machine'", [org.orgId, root.s.id]);
     assert.equal(dbRunning.length, 4, "the next started");
     for (const x of list.filter((y) => !y.settled)) await N.cancelChild(root.ctx, x.handle);
+    N.setNestedRunsForTest(null);
     await finish(root.c, "parked");
     ok("depth 2, eight children to a tree, four at once, queueing said plainly, a child's cost includes its own children's");
   }
@@ -635,7 +638,7 @@ try {
 
     // A true improvement over the champion: restored bytes so the contract matches, a candidate that beats kit-a's champion.
     await (await (await import("../src/storage.js")).objectStore()).put(`agent-profiles/uploads/${files[1]!.id}/0.part`, Buffer.from(scorer), "application/octet-stream");
-    const champRow = (await db.query<{ candidate: { key: string } }>("SELECT candidate FROM harness_champions WHERE target_id = 'kit-a' AND status = 'champion'"))[0]!;
+    const champRow = (await db.query<{ candidate: { key: string; full?: { key: string } } }>("SELECT candidate FROM harness_champions WHERE target_id = 'kit-a' AND status = 'champion'"))[0]!;
     // Seed a baseline that is measurably worse so that the improvement is real; the guardian measures both.
     assert.ok(champRow.candidate.key, "the champion keeps its candidate");
     const { objectStore } = await import("../src/storage.js");
@@ -643,6 +646,10 @@ try {
     const weakBundle = workBundle({ "run.js": weakRun });
     await (await objectStore()).put(champRow.candidate.key, await sealBytes(org.orgId, weakBundle, `harness-candidate:${champRow.candidate.key}`), "application/octet-stream");
     await db.query("UPDATE harness_champions SET candidate = jsonb_set(candidate, '{sha256}', to_jsonb($1::text)) WHERE target_id = 'kit-a' AND status = 'champion'", [sha(weakBundle)]);
+    // mold_v0-303: a version keeps its whole files too (its base with its overlay laid over it): those are its baseline.
+    assert.ok(champRow.candidate.full?.key, "the champion keeps its whole files");
+    await (await objectStore()).put(champRow.candidate.full!.key, await sealBytes(org.orgId, weakBundle, `harness-candidate:${champRow.candidate.full!.key}`), "application/octet-stream");
+    await db.query("UPDATE harness_champions SET candidate = jsonb_set(candidate, '{full,sha256}', to_jsonb($1::text)) WHERE target_id = 'kit-a' AND status = 'champion'", [sha(weakBundle)]);
     const r5 = await improve(workBundle({ "run.js": goodRun }));
     assert.ok(await runEval());
     const d5 = await decision(r5.m.handle);
@@ -667,15 +674,17 @@ try {
     const now = await N.listChampions(org.orgId, { target: "kit-a" });
     assert.equal(now.find((c) => c.version === 1)!.status, "champion");
     assert.equal(now.find((c) => c.version === 2)!.status, "rolled_back");
-    // Applying is a person's, and a mold ref or policy applies nothing by itself.
+    // Applying is a person's, and a mold applies nothing by itself.
     await assert.rejects(N.applyChampion("op", v2.id, {}), /current champion/);
     await assert.rejects(N.applyChampion("op", v1.id, {}), /recipes are not on/i);
-    // A mold ref or a policy: this shell applies nothing itself; a person says what they did, and it is kept.
+    // A mold (mold_v0-303): only ever proposed, for a person to open the pull request from its patch; what they say is kept.
     await db.query("INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, candidate, created_by) VALUES ('hcv_moldref01', $1, 'mold_ref', 'main-mold', 1, 'champion', '{}', 'the guardian')", [org.orgId]);
-    await assert.rejects(N.applyChampion("op", "hcv_moldref01", {}), /say what was applied/);
-    const applied = await N.applyChampion("op", "hcv_moldref01", { ref: "reviewed and merged by hand" });
+    const proposed = await N.applyChampion("op", "hcv_moldref01", {});
+    assert.equal(proposed.target.kind, "mold"); assert.match(proposed.applied_ref!, /^proposed to the mold main-mold/);
+    await db.query("INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, candidate, created_by) VALUES ('hcv_moldref02', $1, 'mold_ref', 'other-mold', 1, 'champion', '{}', 'the guardian')", [org.orgId]);
+    const applied = await N.applyChampion("op", "hcv_moldref02", { ref: "reviewed and merged by hand" });
     assert.equal(applied.applied_by, "op"); assert.equal(applied.applied_ref, "reviewed and merged by hand");
-    await assert.rejects(N.applyChampion("op", "hcv_moldref01", { ref: "again" }), /already applied/);
+    await assert.rejects(N.applyChampion("op", "hcv_moldref02", { ref: "again" }), /already applied/);
     // Recipes on: applying is a proposal staff accept, never a new version by itself.
     F.setAdminRecordsForTest(["recipes"]);
     F.setFeaturesForTest({ agent_harness: true, nested_runs: true, workspace_recipes: true });

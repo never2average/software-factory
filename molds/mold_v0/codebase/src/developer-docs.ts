@@ -14,7 +14,9 @@ interface Cfg {
   events: { name: string; description: string; areas?: string[] }[];
   sdk_languages: string[];
   client_sessions: { ttl_seconds: number; allowed_origins: string[]; scopes?: string[] };
-  webhooks_in?: { name: string; description?: string; area: string; items?: string; key: string; title?: string; fields: Record<string, string>; types?: string[] }[];
+  webhooks_in?: { name: string; description?: string; area: string; items?: string; key?: string; title?: string; fields?: Record<string, string>; types?: string[];
+    /** mold_v0-303: how the sender signs, and a log drain (its requests kept as per-window report records). */
+    signature?: string; log_drain?: { deployments: { area: string } } }[];
   api_version?: string;
 }
 interface Area { name: string; label?: string; scope: string; fields: { name: string; type?: string; required?: boolean }[]; lifecycle?: { field: string; initial: string } | null }
@@ -98,7 +100,10 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
   if (cfg.webhooks_in?.length) {
     out.push(page("Webhooks in", [
       "Other systems can send events into your workspace. Add a source for one of the receivers below (`POST /v1/inbound_sources` with its `receiver`): it answers the address to give the sender and its signing secret. Each payload must be signed as Standard Webhooks signs it; a verified one is written into the receiver's area (the same `webhook-id` twice is written once).",
-      cfg.webhooks_in.map((r) => `- ${code(r.name)}${r.description ? `: ${r.description}` : ""}. Writes ${code(r.area)} records${r.items ? `, one per item of ${code(r.items)}` : ""}, keyed by ${code(r.key)}${r.title ? `, titled by ${code(r.title)}` : ""}; fields ${Object.entries(r.fields).map(([f, p]) => `${code(f)} from ${code(p)}`).join(", ")}.`).join("\n"),
+      cfg.webhooks_in.map((r) => r.log_drain
+        // mold_v0-303: a hosting provider's log drain: no line is kept, only counts per deployment and window.
+        ? `- ${code(r.name)}${r.description ? `: ${r.description}` : ""}. A log drain${r.signature === "vercel" ? " signed as Vercel signs it (x-vercel-signature)" : ""}: each delivery's requests are counted per ${code(r.log_drain.deployments.area)} record and time window into ${code(r.area)} records (requests, errors, error rate, latency); no log line is kept.`
+        : `- ${code(r.name)}${r.description ? `: ${r.description}` : ""}. Writes ${code(r.area)} records${r.items ? `, one per item of ${code(r.items)}` : ""}, keyed by ${code(r.key ?? "/id")}${r.title ? `, titled by ${code(r.title)}` : ""}; fields ${Object.entries(r.fields ?? {}).map(([f, p]) => `${code(f)} from ${code(p)}`).join(", ")}.`).join("\n"),
     ].join("\n\n")));
   }
 

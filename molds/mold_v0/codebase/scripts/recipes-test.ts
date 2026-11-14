@@ -18,6 +18,13 @@
 //    a recipe the session used; accepted, it is the recipe's next version (its source the agent, the proposal named,
 //    the executable bit kept); a proposal made against an older version is refused on accept and declined with a reason;
 //    a decision is made once; a staff viewer decides nothing.
+// 4. mold_v0-303, declared by a pack: its recipes (files inline: a SKILL.md, JSON as json, a script with its executable
+//    flag) come in as version 1, stored as uploads; the same declaration again writes nothing; a changed file is the next
+//    version, a change of words alone none; once staff save a version it is theirs (the pack's next change leaves it);
+//    a pack's agent profile names a recipe and its sessions get its files.
+// 5. mold_v0-303, a person starts a program: the ones people may start listed (spawned_by [] or an agent's that a
+//    session of that profile spawns), inputs checked, a viewer refused, a stepped program only people start refused,
+//    the session's first message the program's prompt filled with the inputs.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -245,6 +252,116 @@ try {
     assert.equal(pend.length, 0, "nothing waiting");
     ok("self-improvement: the agent's .recipe-proposal/ sent as its wake ended, an approval request staff see (what it changes and removes, why, the workspace and session), only for a recipe the session used; a stale one refused on accept and declined with its reason, decided once, never by a staff viewer; accepted, the next version (its source the agent, the proposal named, the program still executable)");
   }
+  // ---------- 4. declared by a pack (mold_v0-303) ----------
+  const { setPacksForTest } = await import("../src/packs.js");
+  const { definePack } = await import("../src/pack-api.js");
+  const AP = await import("../src/agent-profiles.js");
+  const manifest = { id: "kit_pack", name: "Kit", version: "1", entry: null, migrations: null, words: {}, dir: ROOT };
+  const SKILL = "---\nname: review\n---\n# Review\nRead the schema first.\n";
+  const kit = (over: { skill?: string; name?: string; programs?: unknown[] } = {}) => definePack({
+    id: "kit_pack",
+    recipes: [{ id: "review-kit", name: over.name ?? "Review kit", description: "What a reviewer works with.", files: [
+      { path: ".claude/skills/review/SKILL.md", content: over.skill ?? SKILL },
+      { path: "schemas/out.json", json: { type: "object", required: ["ok"] } },
+      { path: "scripts/check.sh", content: "#!/bin/sh\necho ok\n", executable: true }] }],
+    agentProfiles: [{ id: "kit-agent", name: "Kit agent", recipes: [{ id: "review-kit" }] }],
+    ...(over.programs ? { programs: over.programs as never } : {}),
+  });
+  const install = (d: ReturnType<typeof kit>) => { setPacksForTest([{ manifest, definition: d }]); R.forgetDeclaredRecipesForTest(); AP.resetProfileSeedForTest(); };
+  const kitRow = async () => (await adm("GET", "/recipes/review-kit")).body.recipe as { version: number; declared: boolean; name: string; versions: { version: number; files: { path: string; executable: boolean }[]; note: string; by: string }[] };
+  {
+    install(kit());
+    let r = await kitRow();
+    assert.deepEqual([r.version, r.declared, r.versions[0]!.by], [1, true, "the app"], "version 1, the app's");
+    assert.deepEqual(r.versions[0]!.files.map((f) => [f.path, f.executable]), [[".claude/skills/review/SKILL.md", false], ["schemas/out.json", false], ["scripts/check.sh", true]], "its files, the script executable");
+    const dl = async (v: number, n: number) => (await fetch(`${http.base}/api/admin/onboarding/recipes/review-kit/versions/${v}/files/${n}`, { headers: { authorization: `Bearer ${readerTok}` } })).text();
+    assert.equal(await dl(1, 1), SKILL, "the markdown as declared");
+    assert.equal(await dl(1, 2), `${JSON.stringify({ type: "object", required: ["ok"] }, null, 2)}\n`, "json written as indented JSON");
+    const uploads = async () => (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM agent_profile_uploads WHERE created_by = 'the app'"))[0]!.n;
+    const before = await uploads();
+    install(kit());
+    r = await kitRow();
+    assert.deepEqual([r.version, await uploads()], [1, before], "the same declaration again: nothing written");
+    install(kit({ name: "Review kit (renamed)" }));
+    r = await kitRow();
+    assert.deepEqual([r.version, r.name], [1, "Review kit (renamed)"], "its words alone changed: no new version");
+    install(kit({ skill: `${SKILL}Then run scripts/check.sh.\n` }));
+    r = await kitRow();
+    assert.deepEqual([r.version, r.declared, await uploads()], [2, true, before + 1], "a changed file: the next version, only that file stored again");
+    // The pack's profile names it; a session of that profile gets its files.
+    const prof = await AP.readProfile("kit-agent");
+    assert.deepEqual(prof.config.recipes, [{ id: "review-kit", version: null }], "a pack's profile names the recipe (its latest)");
+    const s = await H.startSession(W.orgId, owner, { message: "review", profile: "kit-agent" });
+    const d = await H.readSession(W.orgId, s.id, owner);
+    assert.deepEqual(d.policy.recipes, [{ id: "review-kit", name: "Review kit", version: 2 }]);
+    assert.ok(d.policy.files.includes("scripts/check.sh") && d.policy.executables.includes("scripts/check.sh"), "the script reaches the session, executable");
+    await H.stopSession(W.orgId, s.id, owner).catch(() => null);
+    // Staff save a version: theirs from now on, the pack's next change leaves it.
+    const v2 = (await kitRow()).versions[0]!.files as { id: string; path: string; executable: boolean }[];
+    const x = await adm("POST", "/recipes/review-kit/versions", { version: 2, files: v2.filter((f) => f.path !== "schemas/out.json").map((f) => ({ id: f.id, path: f.path, executable: f.executable })), note: "Staff dropped the schema." });
+    assert.equal(x.status, 201, JSON.stringify(x.body));
+    install(kit({ skill: `${SKILL}A third take.\n` }));
+    r = await kitRow();
+    assert.deepEqual([r.version, r.declared, r.versions[0]!.files.length], [3, false, 2], "staff's version stands; the pack no longer replaces it");
+    ok("declared by a pack: its recipes (markdown, json, an executable script) come in as version 1, stored as uploads; the same declaration writes nothing, its words alone no version, a changed file the next; once staff save one it is theirs; a pack's profile names it and its sessions get the files");
+  }
+
+  // ---------- 5. a person starts a program (mold_v0-303) ----------
+  {
+    F.setFeatureForTest("nested_runs", true);
+    const P = await import("../src/programs.js");
+    const S = await import("../src/program-start.js");
+    const inputs = { type: "object", required: ["topic"], properties: { topic: { type: "string" } } };
+    install(kit({ programs: [
+      { id: "look-into", name: "Look into", config: { prompt: "Look into {topic} and list what you find.", inputs, outputs: { type: "object", required: ["findings"], properties: { findings: { type: "array", items: { type: "string" } } } }, spawned_by: [] } },
+      { id: "kit-only", name: "Kit only", config: { prompt: "Check {topic}.", inputs, spawned_by: ["kit-agent"] } },
+      { id: "stepped", name: "Stepped", config: { prompt: "x", spawned_by: [], machine: { states: [{ id: "one", entry: true, prompt: "Do {topic}." }], transitions: [], max_transitions: 4 } } },
+    ] }));
+    P.forgetDeclaredProgramsForTest();
+    const list = await S.startablePrograms(owner);
+    // mold_v0-303 (integration): a stepped program only people start is offered too: a session of its own profile runs it,
+    // permitted to spawn exactly it (this replaces the earlier refusal).
+    assert.deepEqual(list.map((p) => [p.id, p.via, p.profile]), [["kit-only", "runner", "kit-agent"], ["look-into", "session", "default"], ["stepped", "runner", "default"]], "people only (a session of its own), an agent's (a session of that profile spawns it), and a stepped one only people start (a permitted runner)");
+    await assert.rejects(S.startProgram(W.orgId, owner, "look-into", { inputs: {} }), /inputs do not match this program/);
+    await assert.rejects(S.startProgram(W.orgId, { ...owner, role: "viewer" as const }, "look-into", { inputs: { topic: "x" } }), /Your role cannot start agent sessions/);
+    {
+      const stepped = await S.startProgram(W.orgId, owner, "stepped", { inputs: {} });
+      assert.deepEqual([stepped.program.id, stepped.program.via], ["stepped", "runner"], "a stepped program only people start runs in a runner session");
+      const sd = await H.readSession(W.orgId, stepped.session.id, owner);
+      assert.equal(sd.profile?.id, "default", "its own profile's session");
+      assert.match(sd.messages.find((m: { role: string }) => m.role === "person")!.body, /spawn with program "stepped"/);
+      const [frozen] = await db.query<{ nested: boolean; permit: string | null }>("SELECT policy ? 'nested' AS nested, policy->'nested'->>'permit_program' AS permit FROM harness_sessions WHERE id = $1", [stepped.session.id]);
+      if (frozen?.nested) assert.equal(frozen.permit, "stepped", "the root session's permit names exactly that program");
+      // The permit lets a session spawn exactly that program; without it (or for another program) the profile's rules hold.
+      await P.programForSpawn("stepped", "default", "stepped");
+      await assert.rejects(P.programForSpawn("stepped", "default", null), /may not spawn the program stepped/);
+      await assert.rejects(P.programForSpawn("look-into", "default", "stepped"), /may not spawn the program look-into/);
+      await H.stopSession(W.orgId, stepped.session.id, owner).catch(() => null);
+    }
+    const started = await S.startProgram(W.orgId, owner, "look-into", { inputs: { topic: "the release notes" } });
+    assert.deepEqual([started.program.id, started.program.via, started.session.title], ["look-into", "session", "Look into"]);
+    const d = await H.readSession(W.orgId, started.session.id, owner);
+    const first = d.messages.find((m: { role: string }) => m.role === "person")!.body as string;
+    assert.match(first, /^Look into the release notes and list what you find\./, "the prompt filled with the inputs");
+    assert.match(first, /matching this JSON Schema/, "its result asked for in the outputs' shape");
+    await H.stopSession(W.orgId, started.session.id, owner).catch(() => null);
+    const runner = await S.startProgram(W.orgId, owner, "kit-only", { inputs: { topic: "y" } });
+    const rd = await H.readSession(W.orgId, runner.session.id, owner);
+    assert.equal(rd.profile?.id, "kit-agent", "a session of the profile that may spawn it");
+    assert.match(rd.messages.find((m: { role: string }) => m.role === "person")!.body, /spawn with program "kit-only"/);
+    await H.stopSession(W.orgId, runner.session.id, owner).catch(() => null);
+    // The Agents page's routes (mounted with the flag on, ahead of /:id): the list and the start.
+    const { default: express } = await import("express");
+    const router = express.Router();
+    (await import("../src/program-routes.js")).programDockRoutes(router, () => W.orgId);
+    const paths = (router.stack as unknown as { route?: { path: string; methods: Record<string, boolean> } }[]).flatMap((l) => (l.route ? Object.keys(l.route.methods).map((m) => `${m.toUpperCase()} ${l.route!.path}`) : []));
+    assert.ok(paths.includes("GET /programs") && paths.includes("POST /programs/:id/start"), `Run a program's routes: ${paths.join(", ")}`);
+    assert.equal(S.inputsFromRecord({ topic: "subject", key: "$key" }, { key: "r1", title: "T", data: { subject: "S" } }).topic, "S", "a page action's inputs from the record");
+    F.setFeatureForTest("nested_runs", false);
+    setPacksForTest(null);
+    ok("a person starts a program: the ones people may start listed (people only: a session of its own; an agent's: a session of that profile spawns it), its inputs checked, a viewer refused, a stepped program only people start run by a session permitted to spawn exactly it; the first message is its prompt filled with the inputs");
+  }
+
   await http.close();
   console.log("RECIPES TEST PASS");
 } finally {

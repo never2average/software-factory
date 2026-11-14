@@ -240,6 +240,8 @@ try {
       await probe(n, async () => { noKeysOfA((await ok(cb, n, { filter: {} })).records); noKeysOfA((await ok(cb, n, { sort: "-updated_at" })).records); });
     for (const [n, key] of [["fixture_tracker_get_tracker_apps", "app-a"], ["fixture_tracker_get_tracker_findings", "find-a"], ["review_get_review_items", "item-a"], ["review_get_review_notes", "note-a"]] as const)
       await probe(n, async () => err(cb, n, { key }, /no .* in this workspace|not found|no .* record/i));
+    // mold_v0-303: read_<area>_files (flag document_preview): B never reads A's record's files.
+    await probe("fixture_tracker_read_tracker_findings_files", async () => err(cb, "fixture_tracker_read_tracker_findings_files", { key: "find-a" }, /no .* record|not found/i));
     for (const [n, args] of [["fixture_tracker_update_tracker_apps", { key: "app-a", data: { url: "https://b-steal.example" } }], ["fixture_tracker_update_tracker_findings", { key: "find-a", data: { severity: "low", app: "app-a" } }],
       ["review_update_review_items", { key: "item-a", data: { url: "https://b.example" } }], ["review_update_review_notes", { key: "note-a", data: { body: "b", item: "item-a" } }]] as const)
       await probe(n, async () => err(cb, n, args, /no |not found|does not exist/i));

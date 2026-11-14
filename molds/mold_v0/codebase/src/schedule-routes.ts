@@ -20,6 +20,7 @@ import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
 import { PackError } from "./pack-api.js";
 import { recordAreas } from "./record-areas.js";
+import { packs } from "./packs.js";
 import { createSchedule, deleteSchedule, dismissNotice, dueAreas, listNotices, listSchedules, schedulableKinds, schedulesWired, updateSchedule } from "./schedules.js";
 import { featureOn } from "./features.js";
 
@@ -59,6 +60,8 @@ export function scheduleAppRouter(): Router {
     asset_areas: recordAreas().filter((a) => a.role === "asset" && a.scope === "workspace").map((a) => ({ pack: a.pack, name: a.name, label: a.label })),
     timezone: "UTC",
     can_manage: canAccount(S(res).accountRole, "manage"),
+    // mold_v0-303: the names of the packs' programs, so a schedule that starts one says which ("Starts <name>").
+    programs: Object.fromEntries(packs().flatMap((p) => (p.definition.programs ?? []).map((d) => [d.id, d.name]))),
   })));
   r.post("/", answer(async (req, res) => {
     may(res, "manage");

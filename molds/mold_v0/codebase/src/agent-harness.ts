@@ -379,7 +379,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
         for (let n = 0; n < u.parts; n++) { const b = await agent.uploadPart(run.id, lease, u.id, n); h.update(b); parts.push(b); }
         if (h.digest("hex") !== u.sha256) throw new Error(`the uploaded file ${u.path} did not arrive as it was uploaded`);
         mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-        if (isLink(dest)) rmSync(dest, { force: true });
+        if (isLink(dest) || existsSync(dest)) rmSync(dest, { force: true }); // mold_v0-303: a read-only .target/ file of an earlier wake too
         writeFileSync(dest, Buffer.concat(parts), { mode: u.executable ? 0o700 : 0o600 });
         chmodSync(dest, u.executable ? 0o700 : 0o600);
         uploaded.add(path.relative(state, dest).split(path.sep).join("/"));
@@ -415,6 +415,9 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       // The scratch is passed through (0711); what the agent reads in it is its own user's alone.
       if (existsSync(hooksDir)) { chownTree(hooksDir, as.uid, as.gid); chmodSync(hooksDir, 0o700); }
     }
+    // mold_v0-303: what a candidate step improves (.target/, from its uploads): read-only, root's where the run has a user of
+    // its own. Only .candidate/ is ever taken; this only keeps the agent from mistaking an edit of the target for one.
+    lockTarget(path.join(work, ".target"), !!as);
     // The program: the pinned run tool (or a test's stand-in).
     let argv: string[];
     let binDir: string | null = null;
@@ -776,6 +779,22 @@ export async function sendRecipeProposals(agent: Pick<AgentRunnerClient, "recipe
     rmSync(dir, { recursive: true, force: true });
   }
   return sent;
+}
+
+/** mold_v0-303: everything in a folder read-only (files 0444 or 0555; with `asRoot`, root's, and its folders 0555 too). */
+export function lockTarget(dir: string, asRoot: boolean): void {
+  if (!existsSync(dir) || isLink(dir)) return;
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isSymbolicLink()) { rmSync(p, { force: true }); continue; }
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) { const x = lstatSync(p).mode & 0o100; if (asRoot) chownSync(p, 0, 0); chmodSync(p, x ? 0o555 : 0o444); }
+    }
+    // A folder is closed only when root owns it: a runner of its own user must still be able to clear its scratch.
+    if (asRoot) { chownSync(d, 0, 0); chmodSync(d, 0o555); }
+  };
+  walk(dir);
 }
 
 /**

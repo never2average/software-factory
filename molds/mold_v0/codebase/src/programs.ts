@@ -10,7 +10,7 @@ import { PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { agentHarnessOn } from "./agent-harness-config.js";
 import { featureOn } from "./features.js";
-import { parseProgram, PROGRAM_ID, PROGRAM_LIMITS, mayBeSpawnedBy, type ProgramConfig } from "./program-spec.js";
+import { contractSha, parseProgram, PROGRAM_ID, PROGRAM_LIMITS, mayBeSpawnedBy, testFrozen, type AcceptanceTest, type ProgramConfig } from "./program-spec.js";
 
 const read = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => fn(await getDb()));
 const tx = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => (await getDb()).transaction(fn));
@@ -27,10 +27,37 @@ const COLS = "id, name, description, icon, status, version, source, pack_sha, cr
 const nameOf = (v: unknown) => { const n = typeof v === "string" ? v.trim() : ""; if (!n) throw new PackError("name: give the program a name", 400); if (n.length > PROGRAM_LIMITS.name) throw new PackError(`name: at most ${PROGRAM_LIMITS.name} characters`, 400); return n; };
 const textOf = (v: unknown, what: string, max: number) => { const t = typeof v === "string" ? v.trim() : ""; if (t.length > max) throw new PackError(`${what}: at most ${max} characters`, 400); return t; };
 export const programIdFromName = (n: string) => n.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/^(\d)/, "p-$1").slice(0, 40).replace(/-+$/, "");
-function configOf(raw: unknown): ProgramConfig {
-  const { config, problems } = parseProgram(raw, sha256);
+/**
+ * A config as saved: checked (mold_v0-303: a `record` against this build's record areas too) and its test frozen (a test
+ * declared from a recipe takes that recipe version's files, each by its sha256, now).
+ */
+async function configOf(raw: unknown): Promise<ProgramConfig> {
+  const areas = await (await import("./program-records.js")).recordAreaShapes().catch(() => null);
+  const { config, problems } = parseProgram(raw, sha256, { areas });
   if (!config) throw new PackError(problems.join("; ").slice(0, 2000), 400);
-  return config;
+  return freezeTest(config);
+}
+/**
+ * mold_v0-303 (M6): a test declared from a recipe ({recipe: {id, version?}, cases_path, candidate_command, scorer_command})
+ * frozen: the recipe's version (its latest now when none is named) and its files, each with its sha256, so the contract is
+ * what was frozen whatever the recipe becomes. A test that is frozen already is left as it is.
+ */
+export async function freezeTest(config: ProgramConfig): Promise<ProgramConfig> {
+  const t = config.acceptance?.test;
+  if (!t || testFrozen(t) || !t.recipe) return config;
+  const R = await import("./recipes.js");
+  const sync = (R as unknown as { syncDeclaredRecipes?: () => Promise<unknown> }).syncDeclaredRecipes;
+  if (typeof sync === "function") await sync(); // a pack's own recipes are brought in first (src/recipes.ts)
+  if (!R.recipesOn()) throw new PackError("acceptance.test.recipe: workspace recipes are not on in this app, so the test has no files", 400);
+  const detail = await R.readRecipe(t.recipe.id).catch(() => { throw new PackError(`acceptance.test.recipe: there is no recipe called ${t.recipe!.id}`, 400); });
+  const version = t.recipe.version ?? detail.version;
+  const v = detail.versions.find((x) => x.version === version);
+  if (version < 1 || !v) throw new PackError(`acceptance.test.recipe: ${detail.name} has no version ${version < 1 ? "yet" : version}`, 400);
+  const files = v.files.map((f) => ({ id: f.id, path: f.path, bytes: f.bytes, sha256: f.sha256, executable: f.executable }));
+  if (!files.some((f) => f.path === t.cases_path)) throw new PackError(`acceptance.test.cases_path: version ${version} of ${detail.name} has no file ${t.cases_path}`, 400);
+  const clean = { files, cases_path: t.cases_path, candidate_command: t.candidate_command, scorer_command: t.scorer_command, timeout_seconds: t.timeout_seconds };
+  const test: AcceptanceTest = { ...clean, sha256: contractSha(clean, sha256), recipe: { id: t.recipe.id, version } };
+  return { ...config, acceptance: { ...config.acceptance!, test } };
 }
 
 async function latest(q: Queryable, id: string, lock = false): Promise<Row> {
@@ -57,8 +84,13 @@ export function declaredPrograms(): { id: string; name: string; description?: st
 }
 export function syncDeclaredPrograms(): Promise<void> {
   declared ??= (async () => {
+    let again = false;
     for (const d of declaredPrograms()) {
-      const config = configOf(d.config);
+      // mold_v0-303: one that cannot be brought in yet (its test's recipe, or its record area, not there) waits, said in
+      // the log; the others come in, and it is tried again on the next call.
+      let config: ProgramConfig;
+      try { config = await configOf(d.config); }
+      catch (e) { again = true; console.error(`programs: ${d.id} was not brought in: ${(e as Error).message}`); continue; }
       const packSha = sha256(JSON.stringify({ name: d.name, description: d.description ?? "", config }));
       await tx(async (q) => {
         await q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`program:${d.id}`]);
@@ -74,6 +106,7 @@ export function syncDeclaredPrograms(): Promise<void> {
         }
       });
     }
+    if (again) declared = null;
   })().catch((e) => { declared = null; throw e; });
   return declared;
 }
@@ -112,7 +145,7 @@ export async function createProgram(by: string, input: { id?: unknown; name?: un
   const name = nameOf(input.name);
   const id = typeof input.id === "string" && input.id ? input.id : programIdFromName(name) || `program-${randomBytes(3).toString("hex")}`;
   if (!PROGRAM_ID.test(id)) throw new PackError("id: lowercase letters, digits and -, starting with a letter", 400);
-  const config = configOf(input.config ?? {});
+  const config = await configOf(input.config ?? {});
   await tx(async (q) => {
     const made = await q.query<{ id: string }>("INSERT INTO harness_programs (id, name, description, icon, version, source, created_by, updated_by) VALUES ($1, $2, $3, $4, 1, 'staff', $5, $5) ON CONFLICT (id) DO NOTHING RETURNING id",
       [id, name, textOf(input.description, "description", PROGRAM_LIMITS.description), config.icon, by]);
@@ -124,7 +157,7 @@ export async function createProgram(by: string, input: { id?: unknown; name?: un
 /** A change is the next version, against the version edited (409 when someone else saved one first). */
 export async function updateProgram(by: string, id: string, input: { version?: unknown; name?: unknown; description?: unknown; config?: unknown; note?: unknown }): Promise<ProgramDetail> {
   needOn();
-  const config = configOf(input.config ?? {});
+  const config = await configOf(input.config ?? {});
   await tx(async (q) => {
     const r = await latest(q, id, true);
     if (Number(input.version) !== r.version) throw new PackError("This program was changed meanwhile: look again before saving", 409);
@@ -159,14 +192,17 @@ export async function programsForProfile(profile: string | null): Promise<{ id: 
     "SELECT p.id, p.name, p.description, p.version, v.config FROM harness_programs p JOIN harness_program_versions v ON v.program_id = p.id AND v.version = p.version WHERE p.status = 'active' ORDER BY p.name"));
   return rows.filter((r) => mayBeSpawnedBy(r.config, profile));
 }
-/** One program a session asks to spawn: active, and one its profile may spawn; else refused in words. */
-export async function programForSpawn(id: string, profile: string | null): Promise<{ id: string; name: string; description: string; version: number; config: ProgramConfig }> {
+/**
+ * One program a session asks to spawn: active, and one its profile may spawn (or the one program its start permits,
+ * mold_v0-303: `permit`, a root session a person started to run it); else refused in words.
+ */
+export async function programForSpawn(id: string, profile: string | null, permit: string | null = null): Promise<{ id: string; name: string; description: string; version: number; config: ProgramConfig }> {
   await syncDeclaredPrograms();
   return read(async (q) => {
     const r = await latest(q, id);
     if (r.status !== "active") throw new PackError(`The program ${id} is archived`, 409);
     const config = await configAt(q, id, r.version);
-    if (!mayBeSpawnedBy(config, profile)) throw new PackError(`This session's agent profile may not spawn the program ${id}`, 403);
+    if (!mayBeSpawnedBy(config, profile, permit === id ? id : null)) throw new PackError(`This session's agent profile may not spawn the program ${id}`, 403);
     return { id: r.id, name: r.name, description: r.description, version: r.version, config };
   });
 }

@@ -71,7 +71,7 @@ import { emailPackProblems, type EmailPackSchema } from "./company-email-config.
 import { documentProblems, type DocumentsSchema } from "./record-files-config.js";
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 import { templateProblems } from "./text-template.js";
-import { configProblems, PackAgentProfileSchema, PROFILE_ID, templateNames, DEFAULT_PROFILE } from "./agent-profile-spec.js";
+import { configProblems, PackAgentProfileSchema, PackRecipeSchema, packRecipeProblems, PROFILE_ID, templateNames, DEFAULT_PROFILE } from "./agent-profile-spec.js";
 
 import { CheckSchema } from "./check-spec.js";
 export { z };
@@ -1246,7 +1246,9 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program"] as const;
+/** A program's id (src/program-spec.ts PROGRAM_ID, the same rule). */
+export const PROGRAM_REF = /^[a-z][a-z0-9-]{1,39}$/;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
 export const PAGE_ACTION_PLACES = ["primary", "secondary", "more"] as const;
 export const PAGE_ACTIONS_MAX = 12;
@@ -1277,6 +1279,10 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *   open_url   (mold_v0-262) open the web address the record's url field (or text field holding one) `field` holds, in
  *              a new tab ("Open live app", "Open docs"); hidden while the field is empty (mold_v0-298); disabled, with why,
  *              while it holds no http(s) address
+ *   start_program (mold_v0-303, flag nested_runs) a person starts the program `program` (a pack's declared one) on this
+ *              record: its inputs filled from the record (`input`: a program input's name -> a field of the record, or
+ *              $key, $title), on the server; offered only to a role that may start it (the program's spawned_by: [] or
+ *              "*" means people may; src/program-start.ts) and only while the program is active
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1304,6 +1310,8 @@ export const DetailActionSchema = z.object({
   profile: z.string().regex(PROFILE_ID, "an agent profile's id").optional(),
   /** mold_v0-261: a start_agent action's first message, a template filled from the record ({{key}}, {{title}}, {{<field>}}). */
   first_message: z.string().trim().min(1).max(4000).optional(),
+  /** mold_v0-303: a start_program action's program (one the build's packs declare). */
+  program: z.string().regex(PROGRAM_REF, "a program's id (lowercase letters, digits and -)").optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1347,8 +1355,8 @@ export const RecordDetailSchema = z.object({
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
 
 /** An action's id on its page and in the API (POST /api/records/_page/<area>/<key>/actions/<id>): its kind, then what it names. */
-export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field"> & { area?: string; profile?: string }) =>
-  [a.kind, a.job_kind ?? a.to ?? a.field ?? a.area ?? a.profile].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
+export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field"> & { area?: string; profile?: string; program?: string }) =>
+  [a.kind, a.job_kind ?? a.to ?? a.field ?? a.area ?? a.profile ?? a.program].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
 
 /** A layout's id for each tab (its label, lowercased, words joined by -): the page's ?tab= value. */
 export const detailTabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "tab";
@@ -1475,7 +1483,12 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
   const ids = actions.map(pageActionId);
   for (const [i, x] of actions.entries()) {
     const only = (k: "job_kind" | "input" | "to" | "field", kinds: readonly string[]) => { if (x[k] !== undefined && !kinds.includes(x.kind)) bad(`${k} is for a ${kinds.join(" or ")} action, not ${x.kind}`, i, k); };
-    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record"]); only("to", ["move"]); only("field", ["link", "open_url"]);
+    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record", "start_program"]); only("to", ["move"]); only("field", ["link", "open_url"]);
+    // mold_v0-303: a start_program action names its program (the build checks it is declared), and is never a viewer's.
+    if (x.program !== undefined && x.kind !== "start_program") bad(`program is for a start_program action, not ${x.kind}`, i, "program");
+    if (x.kind === "start_program" && !x.program) bad("a start_program action names the program it starts (program)", i, "program");
+    if (x.kind === "start_program" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a start_program action cannot be a viewer's", i, "roles");
+    if (x.kind === "start_program" && a.scope === "platform") bad("a shared (platform) area's page starts no program: a program runs in a workspace", i, "kind");
     if (x.area !== undefined && x.kind !== "create_record") bad(`area is for a create_record action, not ${x.kind}`, i, "area");
     if (x.kind === "create_record" && !x.area) bad("a create_record action names the area it adds a record to", i, "area");
     if (x.target !== undefined && x.kind !== "start_run") bad(`target is for a start_run action, not ${x.kind}`, i, "target");
@@ -2741,17 +2754,41 @@ export const OperatorCredentialSchema = z.object({
  *   environment  targets.environment of each run (an environment-bound credential)
  *   scope        the run's scope (what is checked: source and check record keys), as given to ctx.runs.start
  *   enabled      false: offered to each workspace but off until an owner turns it on
+ *   start_agent  (mold_v0-303, flag agent_harness) in place of job_kind: each due time starts a workspace agent session
+ *                with the agent profile `profile` (the pack's own, or "default") and its first message `first_message`
+ *                (plain words; a schedule has no record), acting for the workspace's account (as an account key does)
+ *   start_program (mold_v0-303, flag nested_runs) in place of job_kind: each due time starts the program `program` (one
+ *                the build declares, that people may start: spawned_by [] or "*") with `inputs` (checked against the
+ *                program's inputs schema when it fires), acting for the workspace's account. A weekly scan, a digest
+ * Exactly one of job_kind, start_agent and start_program. A schedule that starts an agent or a program runs over no assets.
  */
+export const ScheduleStartAgentSchema = z.object({
+  profile: z.string().regex(PROFILE_ID, "an agent profile's id"),
+  first_message: z.string().trim().min(1).max(4000),
+}).strict();
+export const ScheduleStartProgramSchema = z.object({
+  program: z.string().regex(PROGRAM_REF, "a program's id (lowercase letters, digits and -)"),
+  inputs: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+/** The job_kind a schedule that starts an agent session or a program is kept under (never a job kind's name). */
+export const SCHEDULE_AGENT_KIND = "@agent";
+export const SCHEDULE_PROGRAM_KIND = "@program";
 export const ScheduleSchema = z.object({
   name,
   label: z.string().min(1).max(80).optional(),
-  job_kind: name,
+  job_kind: name.optional(),
+  start_agent: ScheduleStartAgentSchema.optional(),
+  start_program: ScheduleStartProgramSchema.optional(),
   cron: z.string().max(120).refine((c) => { try { parseCron(c); return true; } catch { return false; } }, "a cron expression: five fields (minute hour day-of-month month day-of-week, UTC), at most every 5 minutes"),
   assets: z.object({ area: name, keys: z.array(z.string().regex(RECORD_KEY, "a record key")).min(1).max(50).optional() }).strict().optional(),
   environment: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment name: lowercase letters, digits, _ and -").optional(),
   scope: z.record(z.string(), z.unknown()).optional(),
   enabled: z.boolean().default(true),
-}).strict();
+}).strict().superRefine((s, ctx) => {
+  const n = [s.job_kind, s.start_agent, s.start_program].filter((x) => x !== undefined).length;
+  if (n !== 1) ctx.addIssue({ code: "custom", path: ["job_kind"], message: "a schedule starts one thing: a job_kind's runs, an agent session (start_agent) or a program (start_program)" });
+  if ((s.start_agent || s.start_program) && (s.assets || s.environment || s.scope)) ctx.addIssue({ code: "custom", path: ["assets"], message: "a schedule that starts an agent session or a program runs over no assets, environment or scope" });
+});
 
 /**
  * When an onboarding step is done (mold_v0-011; src/onboarding.ts), read for one workspace from what really happened
@@ -2928,6 +2965,12 @@ export interface PackDefinition {
    */
   agentProfiles?: z.input<typeof PackAgentProfileSchema>[];
   /**
+   * mold_v0-303: workspace recipes this pack declares (pack.json `recipes`; src/recipes.ts syncDeclaredRecipes): their
+   * files inline as text, brought into the platform's recipes (a new version only when the pack's files changed, never
+   * over a change staff made). Its agent profiles' `recipes` and its programs' acceptance tests may name them.
+   */
+  recipes?: z.input<typeof PackRecipeSchema>[];
+  /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
@@ -3035,7 +3078,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
       }
     }
     if (a.kind === "new_schedule") {
-      const scheduled = new Set((p.schedules ?? []).map((s) => s?.job_kind));
+      const scheduled = new Set((p.schedules ?? []).flatMap((s) => (s?.job_kind ? [s.job_kind] : [])));
       if (!scheduled.size) problems.push(at(`${where}: this pack schedules no job kind (schedules), so a workspace adds no schedule of its own`));
       else if (a.job_kind && !scheduled.has(a.job_kind)) problems.push(at(`${where}: job kind ${a.job_kind} is not one this pack schedules (a workspace adds schedules of the kinds its pack schedules)`));
     }
@@ -3057,6 +3100,16 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     profileIds.add(r.data.id);
   }
   const knownProfile = (id: string | undefined) => !id || id === DEFAULT_PROFILE || profileIds.has(id);
+  // mold_v0-303: the recipes it declares (each id once, its files' paths and sizes); a recipe another pack declares or
+  // staff keep is checked by the build (scripts/gen-packs.mjs) and when a session starts.
+  const recipeIds = new Set<string>();
+  for (const [i, x] of (p.recipes ?? []).entries()) {
+    const r = PackRecipeSchema.safeParse(x);
+    if (!r.success) { problems.push(at(`recipes[${i}]: ${r.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`)); continue; }
+    for (const m of packRecipeProblems(r.data)) problems.push(at(`recipe ${r.data.id}: ${m}`));
+    if (recipeIds.has(r.data.id)) problems.push(at(`recipe ${r.data.id} is declared twice`));
+    recipeIds.add(r.data.id);
+  }
   for (const t of p.tabs ?? []) {
     const a = t?.action as { kind?: string; profile?: string } | false | undefined;
     if (a && typeof a === "object" && a.kind === "start_agent" && !knownProfile(a.profile))
@@ -3065,6 +3118,11 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const ar of p.recordAreas ?? []) for (const x of ((ar as { detail?: { actions?: { kind?: string; profile?: string }[] } })?.detail?.actions ?? []))
     if (x?.kind === "start_agent" && !knownProfile(x.profile))
       problems.push(at(`record area ${(ar as { name?: string }).name}'s page: action start_agent: agent profile ${x.profile} is not one this pack declares (agent_profiles) or default`));
+  // mold_v0-303: a schedule that starts an agent session names one of its profiles (or default).
+  for (const sc of p.schedules ?? []) {
+    const sa = (sc as { start_agent?: { profile?: string } } | undefined)?.start_agent;
+    if (sa && !knownProfile(sa.profile)) problems.push(at(`schedule ${sc.name}: start_agent: agent profile ${sa.profile} is not one this pack declares (agent_profiles) or default`));
+  }
   each(p.checks, CheckSchema, "checks");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.oauthProviders, OAuthProviderSchema, "oauthProviders");

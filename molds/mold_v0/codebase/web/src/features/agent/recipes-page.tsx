@@ -33,7 +33,9 @@ import { ToolbarAction } from '@/features/tabs/tab-action';
 // ---------------------------------------------------------------- the shapes (src/recipes.ts)
 
 interface RecipeFile { id: string; path: string; bytes: number; sha256: string; executable: boolean }
-interface Summary { id: string; name: string; description: string; status: 'active' | 'archived'; version: number; files: number; bytes: number; pending_proposals: number; updated_by: string; updated_at: string }
+interface Summary { id: string; name: string; description: string; status: 'active' | 'archived'; version: number; files: number; bytes: number; pending_proposals: number; updated_by: string; updated_at: string;
+  /** mold_v0-303: a pack declares it and no staff change has replaced it (a pack update may add its next version; a staff save makes it theirs). */
+  declared?: boolean }
 interface Version { version: number; files: RecipeFile[]; note: string; source: 'staff' | 'agent'; proposal: string | null; by: string; at: string }
 interface Proposal {
   id: string; recipe: string; recipe_name: string; base_version: number; status: 'pending' | 'accepted' | 'declined'; files: RecipeFile[]; changed: string[]; removed: string[]; note: string;
@@ -154,6 +156,7 @@ function RecipeView({ id, tabParam = 'tab' }: { id: string; tabParam?: string })
                 {r.description && <p className='text-muted-foreground max-w-prose text-sm leading-relaxed break-words'>{r.description}</p>}
                 <div className='flex flex-wrap items-center gap-2 pt-1'>
                   <StatusBadge s={r.status} />
+                  {r.declared && <ToneBadge color='neutral'>From the app</ToneBadge>}
                   {pending.length > 0 && <ToneBadge color='warning'>{plural(pending.length, 'proposal')} waiting</ToneBadge>}
                 </div>
               </div>
@@ -276,7 +279,7 @@ let seq = 0;
 const next = () => ++seq;
 
 /** One file to the agent profiles' upload routes, in parts (mold_v0-267): its upload's id, sha256 and whether it is a program. */
-async function uploadFile(file: File, progress: (pct: number) => void): Promise<{ id: string; sha256: string; bytes: number; executable: boolean }> {
+export async function uploadFile(file: File, progress: (pct: number) => void): Promise<{ id: string; sha256: string; bytes: number; executable: boolean }> {
   const { upload } = await adminApi<{ upload: { id: string; parts: number; part_bytes: number } }>('POST', '/agent-profiles/uploads', { bytes: file.size });
   for (let n = 0; n < upload.parts; n++) {
     const part = file.slice(n * upload.part_bytes, Math.min(file.size, (n + 1) * upload.part_bytes));

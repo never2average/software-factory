@@ -116,7 +116,11 @@ export interface Profile {
    * resolved by scripts/gen-packs.mjs); absent when none declares it. The server reads which staff pages it lists.
    */
   admin_records?: { show: readonly string[] };
-  /** mold_v0-291 (flag nested_runs): a build's own limits on its trees, each lower only than the shell's (depth 2, 8 children, 4 at once). */
+  /**
+   * mold_v0-291 (flag nested_runs): a build's own limits on its trees. mold_v0-303: absent, depth 2, 32 children, 4 at once;
+   * set, up to the hard maximum (depth 3, 256 children, 16 at once; src/nested-runs.ts NESTED_HARD_MAX). The tree's budget
+   * is the real limit.
+   */
   nested_runs?: { max_depth?: number; max_children?: number; max_concurrent?: number };
 }
 

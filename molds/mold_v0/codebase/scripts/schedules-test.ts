@@ -101,7 +101,15 @@ try {
     assert.throws(() => due({ ...areas[1], scope: "platform", due: { field: "sla" } }), /check area of workspace scope/);
     assert.throws(() => due({ ...areas[1], due: { field: "sla", notify: ["root"] } }), /notify/);
     assert.doesNotThrow(() => due({ ...areas[1], due: { field: "sla", within_days: 3, notify: ["owner", "member"] } }));
-    console.log("✓ definePack refuses a schedule of a kind or asset area that is not the pack's own, a bad cron, a due date on the wrong area or field");
+    // mold_v0-303: a schedule may start an agent session (start_agent) or a program (start_program) in place of a job kind.
+    assert.doesNotThrow(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1", start_agent: { profile: "default", first_message: "Scan last week's numbers." } }] }));
+    assert.doesNotThrow(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1", start_program: { program: "weekly-scan", inputs: { window_days: 7 } } }] }));
+    assert.throws(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1" }] }), /starts one thing/, "neither a job kind nor a start");
+    assert.throws(() => pack({ schedules: [{ name: "scan", job_kind: "kk", cron: "0 6 * * 1", start_agent: { profile: "default", first_message: "x" } }] }), /starts one thing/, "both");
+    assert.throws(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1", start_agent: { profile: "nobody-here", first_message: "x" } }] }), /not one this pack declares/);
+    assert.throws(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1", start_agent: { profile: "default", first_message: "x" }, assets: { area: "rf_apps" } }] }), /no assets/);
+    assert.throws(() => pack({ schedules: [{ name: "scan", cron: "0 6 * * 1", start_program: { program: "Not An Id" } }] }), /program's id/);
+    console.log("✓ definePack refuses a schedule of a kind or asset area that is not the pack's own, a bad cron, a due date on the wrong area or field; a schedule starts one thing (a job kind, an agent session or a program)");
   }
 
   // ---------- the fixture pack ----------
@@ -387,6 +395,27 @@ try {
       const body = await ok.json();
       assert.ok(body.schedules?.schedules && body.schedules?.due, "the cron entry ticks the scheduler");
       console.log("✓ the cron entry needs CRON_SECRET and ticks the scheduler");
+    }
+    // ---------- 8. mold_v0-303: a schedule that starts an agent session ----------
+    {
+      const withAgent = definePack({ id: "fixture_sched", jobKinds: [{ name: "sweep", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15 }],
+        schedules: [{ name: "weekly_scan", label: "Weekly scan", cron: "0 6 * * 1", start_agent: { profile: "default", first_message: "Scan last week's numbers and say what changed." } }] });
+      setPacksForTest([{ manifest, definition: withAgent }]);
+      const d = sch.defaultSchedules().find((x) => x.name === "weekly_scan")!;
+      assert.equal(d.job_kind, "@agent", "kept under the job kind @agent");
+      assert.deepEqual(d.scope, { start_agent: { profile: "default", first_message: "Scan last week's numbers and say what changed." } }, "what it starts is its scope: the pack's");
+      assert.ok(!sch.schedulableKinds().some((k) => k.name === "@agent"), "an owner adds no schedule of it");
+      await sch.ensureDefaults(at("2030-03-09T00:00:00Z"));
+      const [row] = await db.query<{ job_kind: string; scope: Record<string, unknown> }>("SELECT job_kind, scope FROM workspace_schedules WHERE org_id = $1 AND name = 'weekly_scan'", [A.orgId]);
+      assert.equal(row?.job_kind, "@agent");
+      await sch.tickSchedules(at("2030-03-11T06:00:00Z"));
+      const [fired] = await db.query<{ last_error: string | null; last_runs: string[] }>("SELECT last_error, last_runs FROM workspace_schedules WHERE org_id = $1 AND name = 'weekly_scan'", [A.orgId]);
+      assert.match(fired!.last_error ?? "", /workspace agent is off/, "the workspace agent off: not started, and the row says why");
+      assert.deepEqual(fired!.last_runs, []);
+      const [mine] = await db.query<{ id: string }>("SELECT id::text FROM workspace_schedules WHERE org_id = $1 AND name = 'weekly_scan'", [A.orgId]);
+      assert.equal(await count("SELECT count(*)::int AS n FROM runs WHERE requested_by = $1", [`schedule:${mine!.id}`]), 0, "no job kind's run started for it");
+      setPacksForTest([{ manifest, definition: def() }]);
+      console.log("✓ a pack's schedule may start an agent session: kept as @agent with what it starts in its scope, copied to every workspace, fired at its time (the agent off: not started, said on the row)");
     }
   } finally {
     await http.close();

@@ -6,11 +6,13 @@
  *   refused       the test was tampered with, the candidate changed something outside the declared surface, a floor was
  *                 violated or a metric is missing, there are too few cases, the improvement is too small, or its 95%
  *                 confidence interval's lower bound is not above zero
- *   needs_review  there is no test, or no current best to beat: a person decides, and nothing is promoted by itself
+ *   needs_review  there is no test, or nothing to beat (no current best, and no current version of the target to measure
+ *                 in its place: mold_v0-303), or (mold_v0-303) what changed is wording only (instructions, a SKILL.md: no
+ *                 model runs in the evaluator, so wording cannot be measured): a person decides, nothing is promoted by itself
  *   accepted      everything held: it beats the current best by at least min_lift, and is promoted to a new version
  */
 import type { Acceptance } from "./program-spec.js";
-import { globMatch } from "./program-spec.js";
+import { globMatch, testFrozen } from "./program-spec.js";
 
 export const CONFIDENCE = 0.95;
 export const MIN_CASES = 5;
@@ -42,18 +44,31 @@ export function bootstrapCI(samples: readonly number[], seed: number, confidence
   return { low: q(tail), high: q(1 - tail) };
 }
 
+/**
+ * mold_v0-303 (operator decision 2): the paths that are wording, not a measurable artefact. A change of only these goes to a
+ * person: the guardian measures scripts, schemas and policies offline, and never a model reading words.
+ */
+export const WORDING_GLOBS = ["*.md", "**/*.md", "*.mdx", "**/*.mdx", "*.markdown", "**/*.markdown", "*.txt", "**/*.txt", "*.rst", "**/*.rst"] as const;
+export const isWording = (p: string) => WORDING_GLOBS.some((g) => globMatch(g, p));
+export const wordingOnly = (paths: readonly string[]) => paths.length > 0 && paths.every(isWording);
+
 /** The candidate's paths outside its declared surface. */
 export const offSurface = (paths: readonly string[], surface: readonly string[]): string[] => paths.filter((p) => !surface.some((g) => globMatch(g, p)));
 
 /**
- * The rule. `hasBest`: a current champion exists, and was measured here as the baseline. A case is compared within the
- * case (paired), so the interval is of the improvement, not of two separate means.
+ * The rule. `hasBest`: a baseline was measured here: the current champion, or (mold_v0-303) with none yet, the target's
+ * current version. A case is compared within the case (paired), so the interval is of the improvement, not of two separate
+ * means. `changedPaths` (mold_v0-303): what the candidate changed against that baseline, when known: nothing is refused,
+ * wording only goes to a person.
  */
-export function decideAcceptance(a: Acceptance, input: { measured: Measurement | null; offSurfacePaths: readonly string[]; hasBest: boolean; seed: number }): Decision {
+export function decideAcceptance(a: Acceptance, input: { measured: Measurement | null; offSurfacePaths: readonly string[]; hasBest: boolean; seed: number; changedPaths?: readonly string[] }): Decision {
   const empty = { n: 0, baseline_mean: null, candidate_mean: null, lift: null, ci_low: null, ci_high: null, floors: {} };
   const refused = (reasons: string[], metrics: Decision["metrics"] = empty): Decision => ({ outcome: "refused", reasons, metrics });
   if (input.offSurfacePaths.length) return refused([`it changed something outside its declared surface: ${input.offSurfacePaths.slice(0, 10).join(", ")}`]);
+  if (input.changedPaths && !input.changedPaths.length) return refused(["it changes nothing of the target"]);
+  if (input.changedPaths && wordingOnly(input.changedPaths)) return { outcome: "needs_review", reasons: [`it changes wording only (${input.changedPaths.slice(0, 5).join(", ")}): the guardian measures scripts, schemas and policies, not words, so a person decides`], metrics: empty };
   if (!a.test) return { outcome: "needs_review", reasons: ["this program declares no test, so a person decides"], metrics: empty };
+  if (!testFrozen(a.test)) return refused(["its test was declared from a recipe but never frozen (bring the program in again once the recipe has its version)"]);
   const m = input.measured;
   if (!m) return refused(["the evaluation did not produce measurements"]);
   if (m.tampered) return refused([`the test was tampered with: ${m.tampered}`]);
@@ -72,7 +87,7 @@ export function decideAcceptance(a: Acceptance, input: { measured: Measurement |
     if (f.max !== undefined && avg > f.max) reasons.push(`the floor ${f.metric} is ${avg.toFixed(4)}, above its maximum ${f.max}`);
   }
   const candMean = mean(usable.map((c) => c.candidate as number));
-  if (!input.hasBest) return { outcome: reasons.length ? "refused" : "needs_review", reasons: reasons.length ? reasons : ["there is no current best to beat yet, so a person decides"], metrics: { ...empty, n: usable.length, candidate_mean: candMean, floors } };
+  if (!input.hasBest) return { outcome: reasons.length ? "refused" : "needs_review", reasons: reasons.length ? reasons : ["there is nothing to beat yet (no current best and no current version of the target), so a person decides"], metrics: { ...empty, n: usable.length, candidate_mean: candMean, floors } };
   if (usable.some((c) => typeof c.baseline !== "number" || !Number.isFinite(c.baseline))) return refused([...reasons, "the current best was not measured on every case (fails closed)"], { ...empty, n: usable.length, candidate_mean: candMean, floors });
   const deltas = usable.map((c) => sign * ((c.candidate as number) - (c.baseline as number)));
   const baseMean = mean(usable.map((c) => c.baseline as number));

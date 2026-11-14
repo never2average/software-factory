@@ -14,6 +14,9 @@
  *              Its runs go through the run engine (src/runs.ts startRun) for the row's own workspace, requested_by
  *              "schedule:<id>", one per asset record (targets.asset {area, key}, targets.environment), skipping a target
  *              whose previous run from this schedule is still queued or running. The engine's per-workspace cap applies
+ *   sessions   (mold_v0-303) a pack's schedule may start a workspace agent session (start_agent: a profile and a first
+ *              message) or a program (start_program: src/program-start.ts) in place of a job kind's runs, acting for the
+ *              workspace's account; its row is kept under the job kind "@agent" or "@program" (fireSession)
  *   due check  dueCheck(now), once a UTC day (scheduler_marks): for every check area that declares `due`, each workspace
  *              record whose date falls within the window gets one in-app notice (workspace_notices, one per record and
  *              due date), and the workspace's people with the area's notify roles (its own Clerk organization's members,
@@ -30,7 +33,7 @@ import { CronError, countBetween, latestAtOrBefore, nextAfter, parseCron } from 
 import { getDb } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { ensureOrgKey, isSealed, open, openJson, seal } from "./orgcrypto.js";
-import { PackError, RECORD_KEY, ScheduleSchema, z } from "./pack-api.js";
+import { PackError, RECORD_KEY, SCHEDULE_AGENT_KIND, SCHEDULE_PROGRAM_KIND, ScheduleSchema, z } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { findArea, isSealedArea, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { findKind, jobKinds, startRun } from "./runs.js";
@@ -44,7 +47,14 @@ import { checkpointTick, signOn, type LedgerTick } from "./ledger.js";
 import { tracked } from "./scheduler-jobs.js";
 import { featureSetting } from "./feature-flags.js";
 
-export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
+/**
+ * A pack's default schedule as rows keep it: a schedule that starts an agent session or a program (mold_v0-303) is kept
+ * under the job kind "@agent" or "@program" (never a job kind's name), what it starts in its scope ({start_agent} or
+ * {start_program}): the pack's, never an owner's to change.
+ */
+export type DefaultSchedule = Omit<z.output<typeof ScheduleSchema>, "job_kind"> & { job_kind: string; pack: string };
+/** Whether a row's job kind is one of the starts of mold_v0-303 (an agent session, a program), not a run of a job kind. */
+export const startsSession = (kind: string) => kind === SCHEDULE_AGENT_KIND || kind === SCHEDULE_PROGRAM_KIND;
 
 /** The scheduler's clock: the wall clock, or one a test sets (every function here also takes `now`). */
 let clockFn: () => Date = () => new Date();
@@ -57,16 +67,20 @@ let cache: { from: unknown; list: DefaultSchedule[] } | null = null;
 export function defaultSchedules(): DefaultSchedule[] {
   const list = packs();
   if (cache?.from === list) return cache.list;
-  cache = { from: list, list: list.flatMap((p) => (p.definition.schedules ?? []).map((s) => ({ ...ScheduleSchema.parse(s), pack: p.id }))) };
+  cache = { from: list, list: list.flatMap((p) => (p.definition.schedules ?? []).map((s) => {
+    const x = ScheduleSchema.parse(s);
+    const scope = x.start_agent ? { start_agent: x.start_agent } : x.start_program ? { start_program: x.start_program } : x.scope;
+    return { ...x, job_kind: x.job_kind ?? (x.start_agent ? SCHEDULE_AGENT_KIND : SCHEDULE_PROGRAM_KIND), ...(scope ? { scope } : {}), pack: p.id };
+  })) };
   return cache.list;
 }
 /** Check areas that declare due dates; none while the scheduled_alerts flag is off (mold_v0-219: no notice, no email). */
 export const dueAreas = (): (RecordArea & { due: NonNullable<RecordArea["due"]> })[] =>
   (featureSetting("scheduled_alerts") ? recordAreas() : []).filter((a): a is RecordArea & { due: NonNullable<RecordArea["due"]> } => !!a.due);
 /** The job kinds a pack schedules (it declares a default schedule of the kind): the ones owners may schedule too. */
-export const schedulableKinds = () => [...new Map(defaultSchedules().map((d) => [`${d.pack}/${d.job_kind}`, { pack: d.pack, name: d.job_kind }])).values()];
-/** Whether there is anything to schedule at all (a job kind in the build). */
-export const schedulesWired = () => jobKinds().length > 0;
+export const schedulableKinds = () => [...new Map(defaultSchedules().filter((d) => !startsSession(d.job_kind)).map((d) => [`${d.pack}/${d.job_kind}`, { pack: d.pack, name: d.job_kind }])).values()];
+/** Whether there is anything to schedule at all (a job kind in the build, or mold_v0-303 a pack's schedule of an agent session or a program). */
+export const schedulesWired = () => jobKinds().length > 0 || defaultSchedules().some((d) => startsSession(d.job_kind));
 
 interface Row {
   id: string; org_id: number; pack: string; name: string; label: string | null; job_kind: string; cron: string;
@@ -259,6 +273,8 @@ export async function updateSchedule(orgId: number, id: string, by: string, b: R
   if (b.scope !== undefined) throw new PackError("scope is the pack's: it cannot be changed here", 400);
   const f = await checkFields(orgId, cur.pack, b);
   if (!Object.keys(f).length) throw new PackError("nothing to change: label, cron, assets, environment or enabled", 400);
+  if (startsSession(cur.job_kind) && ((f.assets !== undefined && f.assets !== null) || (f.environment !== undefined && f.environment !== null)))
+    throw new PackError("this schedule starts an agent session or a program: it runs over no assets and no environment", 400);
   if (f.enabled === true && cur.is_default && !declared(cur.pack, cur.name)) throw new PackError("no pack declares this default any more: remove it instead", 409);
   // Turning one on (or giving it a time) only on a plan that includes schedules (src/entitlements.ts, mold_v0-083).
   if (f.enabled === true || (f.cron !== undefined && (f.enabled ?? cur.enabled))) await requireFeature(orgId, "schedules");
@@ -333,6 +349,7 @@ export async function accountStanding(orgId: number): Promise<string | null> {
 
 /** Start the runs of one firing (its row already moved on). Never throws: what went wrong is the row's last_error. */
 async function fire(s: Row): Promise<{ runs: string[]; error: string | null }> {
+  if (startsSession(s.job_kind)) return fireSession(s);
   const errors: string[] = [];
   const runs: string[] = [];
   try {
@@ -355,6 +372,41 @@ async function fire(s: Row): Promise<{ runs: string[]; error: string | null }> {
     }
   } catch (e) { errors.push(`could not start: ${(e as Error).message}`); }
   return { runs, error: errors.length ? [...new Set(errors)].join("; ").slice(0, 1000) : null };
+}
+
+/**
+ * mold_v0-303: one firing of a schedule that starts an agent session (start_agent) or a program (start_program), for
+ * the row's own workspace, acting for its account (as an account key does: src/harness-sessions.ts startSession). Its
+ * row's last_runs keeps the session's id; while the session it started last is still in a turn, none is started again.
+ * Never throws: what went wrong is the row's last_error.
+ */
+async function fireSession(s: Row): Promise<{ runs: string[]; error: string | null }> {
+  try {
+    if (!agentHarnessOn()) return { runs: [], error: "the workspace agent is off in this app: not started" };
+    const unplanned = featureRefusal(await workspaceEntitlements(s.org_id), "schedules");
+    if (unplanned) return { runs: [], error: `not started: ${unplanned}` };
+    const standing = await accountStanding(s.org_id);
+    if (standing) return { runs: [], error: standing };
+    if ((s.last_runs ?? []).length) {
+      const busy = await asPlatform(async () => (await getDb()).query<{ id: string }>(
+        `/* tenant: this schedule's own workspace, the sessions it started last */ SELECT h.id FROM harness_sessions h JOIN runs r ON r.id = h.current_run_id AND r.org_id = h.org_id
+          WHERE h.org_id = $1 AND h.id = ANY ($2::text[]) AND r.status IN ('queued', 'running')`, [s.org_id, s.last_runs]));
+      if (busy.length) return { runs: [], error: "the session this schedule started last is still working" };
+    }
+    const actor = { kind: "key" as const, user: null, name: `Schedule ${s.label ?? s.name}`, role: null };
+    const scope = (s.scope ?? {}) as { start_agent?: { profile: string; first_message: string }; start_program?: { program: string; inputs?: Record<string, unknown> } };
+    if (s.job_kind === SCHEDULE_AGENT_KIND) {
+      if (!scope.start_agent) return { runs: [], error: "this schedule says no agent session to start" };
+      const H = await import("./harness-sessions.js");
+      const session = await H.startSession(s.org_id, actor, { message: scope.start_agent.first_message, profile: scope.start_agent.profile, title: s.label ?? s.name, mode: "task" });
+      return { runs: [session.id], error: null };
+    }
+    if (!scope.start_program) return { runs: [], error: "this schedule says no program to start" };
+    const { session } = await (await import("./program-start.js")).startProgram(s.org_id, actor, scope.start_program.program, { inputs: scope.start_program.inputs ?? {}, title: s.label ?? undefined });
+    return { runs: [session.id], error: null };
+  } catch (e) {
+    return { runs: [], error: (e instanceof PackError ? `not started: ${e.message}` : `could not start: ${(e as Error).message}`).slice(0, 1000) };
+  }
 }
 
 /**

@@ -16,6 +16,11 @@
  *                 case's expected answer and the candidate's output, and never runs as this runner
  *   after         the test's files and the current best's are hashed again: a change to either is reported as tampering
  *   the result    measurements only: the rule, the decision and any promotion are the API's (src/nested-runs.ts)
+ *   mold_v0-303   the candidate is the target's base with the candidate's files laid over it (the API merges them, so a
+ *                 change of one file runs whole), and the baseline is the current best or, with none yet, the target's
+ *                 current version. A built-in scorer (src/program-scorers.ts) is run here, as trusted code, in place of a
+ *                 scorer program; a built-in candidate (["builtin:file", path]) is that file of the candidate's tree, read
+ *                 by this runner, with no code of the candidate's running at all (a policy, a schema)
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -29,6 +34,7 @@ import { runIsolation } from "./run-harness.js";
 import { killUser, leaseRunUser, runUidRange, type RunUser } from "./run-users.js";
 import { unpackBundle } from "./workspace-bundle.js";
 import type { AcceptanceTest } from "./program-spec.js";
+import { builtinScore } from "./program-scorers.js";
 
 export interface EvaluationStart { evaluation: string; test: AcceptanceTest; metric: string; floors: string[]; has_candidate: boolean; has_champion: boolean }
 export interface CaseMeasurement { id: string; baseline: number | null; candidate: number | null; floors: Record<string, number | null> }
@@ -173,15 +179,24 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     const timeoutMs = start.test.timeout_seconds * 1000;
     const results: CaseMeasurement[] = [];
     const command = (argv: string[], u: RunUser | null) => (u ? netlessArgv(argv, u, !!opts.noNewPrivs) : argv);
+    const builtinFile = start.test.candidate_command[0] === "builtin:file" ? start.test.candidate_command[1]! : null;
     const runOne = async (dir: string, user: RunUser | null, name: string, c: EvalCase): Promise<{ output: string | null; why: string | null }> => {
+      // mold_v0-303: a built-in candidate is a file of its tree (protectTree left only plain files and folders), read here.
+      if (builtinFile) {
+        const f = path.resolve(dir, builtinFile);
+        if (!f.startsWith(dir + path.sep) || !existsSync(f) || !statSync(f).isFile() || statSync(f).size > MAX_OUTPUT) return { output: null, why: `it has no file ${builtinFile}` };
+        return { output: readFileSync(f, "utf8"), why: null };
+      }
       // It gets the input only: never the expected answer, the test's folder, the other's, or the runner's own user.
       const work = freshWork(name, user);
       const r = await runProgram(command(start.test.candidate_command, user), { cwd: dir, input: JSON.stringify({ id: c.id, input: c.input }), timeoutMs, env: { ...clean, HOME: work, TMPDIR: work, EVAL: "1" } });
       if (user) killUser({ uid: user.uid, gid: user.gid });
       return r.ok ? { output: r.stdout, why: null } : { output: null, why: r.why };
     };
+    const builtinScorer = start.test.scorer_command[0]?.startsWith("builtin:") ? start.test.scorer_command[0] : null;
     const score = async (c: EvalCase, output: string | null): Promise<Record<string, number>> => {
       if (output === null) return {};
+      if (builtinScorer) return builtinScore(builtinScorer, c, output);
       const work = freshWork("scorer", scorerUser);
       const s = await runProgram(command(start.test.scorer_command, scorerUser), { cwd: testDir, input: JSON.stringify({ id: c.id, input: c.input, expected: c.expected, output }), timeoutMs, env: { ...clean, HOME: scorerHome, TMPDIR: work } });
       if (scorerUser) killUser({ uid: scorerUser.uid, gid: scorerUser.gid });

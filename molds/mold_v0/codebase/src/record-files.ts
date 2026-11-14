@@ -22,8 +22,13 @@
  *              record (if it exists) does not hold. Each is a `create` or `delete` of target `file` in the data trail.
  *              At most RECORD_UPLOAD_MAX bytes a file: 25 MiB, or 4 MiB where the API runs on Vercel's functions,
  *              whose request bodies stop at 4.5 MB.
- *   never      in a list, an export, an MCP answer or a log line: those carry the reference (the console's lists the
- *              name and count). Bytes are read one file at a time, here.
+ *   never      in a list, an export, an MCP list or get, or a log line: those carry the reference (the console's lists
+ *              the name and count). Bytes are read one file at a time, here.
+ *   agents     (mold_v0-303) <prefix>_read_<area>_files (src/mcp-catalog.ts) lists a record's files and documents, or
+ *              hands one to the agent (agentRecordFiles): the same permissions, flag and trail as the console's preview,
+ *              text and sanitised HTML as text, images and PDFs as MCP image and resource blobs (at most 2 MiB), any
+ *              other type refused. Shared (platform-scope) areas keep files too (mold_v0-271): staff's, unsealed, bound by
+ *              place and sha256, read by every workspace that reads the area, so the same tool reads them.
  *   who        the area's read permission (src/record-areas.ts getFor, as the record itself), the record must exist for
  *              the caller; a withheld get answers 404 (src/record-routes.ts). Bytes are served only at a signed,
  *              short-lived link (10 minutes) bound to the person and the file, on the console's own origin, with the
@@ -417,6 +422,15 @@ const disposition = (kind: "inline" | "attachment", name: string) => {
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${ext}`;
 };
 
+/** One slot's bytes, name and type: a stored file opened for its record, or a document's kept copy (fetched when due). */
+async function slotBytes(area: RecordArea, orgId: number | null, recordKey: string, slot: FileSlot): Promise<{ data: Buffer; name: string; type: string }> {
+  if (slot.ref) return { data: await openRecordFile(area.scope === "platform" ? null : orgId, area, recordKey, slot.ref), name: slot.ref.name, type: slot.ref.content_type };
+  const docOrg = area.scope === "platform" ? null : orgId;
+  const m = await documentMeta(docOrg, area, slot.url!);
+  if (m.error) throw new PackError(m.error, 404);
+  return { data: await openDocument(docOrg, slot.url!, m), name: docName(m.final_url ?? slot.url!), type: m.content_type! };
+}
+
 /** One file's bytes: a preview (inline, by its kind) or a download, at a signed link, for the caller's session. */
 export async function serveFile(door: FileDoor, req: Request, res: Response): Promise<void> {
   const areaName = String(req.params.area), key = String(req.params.key), fieldName = String(req.params.field), n = Number(req.params.n);
@@ -426,17 +440,7 @@ export async function serveFile(door: FileDoor, req: Request, res: Response): Pr
   const slot = slotsOf(area, record.data).find((s) => s.field.name === fieldName && s.n === n);
   if (!slot) throw new PackError("Not found", 404);
   const mode = req.query.mode === "download" ? "download" : "inline";
-  let data: Buffer, name: string, type: string;
-  if (slot.ref) {
-    data = await openRecordFile(area.scope === "platform" ? null : orgId, area, record.key, slot.ref);
-    name = slot.ref.name; type = slot.ref.content_type;
-  } else {
-    const docOrg = area.scope === "platform" ? null : orgId;
-    const m = await documentMeta(docOrg, area, slot.url!);
-    if (m.error) throw new PackError(m.error, 404);
-    data = await openDocument(docOrg, slot.url!, m);
-    name = docName(m.final_url ?? slot.url!); type = m.content_type!;
-  }
+  const { data, name, type } = await slotBytes(area, orgId, record.key, slot);
   // The data trail (mold_v0-197): which record's file was previewed (read) or downloaded (export); a shared area's
   // document is nobody's workspace data.
   if (orgId !== null && area.scope === "workspace") auditData(orgId, { action: mode === "download" ? "export" : "read", target: "file", pack: area.pack, area: area.name, key: `${record.key}:${fieldName}/${n}` });
@@ -478,3 +482,82 @@ export function mountFileRoutes(r: Router, door: FileDoor, guard: (op: "get") =>
 
 /** The area as a door may read it: any declared area for a workspace's people, shared areas only for staff. */
 export const anyArea = (name: string) => areaOrThrow(name);
+
+// ---------- for agents (mold_v0-303, M11: src/mcp-catalog.ts <prefix>_read_<area>_files) ----------
+
+/** The most bytes of a PDF or an image an agent is handed in one answer (base64 grows it by a third; mcp.max_response_bytes caps the answer). */
+export const AGENT_BINARY_MAX = 2 * 1024 * 1024;
+/** What an agent can be handed of a file, by its preview kind: text (text, HTML as sanitised markup), an image, a PDF document. */
+export type AgentReadable = "text" | "html" | "image" | "pdf";
+export interface AgentFileEntry {
+  id: string; field: string; label: string; n: number; source: "file" | "document"; name: string; size: number | null; content_type: string | null;
+  /** What reading it answers (null: this type is download only, in the console). */
+  readable: AgentReadable | null;
+  url?: string; fetched_at?: string; error?: string;
+}
+/** An MCP tool answer (the SDK's CallToolResult, kept structural so this module needs no MCP import). */
+export interface AgentFileAnswer {
+  content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+    | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } })[];
+  structuredContent: Record<string, unknown>;
+}
+
+/**
+ * A record's files and previewed documents as an agent reads them (mold_v0-303): the same permissions as the console's
+ * cards (the document_preview flag on, the vault unlocked, the record readable by the caller under its area's read roles
+ * in the caller's own workspace; a shared area's for every workspace that reads it), and the same trail (a `read` of
+ * target `file` for a workspace area's file). `file` absent: the list (no links: those are bound to a console session).
+ * `file` given ("<field>:<n>", an id the list answered): its contents, as the console's inline preview would show them:
+ * text (at most 1 MiB), HTML only sanitised (no script, no remote image), a PNG/JPEG/GIF/WebP image or a PDF whose bytes
+ * are what the type says, at most AGENT_BINARY_MAX; any other type is refused (download it in the console).
+ */
+export async function agentRecordFiles(orgId: number, actor: Actor, areaName: string, key: string, file?: string): Promise<{ area: string; key: string; files: AgentFileEntry[] } | AgentFileAnswer> {
+  if (!featureOn("document_preview")) throw new PackError("Document previews are off in this app", 404);
+  const area = areaOrThrow(areaName);
+  const record = await getFor(orgId, area.name, checkKey(key), actor);
+  if (!record) throw new PackError(`no ${area.name} record ${String(key).slice(0, 200)} in this workspace`, 404);
+  if (!vaultUnlocked()) throw new PackError("the key vault is locked: files cannot be opened now, try again later", 503);
+  const slots = slotsOf(area, record.data);
+  const readableOf = (t: string | null): AgentReadable | null => {
+    const p = t ? previewOf(t) : null;
+    return p === "pdf" || p === "image" || p === "text" || p === "html" ? p : null;
+  };
+  if (file === undefined || file === null || file === "") {
+    const files: AgentFileEntry[] = [];
+    for (const s of slots) {
+      const base = { id: `${s.field.name}:${s.n}`, field: s.field.name, label: s.field.label, n: s.n };
+      if (s.ref) { files.push({ ...base, source: "file", name: s.ref.name, size: s.ref.size, content_type: s.ref.content_type, readable: readableOf(s.ref.content_type) }); continue; }
+      const m = await documentMeta(area.scope === "platform" ? null : orgId, area, s.url!).catch((e: Error): DocMeta => {
+        console.error(`record files: a document of ${area.name} could not be kept (${e.name})`);
+        return { url: s.url!, fetched_at: new Date().toISOString(), error: "the document could not be kept here now: try again later", kind: "unreachable" };
+      });
+      files.push(m.error
+        ? { ...base, source: "document", url: s.url, name: docName(s.url!), size: null, content_type: null, readable: null, error: m.error, fetched_at: m.fetched_at }
+        : { ...base, source: "document", url: s.url, name: docName(m.final_url ?? s.url!), size: m.size ?? null, content_type: m.content_type!, readable: readableOf(m.content_type!), fetched_at: m.fetched_at });
+    }
+    return { area: area.name, key: record.key, files };
+  }
+  const m = /^([a-z][a-z0-9_]{0,63}):([1-9][0-9]{0,3})$/.exec(String(file));
+  const slot = m ? slots.find((s) => s.field.name === m[1] && s.n === Number(m[2])) : undefined;
+  if (!slot) throw new PackError(`no file ${String(file).slice(0, 80)} on this record: list them first (file absent)`, 404);
+  const { data, name, type } = await slotBytes(area, orgId, record.key, slot);
+  if (area.scope === "workspace") auditData(orgId, { action: "read", target: "file", pack: area.pack, area: area.name, key: `${record.key}:${slot.field.name}/${slot.n}` });
+  const readable = readableOf(type);
+  const meta = { area: area.name, key: record.key, file: `${slot.field.name}:${slot.n}`, name, content_type: type, size: data.length, readable };
+  if (readable === "text" || readable === "html") {
+    const truncated = data.length > TEXT_PREVIEW_MAX;
+    const raw = data.subarray(0, TEXT_PREVIEW_MAX).toString("utf8").replace(/\u0000/g, "");
+    const text = readable === "html" ? sanitiseHtml(raw, { remoteImages: "block" }).html : raw;
+    return { content: [{ type: "text", text: `${name} (${type}${readable === "html" ? ", sanitised" : ""}${truncated ? `, first ${TEXT_PREVIEW_MAX} bytes of ${data.length}` : ""}):\n\n${text}` }],
+      structuredContent: { ...meta, truncated } };
+  }
+  if (readable === "pdf" || readable === "image") {
+    if (sniff(data, "") !== type) throw new PackError("This file's contents do not match its type: download it in the console instead", 415);
+    if (data.length > AGENT_BINARY_MAX) throw new PackError(`${name} is ${data.length} bytes: an agent is handed at most ${AGENT_BINARY_MAX}; open it in the console`, 413);
+    const b64 = data.toString("base64");
+    return { content: readable === "image" ? [{ type: "image", data: b64, mimeType: type }]
+      : [{ type: "resource", resource: { uri: `record-file:///${area.name}/${encodeURIComponent(record.key)}/${slot.field.name}/${slot.n}`, mimeType: type, blob: b64 } }],
+      structuredContent: { ...meta, truncated: false } };
+  }
+  throw new PackError(`No reading for ${type}: download ${name} in the console instead`, 415);
+}

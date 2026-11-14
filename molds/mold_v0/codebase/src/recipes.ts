@@ -22,6 +22,11 @@
  * entries of the session's frozen `policy.uploads`, the profile's own file winning a path both name, and records which
  * versions it used in `policy.recipes`. Nothing in the wake, the worker route or the runner changes for the files.
  * The platform's own tables (src/rls.ts NO_ACCESS): no workspace reads them.
+ *
+ * mold_v0-303: a pack may declare recipes (pack.json `recipes`, src/agent-profile-spec.ts PackRecipeSchema: files inline
+ * as text, scripts with an executable flag). syncDeclaredRecipes brings them in as staff's are kept (their files stored as
+ * uploads): version 1, then the next version only when the pack's files or words changed; once staff change one (a
+ * version, its name, archive, an accepted proposal) it is theirs and the pack no longer touches it.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
@@ -30,7 +35,8 @@ import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
 import { agentHarnessOn } from "./agent-harness-config.js";
 import { readUploadBytes, storeUploadBytes, uploadLimitBytes } from "./agent-profiles.js";
-import { RECIPE_ID, UPLOAD_ID } from "./agent-profile-spec.js";
+import { RECIPE_ID, UPLOAD_ID, PackRecipeSchema, packRecipeText, type PackRecipe } from "./agent-profile-spec.js";
+import { packs } from "./packs.js";
 
 export { RECIPE_ID };
 export const RECIPE_PROPOSAL_ID = /^rpp_[0-9a-f]{24}$/;
@@ -48,6 +54,8 @@ export type RecipeStatus = "active" | "archived";
 export interface RecipeSummary {
   id: string; name: string; description: string; status: RecipeStatus; version: number; files: number; bytes: number;
   pending_proposals: number; updated_by: string; updated_at: string;
+  /** mold_v0-303: the app's (a pack declares it, and no staff change has replaced it): a pack update may add its next version. */
+  declared: boolean;
 }
 export interface RecipeVersionView { version: number; files: RecipeFile[]; note: string; source: "staff" | "agent"; proposal: string | null; by: string; at: string }
 export interface ProposalView {
@@ -140,8 +148,89 @@ async function addVersion(q: Queryable, r: RecipeRow, files: RecipeFile[], by: s
   return v;
 }
 
+// ---------------------------------------------------------------- recipes a pack declares (mold_v0-303)
+
+/** Who a declared recipe's rows and versions are written by: the app. A row someone else changed since is staff's. */
+export const DECLARED_BY = "the app";
+const DECLARED_NOTE = "declared by the app";
+/** The sha256 a declared recipe is brought in under: its words and its files' paths, text and executable bits. */
+export function declaredRecipeSha(r: PackRecipe): string {
+  const files = r.files.map((f) => [f.path, createHash("sha256").update(packRecipeText(f)).digest("hex"), f.executable === true]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  return createHash("sha256").update(JSON.stringify({ name: r.name, description: r.description ?? "", files })).digest("hex");
+}
+/** Every recipe the build's packs declare (pack.json `recipes`), each with its pack. */
+export function declaredRecipes(): (PackRecipe & { pack: string })[] {
+  return packs().flatMap((p) => ((p.definition as { recipes?: unknown[] }).recipes ?? []).map((x) => ({ ...PackRecipeSchema.parse(x), pack: p.id })));
+}
+const shaOfNote = (note: string) => /\(pack sha ([0-9a-f]{64})\)/.exec(note)?.[1] ?? null;
+let declaredSync: Promise<void> | null = null;
+/**
+ * Bring the packs' declared recipes in, once per process (idempotent; listing, reading and a session's pick wait for it):
+ * a new one becomes version 1, its files stored as uploads (the one storage layer); a declaration whose words or files
+ * changed adds the next version, unless staff have changed that recipe since (a version, its name, archived): theirs
+ * stands. Nothing is written while the declaration is the one already in.
+ */
+export function syncDeclaredRecipes(): Promise<void> {
+  if (!recipesOn()) return Promise.resolve();
+  declaredSync ??= (async () => {
+    for (const d of declaredRecipes()) {
+      const sha = declaredRecipeSha(d);
+      const note = `${DECLARED_NOTE} (pack sha ${sha})`;
+      const state = await read(async (q) => {
+        const [r] = await q.query<RecipeRow & { note: string | null; by: string | null }>(
+          `SELECT ${COLS.split(", ").map((c) => `r.${c}`).join(", ")}, v.note, v.created_by AS by FROM workspace_recipes r LEFT JOIN workspace_recipe_versions v ON v.recipe_id = r.id AND v.version = r.version WHERE r.id = $1`, [d.id]);
+        return r ?? null;
+      });
+      // Staff's since: a version or a change of theirs, or archived. The pack's declaration no longer replaces it.
+      if (state && (state.updated_by !== DECLARED_BY || state.created_by !== DECLARED_BY || state.status !== "active" || (state.version > 0 && state.by !== DECLARED_BY))) continue;
+      if (state && state.note && shaOfNote(state.note) === sha) continue;
+      const files: RecipeFile[] = [];
+      const before = state ? await read((q) => versionFiles(q, d.id, state.version)) : [];
+      for (const f of d.files) {
+        const data = Buffer.from(packRecipeText(f), "utf8");
+        const h = createHash("sha256").update(data).digest("hex");
+        const same = before.find((x) => x.path === f.path && x.sha256 === h);
+        const u = same ? { id: same.id, bytes: same.bytes, sha256: same.sha256 } : await storeUploadBytes(DECLARED_BY, data);
+        files.push({ id: u.id, path: f.path, bytes: u.bytes, sha256: u.sha256, executable: f.executable === true });
+      }
+      files.sort((a, b) => a.path.localeCompare(b.path));
+      const problems = fileProblems(files);
+      if (problems.length) { console.error(`recipes: the app's recipe ${d.id} is not brought in: ${problems.join("; ")}`); continue; }
+      await tx(async (q) => {
+        await q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`recipe:${d.id}`]);
+        const [r] = await q.query<RecipeRow>(`SELECT ${COLS} FROM workspace_recipes WHERE id = $1 FOR UPDATE`, [d.id]);
+        if (!r) {
+          const [made] = await q.query<RecipeRow>(
+            `INSERT INTO workspace_recipes (id, name, description, created_by, updated_by) VALUES ($1, $2, $3, $4, $4) ON CONFLICT (id) DO NOTHING RETURNING ${COLS}`,
+            [d.id, d.name, d.description ?? "", DECLARED_BY]);
+          if (made) await addVersion(q, made, files, DECLARED_BY, note, "staff", null);
+          return;
+        }
+        // Read again under the lock: another process brought it in, or staff changed it meanwhile.
+        if (r.updated_by !== DECLARED_BY || r.created_by !== DECLARED_BY || r.status !== "active") return;
+        const [v] = await q.query<{ note: string; created_by: string }>("SELECT note, created_by FROM workspace_recipe_versions WHERE recipe_id = $1 AND version = $2", [r.id, r.version]);
+        if (v && (v.created_by !== DECLARED_BY || shaOfNote(v.note) === sha)) return;
+        await q.query("UPDATE workspace_recipes SET name = $2, description = $3 WHERE id = $1", [r.id, d.name, d.description ?? ""]);
+        const cur = await versionFiles(q, r.id, r.version);
+        if (sameFiles(cur, files)) {
+          // Only its words changed: a version is its files, so the words are written and the note marks it brought in.
+          if (r.version > 0) await q.query("UPDATE workspace_recipe_versions SET note = $3 WHERE recipe_id = $1 AND version = $2", [r.id, r.version, note]);
+          else await addVersion(q, r, files, DECLARED_BY, note, "staff", null);
+          return;
+        }
+        await addVersion(q, r, files, DECLARED_BY, note, "staff", null);
+      });
+    }
+  })().catch((e) => { declaredSync = null; throw e; });
+  return declaredSync;
+}
+export function forgetDeclaredRecipesForTest() { declaredSync = null; }
+/** Whether a recipe is the app's (a pack declares it and no staff change replaced it), for the Recipes page. */
+export const isDeclaredRecipe = (r: { created_by: string; updated_by: string }) => r.created_by === DECLARED_BY && r.updated_by === DECLARED_BY;
+
 export async function listRecipes(): Promise<RecipeSummary[]> {
   needOn();
+  await syncDeclaredRecipes();
   return read(async (q) => {
     const rows = await q.query<RecipeRow & { files: RecipeFile[] | null; pending: number }>(
       `SELECT ${COLS.split(", ").map((c) => `r.${c}`).join(", ")}, v.files,
@@ -153,7 +242,7 @@ export async function listRecipes(): Promise<RecipeSummary[]> {
 }
 const summary = (r: RecipeRow, files: RecipeFile[], pending: number): RecipeSummary => ({
   id: r.id, name: r.name, description: r.description, status: r.status, version: r.version, files: files.length, bytes: files.reduce((t, f) => t + f.bytes, 0),
-  pending_proposals: pending, updated_by: r.updated_by, updated_at: iso(r.updated_at)!,
+  pending_proposals: pending, updated_by: r.updated_by, updated_at: iso(r.updated_at)!, declared: isDeclaredRecipe(r),
 });
 
 interface ProposalRow {
@@ -172,6 +261,7 @@ const proposalView = (p: ProposalRow): ProposalView => ({
 
 export async function readRecipe(id: string): Promise<RecipeDetail> {
   needOn();
+  await syncDeclaredRecipes();
   return read(async (q) => {
     const r = await rowOf(q, id);
     const versions = await q.query<{ version: number; files: RecipeFile[]; note: string; source: "staff" | "agent"; proposal_id: string | null; created_by: string; created_at: Date }>(
@@ -265,6 +355,7 @@ export async function recipeFile(id: string, version: number, n: number): Promis
 /** The problem with a profile's pick (null: none): an unknown or archived recipe, a version it does not have, one with no files. */
 export async function pickProblem(pick: { id: string; version?: number | null }): Promise<string | null> {
   if (!recipesOn()) return "recipe: workspace recipes are not on in this app";
+  await syncDeclaredRecipes();
   const [r] = await read((q) => q.query<{ name: string; status: RecipeStatus; version: number }>("SELECT name, status, version FROM workspace_recipes WHERE id = $1", [pick.id]));
   if (!r) return `recipe: no recipe is called ${pick.id}`;
   if (r.status === "archived") return `recipe: ${r.name} is archived`;
