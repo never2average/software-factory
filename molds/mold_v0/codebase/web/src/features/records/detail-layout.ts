@@ -62,6 +62,8 @@ export interface DetailActionSpec {
   target?: { via: string };
   /** mold_v0-261: a start_agent action's agent profile and first message (a template filled from the record). */
   profile?: string; first_message?: string;
+  /** mold_v0-304: a start_program action's program (its inputs in `input`, mapped from the record). */
+  program?: string;
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
