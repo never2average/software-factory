@@ -146,6 +146,21 @@ try {
     await assert.rejects(mergedPage(A.orgId, { kind: "area", area: "req_status" }, {}), /Not found/, "a one-area tab is not merged");
     console.log("✓ a matched area listed before a later area adds its fields to that area's rows, in the tab's order");
   }
+  // ---------- 6. mold_v0-305: an area's own filter ----------
+  {
+    const { TabSchema } = await import("../src/pack-api.js");
+    const t = { kind: "area" as const, areas: [{ area: "req_own", source: "Our own" }, { area: "req_library", source: "Shared", filter: { topic: "access" } }] };
+    assert.ok(TabSchema.safeParse({ id: "mixed", ...t, label: "Mixed" }).success, "an area of a merged tab takes a filter");
+    const { rows } = await all(A, 7, t);
+    const lib = rows.filter((r) => r.key.startsWith("lib:"));
+    assert.equal(lib.length, 60, "only the shared entries the filter keeps (topic access), whatever the page size");
+    assert.ok(lib.every((r) => r.data.topic === "access"));
+    assert.deepEqual(rows.filter((r) => r.key.startsWith("own:")).map((r) => [r.key, r.areas]), [["own:a1", ["req_own"]], ["own:a2", ["req_own"]], ["own:a3", ["req_own"]]],
+      "the workspace's own rows; the shared entry keyed own:a3 (no topic) adds nothing");
+    const first = { kind: "area" as const, areas: [{ area: "req_own", filter: { topic: "vendor" } }, { area: "req_library", rows: "matched" as const }] };
+    assert.deepEqual((await all(A, 50, first)).rows.map((r) => [r.key, r.areas]), [["own:a1", ["req_own"]], ["own:a3", ["req_own", "req_library"]]], "the first area's own filter");
+    console.log("✓ mold_v0-305: an area of a merged tab narrowed by its own filter: only its matching rows join (or add their fields)");
+  }
   console.log("MERGED TABS TEST PASS");
 } finally {
   cleanup();

@@ -52,6 +52,8 @@ export interface FormField {
   /** mold_v0-260 (flag record_rules): the records a reference may name (its picker lists only those), and in words. */
   where?: unknown;
   where_words?: string;
+  /** mold_v0-305: an encrypted field: a hidden input, never shown filled; left empty on an edit, the saved value stays. */
+  secret?: true;
 }
 interface StartKind { name: string; label: string; description: string | null; args: FormField[]; targets: { name: string; label: string }[] | null; environments: string[] | null }
 type ActionSpec =
@@ -392,6 +394,11 @@ export function FieldsForm({ fields, values, set, idPrefix }: {
             </NativeSelect>
           ) : (f.type === 'reference' || (f.type === 'link' && f.to)) && f.to && featureOn('record_pages') ? (
             <RecordPicker id={id} f={f} value={v} set={(x) => set(f.name, x)} />
+          ) : f.secret ? (
+            // mold_v0-305: never shown again: an edit's input starts empty (the saved value stays unless a new one is typed).
+            <Input id={id} type='password' autoComplete='new-password' spellCheck={false} value={v === '[encrypted]' ? '' : String(v ?? '')}
+              onChange={(e) => set(f.name, e.target.value === '' && v === '[encrypted]' ? v : e.target.value)} required={f.required && v !== '[encrypted]'}
+              maxLength={f.max_length ?? undefined} placeholder={v === '[encrypted]' ? 'Saved and hidden: type a new one to replace it' : undefined} />
           ) : f.type === 'json' || (f.type === 'text' && (f.max_length === null || f.max_length > 200)) ? (
             <Textarea id={id} rows={f.type === 'json' ? 5 : 3} className={f.type === 'json' ? 'font-mono text-xs' : undefined} value={String(v ?? '')}
               maxLength={f.max_length ?? undefined} onChange={(e) => set(f.name, e.target.value)} required={f.required} placeholder={f.type === 'json' ? '{ }' : undefined} />

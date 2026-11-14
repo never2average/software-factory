@@ -74,8 +74,10 @@ try {
       // mold_v0-291
       "nested_runs",
       // mold_v0-272
-      "record_resources"]);
-    assert.equal(reg.flags.length, 28);
+      "record_resources",
+      // mold_v0-305
+      "workspace_storage"]);
+    assert.equal(reg.flags.length, 29);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
@@ -95,7 +97,8 @@ try {
     assert.equal(F.featureSetting("company_email", {}), true);
     assert.equal(F.featureSpec("workspace_recipes").quiet_off, true, "workspace_recipes: quiet while off (asked for only by the staff Records group)");
     assert.equal(F.featureSpec("record_resources").quiet_off, true, "record_resources: quiet while off (asked for only by a shared area's repository or database field)");
-    console.log("✓ the registry: 28 flags, each documented with a default; profile.features over the legacy key over the default");
+    assert.equal(F.featureSpec("workspace_storage").quiet_off, true, "workspace_storage: quiet while off (asked for only by a pack's object_storage)");
+    console.log("✓ the registry: 29 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------

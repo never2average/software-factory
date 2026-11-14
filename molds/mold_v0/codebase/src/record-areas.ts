@@ -876,6 +876,8 @@ const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } 
  * the writer's own workspace. A field that is empty leaves its input out (the check's own rules then decide).
  */
 export async function onSaveChecks(orgId: number, area: RecordArea, key: string, title: string | null, data: Record<string, unknown>, op: "create" | "update", actor: Actor) {
+  // mold_v0-305 (flag workspace_storage): a workspace's own object storage names a bucket and an endpoint a service takes.
+  await (await import("./workspace-storage.js")).checkStorageRecord(area.name, data);
   const rules = (area as { on_save?: { check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] }[] }).on_save;
   if (!rules?.length || !featureSetting("record_rules")) return;
   const { answerCheck } = await import("./checks.js");

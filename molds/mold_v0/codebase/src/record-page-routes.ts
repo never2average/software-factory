@@ -13,7 +13,9 @@
  *        start_agent (mold_v0-261, flag agent_harness: a workspace agent session with the action's profile, its first
  *        message filled from the record here, never from the browser; the session links back to the record),
  *        start_program (mold_v0-303, flag nested_runs: the action's program, its inputs filled from the record here;
- *        src/program-start.ts)
+ *        src/program-start.ts),
+ *        test_storage (mold_v0-305, flag workspace_storage: the declared object_storage area's record's bucket written,
+ *        read and deleted once with its own settings; src/workspace-storage.ts testStorageRecord)
  *
  * Who may: an action is offered (and taken) only by a role the action's `roles` and the area's own permission allow (the
  * kind's start tool for a run, the area's move and the transition's roles for a move, its update for an edit, its delete
@@ -181,7 +183,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         break;
       }
       case "edit": {
-        if (!writes || !may(area, "update", actor) || areaOpWithheld(area.name, "update") || area.fields.some((f) => f.encrypted)) continue;
+        // mold_v0-305: an area with encrypted fields is edited too (each a secret input left empty: its value is kept).
+        if (!writes || !may(area, "update", actor) || areaOpWithheld(area.name, "update")) continue;
         const fields = area.fields.filter((f) => f.type !== "file" && f.name !== area.lifecycle?.field);
         out.push({ ...base, label: x.label ?? "Edit", disabled: unavailable, ...(opts.withForms === false ? {} : { fields: fields.map(formField) }) });
         break;
@@ -247,6 +250,14 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         out.push({ ...base, label: x.label ?? `Run ${prog.name}`,
           disabled: unavailable ?? ("refused" in how ? how.refused : bad.length ? `This record does not give the program what it needs: ${bad.slice(0, 2).join("; ")}` : null),
           program: { id: prog.id, name: prog.name, version: prog.version, via: "refused" in how ? "session" : how.via, inputs } });
+        break;
+      }
+      case "test_storage": {
+        // mold_v0-305 (flag workspace_storage): the declared storage area's own record, for a role that may update it.
+        if (!writes || opts.org === undefined || !may(area, "update", actor) || areaOpWithheld(area.name, "update")) continue;
+        const W = await import("./workspace-storage.js");
+        if (!W.isStorageArea(area.name)) continue;
+        out.push({ ...base, label: x.label ?? "Test", disabled: unavailable });
         break;
       }
       case "create_record": {
@@ -578,8 +589,10 @@ export function recordPageRouter(): Router {
         if (!v.data || typeof v.data !== "object" || Array.isArray(v.data)) throw new PackError("give {title?, data}", 400);
         // What the form leaves out (the lifecycle's field, file fields) stays as it is.
         const kept = Object.fromEntries(Object.entries(record.data).filter(([k]) => !a.fields?.some((f) => f.name === k)));
+        // mold_v0-305: an encrypted field sent empty (its secret input left blank) keeps its stored value: it is left out.
+        const sent = Object.fromEntries(Object.entries(v.data as Record<string, unknown>).filter(([k, x]) => !(area.fields.some((f) => f.name === k && f.encrypted) && (x === "" || x === null || x === undefined))));
         // mold_v0-259 (flag teams): who sees it, when the form changed it (the record store checks who may).
-        return dataApi.update(callerOf(res), area.name, record.key, { title: typeof v.title === "string" ? v.title : record.title, data: { ...kept, ...(v.data as Record<string, unknown>) },
+        return dataApi.update(callerOf(res), area.name, record.key, { title: typeof v.title === "string" ? v.title : record.title, data: { ...kept, ...sent },
           ...(v.visibility !== undefined ? { visibility: v.visibility } : {}) });
       }
       case "delete": {
@@ -603,6 +616,12 @@ export function recordPageRouter(): Router {
         const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
         return (await import("./program-start.js")).startProgram(s.org, H.actorOf(s), a.program!.id, { inputs: a.program!.inputs, title: `${a.program!.name}: ${record.title || record.key}` }, org,
           { record: { area: area.name, key: record.key } });
+      }
+      case "test_storage": {
+        // mold_v0-305: never a key in the answer; the bucket's own words, cleaned (src/storage.ts bucketErrorInWords).
+        if (a.disabled) throw new PackError(a.disabled, 409);
+        const W = await import("./workspace-storage.js");
+        return W.testStorageRecord(session(res).org, record.key, actor);
       }
       default:
         throw new PackError(`${a.label} happens in the browser: nothing to send`, 400);

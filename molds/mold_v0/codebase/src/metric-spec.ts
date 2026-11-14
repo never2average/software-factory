@@ -16,9 +16,9 @@ export type SpecTab = Tab & { pack: string };
  * The areas an area tab shows (mold_v0-135): its `area`, or each of its `areas` (a merged tab), first the tab's own.
  * Every other kind shows none.
  */
-export interface MergedArea { area: string; rows: "all" | "matched"; source?: string }
+export interface MergedArea { area: string; rows: "all" | "matched"; source?: string; /** mold_v0-305: the area's own narrowing. */ filter?: Record<string, unknown> }
 export const tabAreas = (t: Pick<Tab, "kind" | "area" | "areas">): MergedArea[] =>
-  t.kind !== "area" ? [] : t.areas ? t.areas.map((a) => ({ area: a.area, rows: a.rows ?? "all", ...(a.source !== undefined ? { source: a.source } : {}) })) : t.area ? [{ area: t.area, rows: "all" as const }] : [];
+  t.kind !== "area" ? [] : t.areas ? t.areas.map((a) => ({ area: a.area, rows: a.rows ?? "all", ...(a.source !== undefined ? { source: a.source } : {}), ...(a.filter ? { filter: a.filter } : {}) })) : t.area ? [{ area: t.area, rows: "all" as const }] : [];
 /** The area a tab is named and emptied by: its own (the first of a merged tab's areas). */
 export const tabArea = (t: Pick<Tab, "kind" | "area" | "areas">): string | undefined => tabAreas(t)[0]?.area;
 

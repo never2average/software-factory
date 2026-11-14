@@ -75,6 +75,8 @@ export function featureRequested(id: FeatureId): boolean {
     case "recipes": return adminRecordsShown().includes("recipes");
     // mold_v0-282: a shared area declares a repository or a database field (src/record-resources.ts).
     case "resources": return defs().some((d) => areasOf(d).some((a) => a.scope === "platform" && (a.fields ?? []).some((f) => f.type === "repository" || f.type === "database")));
+    // mold_v0-305: a pack declares object_storage (the workspace area its storage connections are kept in).
+    case "workspace_storage": return defs().some((d) => !!(d as { objectStorage?: unknown }).objectStorage);
     case "record_inputs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];
       return defs().some((d) => ask(d));

@@ -50,7 +50,7 @@ export interface DetailRelated {
 }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {

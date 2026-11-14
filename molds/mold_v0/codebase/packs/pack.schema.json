@@ -3813,7 +3813,8 @@
                         "create_record",
                         "start_agent",
                         "open_url",
-                        "start_program"
+                        "start_program",
+                        "test_storage"
                       ]
                     },
                     "place": {
@@ -7269,6 +7270,14 @@
                   "minLength": 1,
                   "maxLength": 40
                 },
+                "filter": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+                  },
+                  "additionalProperties": {}
+                },
                 "$comment": {
                   "type": "string",
                   "maxLength": 2000
@@ -9209,6 +9218,86 @@
         ],
         "additionalProperties": false
       }
+    },
+    "object_storage": {
+      "type": "object",
+      "properties": {
+        "area": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+        },
+        "where": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "access_key_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "secret_access_key": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "use": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "status": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "tested": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
+          "required": [
+            "bucket",
+            "endpoint",
+            "access_key_id",
+            "secret_access_key",
+            "use"
+          ],
+          "additionalProperties": false
+        },
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "area",
+        "fields"
+      ],
+      "additionalProperties": false
     },
     "team_roles": {
       "minItems": 2,

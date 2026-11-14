@@ -78,7 +78,8 @@ export async function createUpload(run: RunRef, purpose: "workspace" | "completi
   if (typeof bytes !== "number" || !Number.isInteger(bytes) || bytes < 1) throw new PackError("bytes: the content's size, a whole number of bytes", 400);
   if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) throw new PackError("sha256: the content's sha256, 64 lowercase hex characters", 400);
   if (bytes > limitOf(purpose).bytes) throw tooLarge(purpose, bytes);
-  const os = await objectStore();
+  // mold_v0-305: the store the run's workspace keys go to (its own bucket, when it has one).
+  const os = await objectStore(keys.orgPrefix("workspaces", run.org_id));
   if (!os.links) return { upload: null, reason: "this deployment's object store is a local directory: send the content to the API" };
   return asPlatform(async () => {
     const db = await getDb();
@@ -124,7 +125,7 @@ export interface DownloadLink { id: string; url: string; key: string; bytes: num
 
 /** A download of `body` for `run`'s attempt (a checkout larger than the API answers), or null when the store gives no links. */
 export async function createDownload(run: RunRef, purpose: "checkout", body: Buffer): Promise<DownloadLink | null> {
-  const os = await objectStore();
+  const os = await objectStore(keys.orgPrefix("workspaces", run.org_id));
   if (!os.links) return null;
   return asPlatform(async () => {
     const db = await getDb();

@@ -173,6 +173,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "record_areas", "job_kinds", "credentials", "oauth_providers", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts", "programs",
   // workspace recipes the app declares, inline (mold_v0-303, src/agent-profile-spec.ts PackRecipeSchema; src/recipes.ts brings them in)
   "recipes",
+  // a workspace's own object storage: the area its owners keep their bucket in (mold_v0-305, src/pack-api.ts ObjectStorageDeclSchema)
+  "object_storage",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
@@ -1460,6 +1462,10 @@ if (loaded.length === entries.length) {
 // a recipe's id is one pack's; a test's recipe is one the build declares (its cases among its files); a start_program
 // action or schedule names a declared program people may start (src/program-start.ts personStart says the same).
 if (loaded.length === entries.length) {
+  // mold_v0-305: one pack of the build says where a workspace keeps its own object storage (each pack's declaration is
+  // checked against its own areas by src/pack-api.ts validatePack).
+  const storageDecls = loaded.filter((p) => p.definition.objectStorage);
+  if (storageDecls.length > 1) views.problems.push("packs " + storageDecls.map((p) => p.id).join(" and ") + " both declare object_storage: a workspace's storage is kept in one area (declare it once)");
   const recipeOwner = new Map();
   for (const p of loaded) for (const r of p.definition.recipes ?? []) {
     if (recipeOwner.has(r.id)) views.problems.push("pack " + p.id + ": recipe " + r.id + " is already pack " + recipeOwner.get(r.id).pack + "'s");
@@ -1602,6 +1608,8 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     recipes: () => adminRecordsMembers(declaredAdminRecords().entries).includes("recipes"),
     // mold_v0-282: a shared area declares a repository or a database field (src/features.ts and lib/features.py say the same).
     resources: () => areas.some((a) => a.scope === "platform" && (a.fields ?? []).some((x) => x.type === "repository" || x.type === "database")),
+    // mold_v0-305: a pack declares object_storage (src/features.ts and lib/features.py say the same).
+    workspace_storage: () => jsons.some((j) => j.object_storage !== undefined),
     credentials: () => creds.length > 0,
     email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
     clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),

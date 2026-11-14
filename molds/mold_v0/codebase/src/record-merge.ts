@@ -41,12 +41,12 @@ const cursor = (stage: number, key: string | null) => `~m${Buffer.from(JSON.stri
 
 const empty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 
-/** The records of `area` (as `orgId` and `actor` see it) among `keys`, by key. */
-async function lookup(orgId: number, area: string, keys: string[], actor: Actor): Promise<Map<string, RecordRow>> {
+/** The records of `area` (as `orgId` and `actor` see it) among `keys`, by key (mold_v0-305: only those its filter keeps). */
+async function lookup(orgId: number, area: string, keys: string[], actor: Actor, filter?: Record<string, unknown>): Promise<Map<string, RecordRow>> {
   const found = new Map<string, RecordRow>();
   for (let i = 0; i < keys.length; i += LOOKUP) {
     const chunk = keys.slice(i, i + LOOKUP);
-    const page = await listFor(orgId, area, { limit: chunk.length, filter: { key: { in: chunk } } }, actor);
+    const page = await listFor(orgId, area, { limit: chunk.length, filter: { ...(filter ?? {}), key: { in: chunk } } } as never, actor);
     for (const r of page.records) found.set(r.key, r);
   }
   return found;
@@ -80,15 +80,15 @@ export async function mergedPage(orgId: number, tab: Pick<Tab, "kind" | "area" |
   let reads = 0;
   while (stage < stages.length && rows.length < limit) {
     const s = stages[stage]!;
-    const page = await listFor(orgId, s.area, { limit: limit - rows.length, ...(after ? { after } : {}) }, actor);
+    const page = await listFor(orgId, s.area, { limit: limit - rows.length, ...(after ? { after } : {}), ...(s.filter ? { filter: s.filter } : {}) } as never, actor);
     reads++;
     const keys = page.records.map((r) => r.key);
     // A key an earlier area holds was listed with that area's rows.
-    const earlier = await Promise.all(list.slice(0, s.i).filter((a) => a.rows === "all").map((a) => lookup(orgId, a.area, keys, actor)));
+    const earlier = await Promise.all(list.slice(0, s.i).filter((a) => a.rows === "all").map((a) => lookup(orgId, a.area, keys, actor, a.filter)));
     const fresh = keys.filter((k) => !earlier.some((m) => m.has(k)));
     // The rest add their fields: every later area, and the matched areas before this one.
     const others = new Map(await Promise.all(list.filter((a, i) => i > s.i || (i < s.i && a.rows === "matched"))
-      .map(async (a) => [a.area, await lookup(orgId, a.area, fresh, actor)] as const)));
+      .map(async (a) => [a.area, await lookup(orgId, a.area, fresh, actor, a.filter)] as const)));
     const own = new Map(page.records.map((r) => [r.key, r]));
     for (const k of fresh) {
       const row = mergeRow(k, list.map((a, i) => ({ area: a.area, record: i === s.i ? own.get(k) : others.get(a.area)?.get(k) })));
