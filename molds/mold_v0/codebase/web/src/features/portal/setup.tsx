@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { Allowed } from './role';
@@ -180,7 +181,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
       const id = ++run.current;
       const until = Date.now() + 180_000;
       let misses = 0;
-      setLive({ kind: 'wait', text: `Waiting for your client… Open a new chat and type: "Get me started with ${profile.name}."` });
+      setLive({ kind: 'wait', text: `Waiting for your agent… Open a new chat and type: "Get me started with ${profile.name}."` });
       timer.current = setInterval(() => {
         // Only the check itself counts as a miss: an error after it (onConnected) is not a failed check.
         appApi<Setup>('GET', `/setup?since=${encodeURIComponent(since)}`).then((r) => {
@@ -192,7 +193,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
             setTimeout(onConnected, 0);
           } else if (Date.now() > until) {
             stop();
-            setLive({ kind: 'bad', text: `Nothing arrived yet. Check the URL, that you signed in when your client asked, and that the ${profile.name} tools are switched on; then try again.` });
+            setLive({ kind: 'bad', text: `Nothing arrived yet. Check the URL, that you signed in when your agent asked, and that the ${profile.name} tools are switched on; then try again.` });
           }
         }, () => {
           if (run.current !== id) return;
@@ -212,7 +213,8 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
   const masked = maskConnectionUrl(url);
   return (
       <ol className='flex flex-col gap-4'>
-          <NumberedStep n={1} title='Pick your client'>
+          {/* mold_v0-300: the connected tool is an "agent" (operator rule 2026-11-13). */}
+          <NumberedStep n={1} title='Pick your agent'>
             <NativeSelect id='client-pick' aria-label='Your agent' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
               {groups.map(([g, label]) => (
                 <NativeSelectOptGroup key={g} label={label}>
@@ -224,7 +226,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
           <NumberedStep n={2} title={c ? `Add ${profile.name} to ${c.client}` : `Add ${profile.name}`}>
             <div className='flex flex-col gap-2'>
               {/* mold_v0-298: say what the URL is for, in plain words. */}
-              <p className='text-muted-foreground text-xs'>This web address (URL) is how your agent reaches {profile.name}. Add it to your client once and it can use {profile.name} for you in any chat.</p>
+              <p className='text-muted-foreground text-xs'>This web address (URL) is how your agent reaches {profile.name}. Add it to your agent once and it can use {profile.name} for you in any chat.</p>
               <div className='bg-background flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5'>
                 <code className='min-w-0 flex-1 truncate font-mono text-xs select-all' title={show ? url : undefined}>{show ? url : masked}</code>
                 {s.connect.secret && (
@@ -239,7 +241,7 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
           </NumberedStep>
           <NumberedStep n={3} title='Check it works'>
             <Button className='w-full' variant={connected ? 'outline' : 'default'} onClick={test} disabled={live?.kind === 'wait'}>
-              {live?.kind === 'wait' ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} {live?.kind === 'wait' ? 'Waiting for your client…' : 'Test my connection'}
+              {live?.kind === 'wait' ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} {live?.kind === 'wait' ? 'Waiting for your agent…' : 'Test my connection'}
             </Button>
             {live && (
               <Alert variant={live.kind === 'bad' ? 'destructive' : 'default'} role='status' aria-live='polite'
@@ -310,7 +312,7 @@ interface JourneyItem { id: string; name: string; goal: string; done: number; to
  * box) picks; Escape closes and returns focus to the heading.
  */
 function JourneyMenu({ setup, journeys, selected, onSelect }: { setup: { done: number; total: number }; journeys: Journey[]; selected: string; onSelect: (id: string) => void }) {
-  const items: JourneyItem[] = [{ id: 'setup', name: 'Get set up', goal: 'Connect your client and try the workflow once', done: setup.done, total: setup.total },
+  const items: JourneyItem[] = [{ id: 'setup', name: 'Get set up', goal: 'Connect your agent and try the workflow once', done: setup.done, total: setup.total },
     ...journeys.map((j) => ({ id: j.id, name: j.name, goal: j.outcome, done: j.done, total: j.total }))];
   const current = items.find((j) => j.id === selected) ?? items[0]!;
   const [open, setOpen] = useState(false);
@@ -444,7 +446,8 @@ function StepHelp({ help, done, prompt }: { help: string; done: boolean; prompt:
   );
 }
 
-interface TimelineItem { id: string; label: string; done: boolean; body: React.ReactNode; /** The item's address on the page (#anchor): a pack's onboarding step, which a tab's empty state links to (mold_v0-107). */ anchor?: string }
+interface TimelineItem { id: string; label: string; done: boolean; body: React.ReactNode; /** The item's address on the page (#anchor): a pack's onboarding step, which a tab's empty state links to (mold_v0-107). */ anchor?: string;
+  /** mold_v0-300: a step shown but not counted: tagged Optional beside its label. */ optional?: boolean }
 
 /**
  * Get set up and every journey: progress, then a vertical timeline. The earliest open item is highlighted (ring on its
@@ -474,6 +477,8 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
               <div className={cn('min-w-0 flex-1 pt-1', cur && 'bg-primary/5 -mt-1 rounded-lg px-4 py-3')}>
                 <div className='flex flex-wrap items-center gap-2'>
                   <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span>
+                  {/* mold_v0-300: an optional step says so (it is not counted in the progress above). */}
+                  {x.optional && <Badge variant='outline' className='text-muted-foreground font-normal' data-optional-step=''>Optional</Badge>}
                 </div>
                 {x.body && <div id={`${uid}-step-${i}`}>{x.body}</div>}
               </div>
@@ -517,7 +522,7 @@ function Checklist({ steps, title, anchored }: {
     if (!anchored || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: 'start' });
   }, [anchored]);
-  const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
+  const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done, optional: x.optional,
     body: x.pack && !x.help && !x.prompt ? null : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
   const { done, total } = stepProgress(steps);
   // No caption under the steps (mold_v0-216): they tick themselves, and Journeys is in the selector above.

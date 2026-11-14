@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { cellText, codeFile, codeText, columnWords, numericColumn, tableColumns, tableRows, tokensOf, TOKEN_CLASS, type CodeLanguage } from './code-text';
+import { cellText, codeFile, codeText, columnWords, itemCount, itemLines, numericColumn, tableColumns, tableRows, tokensOf, TOKEN_CLASS, type CodeLanguage } from './code-text';
 import { downloadText } from './log-viewer';
 
 const LANGUAGE_WORDS: Record<CodeLanguage, string> = { json: 'JSON', yaml: 'YAML', text: 'Text' };
@@ -55,13 +55,34 @@ export function CodeView({ value, language, name, label, copy }: {
   );
 }
 
+/**
+ * A table cell (mold_v0-300): a list of objects as a count ("2 steps") that opens to one line per item (its name, title,
+ * label or id), never a run-on line of pairs; any other value in words.
+ */
+function Cell({ v, column }: { v: unknown; column: string }) {
+  const items = itemLines(v);
+  if (!items) return <>{cellText(v)}</>;
+  return (
+    <details className='group min-w-0' data-cell-items={items.length}>
+      <summary className='text-primary cursor-pointer list-none whitespace-nowrap underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden'>
+        <Icons.chevronRight aria-hidden className='mr-1 inline size-3.5 align-[-2px] transition-transform group-open:rotate-90' />{itemCount(items.length, column)}
+      </summary>
+      <ul className='mt-1.5 flex flex-col gap-1 text-left'>
+        {items.map((t, i) => <li key={i} className='break-words'>{t}</li>)}
+      </ul>
+    </details>
+  );
+}
+
 export function JsonTable({ value, columns, label, copy, empty }: { value: unknown; columns?: string[]; label: string; copy: (text: string, done: string) => void; empty: string }) {
   const rows = useMemo(() => tableRows(value), [value]);
   const cols = useMemo(() => (rows ? tableColumns(rows, columns) : []), [rows, columns]);
+  // mold_v0-300: an unset field (nothing, an empty text, an empty list or object) shows the section's own empty words.
+  const unset = value == null || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && !value.length) || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value as object).length);
   if (!rows || !rows.length) return (
     <div className='flex items-center gap-3 px-6 py-5' data-section-empty=''>
       <Icons.table aria-hidden className='text-muted-foreground size-5 shrink-0' />
-      <p className='text-muted-foreground text-sm'>{rows ? empty : 'This value is not a list of items, so it is not drawn as a table.'}</p>
+      <p className='text-muted-foreground text-sm'>{rows || unset ? empty : 'This value is not a list of items, so it is not drawn as a table.'}</p>
     </div>
   );
   const num = (k: string) => numericColumn(rows, k);
@@ -75,7 +96,7 @@ export function JsonTable({ value, columns, label, copy, empty }: { value: unkno
           <tbody className='[&_tr:last-child]:border-0'>
             {rows.map((r, i) => (
               <tr key={i} className='hover:bg-muted/40 border-b' data-json-row={i}>
-                {cols.map((c) => <td key={c} className={cn(TD, num(c) && 'text-right tabular-nums', r[c] == null && 'text-muted-foreground')}>{cellText(r[c])}</td>)}
+                {cols.map((c) => <td key={c} className={cn(TD, num(c) && 'text-right tabular-nums', r[c] == null && 'text-muted-foreground')}><Cell v={r[c]} column={c} /></td>)}
               </tr>
             ))}
           </tbody>
@@ -88,7 +109,7 @@ export function JsonTable({ value, columns, label, copy, empty }: { value: unkno
               {cols.map((c) => (
                 <div key={c} className='flex min-w-0 flex-col gap-0.5'>
                   <dt className='text-muted-foreground'>{columnWords(c)}</dt>
-                  <dd className={cn('min-w-0 text-sm break-words', num(c) && 'tabular-nums')}>{cellText(r[c])}</dd>
+                  <dd className={cn('min-w-0 text-sm break-words', num(c) && 'tabular-nums')}><Cell v={r[c]} column={c} /></dd>
                 </div>
               ))}
             </dl>

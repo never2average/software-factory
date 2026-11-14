@@ -122,7 +122,7 @@ const neutralRoot = () => {
   const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(PROFILE.name)}</title>` +
     `<meta name="description" content="${esc(PROFILE.short_description)}"><style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#111;background:#fff}a{color:#2563eb}</style></head>` +
-    `<body><main><h1>${esc(PROFILE.name)}</h1><p>${esc(PROFILE.console_description)}</p><p><a href="/install">Connect an MCP client</a> · <a href="/app">Sign in</a></p>${offerFooterHtml(currentOffer())}</main></body></html>`;
+    `<body><main><h1>${esc(PROFILE.name)}</h1><p>${esc(PROFILE.console_description)}</p><p><a href="/install">Connect your agent</a> · <a href="/app">Sign in</a></p>${offerFooterHtml(currentOffer())}</main></body></html>`;
 };
 
 /** Set on SIGTERM/SIGINT: the process is finishing in-flight requests and will exit. */

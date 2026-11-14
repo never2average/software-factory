@@ -143,6 +143,13 @@ export const sectionGroups = (s: DetailSection): DetailGroup[] => s.groups ?? [{
 export const sectionFields = (s: DetailSection) => sectionGroups(s).flatMap((g) => g.fields);
 /** Whether a section has nothing to show on this record: every field it names is empty (then it shows its empty state). */
 export const sectionEmpty = (s: DetailSection, data: Record<string, unknown>) => sectionFields(s).every((n) => isEmptyValue(data[n]));
+/**
+ * mold_v0-300: whether a section's field shows its label above its value. Not when the label says what the section's
+ * title already says (the same words, any case), nor in a titled section of one field (the title names it); a screen
+ * reader still hears it.
+ */
+export const fieldLabelShown = (s: DetailSection, label: string) =>
+  !(s.title && (s.title.trim().toLowerCase() === label.trim().toLowerCase() || sectionFields(s).length === 1));
 /** The grid classes of a section's columns: one on a phone, up to its count on wider screens. */
 export const columnsClass = (n: 1 | 2 | 3 | undefined) => (n === 1 ? 'grid-cols-1' : n === 3 ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2');
 
@@ -200,6 +207,8 @@ export function dateWords(v: unknown, now = Date.now()): { relative: string; abs
 const TIME_UNITS: Record<string, number> = { ms: 0.001, s: 1, sec: 1, secs: 1, second: 1, seconds: 1, min: 60, mins: 60, minute: 60, minutes: 60, h: 3600, hr: 3600, hrs: 3600, hour: 3600, hours: 3600 };
 /** Whether a unit is one of time (its number reads as a duration). */
 export const isTimeUnit = (unit?: string) => !!unit && unit.trim().toLowerCase() in TIME_UNITS;
+/** mold_v0-300: whether a unit is a currency in dollars (usd, $), which reads "$0.90". */
+export const isCurrencyUnit = (unit?: string) => !!unit && ['usd', '$', 'dollars'].includes(unit.trim().toLowerCase());
 /** A duration in seconds in words: "45s", "21m 52s", "3h 4m", "2d 5h" (under a second: "0.4s"). */
 export function durationWords(seconds: number): string {
   const s = Math.abs(seconds), sign = seconds < 0 ? '-' : '';
@@ -218,6 +227,11 @@ export function numberWords(v: unknown, unit?: string): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   if (!Number.isFinite(n)) return v == null ? '' : String(v);
   if (unit && isTimeUnit(unit)) return durationWords(n * TIME_UNITS[unit.trim().toLowerCase()]!);
+  // mold_v0-300: a currency in dollars reads "$0.90" or "$1,250.00", never "0.9 USD" (a fraction of a cent keeps 4 places).
+  if (unit && isCurrencyUnit(unit)) {
+    const a = Math.abs(n);
+    return `${n < 0 ? '-' : ''}$${a.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: a > 0 && a < 0.01 ? 4 : 2 })}`;
+  }
   const text = n.toLocaleString('en', { maximumFractionDigits: 2 });
   if (!unit) return text;
   return /^[%×‰°]/.test(unit) ? `${text}${unit}` : `${text} ${unit}`;
@@ -342,7 +356,9 @@ export const RUN_STATUS_COLOR: Record<string, BadgeColor> = { queued: 'neutral',
  * A number column's unit in a related list (mold_v0-256): the unit its own area's page gives the field (a fact's unit),
  * so a duration in seconds reads "21m 52s" and a coverage "87.4%", as on that record's page.
  */
-export const columnUnit = (target: RecordAreaSpec, field: string) => ((target as LaidOutArea).detail?.header?.facts ?? []).find((f) => f.field === field)?.unit;
+export const columnUnit = (target: RecordAreaSpec, field: string) => ((target as LaidOutArea).detail?.header?.facts ?? []).find((f) => f.field === field)?.unit
+  // mold_v0-300: else the field's own unit (usd reads "$0.90", s "21m 52s").
+  ?? target.fields.find((f) => f.name === field)?.unit;
 
 /**
  * A link's address cut where it may wrap (mold_v0-256): after each "/" (and "?", "&", "="), never inside a word. Each
@@ -371,6 +387,15 @@ export interface FieldChange { field: string; label?: string; before?: unknown; 
 /** One change of a record (src/record-history.ts): what, who, when, each field's before and after. */
 export interface RecordChangeView { id: number; at: string; action: 'created' | 'updated' | 'moved' | 'deleted'; by: string; title: { before: string | null; after: string | null } | null; changes: FieldChange[] }
 export type HistoryData = { changes: RecordChangeView[]; more: boolean; since: string | null };
+/**
+ * Where a workspace record came from, as words after "Added by" (mold_v0-236; mold_v0-300: plain words, "Added by an
+ * import", "Added by an email", never "Added by Its data source"). `capital` for a value standing alone ("An import").
+ */
+const ADDED_BY: Record<string, string> = { people: 'a person in this workspace', staff: 'platform staff', intake: 'an email', run: 'an automatic run', repository: 'an import' };
+export const addedByWords = (by: string, capital = false) => {
+  const w = ADDED_BY[by] ?? by;
+  return capital ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+};
 /** A computed fact's value in words: a count grouped ("1,000+" when it stopped counting), a latest value as its field reads. */
 export const countWords = (n: number, capped: boolean, unit?: string) => `${n.toLocaleString('en')}${capped ? '+' : ''}${unit ? ` ${unit}` : ''}`;
 /** The words of a change's action. */

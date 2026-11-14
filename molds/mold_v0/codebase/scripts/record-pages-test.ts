@@ -822,7 +822,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(facts, /<time datetime="2026-11-05"[^>]*>[^<]*(ago|yesterday|today)<\/time>/, "a date in relative words, its exact date on hover");
       assert.match(facts, /href="https:\/\/artifacts\.example\.com\/builds\/1042\.tar\.gz"/, "an address as a link");
       assert.match(facts, /aria-label="Copy Commit"/, "a copyable fact: its copy button");
-      assert.match(dom, /data-record-creator="">Added by <span[^>]*>The app's own automation<\/span>/, "who added it");
+      assert.match(dom, /data-record-creator="">Added by <span[^>]*>an automatic run<\/span>/, "who added it");
       assert.match(dom, /data-copy-id=""[^>]*>[\s\S]*?Copy ID/); assert.match(dom, /data-copy-link=""[^>]*>[\s\S]*?Copy link/);
       assert.match(dom, /data-record-notice="danger"[\s\S]*?This build failed[\s\S]*?data-record-notice="warning"[\s\S]*?Not approved yet/, "the danger notice, then the warning");
       assert.doesNotMatch(dom, /data-record-notice="info"/, "the running notice does not hold");

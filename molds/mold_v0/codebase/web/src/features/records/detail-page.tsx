@@ -23,7 +23,7 @@
 import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -43,7 +43,7 @@ import { useInRecordPanel } from '@/components/layout/detail-panel';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
-  BADGE_CLASS, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
+  addedByWords, BADGE_CLASS, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
@@ -123,6 +123,8 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, u
 }) {
   if (isEmptyValue(v)) return <span className='text-muted-foreground'>—</span>;
   if (f.encrypted) return <FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} />;
+  // mold_v0-300: a number without a fact's unit takes its field's own (usd reads "$0.90", s "21m 52s").
+  unit = unit ?? f.unit;
   if (f.type === 'enum') return (
     <span className='flex flex-wrap gap-1.5'>
       {(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(layout, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}
@@ -154,10 +156,11 @@ export function LinkText({ href }: { href: string }) {
 }
 
 /** One label and value of a section or the facts, with its copy button when the field is copyable and has a value. */
-function FieldCell({ label, children, copy, className }: { label: ReactNode; children: ReactNode; copy?: { text: string; what: string } | null; className?: string }) {
+function FieldCell({ label, children, copy, className, labelHidden = false }: { label: ReactNode; children: ReactNode; copy?: { text: string; what: string } | null; className?: string; labelHidden?: boolean }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)} data-detail-field=''>
-      <dt className='text-muted-foreground text-xs font-medium'>{label}</dt>
+      {/* mold_v0-300: a label the section's title already says is kept for a screen reader only. */}
+      <dt className={labelHidden ? 'sr-only' : 'text-muted-foreground text-xs font-medium'} data-label-hidden={labelHidden ? '' : undefined}>{label}</dt>
       <dd className='flex min-w-0 items-start gap-2 text-sm leading-relaxed break-words'>
         <span className='min-w-0'>{children}</span>
         {copy && <CopyButton text={copy.text} what={copy.what} />}
@@ -168,7 +171,7 @@ function FieldCell({ label, children, copy, className }: { label: ReactNode; chi
 const copyOf = (f: RecordFieldSpec, v: unknown) => ((f as LaidOutField).copyable && !isEmptyValue(v) ? { text: copyText(v), what: f.label } : null);
 
 /** A section: a full-width card, its groups of fields in its columns, or its empty state. */
-function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; id: string }) {
+function SectionCard({ s, area, base, layout, record, id, labels = 'auto' }: { s: DetailSection; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; id: string; labels?: 'auto' | 'always' }) {
   const empty = sectionEmpty(s, record.data);
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} aria-labelledby={`${id}-title`} role='region'>
@@ -192,7 +195,7 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
                     if (!f) return null;
                     const v = record.data[n];
                     return (
-                      <FieldCell key={n} label={f.label} copy={copyOf(f, v)} className={f.type === 'json' && s.columns !== 1 ? 'sm:col-span-full' : undefined}>
+                      <FieldCell key={n} label={f.label} copy={copyOf(f, v)} className={f.type === 'json' && s.columns !== 1 ? 'sm:col-span-full' : undefined} labelHidden={labels === 'auto' && !fieldLabelShown(s, f.label)}>
                         <LaidOutValue area={area} base={base} layout={layout} f={f} v={v} recordKey={record.key} unit={layout.header?.facts?.find((x) => x.field === n)?.unit} titles={record.ref_titles?.[n]} />
                       </FieldCell>
                     );
@@ -243,7 +246,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
     return (
       <ListCard id={id} kind='history' title={s.title}>
         {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div> : !data ? <ListLoading />
-          : <HistoryList area={area} data={data as unknown as HistoryData} empty={s.empty ?? 'No changes recorded yet.'}
+          : <HistoryList area={area} data={data as unknown as HistoryData} empty={s.empty ?? 'No changes recorded yet.'} titles={record.ref_titles}
               url={`/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/history?section=${pageKey}`} />}
       </ListCard>
     );
@@ -514,9 +517,6 @@ function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: Detai
   );
 }
 
-/** Where a workspace record came from, in words (mold_v0-236; the same words as the page without a layout). */
-const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
-
 /** Whether a layout reads anything from the page's own route (mold_v0-254): actions, a related list, the record's runs. */
 const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
 
@@ -599,7 +599,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
     .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden : !!x.f));
   const notices = shownNotices(layout, record.data, record.clocks, page.data?.facts); // mold_v0-298: a notice may test a computed fact
-  const added = h.creator !== false && provenance?.by ? ADDED_BY[provenance.by] ?? provenance.by : null;
+  const added = h.creator !== false && provenance?.by ? addedByWords(provenance.by) : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
   const sectionId = (i: number) => `detail-${tabId(tab.label)}-${i}`;
@@ -617,7 +617,8 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
               {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
                 <p className='text-muted-foreground max-w-prose text-sm leading-relaxed break-words' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
               )}
-              {visibility && <div className='flex flex-wrap items-center gap-2' data-record-visibility=''><VisibilityBadge v={visibility} /></div>}
+              {/* mold_v0-300: no chip for the default (the whole workspace sees it): the line above already says it is the workspace's. */}
+              {visibility && visibility.mode !== 'workspace' && <div className='flex flex-wrap items-center gap-2' data-record-visibility=''><VisibilityBadge v={visibility} /></div>}
               {!!h.badges?.length && (
                 <div className='flex flex-wrap items-center gap-2 pt-1' data-record-badges=''>
                   {h.badges.map((b) => {
@@ -677,12 +678,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
 
       {tabs.length > 1 ? (
         <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
-          {/* mold_v0-298: on a phone a long strip wraps to a second line rather than clip its last tab (as Settings). */}
-          <div className='max-w-full pb-1.5' data-tab-strip-room=''>
-            <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
-              {tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
-            </TabsList>
-          </div>
+          <RecordTabStrip tabs={tabs} open={tabId(tab.label)} />
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>
             {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
             {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
@@ -698,6 +694,51 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   );
 }
 
+/**
+ * The record page's tab strip (mold_v0-300): always one row. When its tabs are wider than the page (a phone with seven
+ * tabs) it scrolls sideways, the open tab scrolled into view, and the edge with more tabs past it fades out as a cue.
+ */
+function RecordTabStrip({ tabs, open }: { tabs: DetailLayout['tabs']; open: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState<{ start: boolean; end: boolean }>({ start: false, end: false });
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const start = el.scrollLeft > 2, end = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const active = el.querySelector<HTMLElement>('[data-active]');
+    if (active) {
+      // Only the strip scrolls (never the page): the open tab's box brought inside the strip's, with a little room.
+      const a = active.getBoundingClientRect(), b = el.getBoundingClientRect();
+      if (a.left < b.left + 16) el.scrollLeft -= b.left + 16 - a.left;
+      else if (a.right > b.right - 16) el.scrollLeft += a.right - (b.right - 16);
+    }
+    measure();
+  }, [open, measure]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure]);
+  const fade = edges.start && edges.end ? '[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]'
+    : edges.end ? '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]'
+    : edges.start ? '[mask-image:linear-gradient(to_right,transparent,black_2rem)]' : '';
+  return (
+    <div ref={ref} onScroll={measure} className={cn('max-w-full overflow-x-auto overscroll-x-contain pb-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden', fade)}
+      data-tab-strip-room='' data-tab-strip-more={edges.end ? 'end' : edges.start ? 'start' : undefined}>
+      <TabsList variant='line' className='w-max max-w-none flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
+        {tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
+      </TabsList>
+    </div>
+  );
+}
+
 /** The first tab's end: the fields the layout leaves out, then what every record page has (documents, deadlines, links, credentials). */
 function FirstTabRest({ area, base, layout, record, rest, links, clockEvents, credentials }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; rest: RecordFieldSpec[]; links: Links; clockEvents?: ClockEvent[]; credentials: ReactNode;
@@ -708,7 +749,7 @@ function FirstTabRest({ area, base, layout, record, rest, links, clockEvents, cr
   return (
     <>
       {!!rest.length && (
-        <SectionCard s={{ title: 'Other details', fields: rest.map((f) => f.name), columns: 2 }} id='detail-other' area={area} base={base} layout={layout} record={record} />
+        <SectionCard s={{ title: 'Other details', fields: rest.map((f) => f.name), columns: 2 }} id='detail-other' area={area} base={base} layout={layout} record={record} labels='always' />
       )}
       {/* The record's documents and deadlines, drawn as on every record page; the card shows only when one of them does. */}
       <Card className='w-full gap-0 py-0 [&:not(:has(section))]:hidden' data-record-extras=''>

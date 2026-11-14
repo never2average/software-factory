@@ -289,6 +289,7 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
   const subs = (tab.sections ?? []).map((id) => packTabs.find((t) => t.pack === tab.pack && t.id === id))
     .filter((t): t is PackTabSpec => !!t && (role === null || t.roles.includes(role)));
   // The console's one in-page tab strip (./in-page-tabs.tsx; the staff Records entries of in-page tabs draw it too).
+  // mold_v0-300: a tab spec's `icon` is an icon NAME: the strip resolves it (tabIcon), never prints it before the label.
   return (
     <InPageTabs tabs={subs}>
       {(current) => current.kind === 'area' ? <AreaTab key={current.id} tab={current} />

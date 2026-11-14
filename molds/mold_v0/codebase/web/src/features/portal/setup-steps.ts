@@ -6,6 +6,7 @@
 // declared order. A pack step whose condition is one the shell measures (`workspace`, `connected`, `first_call`:
 // /api/onboarding `covers`) takes that shell step's place: the shell's step is dropped, and the shell steps after it
 // follow the pack's step. So a pack places the connection where it wants it by declaring a step `done_when: connected`.
+// mold_v0-300: an optional step goes after them all (shown with an Optional tag, never counted).
 
 export interface ShellSetupStep { id: string; label: string; done: boolean; at: string | null; help: string; prompt?: string | null; optional?: boolean }
 export interface PackSetupStep { pack: string; id: string; label: string; help: string | null; prompt?: string | null; done: boolean; at: string | null; covers?: string | null }
@@ -35,7 +36,9 @@ export function mergeSetupSteps(shell: ShellSetupStep[], packSteps: PackSetupSte
     if (at >= 0) { cursor = at + 1; continue; }
     out.splice(cursor++, 0, { key: `shell:${x.id}`, label: x.label.replace(' (team)', ''), help: x.help, prompt: x.prompt ?? null, done: x.done, at: x.at, id: x.id, shell: x.id, ...(x.optional ? { optional: true } : {}) });
   }
-  return out;
+  // mold_v0-300: the optional steps (a connection step a pack marks optional, a host pack's optional step) come last,
+  // after every step that counts, each kind in its order: the list leads with what the person has to do.
+  return [...out.filter((x) => !x.optional), ...out.filter((x) => x.optional)];
 }
 
 /**

@@ -170,7 +170,10 @@ try {
   refused("a skill the shell lacks", { hosty: hostPack({ admin_mcp: { skills: { weekly_review: [{ from: "1. health_summary with failures: true.", to: "x" }] } } }) }, /admin_mcp\.skills weekly_review: not one of the shell's admin skills/);
   refused("a skill step the skill no longer reads", { hosty: hostPack({ admin_mcp: { skills: { ops_review: [{ from: "1. health_summary with failures: false.", to: "x" }] } } }) },
     /admin_mcp\.skills ops_review\[0\]\.from: the shell's skill no longer reads "1\. health_summary with failures: false\."/);
-  refused("setup from a declarative pack", { hosty: hostPack(), plainpack: decl({ setup: { viewer_note: "No." } }) }, /packs\/plainpack\/pack\.json: setup is a host pack's/);
+  // mold_v0-300: a declarative pack's setup is shell_steps only; the Setup page's own steps, viewer note and workflow stay a host pack's.
+  refused("setup from a declarative pack", { hosty: hostPack(), plainpack: decl({ setup: { viewer_note: "No." } }) }, /packs\/plainpack\/pack\.json: setup viewer_note: a config pack's setup is shell_steps only/);
+  refused("a shell step two packs word", { hosty: hostPack({ setup: CONFIG.setup }), plainpack: decl({ setup: { shell_steps: { first_call: { label: "Ask." } } } }) },
+    /packs\/plainpack\/pack\.json: setup\.shell_steps first_call: pack hosty words it too/);
   refused("a setup step after a step there is not", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], after: "dashboard" }] } }) }, /setup\.steps\[0\] widget: after: dashboard is not a step before it/);
   refused("a shell step as the pack's own", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], id: "tools" }] } }) }, /is one of the shell's steps: give its words in setup\.shell_steps/);
   refused("a stage step without the session engine", { hosty: hostPack({ setup: { steps: [{ ...CONFIG.setup.steps[0], done_when: "stage:onboarded" }] } }) }, /done_when stage: the build has no session engine/);
@@ -187,6 +190,22 @@ try {
   refused("a label of a table host.schema does not declare", { hosty: hostPack({ migrations: "migrations", host: { entry: "host.ts", schema: { tables: ["things"], labels: { widgets: "Widgets" } } } }) },
     /host\.schema\.labels\.widgets: not one of host\.schema\.tables/);
   console.log("✓ refused: nav.ts and routes.json redirects, a nav entry not the pack's page or from a declarative pack, a shortcut twice, bad settings, rewords and skill steps, bad setup steps and hints, account_stages without the engine, bad shell texts and table labels");
+
+  // mold_v0-300: a declarative pack words the shell's steps and marks the connection optional; joined into the one setup the server reads.
+  const optional = world({ hosty: hostPack({ setup: CONFIG.setup }), plainpack: decl({ setup: { shell_steps: { connected: { label: "Connect an agent", optional: true }, tools: { optional: true } } } }) },
+    HOST_PROFILE, { "web/src/packs/hosty/index.ts": HOST_WEB["web/src/packs/hosty/index.ts"] });
+  assert.equal(optional.status, 0, optional.out);
+  const oh = read(optional.dir, "src/hosts.generated.ts");
+  const opc = JSON.parse(oh.slice(oh.indexOf("PACK_CONFIG: readonly unknown[] = ") + "PACK_CONFIG: readonly unknown[] = ".length, oh.lastIndexOf(";")));
+  assert.deepEqual(opc.filter((x: { setup?: unknown }) => x.setup).map((x: { pack: string }) => x.pack), ["hosty"], "one pack's setup reaches the server");
+  assert.deepEqual(opc.find((x: { pack: string }) => x.pack === "hosty").setup.shell_steps,
+    { first_call: CONFIG.setup.shell_steps.first_call, connected: { label: "Connect an agent", optional: true }, tools: { optional: true } }, "every pack's shell_steps, joined");
+  const alone = world({ plainpack: decl({ setup: { shell_steps: { connected: { optional: true } } } }) });
+  assert.equal(alone.status, 0, alone.out);
+  const ah = read(alone.dir, "src/hosts.generated.ts");
+  assert.deepEqual(JSON.parse(ah.slice(ah.indexOf("PACK_CONFIG: readonly unknown[] = ") + "PACK_CONFIG: readonly unknown[] = ".length, ah.lastIndexOf(";"))),
+    [{ pack: "plainpack", setup: { shell_steps: { connected: { optional: true } } } }], "a build of config packs only: theirs");
+  console.log("✓ a config pack's setup.shell_steps: words and optional connection steps, joined with the host pack's");
 
   // ---------- 4. shell texts (mold_v0-141) ----------
   const TEXTS = { $comment: "x", "refusal.viewer_edit": "Hosty viewers look, never touch.", "admin_roles.support": "Viewer, plus Hosty's {runs}.", "usage.score": "Hits", "journeys.one": "tour" };

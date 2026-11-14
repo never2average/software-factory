@@ -11,9 +11,18 @@ import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from '
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useQueryState } from 'nuqs';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Icons, type Icon as IconType } from '@/components/icons';
 import { cn } from '@/lib/utils';
 
 export interface InPageTab { id: string; label: string; icon?: ReactNode; data?: Record<`data-${string}`, string | undefined> }
+
+/** mold_v0-300: a tab's icon as drawn: a node as given; an icon NAME (a pack tab spec's `icon`, as the sidebar takes it)
+ *  resolved to its icon the way the sidebar does (Icons[name]), and an unknown name draws none, never the name as text. */
+export function tabIcon(icon: ReactNode): ReactNode {
+  if (typeof icon !== 'string') return icon;
+  const Icon = (Icons as Record<string, IconType | undefined>)[icon];
+  return Icon ? <Icon aria-hidden /> : null;
+}
 
 export function InPageTabs<T extends InPageTab>({ tabs, children, value, onValueChange, size = 'default', label, className }: {
   tabs: readonly T[]; children?: (tab: T) => ReactNode; value?: string; onValueChange?: (id: string) => void; size?: 'default' | 'sm'; label?: string; className?: string;
@@ -25,7 +34,7 @@ export function InPageTabs<T extends InPageTab>({ tabs, children, value, onValue
   if (!current) return null;
   const wide = tabs.length > 6;
   const sm = size === 'sm';
-  const triggers = tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className={cn('flex-none px-0', sm && 'text-[13px] [&_svg]:size-3.5')} {...t.data}>{t.icon}{t.label}</TabsTrigger>);
+  const triggers = tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className={cn('flex-none px-0', sm && 'text-[13px] [&_svg]:size-3.5')} {...t.data}>{tabIcon(t.icon)}{t.label}</TabsTrigger>);
   return (
     <Tabs value={current.id} onValueChange={(v) => (controlled ? onValueChange?.(String(v)) : void setSelected(String(v)))} className={cn('w-full min-w-0', sm ? 'gap-0' : 'gap-6', className)}>
       {/* mold_v0-289: the strip always scrolls sideways on its own when wider than the page: it never widens the page (a phone). */}

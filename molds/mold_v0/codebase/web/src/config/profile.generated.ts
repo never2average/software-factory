@@ -4,8 +4,8 @@ export const profile = {
   "name": "Workspace",
   "mcp_server_name": "workspace",
   "console_title": "Workspace",
-  "console_description": "Your workspace: connect an MCP client, run agents and read their results.",
-  "short_description": "Connect an MCP client, run agents and read their results.",
+  "console_description": "Your workspace: connect your agent, run work and read the results.",
+  "short_description": "Connect your agent, run work and read the results.",
   "email_sender_name": "Workspace",
   "email_from_address": "no-reply@example.com"
 } as const;

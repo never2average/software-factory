@@ -82,7 +82,7 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
  * The dynamic routes whose answer depends on data: an account's slug, and Clerk's own sign-in and sign-up steps. (A
  * record's key is the other: its area is checked above, the record by its page.)
  */
-export const OPEN: readonly string[] = ['/admin/accounts/[slug]', '/auth/sign-in/[[...sign-in]]', '/auth/sign-up/[[...sign-up]]'];
+export const OPEN: readonly string[] = ['/admin/accounts/[slug]', '/admin/recipes/[id]', '/app/settings/[group]', '/auth/sign-in/[[...sign-in]]', '/auth/sign-up/[[...sign-up]]'];
 
 type Seg = { kind: 'static'; name: string } | { kind: 'one' | 'many' | 'any'; name: string };
 const seg = (s: string): Seg => {
