@@ -1,6 +1,6 @@
 import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname as pathDirname, join as pathJoin, relative as pathRelative, resolve as pathResolve, sep as pathSep } from "node:path";
 import { ENV } from "./env-names.js";
@@ -24,6 +24,12 @@ import { ENV } from "./env-names.js";
  *
  * Customer data always sits under its org's prefix, so access can be scoped per org by construction. The org id (not
  * the slug) is used: slugs can be renamed, ids cannot.
+ *
+ * mold_v0-305 (flag workspace_storage; src/workspace-storage.ts): a key under an org's prefix (<kind>/org-<id>/...) goes
+ * to that workspace's own bucket when its owners set one up in the customer console (a record of the pack's declared
+ * object_storage area, marked for use); every other key, and a workspace without one, to the bucket below. A read of a
+ * key the workspace's bucket does not hold falls back to the bucket below (what was stored before the workspace had its
+ * own stays readable); nothing is moved between buckets.
  */
 
 const env = ENV;
@@ -43,7 +49,7 @@ export const NOT_CONFIGURED = "no object store: set R2_BUCKET, R2_ENDPOINT, R2_A
   "or add Object storage (R2 / S3) on the console's Key vault page (/admin/keys), or set APP_STORAGE_DIR";
 
 export interface BucketSettings { bucket: string; endpoint: string; access_key_id: string; secret_access_key: string }
-interface Target { source: "env" | "vault"; bucket: string; endpoint: string; client: S3Client }
+interface Target { source: "env" | "vault" | "workspace"; bucket: string; endpoint: string; client: S3Client }
 
 /** The SigV4 region for an endpoint: AWS's own from its address (s3.<region>.amazonaws.com), else "auto" (R2 and most others). */
 export const regionOf = (endpoint: string) => /(?:^|\.)s3[.-]([a-z0-9-]+)\.amazonaws\.com$/.exec(new URL(endpoint).hostname)?.[1] ?? "auto";
@@ -84,6 +90,37 @@ async function fromVault(): Promise<BucketSettings | null> {
 
 /** The bucket in use and where its settings came from, or null when neither the environment nor the vault has one. */
 async function target(): Promise<Target | null> {
+  return platformTarget();
+}
+
+/** mold_v0-305: the workspace a key is stored for (<kind>/org-<id>/...), or null (the platform's own: backups, uploads, ops). */
+export const orgOfKey = (key: string): number | null => {
+  const m = /^[a-z][a-z0-9-]{0,40}\/org-([1-9]\d{0,14})\//.exec(key);
+  return m ? Number(m[1]) : null;
+};
+const workspaceClients = new Map<number, { key: string; target: Target }>();
+/** mold_v0-305: the workspace's own bucket for a key stored for it (src/workspace-storage.ts), or null. */
+async function workspaceTarget(key: string): Promise<Target | null> {
+  const org = orgOfKey(key);
+  if (org === null) return null;
+  const W = await import("./workspace-storage.js");
+  if (!W.workspaceStorageOn()) return null;
+  const got = await W.workspaceBucket(org);
+  if (!got) return null;
+  const k = createHash("sha256").update(JSON.stringify(got.settings)).digest("hex");
+  const have = workspaceClients.get(org);
+  if (have?.key === k) return have.target;
+  have?.target.client.destroy();
+  const t: Target = { source: "workspace", bucket: got.settings.bucket, endpoint: got.settings.endpoint, client: s3Client(got.settings) };
+  workspaceClients.set(org, { key: k, target: t });
+  return t;
+}
+/** The bucket a key goes to: its workspace's own (mold_v0-305), else the platform's (environment, else Key vault), else null. */
+async function targetFor(key: string): Promise<Target | null> {
+  return (await workspaceTarget(key)) ?? platformTarget();
+}
+
+async function platformTarget(): Promise<Target | null> {
   if (storageInEnv()) {
     const c = { bucket: env.R2_BUCKET!, endpoint: env.R2_ENDPOINT!, access_key_id: env.R2_ACCESS_KEY_ID!, secret_access_key: env.R2_SECRET_ACCESS_KEY! };
     const key = JSON.stringify(c);
@@ -103,17 +140,23 @@ export function forgetStorageSettings() { vaultTarget = null; }
 
 /** Whether a bucket is configured, in the environment or in the key vault (APP_STORAGE_DIR does not count). */
 export const s3Ready = async () => (await target()) !== null;
+/**
+ * mold_v0-305: whether the platform has an object store at all (a bucket in the environment or the key vault, or
+ * APP_STORAGE_DIR): with none, files the build itself carries (a pack's declared recipes) are kept in the database.
+ */
+export const platformStoreConfigured = async () => !!localDir() || (await target().catch(() => null)) !== null;
 /** Where the object store's settings come from now: env, vault, dir (APP_STORAGE_DIR) or null (none). Never a value. */
 export async function storageSource(): Promise<{ source: "env" | "vault" | "dir" | null; bucket: string | null }> {
   const t = await target().catch(() => null);
-  if (t) return { source: t.source, bucket: t.bucket };
+  if (t) return { source: t.source as "env" | "vault", bucket: t.bucket };
   return { source: localDir() ? "dir" : null, bucket: null };
 }
 
-async function s3(): Promise<{ client: S3Client; bucket: string }> {
-  const t = await target();
+/** The bucket for `key` (its workspace's own, else the platform's: mold_v0-305), or refused (NOT_CONFIGURED). */
+async function s3(key: string): Promise<{ client: S3Client; bucket: string; source: Target["source"] }> {
+  const t = await targetFor(key);
   if (!t) throw new Error(NOT_CONFIGURED);
-  return { client: t.client, bucket: t.bucket };
+  return { client: t.client, bucket: t.bucket, source: t.source };
 }
 
 const safe = (s: string) => {
@@ -137,13 +180,11 @@ export const keys = {
 };
 
 export async function putObject(key: string, body: Buffer | string, contentType: string, meta: Record<string, string> = {}): Promise<void> {
-  const { client, bucket } = await s3();
+  const { client, bucket } = await s3(key);
   await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType, Metadata: meta }));
 }
 
-/** The object's bytes, or null when it does not exist. */
-export async function getObject(key: string): Promise<Buffer | null> {
-  const { client, bucket } = await s3();
+async function getFrom(client: S3Client, bucket: string, key: string): Promise<Buffer | null> {
   try {
     const r = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     return Buffer.from(await r.Body!.transformToByteArray());
@@ -153,11 +194,22 @@ export async function getObject(key: string): Promise<Buffer | null> {
     throw e;
   }
 }
+/**
+ * The object's bytes, or null when it does not exist. mold_v0-305: a key its workspace's own bucket does not hold is
+ * looked for in the platform's bucket (stored there before the workspace had its own).
+ */
+export async function getObject(key: string): Promise<Buffer | null> {
+  const { client, bucket, source } = await s3(key);
+  const got = await getFrom(client, bucket, key);
+  if (got !== null || source !== "workspace") return got;
+  const p = await platformTarget().catch(() => null);
+  return p ? getFrom(p.client, p.bucket, key) : null;
+}
 
 export async function listKeys(prefix: string, max = 100_000): Promise<{ key: string; size: number; modified: Date | null }[]> {
   const out: { key: string; size: number; modified: Date | null }[] = [];
   let token: string | undefined;
-  const { client, bucket } = await s3();
+  const { client, bucket } = await s3(prefix);
   do {
     const r = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }));
     for (const o of r.Contents ?? []) out.push({ key: o.Key!, size: Number(o.Size ?? 0), modified: o.LastModified ?? null });
@@ -166,18 +218,23 @@ export async function listKeys(prefix: string, max = 100_000): Promise<{ key: st
   return out;
 }
 
-/** Delete objects by key, 1000 per request (organization deletion, src/tenancy.ts). */
+/** Delete objects by key, 1000 per request (organization deletion, src/tenancy.ts); each from the bucket its key goes to. */
 export async function deleteKeys(list: string[]): Promise<void> {
-  const { client, bucket } = await s3();
-  for (let i = 0; i < list.length; i += 1000) {
-    const r = await client.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: list.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));
+  const groups = new Map<Target, string[]>();
+  for (const k of list) {
+    const t = await targetFor(k);
+    if (!t) throw new Error(NOT_CONFIGURED);
+    groups.set(t, [...(groups.get(t) ?? []), k]);
+  }
+  for (const [t, keys] of groups) for (let i = 0; i < keys.length; i += 1000) {
+    const r = await t.client.send(new DeleteObjectsCommand({ Bucket: t.bucket, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));
     if (r.Errors?.length) throw new Error(`object store delete failed for ${r.Errors.length} object(s), e.g. ${r.Errors[0]!.Key}: ${r.Errors[0]!.Message}`);
   }
 }
 
 /** A time-limited download link: 1 hour by default (docs/security.md), at most 7 days (the S3 maximum). */
 export async function signedUrl(key: string, seconds = 3600, filename?: string): Promise<string> {
-  const { client, bucket } = await s3();
+  const { client, bucket } = await s3(key);
   return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key,
     ...(filename ? { ResponseContentDisposition: `attachment; filename="${filename.replace(/["\\]/g, "")}"` } : {}) }),
     { expiresIn: Math.min(Math.max(60, seconds), 7 * 24 * 3600) });
@@ -189,7 +246,7 @@ export async function signedUrl(key: string, seconds = 3600, filename?: string):
  * straight to the bucket with it; nothing but that key can be written with it.
  */
 export async function signedPutUrl(key: string, seconds = 900): Promise<string> {
-  const { client, bucket } = await s3();
+  const { client, bucket } = await s3(key);
   return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: Math.min(Math.max(60, seconds), 3600) });
 }
 
@@ -268,8 +325,8 @@ export async function testBucket(c: BucketSettings): Promise<BucketTest> {
  */
 export interface ObjectStore {
   kind: "r2" | "local";
-  /** Where a bucket's settings came from: the environment or the key vault (a local directory: "dir"). */
-  source: "env" | "vault" | "dir";
+  /** Where a bucket's settings came from: the environment or the key vault (a local directory: "dir"; mold_v0-305: a workspace's own record, "workspace"). */
+  source: "env" | "vault" | "dir" | "workspace";
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   list(prefix: string): Promise<string[]>;
@@ -287,18 +344,54 @@ const localPath = (root: string, key: string) => {
   return pathJoin(root, key);
 };
 
-export async function objectStore(): Promise<ObjectStore> {
+/**
+ * mold_v0-305: with a workspace's own bucket (src/workspace-storage.ts), its keys go there whatever the store below is.
+ * `forKey` (a key or an org prefix) asks for the store that key goes to as it is (its links: a bucket's, none for a
+ * local directory); without it, keys are routed one by one.
+ */
+export async function objectStore(forKey?: string): Promise<ObjectStore> {
   const t = await target();
-  if (t) return {
-    kind: "r2", source: t.source,
-    put: (key, body, type) => putObject(key, body, type),
-    get: (key) => getObject(key),
-    list: async (prefix) => (await listKeys(prefix)).map((o) => o.key),
-    remove: (list) => deleteKeys(list),
-    links: { put: (key, seconds) => signedPutUrl(key, seconds), get: (key, seconds) => signedUrl(key, seconds) },
-  };
+  // A platform bucket: putObject and the rest route each key themselves (a workspace's own bucket first).
+  if (t) return bucketStore(t.source);
   const root = localDir();
-  if (!root) throw new Error(NOT_CONFIGURED);
+  const local = root ? localStore(root) : null;
+  const W = await import("./workspace-storage.js");
+  if (!W.workspaceStorageOn()) {
+    if (!local) throw new Error(NOT_CONFIGURED);
+    return local;
+  }
+  if (forKey !== undefined) {
+    if (await workspaceTarget(forKey)) return bucketStore("workspace");
+    if (!local) throw new Error(NOT_CONFIGURED);
+    return local;
+  }
+  const below = () => { if (!local) throw new Error(NOT_CONFIGURED); return local; };
+  return {
+    kind: local ? "local" : "r2", source: local ? "dir" : "workspace",
+    put: async (key, body, type) => ((await workspaceTarget(key)) ? putObject(key, body, type) : below().put(key, body, type)),
+    get: async (key) => {
+      if (!(await workspaceTarget(key))) return below().get(key);
+      return (await getObject(key)) ?? (local ? local.get(key) : null);
+    },
+    list: async (prefix) => ((await workspaceTarget(prefix)) ? (await listKeys(prefix)).map((o) => o.key) : below().list(prefix)),
+    remove: async (list) => {
+      const mine: string[] = [], rest: string[] = [];
+      for (const k of list) ((await workspaceTarget(k)) ? mine : rest).push(k);
+      if (mine.length) await deleteKeys(mine);
+      if (rest.length) await below().remove(rest);
+    },
+  };
+}
+/** A bucket's store: every key to the bucket it goes to (putObject and the rest choose it per key). */
+const bucketStore = (source: ObjectStore["source"]): ObjectStore => ({
+  kind: "r2", source,
+  put: (key, body, type) => putObject(key, body, type),
+  get: (key) => getObject(key),
+  list: async (prefix) => (await listKeys(prefix)).map((o) => o.key),
+  remove: (list) => deleteKeys(list),
+  links: { put: (key, seconds) => signedPutUrl(key, seconds), get: (key, seconds) => signedUrl(key, seconds) },
+});
+function localStore(root: string): ObjectStore {
   return {
     kind: "local", source: "dir",
     put: async (key, body) => { const p = localPath(root, key); await mkdir(pathDirname(p), { recursive: true }); await writeFile(p, body, { mode: 0o600 }); },

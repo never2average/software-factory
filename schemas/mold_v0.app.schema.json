@@ -5310,7 +5310,8 @@
                             "create_record",
                             "start_agent",
                             "open_url",
-                            "start_program"
+                            "start_program",
+                            "test_storage"
                           ]
                         },
                         "place": {
@@ -8766,6 +8767,14 @@
                       "minLength": 1,
                       "maxLength": 40
                     },
+                    "filter": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+                      },
+                      "additionalProperties": {}
+                    },
                     "$comment": {
                       "type": "string",
                       "maxLength": 2000
@@ -10706,6 +10715,86 @@
             ],
             "additionalProperties": false
           }
+        },
+        "object_storage": {
+          "type": "object",
+          "properties": {
+            "area": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "where": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "endpoint": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "access_key_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "secret_access_key": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "use": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "status": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "tested": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                }
+              },
+              "required": [
+                "bucket",
+                "endpoint",
+                "access_key_id",
+                "secret_access_key",
+                "use"
+              ],
+              "additionalProperties": false
+            },
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "area",
+            "fields"
+          ],
+          "additionalProperties": false
         },
         "team_roles": {
           "minItems": 2,
@@ -18756,6 +18845,13 @@
           "title": "Record resources (mold_v0-282)",
           "description": "A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one database per record inside the app's own Postgres when the record is created (provider core, mold_v0-285: a schema of its own and, where the database allows CREATE ROLE, a login role limited to that schema; no outside provider, no key), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and drops the schema and role with the record. Health names a database that refuses CREATE SCHEMA or CREATE ROLE. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry. Asked for when a shared (platform) area declares a repository field or a database field (provider core, the default). Default false. Off: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.",
           "markdownDescription": "**Record resources** (mold_v0-282; board name `resources`). A shared record's own resources: a repository field links an existing GitHub repository (owner/name), checked on save through the platform's GitHub App and shown on the record's page with its default branch and last commit; a database field creates one database per record inside the app's own Postgres when the record is created (provider core, mold_v0-285: a schema of its own and, where the database allows CREATE ROLE, a login role limited to that schema; no outside provider, no key), keeps its connection string sealed apart from the record's fields, shows its status (provisioning, ready, failed with the reason) with a Retry, and drops the schema and role with the record. Health names a database that refuses CREATE SCHEMA or CREATE ROLE. GET /api/admin/records/_resources/<area>/<key>, POST .../<field>/retry.\n\n- **Asked for** when a shared (platform) area declares a repository field or a database field (provider core, the default).\n- **Default** `false`.\n- **Off**: Refused at build while a pack declares either field type (nothing could check a repository or create a database); the routes answer not found; the generated files leave the flag out.\n\nBrief line: `features.record_resources = true` in `## Profile`."
+        },
+        "workspace_storage": {
+          "type": "boolean",
+          "default": true,
+          "title": "Workspace object storage (mold_v0-305)",
+          "description": "A workspace keeps its files in its own bucket (Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console: a record of the pack's declared area (object_storage: area, where, fields bucket, endpoint, access_key_id, secret_access_key, use; both keys encrypted fields, never revealed). Everything stored for that workspace (uploads, record files, agent attachments and checkpoints, evaluation bundles, workspace snapshots) goes to the record marked for use; else the environment's R2_*, else the Key vault's Object storage. The record page's Test action writes, reads and deletes one small object and says what went wrong in plain words. Asked for when a pack declares object_storage (the workspace area that holds its storage connections). Default true. Off: The declaration is ignored: every workspace uses the environment's or the Key vault's bucket as before; the Test action is not offered; the generated files leave the flag out. Needs encrypted_fields on.",
+          "markdownDescription": "**Workspace object storage** (mold_v0-305; board name `storage`). A workspace keeps its files in its own bucket (Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console: a record of the pack's declared area (object_storage: area, where, fields bucket, endpoint, access_key_id, secret_access_key, use; both keys encrypted fields, never revealed). Everything stored for that workspace (uploads, record files, agent attachments and checkpoints, evaluation bundles, workspace snapshots) goes to the record marked for use; else the environment's R2_*, else the Key vault's Object storage. The record page's Test action writes, reads and deletes one small object and says what went wrong in plain words.\n\n- **Asked for** when a pack declares object_storage (the workspace area that holds its storage connections).\n- **Default** `true`.\n- **Off**: The declaration is ignored: every workspace uses the environment's or the Key vault's bucket as before; the Test action is not offered; the generated files leave the flag out.\n- **Needs** Needs encrypted_fields on.\n\nBrief line: `features.workspace_storage = false` in `## Profile`."
         }
       }
     }

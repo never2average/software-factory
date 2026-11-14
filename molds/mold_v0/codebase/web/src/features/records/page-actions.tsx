@@ -12,6 +12,7 @@
 //   link       the record its field names; copy_link the page's address, with a toast
 //   start_agent (mold_v0-261, flag agent_harness) starts a workspace agent session with its profile, the first message
 //              filled from the record by the server, then opens the session on the agent's page
+//   test_storage (mold_v0-305, flag workspace_storage) tests the record's own bucket; the answer, in words, as a toast
 //   start_program (mold_v0-303, flag nested_runs) starts a program with its inputs filled from the record by the server,
 //              then opens the session that runs it on the agent's page
 // A disabled action stays in its place, its reason shown on hover and on focus (a tooltip on a button, a line under the
@@ -55,7 +56,9 @@ const ICON: Record<PageAction['kind'], ReactNode> = {
   create_record: <Icons.add aria-hidden data-icon='inline-start' />, start_agent: <Icons.agent aria-hidden data-icon='inline-start' />,
   open_url: <Icons.externalLink aria-hidden data-icon='inline-start' />,
   // mold_v0-303: a start_program action (src/record-page-routes.ts ActionView.program)
-  start_program: <Icons.sparkles aria-hidden data-icon='inline-start' />
+  start_program: <Icons.sparkles aria-hidden data-icon='inline-start' />,
+  // mold_v0-305: a workspace's own storage, written, read and deleted once (src/workspace-storage.ts testStorageRecord)
+  test_storage: <Icons.circleCheck aria-hidden data-icon='inline-start' />
 };
 
 /** Whether an action's form is a create or an edit (it opens in the side panel: mold_v0-256, flag side_panel_forms). */
@@ -111,6 +114,13 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
         const r = await takeAction<{ session: { id: string } }>(host.area, host.record.key, a.id);
         toast.success(`${a.program?.name ?? a.label} started`);
         router.push(`/app/agent?session=${encodeURIComponent(r.session.id)}`);
+        return;
+      }
+      if (a.kind === 'test_storage') {
+        // mold_v0-305: the server tests the record's own bucket and says in plain words what it found (never a key).
+        const r = await takeAction<{ ok: boolean; words: string }>(host.area, host.record.key, a.id);
+        if (r.ok) toast.success(r.words); else toast.error(r.words, { duration: 15000 });
+        host.changed();
         return;
       }
       if (a.kind === 'move') {

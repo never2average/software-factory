@@ -2987,6 +2987,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `filters_in_address` | off | always (the profile alone) | the dashboards' filters kept in the address (staff's Overview, a workspace's Activity, run analytics). `quiet_off` |
 | `usage_tool` | off | always (the profile alone) | the customer MCP's `get_usage`. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
 | `record_resources` | off | a shared area's `repository` or `database` field | a shared record's own GitHub repository (linked, checked on save) and its own database inside the app's own Postgres (a schema and, where allowed, a login role; created with the record, dropped with it; mold_v0-285): "Record-owned resources (mold_v0-282)" below. Off, either field is refused at build. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
+| `workspace_storage` | on | a pack's `object_storage` | a workspace keeps its files in its own bucket, set up by its owners in the customer console: "Workspace object storage (mold_v0-305)" below. Off, the declaration is ignored (the environment's or the Key vault's bucket, as before). `quiet_off` |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3960,6 +3961,36 @@ updated / unchanged / invalid with reasons and writes nothing). Idempotent by ke
 duplicated; a rerun writes nothing. On a Vercel app it runs from the build copy with the API project's `DATABASE_URL`
 and, because its first line says `// SEALS.`, that project's `APP_VAULT_KEY` (hidden; lib/operator_run.py); without the
 key a real run into an area that makes databases is refused before anything is written (exit 2).
+
+## Workspace object storage (mold_v0-305)
+
+Flag `workspace_storage` (on by default, `quiet_off`; asked for by a pack's `object_storage`, needs `encrypted_fields`).
+A workspace's owners add the bucket its files are kept in (Cloudflare R2, Amazon S3 or any S3-compatible service) as a
+record of the area the pack names, from the customer console; nobody needs the server's environment or the staff
+console's Key vault (`src/workspace-storage.ts`, `src/storage.ts`).
+
+- **Declared** (pack.json, config only; `src/pack-api.ts` ObjectStorageDeclSchema, checked by validatePack and gen-packs):
+  `"object_storage": {"area": "<workspace area>", "where": {<plain field>: <value>}?, "fields": {"bucket", "endpoint",
+  "access_key_id", "secret_access_key", "use", "status"?, "tested"?}}`. Both keys are `encrypted: true` text fields of
+  an area whose contract says `reveal: {"none": ...}` (never shown again, never in a log, an export or an MCP answer);
+  `use` is a boolean; `status` a text field or an enum with `working` and `failing`; `tested` a date. One pack per build.
+- **Resolution, per key**: a key stored for a workspace (`<kind>/org-<id>/...`: uploads, record files, agent attachments
+  and checkpoints, evaluation bundles, workspace snapshots, transfers) goes to that workspace's record marked `use` (the
+  latest changed), else the environment's `R2_*`, else the Key vault's Object storage, else `APP_STORAGE_DIR`, else it
+  is refused. The platform's own keys (backups, `agent-profiles/uploads/`, `ops/`) never go to a workspace's bucket. A
+  read its bucket lacks falls back to the platform's (what was stored before); nothing is moved. A record marked `use`
+  whose keys cannot be opened is refused in words, never quietly replaced. Cached a minute per workspace, dropped at
+  once on a change of the area. A save names a bucket and an endpoint a service takes (the Key vault's own checks).
+- **Test**: the record page's `test_storage` action (owners, or the roles that may update the area) writes, reads and
+  deletes one object under `ops/key-vault-test/` with the record's own settings (the Key vault's Test), says in plain
+  words what it found and writes `status` and `tested`. An edit leaves an encrypted field's hidden input empty to keep it
+  (mold_v0-305 lets an area with encrypted fields take an `edit` action).
+- **Merged tabs** take a per-area `filter` (`areas: [{area, filter}]`): a shared catalog's entries of one kind beside the
+  workspace's own rows of that kind.
+- **No object store at all**: a pack's declared recipe files (and an agent's proposed ones) of one part are kept in the
+  database (`agent_profile_uploads.inline_data`, `sql/migrations/0070_upload_bytes_inline.sql`), so declared recipes, the
+  acceptance tests frozen from them and the files a session receives need no bucket. Staff uploads still go to the store.
+- Tests: `npm run test:workspace-storage`, `npm run test:declared-recipes-no-store`.
 
 ## Early access form (mold_v0-266, mold_v0-289)
 

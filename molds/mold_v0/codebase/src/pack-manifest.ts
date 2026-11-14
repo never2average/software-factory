@@ -34,7 +34,7 @@ import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
 import { PackAgentProfileSchema, PackRecipeSchema } from "./agent-profile-spec.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, ObjectStorageDeclSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -468,6 +468,12 @@ export const PackJsonSchema = z.object({
    * program's acceptance test may run one (`acceptance.test.recipe`). Used only while workspace_recipes is on.
    */
   recipes: z.array(PackRecipeSchema).max(50).optional(),
+  /**
+   * mold_v0-305 (flag workspace_storage): the workspace area that holds a workspace's own object storage
+   * (src/pack-api.ts ObjectStorageDeclSchema; src/workspace-storage.ts): its owners add their bucket in the customer
+   * console, and everything stored for the workspace goes there.
+   */
+  object_storage: ObjectStorageDeclSchema.optional(),
   /** A workspace's team roles in the pack's words (mold_v0-262; src/teams.ts): the app's profile.json team_roles wins. */
   team_roles: TeamRolesSchema.optional(),
   /**
@@ -589,7 +595,7 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "programs" | "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles" | "recipes">;
+export type DeclaredPack = Pick<PackDefinition, "programs" | "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles" | "recipes" | "objectStorage">;
 export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles", "programs", "recipes"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
@@ -650,6 +656,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.documents) out.documents = p.documents;
   if (p.agent_profiles?.length) out.agentProfiles = p.agent_profiles;
   if (p.recipes?.length) out.recipes = p.recipes;
+  if (p.object_storage) out.objectStorage = p.object_storage;
   return out;
 }
 
@@ -685,6 +692,9 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
   // Document previews (mold_v0-220) too.
   if (declared?.documents && code.documents) throw new PackJsonError(["documents is declared in pack.json and in the code entry"]);
   if (declared?.documents) out.documents = declared.documents;
+  // mold_v0-305: a workspace's own object storage too.
+  if (declared?.objectStorage && code.objectStorage) throw new PackJsonError(["object_storage is declared in pack.json and in the code entry"]);
+  if (declared?.objectStorage) out.objectStorage = declared.objectStorage;
   return out;
 }
 

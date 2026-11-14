@@ -51,12 +51,15 @@ const session = (res: Response) => res.locals.session as Session;
 
 /** A field as the console's form draws it (an argument of a kind, a field of an area). */
 export type FormField = { name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
-  multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: "document" };
+  multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: "document";
+  /** mold_v0-305: an encrypted field: a hidden input, never filled from the record; left empty on an edit, its value is kept. */
+  secret?: true };
 export const formField = (raw: unknown): FormField => {
   const f = RecordFieldSchema.parse(raw);
   return { name: f.name, label: f.label, type: f.type, help: f.help ?? null, required: f.required === true,
     options: f.options ? f.options.map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })) : null,
     multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null, ...(f.preview ? { preview: f.preview } : {}),
+    ...(f.encrypted ? { secret: true as const } : {}),
     // mold_v0-260 (flag record_rules): the records a reference may name, for the picker to narrow its list (the write enforces it).
     ...(f.where && featureOn("record_rules") ? { where: f.where, where_words: referenceWhereWords(f.where, (n) => (findArea(f.to!)?.fields.find((x) => x.name === n)?.label ?? n).toLowerCase()) } : {}) };
 };

@@ -453,8 +453,8 @@ export async function startUpload(by: ProfileActor, input: { bytes?: unknown }):
 }
 async function uploadRow(id: string) {
   if (!UPLOAD_ID.test(String(id))) throw new PackError("no such upload", 404);
-  const [u] = await read((q) => q.query<{ id: string; bytes: string; parts: number; sha256: string | null; completed_at: Date | null }>(
-    "SELECT id, bytes, parts, sha256, completed_at FROM agent_profile_uploads WHERE id = $1", [String(id)]));
+  const [u] = await read((q) => q.query<{ id: string; bytes: string; parts: number; sha256: string | null; completed_at: Date | null; inline: boolean }>(
+    "SELECT id, bytes, parts, sha256, completed_at, inline_data IS NOT NULL AS inline FROM agent_profile_uploads WHERE id = $1", [String(id)]));
   if (!u) throw new PackError("no such upload", 404);
   return { ...u, bytes: Number(u.bytes) };
 }
@@ -493,6 +493,12 @@ export async function readUploadPart(id: string, n: number): Promise<Buffer> {
   const u = await uploadRow(id);
   if (!u.completed_at) throw new PackError("this upload is not finished", 409);
   if (!Number.isSafeInteger(n) || n < 0 || n >= u.parts) throw new PackError(`part: 0 to ${u.parts - 1}`, 400);
+  // mold_v0-305: bytes the database keeps (stored with no object store: a pack's declared recipe file, say).
+  if (u.inline) {
+    const [r] = await read((q) => q.query<{ data: Buffer | Uint8Array }>("SELECT inline_data AS data FROM agent_profile_uploads WHERE id = $1", [u.id]));
+    if (!r?.data) throw new PackError("this upload's bytes are gone", 410);
+    return Buffer.from(r.data);
+  }
   const b = await (await (await import("./storage.js")).objectStore()).get(partKey(u.id, n));
   if (!b) throw new PackError("this upload's bytes are gone from the object store", 410);
   return b;
@@ -501,14 +507,25 @@ export const uploadParts = (bytes: number) => partsOf(bytes);
 /**
  * mold_v0-271: bytes already in hand kept as one finished upload (a file of an agent's recipe proposal, src/recipes.ts),
  * stored exactly as a staff upload's parts are.
+ *
+ * mold_v0-305: with no object store configured (none in the environment, the Key vault or APP_STORAGE_DIR), a file of
+ * one part (UPLOAD_PART_BYTES at most: a pack's declared recipe file, an agent's proposed one) is kept in the database
+ * instead (agent_profile_uploads.inline_data), so a pack's recipes, the tests frozen from them and the files a session
+ * receives need no bucket. A larger file still needs the object store (refused with its words). Read back the same way.
  */
 export async function storeUploadBytes(by: ProfileActor, data: Buffer): Promise<{ id: string; bytes: number; sha256: string; executable: boolean }> {
   if (data.length > uploadLimitBytes()) throw new PackError(`That file is ${mb(data.length)}: at most ${mb(uploadLimitBytes())} (the platform's AGENT_UPLOAD_MAX_MB)`, 413);
   const id = `upl_${randomBytes(18).toString("base64url").replace(/[^A-Za-z0-9]/g, "x")}`, parts = partsOf(data.length);
-  await tx((q) => q.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by) VALUES ($1, $2, $3, $4)", [id, data.length, parts, by]));
-  const store = await (await import("./storage.js")).objectStore();
-  for (let n = 0; n < parts; n++) await store.put(partKey(id, n), data.subarray(n * UPLOAD_PART_BYTES, (n + 1) * UPLOAD_PART_BYTES), "application/octet-stream");
   const sha256 = createHash("sha256").update(data).digest("hex");
+  const S = await import("./storage.js");
+  if (parts === 1 && !(await S.platformStoreConfigured())) {
+    await tx((q) => q.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by, sha256, completed_at, inline_data) VALUES ($1, $2, 1, $3, $4, now(), $5)",
+      [id, data.length, by, sha256, data]));
+    return { id, bytes: data.length, sha256, executable: looksExecutable(data.subarray(0, 8)) };
+  }
+  await tx((q) => q.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by) VALUES ($1, $2, $3, $4)", [id, data.length, parts, by]));
+  const store = await S.objectStore();
+  for (let n = 0; n < parts; n++) await store.put(partKey(id, n), data.subarray(n * UPLOAD_PART_BYTES, (n + 1) * UPLOAD_PART_BYTES), "application/octet-stream");
   await tx((q) => q.query("UPDATE agent_profile_uploads SET sha256 = $2, completed_at = now() WHERE id = $1", [id, sha256]));
   return { id, bytes: data.length, sha256, executable: looksExecutable(data.subarray(0, 8)) };
 }

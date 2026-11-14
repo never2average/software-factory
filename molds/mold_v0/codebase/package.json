@@ -19,6 +19,8 @@
     "test:console-hide": "tsx scripts/console-hide-test.ts",
     "test:console-sidebar": "tsx scripts/console-sidebar-test.ts",
     "test:recipes": "tsx scripts/recipes-test.ts",
+    "test:workspace-storage": "tsx scripts/workspace-storage-test.ts",
+    "test:declared-recipes-no-store": "tsx scripts/declared-recipes-no-store-test.ts",
     "test:shared-records": "tsx scripts/shared-records-test.ts",
     "test:record-resources": "tsx scripts/record-resources-test.ts",
     "test:developer-console": "tsx scripts/developer-console-test.ts",

@@ -1246,7 +1246,7 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage"] as const;
 /** A program's id (src/program-spec.ts PROGRAM_ID, the same rule). */
 export const PROGRAM_REF = /^[a-z][a-z0-9-]{1,39}$/;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
@@ -1283,6 +1283,10 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *              record: its inputs filled from the record (`input`: a program input's name -> a field of the record, or
  *              $key, $title), on the server; offered only to a role that may start it (the program's spawned_by: [] or
  *              "*" means people may; src/program-start.ts) and only while the program is active
+ *   test_storage (mold_v0-305, flag workspace_storage) on the pack's object_storage area only: write, read and delete one
+ *              small object with this record's bucket settings and say in plain words whether it works (src/workspace-
+ *              storage.ts testStorageRecord); writes the declared status and tested fields; offered to the roles that
+ *              may update the record
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1489,6 +1493,9 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     if (x.kind === "start_program" && !x.program) bad("a start_program action names the program it starts (program)", i, "program");
     if (x.kind === "start_program" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a start_program action cannot be a viewer's", i, "roles");
     if (x.kind === "start_program" && a.scope === "platform") bad("a shared (platform) area's page starts no program: a program runs in a workspace", i, "kind");
+    // mold_v0-305: a storage Test is a workspace record's (the pack checks that the area is its object_storage one).
+    if (x.kind === "test_storage" && a.scope === "platform") bad("a shared (platform) area holds no workspace's storage: test_storage is for the pack's object_storage area", i, "kind");
+    if (x.kind === "test_storage" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a test_storage action writes the record's status", i, "roles");
     if (x.area !== undefined && x.kind !== "create_record") bad(`area is for a create_record action, not ${x.kind}`, i, "area");
     if (x.kind === "create_record" && !x.area) bad("a create_record action names the area it adds a record to", i, "area");
     if (x.target !== undefined && x.kind !== "start_run") bad(`target is for a start_run action, not ${x.kind}`, i, "target");
@@ -1540,7 +1547,8 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
       else if (!f) bad(`${x.field} is not one of the area's fields`, i, "field");
       else if ((f.type !== "url" && f.type !== "text") || f.encrypted) bad(`${x.field} is ${f.encrypted ? "encrypted" : `a ${f.type} field`}: an open_url action opens a url field's address (or a text field holding one)`, i, "field");
     }
-    if (x.kind === "edit" && a.fields.some((f) => f.encrypted)) bad("the edit form never holds an encrypted value: an area with an encrypted field has no edit action", i, "kind");
+    // mold_v0-305: an area with an encrypted field is edited too: each encrypted field is a hidden input that starts empty
+    // (the form never holds its value), and left empty it keeps the stored value (src/record-page-routes.ts).
     if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link" && x.kind !== "open_url") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
     for (const [j, u] of (x.unavailable ?? []).entries())
       for (const m of conditionIssues(a.fields, (a as { clocks?: { name: string }[] }).clocks ?? [], u.when)) bad(m, i, "unavailable", j, "when", ...(/^\S+ is not one of the area's fields/.test(m) && !u.when.all && !u.when.any ? ["field"] : []));
@@ -2345,6 +2353,9 @@ export type TabEmpty = z.output<typeof TabEmptySchema>;
  *                   entries beside the workspace's own status of the ones it tracks, never the whole catalog
  *   source          the area's word in the tab's `source` column (a row shows the first of its areas, in the list's
  *                   order, that has one): plain text on one line, at most 40 characters
+ *   filter          mold_v0-305: the area's own narrowing, as an area tab's `filter` ({field: value} or {field: {op:
+ *                   value}}): only its matching rows join the list (or add their fields); a shared catalog's entries of
+ *                   one kind beside the workspace's own rows of that kind
  * The first area is the tab's own (its label, its empty state, its onboarding); it brings rows. A row opens the record
  * of the first of its areas (the detail view). Who sees the tab: the roles that may read every one of its areas.
  */
@@ -2353,6 +2364,8 @@ export const TabAreaSchema = z.object({
   area: name,
   rows: z.enum(["all", "matched"]).optional(),
   source: emptyText(40).optional(),
+  filter: z.record(z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "a field of the area (or key, title, updated_at)"), z.unknown())
+    .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type TabArea = z.output<typeof TabAreaSchema>;
@@ -2905,6 +2918,63 @@ export const McpSettingsSchema = z.object({
 }).strict();
 export type McpSettings = z.output<typeof McpSettingsSchema>;
 
+/**
+ * mold_v0-305 (flag workspace_storage): where a workspace keeps the settings of its own object storage (a bucket of
+ * Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console. `area` is one of
+ * this pack's workspace areas; `where` narrows it to its object-storage rows ({field: value}, plain fields); `fields`
+ * names the area's fields that hold the bucket, its endpoint (an https address), the access key id and the secret access
+ * key (both encrypted fields of an area whose contract reveals nothing: never shown again, never in a log or an MCP
+ * answer) and the boolean that marks the record in use; `status` (optional) a text or enum field the record page's Test
+ * writes ("working" or "failing", or the option whose value says so) and `tested` (optional) a date field it stamps.
+ * src/storage.ts resolves each workspace's bucket: its record marked for use, else the environment's R2_*, else the
+ * Key vault's Object storage.
+ */
+export const ObjectStorageDeclSchema = z.object({
+  area: name,
+  where: z.record(name, z.union([z.string().max(200), z.number(), z.boolean()])).refine((w) => Object.keys(w).length <= 4, "at most 4 conditions").optional(),
+  fields: z.object({ bucket: name, endpoint: name, access_key_id: name, secret_access_key: name, use: name, status: name.optional(), tested: name.optional() }).strict(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type ObjectStorageDecl = z.output<typeof ObjectStorageDeclSchema>;
+interface DeclArea { name?: string; scope?: string; repository?: string; sealed?: boolean; role?: string; fields?: { name?: string; type?: string; encrypted?: boolean; options?: unknown[] }[];
+  contract?: { actions?: Record<string, unknown> } }
+/** mold_v0-305: what is wrong with a pack's object_storage declaration against its own record areas ([]: nothing). */
+export function objectStorageProblems(decl: unknown, areas: readonly unknown[]): string[] {
+  const r = ObjectStorageDeclSchema.safeParse(decl);
+  if (!r.success) return r.error.issues.map((e) => `object_storage.${e.path.join(".") || "value"}: ${e.message}`);
+  const d = r.data, out: string[] = [];
+  const a = (areas as DeclArea[]).find((x) => x?.name === d.area);
+  if (!a) return [`object_storage.area: this pack declares no record area ${d.area}`];
+  if (a.scope !== "workspace") out.push(`object_storage.area: ${d.area} is a shared area: a workspace's storage is one of its own records (scope workspace)`);
+  if (a.repository !== undefined) out.push(`object_storage.area: ${d.area} is read from a repository: a workspace's owners add its storage by hand`);
+  if (a.sealed === true || a.role === "asset") out.push(`object_storage.area: ${d.area} is sealed: its plain fields (bucket, endpoint, use) must be readable to find the bucket`);
+  const field = (n: string) => (a.fields ?? []).find((f) => f?.name === n);
+  const need = (k: string, n: string, check: (f: NonNullable<ReturnType<typeof field>>) => string | null) => {
+    const f = field(n);
+    if (!f) { out.push(`object_storage.fields.${k}: ${d.area} has no field ${n}`); return; }
+    const why = check(f);
+    if (why) out.push(`object_storage.fields.${k}: ${n} ${why}`);
+  };
+  const plainText = (f: { type?: string; encrypted?: boolean }) => f.encrypted ? "is encrypted: it is a plain text field" : !["text", "url"].includes(f.type ?? "text") ? "is a text or url field" : null;
+  need("bucket", d.fields.bucket, plainText);
+  need("endpoint", d.fields.endpoint, plainText);
+  for (const k of ["access_key_id", "secret_access_key"] as const)
+    need(k, d.fields[k], (f) => (f.encrypted !== true ? "is an encrypted field (encrypted: true): a key is never kept in the clear" : (f.type ?? "text") !== "text" ? "is a text field" : null));
+  need("use", d.fields.use, (f) => (f.encrypted ? "is a plain field" : f.type !== "boolean" ? "is a boolean field (the record in use)" : null));
+  if (d.fields.status) need("status", d.fields.status, (f) => {
+    if (f.encrypted) return "is a plain field";
+    if (!["text", "enum"].includes(f.type ?? "text")) return "is a text or enum field";
+    const vals = (f.options ?? []).map((o) => (typeof o === "string" ? o : (o as { value?: string })?.value));
+    return f.type === "enum" && !(vals.includes("working") && vals.includes("failing")) ? "is an enum with the options working and failing (what the Test writes)" : null;
+  });
+  if (d.fields.tested) need("tested", d.fields.tested, (f) => (f.encrypted ? "is a plain field" : f.type !== "date" ? "is a date field" : null));
+  for (const n of Object.keys(d.where ?? {})) { const f = field(n); if (!f) out.push(`object_storage.where: ${d.area} has no field ${n}`); else if (f.encrypted) out.push(`object_storage.where: ${n} is encrypted: narrow by a plain field`); }
+  const reveal = a.contract?.actions?.reveal as { none?: unknown } | undefined;
+  if (!reveal || typeof reveal !== "object" || Array.isArray(reveal) || typeof reveal.none !== "string")
+    out.push(`object_storage.area: ${d.area}'s contract reveals nothing (contract.actions.reveal {"none": "<why>"}): the keys are never shown again once saved`);
+  return out;
+}
+
 export interface PackDefinition {
   id: string;
   tools?: PackTool<any>[];
@@ -2970,6 +3040,12 @@ export interface PackDefinition {
    * over a change staff made). Its agent profiles' `recipes` and its programs' acceptance tests may name them.
    */
   recipes?: z.input<typeof PackRecipeSchema>[];
+  /**
+   * mold_v0-305 (flag workspace_storage): the workspace area that holds a workspace's own object storage (pack.json
+   * `object_storage`, ObjectStorageDeclSchema; src/workspace-storage.ts reads it): the record marked for use is where
+   * everything stored for that workspace goes.
+   */
+  objectStorage?: z.input<typeof ObjectStorageDeclSchema>;
   /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
@@ -3110,6 +3186,12 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     if (recipeIds.has(r.data.id)) problems.push(at(`recipe ${r.data.id} is declared twice`));
     recipeIds.add(r.data.id);
   }
+  // mold_v0-305: a workspace's own object storage, one of this pack's workspace areas with its keys encrypted; its Test
+  // (a page's test_storage action) only on that area.
+  if (p.objectStorage !== undefined) for (const m of objectStorageProblems(p.objectStorage, p.recordAreas ?? [])) problems.push(at(m));
+  for (const ar of p.recordAreas ?? []) for (const x of ((ar as { detail?: { actions?: { kind?: string }[] } })?.detail?.actions ?? []))
+    if (x?.kind === "test_storage" && (ar as { name?: string }).name !== (p.objectStorage as { area?: string } | undefined)?.area)
+      problems.push(at(`record area ${(ar as { name?: string }).name}'s page: action test_storage: the area is not this pack's object_storage area`));
   for (const t of p.tabs ?? []) {
     const a = t?.action as { kind?: string; profile?: string } | false | undefined;
     if (a && typeof a === "object" && a.kind === "start_agent" && !knownProfile(a.profile))
