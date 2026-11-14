@@ -3812,7 +3812,8 @@
                         "copy_link",
                         "create_record",
                         "start_agent",
-                        "open_url"
+                        "open_url",
+                        "start_program"
                       ]
                     },
                     "place": {
@@ -4233,6 +4234,10 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 4000
+                    },
+                    "program": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{1,39}$"
                     }
                   },
                   "required": [
@@ -6601,6 +6606,45 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
           },
+          "start_agent": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,39}$"
+              },
+              "first_message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              }
+            },
+            "required": [
+              "profile",
+              "first_message"
+            ],
+            "additionalProperties": false
+          },
+          "start_program": {
+            "type": "object",
+            "properties": {
+              "program": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,39}$"
+              },
+              "inputs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "program"
+            ],
+            "additionalProperties": false
+          },
           "cron": {
             "type": "string",
             "maxLength": 120
@@ -6645,7 +6689,6 @@
         },
         "required": [
           "name",
-          "job_kind",
           "cron"
         ],
         "additionalProperties": false
@@ -9066,6 +9109,36 @@
               "general"
             ]
           },
+          "recipes": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{1,39}$"
+                },
+                "version": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
           "$comment": {
             "type": "string",
             "maxLength": 2000
@@ -9074,6 +9147,65 @@
         "required": [
           "id",
           "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recipes": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,39}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "files": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "maxLength": 400,
+                  "pattern": "^(?!\\/)(?!\\.recipe-proposal(?:\\/|$))(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))[A-Za-z0-9._@+ -]+(?:\\/[A-Za-z0-9._@+ -]+){0,15}$"
+                },
+                "content": {
+                  "type": "string",
+                  "maxLength": 524288
+                },
+                "json": {},
+                "executable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "$comment": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "files"
         ],
         "additionalProperties": false
       }
@@ -15106,13 +15238,150 @@
                   "minLength": 1,
                   "maxLength": 120
                 }
+              },
+              "signature": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "vercel"
+                ]
+              },
+              "log_drain": {
+                "type": "object",
+                "properties": {
+                  "secret_env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "verify_env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "window_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440
+                  },
+                  "max_bytes": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 1048576
+                  },
+                  "deployments": {
+                    "type": "object",
+                    "properties": {
+                      "area": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "field": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "$key"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                          }
+                        ]
+                      },
+                      "match": {
+                        "type": "string",
+                        "enum": [
+                          "deployment_id",
+                          "project_id",
+                          "host"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "area",
+                      "field"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "deployment": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "window_start": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "window_end": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "requests": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "errors": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "error_rate": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "p95_ms": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "mean_ms": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "source": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      },
+                      "buckets": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "sources": {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    }
+                  },
+                  "environments": {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    }
+                  },
+                  "source_label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  }
+                },
+                "required": [
+                  "deployments"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
               "name",
-              "area",
-              "key",
-              "fields"
+              "area"
             ],
             "additionalProperties": false
           }

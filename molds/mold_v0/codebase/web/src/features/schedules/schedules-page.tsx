@@ -32,9 +32,11 @@ import { httpError } from '@/features/status/from-error';
 interface Schedule {
   id: string; pack: string; name: string; label: string | null; job_kind: string; cron: string;
   assets: { area: string; keys: string[] | null } | null; environment: string | null; enabled: boolean; is_default: boolean; customized: boolean;
+  /** mold_v0-303: what a schedule that starts a session holds ({start_agent} or {start_program: {program}}). */
+  scope?: { start_program?: { program?: string } } & Record<string, unknown>;
   next_at: string | null; last: { slot_at: string; fired_at: string | null; skipped: number; runs: string[]; error: string | null } | null;
 }
-interface Data { schedules: Schedule[]; kinds: { pack: string; name: string }[]; asset_areas: { pack: string; name: string; label: string }[]; timezone: string; can_manage: boolean }
+interface Data { schedules: Schedule[]; kinds: { pack: string; name: string }[]; asset_areas: { pack: string; name: string; label: string }[]; timezone: string; can_manage: boolean; programs?: Record<string, string> }
 
 async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
   const res = await fetch(`/api/schedules${path}`, {
@@ -93,7 +95,7 @@ export function SchedulesBody({ summary, action }: { summary?: ReactNode; action
           <RecordView<Schedule>
             id='app-schedules' compact noun='schedules' properties summary={summary} toolbarAction={toolbarAction}
             rows={data?.schedules ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
-            searchText={(s) => `${s.label ?? ''} ${s.name} ${kindLabel(s)} ${cronWords(s.cron)} ${s.cron} ${assetWords(s)}`}
+            searchText={(s) => `${s.label ?? ''} ${s.name} ${startsLabel(s, data?.programs)} ${cronWords(s.cron)} ${s.cron} ${assetWords(s)}`}
             searchPlaceholder='Search schedules'
             filters={data && <span className='text-muted-foreground text-xs'>{data.can_manage ? 'Open a schedule to change when it runs.' : 'An owner of this workspace changes these.'}</span>}
             exports={data?.schedules.length ? [exportRowsItem({ name: 'schedules', rows: data.schedules, cols: [...cols, { key: 'cron_utc', label: 'Cron (UTC)', value: (s: Schedule) => s.cron }] })] : undefined}
@@ -118,6 +120,15 @@ export function SchedulesBody({ summary, action }: { summary?: ReactNode; action
 }
 
 const kindLabel = (s: Pick<Schedule, 'pack' | 'job_kind'>) => JOB_KINDS.find((k) => k.pack === s.pack && k.name === s.job_kind)?.label ?? s.job_kind;
+/**
+ * mold_v0-303: what a schedule starts, in words: a pack's schedule of an agent session ("@agent") or a program
+ * ("@program", by its name) says so, never its internal job kind.
+ */
+const startsLabel = (s: Schedule, programs: Data['programs']) => {
+  if (s.job_kind === '@agent') return 'Starts an agent session';
+  if (s.job_kind === '@program') { const id = s.scope?.start_program?.program; return `Starts ${(id && programs?.[id]) || id || 'a program'}`; }
+  return kindLabel(s);
+};
 /** The kinds a schedule may run, by their labels (mold_v0-298); two with the same label say their pack too. */
 function kindOptions(kinds: Data['kinds']) {
   const labels = kinds.map((k) => kindLabel({ pack: k.pack, job_kind: k.name }));
@@ -138,7 +149,7 @@ function columns(data: Data, onChanged: () => unknown): RecordCol<Schedule>[] {
         </span>
       )
     },
-    { key: 'kind', label: 'Runs', type: 'select', options: kinds, value: (s) => `${s.pack}/${s.job_kind}`, render: (s) => kindLabel(s) },
+    { key: 'kind', label: 'Runs', type: 'select', options: kinds, value: (s) => `${s.pack}/${s.job_kind}`, render: (s) => startsLabel(s, data.programs) },
     // mold_v0-298: in words, in the person's own time zone (the cron text, UTC, on hover).
     // The export names the viewer's time zone for these words and carries the exact cron text (UTC) in its own column.
     { key: 'cron', label: 'When', name: `When (${zoneName()})`, type: 'text', value: (s) => cronWords(s.cron), render: (s) => <span title={`In your time zone, ${zoneName()}. Cron: ${s.cron} (UTC)`}>{cronWords(s.cron)}</span> },

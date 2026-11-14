@@ -214,6 +214,39 @@ try {
       ok("permission: the area's read roles, the workspace, the person and the file a link names; forged and expired links; a reference copied to another record or workspace opens nothing; a locked vault serves none");
     }
 
+    // ---------- 4b. agents read files (mold_v0-303, M11) ----------
+    {
+      const { generateCatalog } = await import("../src/mcp-catalog.js");
+      const cat = generateCatalog([{ id: "filefix", name: "File fixture", definition: pack }], { documents: true });
+      const ft = cat.tools.find((t) => t.name === "filefix_read_cases_files");
+      assert.ok(ft && ft.op === "files" && ft.action === "read" && ft.annotations.readOnlyHint, "an area with files gets read_<area>_files, a read");
+      assert.ok(cat.tools.some((t) => t.name === "filefix_read_instruments_files"), "a shared area's documents too");
+      assert.ok(!generateCatalog([{ id: "filefix", name: "File fixture", definition: pack }], { documents: false }).tools.some((t) => t.op === "files"), "none with document_preview off");
+      assert.ok(!generateCatalog([{ id: "filefix", name: "File fixture", definition: pack }]).tools.some((t) => t.op === "files"), "none until the binder opts in");
+      const member = { role: "member" as const, userId: null };
+      const listed = await withTenant(A.orgId, () => files.agentRecordFiles(A.orgId, member, "cases", "case-1")) as any;
+      assert.deepEqual(listed.files.map((f: any) => [f.id, f.name, f.readable]),
+        [["files:1", "notice.pdf", "pdf"], ["files:2", "chart.png", "image"], ["files:3", "message.html", "html"], ["files:4", "notes.txt", "text"], ["files:5", "sheet.xlsx", null]]);
+      assert.ok(!JSON.stringify(listed).includes("_url") && !JSON.stringify(listed).includes(MARK), "the list: no links, no bytes");
+      const read = (file: string, actor: { role: any; userId: null } = member, org = A.orgId, key = "case-1") =>
+        withTenant(org, () => files.agentRecordFiles(org, actor, "cases", key, file)) as Promise<any>;
+      const t = await read("files:4");
+      assert.equal(t.content[0].type, "text"); assert.match(t.content[0].text, new RegExp(`plain notes ${MARK}`));
+      const h = await read("files:3");
+      assert.ok(!/<script/i.test(h.content[0].text), "HTML only sanitised");
+      const pd = await read("files:1");
+      assert.equal(pd.content[0].type, "resource"); assert.equal(pd.content[0].resource.mimeType, "application/pdf");
+      assert.ok(Buffer.from(pd.content[0].resource.blob, "base64").equals(PDF), "the PDF's bytes intact");
+      const im = await read("files:2");
+      assert.equal(im.content[0].type, "image"); assert.ok(Buffer.from(im.content[0].data, "base64").equals(PNG));
+      await assert.rejects(read("files:5"), (e: any) => e.status === 415, "a spreadsheet is download only");
+      await assert.rejects(read("files:9"), (e: any) => e.status === 404);
+      await assert.rejects(read("files:1", { role: "viewer", userId: null }), (e: any) => e.status === 404 || e.status === 403, "a role the area does not let read");
+      await assert.rejects(read("files:1", member, B.orgId, "case-2"), (e: any) => e.status === 404, "another workspace never finds A's record");
+      await assert.rejects(read("cover:1", member, A.orgId, "case-2"), (e: any) => e.status === 404, "a copied reference does not open for an agent either");
+      ok("agents: read_<area>_files lists a record's files (no links) and hands one over as the console previews it: text, sanitised HTML, a PDF resource, an image; download-only types refused; the area's read roles and the workspace honoured");
+    }
+
     // ---------- 5. HTML ----------
     {
       const blocked = sanitiseHtml(HTML);

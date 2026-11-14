@@ -527,6 +527,47 @@ export default definePack({ id: "fx_mixed",
     console.log("✓ a code entry extends a declarative pack (its tool and area join the declared ones); redeclaring a declared name is refused");
   }
 
+  // ---------- 3b. mold_v0-303: recipes a pack declares, start_program, acceptance tests that run a recipe ----------
+  {
+    const kit = () => ({
+      id: "fx_kit", name: "Kit", version: "1",
+      record_areas: [{ name: "fx_topics", label: "Topics", role: "check", scope: "workspace", fields: [{ name: "subject", label: "Subject" }],
+        detail: { tabs: [{ label: "Overview", sections: [{ title: "About", fields: ["subject"] }] }], actions: [{ kind: "start_program", program: "look-into", input: { topic: "subject" } }] } }],
+      recipes: [{ id: "review-kit", name: "Review kit", description: "What a reviewer works with.", files: [
+        { path: ".claude/skills/review/SKILL.md", content: "---\nname: review\n---\n# Review\n" },
+        { path: "schemas/out.json", json: { type: "object", required: ["ok"] } },
+        { path: "scripts/check.sh", content: "#!/bin/sh\necho ok\n", executable: true },
+        { path: "cases/cases.json", json: [{ input: 1, expected: 1 }] }] }],
+      agent_profiles: [{ id: "kit-agent", name: "Kit agent", recipes: [{ id: "review-kit" }, { id: "kept-by-staff", version: 2 }] }],
+      programs: [
+        { id: "look-into", name: "Look into", config: { prompt: "Look into {topic}.", inputs: { type: "object", required: ["topic"], properties: { topic: { type: "string" } } }, spawned_by: [] } },
+        { id: "measure", name: "Measure", config: { prompt: "Improve it.", spawned_by: ["kit-agent"], acceptance: { metric: "score", direction: "maximize", surface: ["policy.json"], target: { kind: "harness_policy", id: "kit-agent" },
+          test: { recipe: { id: "review-kit" }, cases_path: "cases/cases.json", candidate_command: ["builtin:file", "policy.json"], scorer_command: ["builtin:exact"] } } } }],
+      schedules: [{ name: "weekly_look", cron: "0 6 * * 1", start_program: { program: "look-into", inputs: { topic: "the week" } } },
+        { name: "weekly_agent", cron: "0 7 * * 1", start_agent: { profile: "kit-agent", first_message: "Scan last week's numbers." } }],
+    });
+    const good = tryPack(kit());
+    assert.equal(good.r.status, 0, `recipes, a profile naming them, start_program and a test from a recipe build: ${good.r.stderr}`);
+    const gen = readFileSync(path.join(good.out, "src", "packs.generated.ts"), "utf8");
+    assert.ok(gen.includes("review-kit") && gen.includes("scripts/check.sh"), "the recipe reaches the registry with its files");
+    const bad: [string, (j: any) => void, RegExp][] = [
+      ["a recipe declared twice", (j) => { j.recipes.push(structuredClone(j.recipes[0])); }, /recipe review-kit is declared twice/],
+      ["a recipe file outside the working directory", (j) => { j.recipes[0].files[0].path = "../escape.md"; }, /a path inside the session's working directory/],
+      ["a recipe file under .recipe-proposal", (j) => { j.recipes[0].files[0].path = ".recipe-proposal/x.md"; }, /a path inside the session's working directory/],
+      ["a recipe file with content and json", (j) => { j.recipes[0].files[1].content = "{}"; }, /exactly one/],
+      ["a recipe with one path twice", (j) => { j.recipes[0].files[1].path = "Cases/Cases.json"; j.recipes[0].files[3].path = "cases/cases.json"; }, /two files have one path/],
+      ["a profile naming version 0 of a recipe", (j) => { j.agent_profiles[0].recipes[1].version = 0; }, /agent_?[pP]rofiles|recipes/],
+      ["a test naming a recipe nobody declares", (j) => { j.programs[1].config.acceptance.test.recipe.id = "no-such-kit"; }, /acceptance\.test\.recipe "no-such-kit" is not a recipe the build's packs declare/],
+      ["a test whose cases are not the recipe's", (j) => { j.programs[1].config.acceptance.test.cases_path = "cases/other.json"; }, /cases_path cases\/other\.json is not a file of recipe review-kit/],
+      ["a page action naming no program", (j) => { delete j.record_areas[0].detail.actions[0].program; }, /names the program it starts/],
+      ["a page action naming a program nobody declares", (j) => { j.record_areas[0].detail.actions[0].program = "nowhere"; }, /program nowhere is not a program the build's packs declare/],
+      ["a viewer's start_program", (j) => { j.record_areas[0].detail.actions[0].roles = ["viewer"]; }, /cannot be a viewer's/],
+      ["a schedule starting an agent with a profile nobody declares", (j) => { j.schedules[1].start_agent.profile = "nobody"; }, /start_agent: agent profile nobody is not one this pack declares/],
+    ];
+    for (const [what, edit, re] of bad) { const j = kit(); edit(j); refused(what, tryPack(j), re); }
+    console.log(`✓ recipes a pack declares (inline files: markdown, JSON, a script with its executable flag) build with a profile naming them, a start_program page action, a schedule that starts a program or an agent, and a test run from a recipe; ${bad.length} malformed ones refused`);
+  }
+
   // ---------- 4. in the database ----------
   const { getDb } = await import("../src/db.js");
   const db = await getDb();

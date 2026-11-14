@@ -8,13 +8,17 @@
  *              out of what the parent has left, under the parent's row lock, and off the parent's running wake too
  *   a child    a session of the root's person, in the root's workspace, under a policy that is the intersection of its
  *              program's and its parent's (src/nested-policy.ts): it never asks anyone for more, cannot be raised, and
- *              ends when it steps outside. Depth 2, 8 children per root, 4 at once by default; lower only by the app
+ *              ends when it steps outside. Depth 2, 32 children per root, 4 at once by default (mold_v0-303): the app's
+ *              profile sets its own, up to a hard maximum (depth 3, 256 children, 16 at once); budget is the real limit
  *   settling   what a child costs is added to its parent, what it did not use is returned, once. A machine's steps
  *              settle into the machine's own pool the same way
  *   durable    all of it is rows: the sweep (nestedTick) reconciles whatever a lost process left half done
  *   budgets    the gateway holds each request's worst cost from its run's budget (admitTreeRequest), so concurrent
  *              requests of a tree can never spend past its root's budget
- *   acceptance the guardian (src/program-acceptance.ts): only this module and the evaluator's measurements decide
+ *   acceptance the guardian (src/program-acceptance.ts): only this module and the evaluator's measurements decide.
+ *              mold_v0-303: the target (src/program-target.ts) is given to the candidate step read-only in .target/, its
+ *              .candidate/ is an overlay on it, and the target's current version is the baseline before any champion
+ *   records    mold_v0-303: a program's settled outputs are written into its workspace area (src/program-records.ts)
  */
 import { randomBytes } from "node:crypto";
 import type { Queryable } from "./db.js";
@@ -29,9 +33,10 @@ import * as H from "./harness-sessions.js";
 import { canAccount, type AccountRole } from "./account-roles.js";
 import { revokeToolTokens } from "./harness-reach.js";
 import { ChildPolicyRefused, effectiveWeb, intersectChildPolicy, type ProgramSide } from "./nested-policy.js";
-import { atPath, renderPrompt, typedOutputs, validateJson, type FailurePolicy, type JsonSchema, type Machine, type MachineState, type ProgramConfig } from "./program-spec.js";
+import { declaredInputs, renderPrompt, storedTargetKind, targetKindOf, testFrozen, TREE_HARD_MAX, typedOutputs, validateJson, type FailurePolicy, type JsonSchema, type Machine, type MachineState, type ProgramConfig, type TargetKind } from "./program-spec.js";
+import { bundleOf, changedPaths, filesOfBundle, overlay, POLICY_FILE, TARGET_DIR, targetBrief, targetCurrent, targetIdFor, targetKindFor, unifiedPatch, type TargetBase, type TargetFile } from "./program-target.js";
 import { machineBegin, machineStep, resolveSource, type MachineRun, type StepSpec } from "./program-machine.js";
-import { decideAcceptance, offSurface, seedOf, type Decision, type MeasuredCase } from "./program-acceptance.js";
+import { decideAcceptance, offSurface, seedOf, wordingOnly, type Decision, type MeasuredCase } from "./program-acceptance.js";
 import { programForSpawn, programsForProfile, sha256 } from "./programs.js";
 import { maskSecrets } from "./run-events.js";
 import type { EvaluationResult, EvaluationStart } from "./program-evaluator.js";
@@ -43,12 +48,19 @@ const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOStrin
 export const nestedOn = () => featureOn("nested_runs") && agentHarnessOn();
 const needOn = () => { if (!nestedOn()) throw new PackError("Nested runs are not on in this app", 404); };
 
-/** The most a build may allow; its profile may only lower them. */
-export const NESTED_CEILINGS = { depth: 2, children: 8, concurrent: 4 } as const;
+/**
+ * mold_v0-303 (operator decision 1): a tree's limits by default, and the most a build's profile may set them to
+ * (profile.json nested_runs). The children are generous: a tree's budget, carved child by child, is the real limit.
+ */
+export const NESTED_CEILINGS = { depth: 2, children: 32, concurrent: 4 } as const;
+export const NESTED_HARD_MAX = { depth: 3, children: TREE_HARD_MAX, concurrent: 16 } as const;
+let limitsForTest: { max_depth?: number; max_children?: number; max_concurrent?: number } | null = null;
+/** Tests only: the profile's nested_runs as if it said this (null: as it says). */
+export const setNestedRunsForTest = (p: typeof limitsForTest) => { limitsForTest = p; };
 export function nestedLimits() {
-  const p = PROFILE.nested_runs ?? {};
-  const lower = (v: number | undefined, ceil: number) => (typeof v === "number" && v >= 0 ? Math.min(Math.floor(v), ceil) : ceil);
-  return { depth: lower(p.max_depth, NESTED_CEILINGS.depth), children: lower(p.max_children, NESTED_CEILINGS.children), concurrent: Math.max(1, lower(p.max_concurrent, NESTED_CEILINGS.concurrent)) };
+  const p = limitsForTest ?? PROFILE.nested_runs ?? {};
+  const set = (v: number | undefined, def: number, hard: number) => (typeof v === "number" && v >= 0 ? Math.min(Math.floor(v), hard) : def);
+  return { depth: set(p.max_depth, NESTED_CEILINGS.depth, NESTED_HARD_MAX.depth), children: set(p.max_children, NESTED_CEILINGS.children, NESTED_HARD_MAX.children), concurrent: Math.max(1, set(p.max_concurrent, NESTED_CEILINGS.concurrent, NESTED_HARD_MAX.concurrent)) };
 }
 export const MIN_CHILD_BUDGET = 0.1;
 /** What a parent always keeps of its own: enough to read what its children return. */
@@ -109,12 +121,12 @@ export async function prepareRootPolicy(policy: AgentPolicy, id: string, profile
   policy.tools.push(...toolNames(limits.depth > 0, false));
   if (limits.depth > 0 && policy.workspace) {
     const programs = await programsForProfile(profileId).catch(() => []);
-    const lines = programs.slice(0, 12).map((p) => `- ${p.id}: ${p.name}${p.description ? `. ${p.description}` : ""} inputs: ${JSON.stringify(p.config.inputs).slice(0, 400)} outputs: ${JSON.stringify(p.config.outputs).slice(0, 400)}`);
+    const lines = programs.slice(0, 24).map((p) => `- ${p.id}: ${p.name}${p.description ? `. ${p.description}` : ""} inputs: ${JSON.stringify(p.config.inputs).slice(0, 400)} outputs: ${JSON.stringify(p.config.outputs).slice(0, 400)}`);
     policy.workspace.context.text = `${policy.workspace.context.text}\n\n${spawnGuide(limits, lines)}`;
   }
 }
 function spawnGuide(limits: ReturnType<typeof nestedLimits>, programLines: string[]): string {
-  return ["## Child sessions", `You can start child sessions of your own: spawn(program or prompt, inputs, name?, budget_usd?) starts one and returns a handle at once; collect(handles?, timeout?) reads their results; list_children and cancel_child manage them. A child runs in its own sandbox, acts as the same person, and its budget comes out of yours. At most ${limits.children} children in this session's tree and ${limits.concurrent} at once. Do your other work while they run; you can end your turn: you are woken when they have all finished.`,
+  return ["## Child sessions", `You can start child sessions of your own: spawn(program or prompt, inputs, name?, budget_usd?) starts one and returns a handle at once; collect(handles?, timeout?) reads their results; list_children and cancel_child manage them. A child runs in its own sandbox, acts as the same person, and its budget comes out of yours. At most ${limits.children} children in this session's tree and ${limits.concurrent} at once; your budget is the real limit. Start a program whenever you judge it worth its cost, an improvement program included: you need nobody's leave. Do your other work while they run; you can end your turn: you are woken when they have all finished.`,
     programLines.length ? `Programs you can spawn (by id, with typed inputs and outputs):\n${programLines.join("\n")}` : ""].filter(Boolean).join("\n");
 }
 
@@ -224,7 +236,9 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
   const hasProgram = typeof input.program === "string" && input.program.trim() !== "";
   const hasPrompt = typeof input.prompt === "string" && input.prompt.trim() !== "";
   if (hasProgram === hasPrompt) throw new PackError("Say either program (an id) or prompt (what the child should do)", 400);
-  const prog = hasProgram ? await programForSpawn(String(input.program).trim(), before.profile_id) : null;
+  // mold_v0-303: a root a person started to run one program (its permit) may spawn that program, and only at the root.
+  const permit = !before.parent_id ? (before.policy?.nested?.permit_program ?? null) : null;
+  const prog = hasProgram ? await programForSpawn(String(input.program).trim(), before.profile_id, permit) : null;
   const config = prog?.config ?? null;
   const inputs = redactDeep(input.inputs ?? {}) as Record<string, unknown>;
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) throw new PackError("inputs: an object", 400);
@@ -238,7 +252,7 @@ export async function spawnChild(ctx: CallCtx, input: SpawnInput): Promise<Handl
   if (config?.limits?.max_budget_usd && ask > config.limits.max_budget_usd) throw new PackError(`budget_usd: this program takes at most $${config.limits.max_budget_usd.toFixed(2)}`, 400);
   const handleId = newId("hch");
   const purpose = await childPurpose(before, prog, name);
-  const prompt = config ? renderPrompt(config.prompt, inputs) : maskSecrets(String(input.prompt)).trim();
+  const prompt = config ? renderPrompt(config.prompt, inputs, declaredInputs(config.inputs)) : maskSecrets(String(input.prompt)).trim();
   const isMachine = !!config?.machine;
   const pending = isMachine ? null : await buildChild(before, handleId, { name, prompt, inputs, profile: config?.agent_profile ?? (config ? before.profile_id : null), config, schema: typedOutputs(config?.outputs), depth, role: ctx.role });
   let cancels: string[] = [];
@@ -375,7 +389,7 @@ export async function wakeCandidate(runId: string, lease: string, bundle: Buffer
   return { sha256: sha, paths: paths.length };
 }
 const candidateAad = (key: string) => `harness-candidate:${key}`;
-async function candidateBytes(orgId: number, ref: CandidateRef): Promise<Buffer | null> {
+async function candidateBytes(orgId: number, ref: Pick<CandidateRef, "key" | "sha256">): Promise<Buffer | null> {
   const { objectStore } = await import("./storage.js");
   const { openBytes } = await import("./orgcrypto.js");
   const sealed = await (await objectStore()).get(ref.key);
@@ -456,12 +470,40 @@ async function buildStepPending(parent: H.SessionRow, h: HandleRow): Promise<Pen
   const stepProgram = state.program ? await programForSpawn(state.program, parent.profile_id) : null;
   const config = stepProgram?.config ?? null;
   const template = config?.prompt ?? state.prompt ?? "";
-  const prompt = renderPrompt(template, { ...(m.inputs ?? {}), ...inputs }); // a machine's own inputs are every state's placeholders
+  // A machine's own inputs are every state's placeholders. mold_v0-303 (M5): one the state (or its program) declares that
+  // has no value yet (a loop's feedback, on its first pass) is blank, never shown as written.
+  const declared = [...Object.keys(state.inputs ?? {}), ...declaredInputs(config?.inputs)];
+  let prompt = renderPrompt(template, { ...(m.inputs ?? {}), ...inputs }, declared);
   const schema = typedOutputs(state.outputs ?? config?.outputs);
   const acceptance = m.machine?.acceptance;
   const candidate = acceptance ? spec!.states.some((s) => s.kind === "acceptance" && s.candidate_from === state.id) : false;
+  // mold_v0-303 (M2): the candidate's step is given what it improves: the current best's files, or the target's current
+  // version, read-only in .target/, and told that its .candidate/ is laid over them.
+  let target: { uploads: NonNullable<AgentPolicy["uploads"]> } | null = null;
+  if (candidate && acceptance) {
+    const a = acceptance.config;
+    const k = targetKindFor(a, m.inputs);
+    const id = targetIdFor(a, m.inputs);
+    if ("kind" in k && id) {
+      const base = await baselineOf(h.org_id, k.kind, id).catch(() => null);
+      target = { uploads: await targetUploads(base?.base ?? null) };
+      prompt = `${prompt}\n\n${targetBrief({ kind: k.kind, id, base: base?.base ?? null, surface: a.surface })}`;
+    }
+  }
   const built = await buildChild(parent, h.id, { name: `${m.name}: ${state.id}`.slice(0, MAX_NAME), prompt, inputs, profile: config?.agent_profile ?? parent.profile_id, config, schema, depth: parent.depth + 1, role: null, candidate });
+  if (target?.uploads.length) built.policy.uploads = [...(built.policy.uploads ?? []).filter((u) => !u.path.startsWith(`${TARGET_DIR}/`)), ...target.uploads];
   return { ...built, schema };
+}
+/** A base's files as uploads at .target/<path> (a recipe's are uploads already; the rest are kept as uploads now). */
+async function targetUploads(base: TargetBase | null): Promise<NonNullable<AgentPolicy["uploads"]>> {
+  if (!base) return [];
+  const { storeUploadBytes } = await import("./agent-profiles.js");
+  const out: NonNullable<AgentPolicy["uploads"]> = [];
+  for (const f of base.files) {
+    const u = f.upload ?? await storeUploadBytes("the platform", f.body);
+    out.push({ id: u.id, path: `${TARGET_DIR}/${f.path}`, bytes: u.bytes, sha256: u.sha256, executable: f.executable });
+  }
+  return out;
 }
 
 /**
@@ -553,10 +595,32 @@ export async function settleHandle(q: Queryable, orgId: number, handleId: string
 async function afterSettleOf(orgId: number, handleId: string): Promise<void> {
   const h = await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND id = $2`, [orgId, handleId]))[0]);
   if (!h || !h.settled_at) return;
+  if (h.status === "done" && !h.step_of && (h.kind === "program" || h.kind === "machine")) await keepRecords(orgId, h);
   if (h.step_of) await advanceMachine(orgId, h);
   else if (h.status === "error") await applyFailurePolicy(orgId, h);
   await wakeParentIfDone(orgId, h.parent_id);
   await pump(orgId, h.root_id).catch((e) => console.error(`nested runs: pump: ${(e as Error).message}`));
+}
+
+/**
+ * mold_v0-303 (M7): a settled program's outputs kept as its program's records say (src/program-records.ts), by the server,
+ * after its outputs passed their schema. A write refused (an area changed since) is said on the parent's trace; it never
+ * changes how the child settled.
+ */
+async function keepRecords(orgId: number, h: HandleRow): Promise<void> {
+  if (!h.program_id || !h.program_version || h.outputs === null || h.outputs === undefined) return;
+  const config = await read((q) => programConfigOf(q, h)).catch(() => null);
+  if (!config?.record) return;
+  const { writeProgramRecords } = await import("./program-records.js");
+  const run = async () => (await read((q) => q.query<{ current_run_id: string | null }>("SELECT current_run_id FROM harness_sessions WHERE id = $1 AND org_id = $2", [h.parent_id, orgId])))[0]?.current_run_id ?? null;
+  try {
+    const keys = await writeProgramRecords(orgId, h, config.record);
+    const r = await run();
+    await tx((q) => runEvent(q, r, orgId, "child_records", { handle: h.id, area: config.record!.area, keys: keys.slice(0, 20), written: keys.length }));
+  } catch (e) {
+    const r = await run().catch(() => null);
+    await tx((q) => runEvent(q, r, orgId, "child_records_refused", { handle: h.id, area: config.record!.area, error: maskSecrets((e as Error).message).slice(0, 300) })).catch(() => {});
+  }
 }
 
 async function applyFailurePolicy(orgId: number, h: HandleRow): Promise<void> {
@@ -828,13 +892,45 @@ export async function releaseHold(id: string | null): Promise<void> {
 
 // ---------------------------------------------------------------- acceptance
 
+/** A sealed bundle of an evaluation's (mold_v0-303): the whole candidate, or its baseline. */
+interface BundleRef { key: string; sha256: string; bytes: number; paths: string[] }
+/**
+ * What an evaluation (and the version it promotes) keeps of its candidate (mold_v0-303): the overlay as the agent sent it
+ * (key, sha256, paths), what it changed against its baseline, the whole candidate (the baseline with the overlay laid
+ * over it) and the baseline itself (the current best, or the target's current version; null: there was none).
+ */
+type EvalCandidate = CandidateRef & { id?: string; changed?: string[]; full?: BundleRef; base?: (BundleRef & { label: string }) | null; executables?: string[] };
 interface EvaluationRow {
   id: string; org_id: number; program_id: string; program_version: number; root_id: string; session_id: string | null; handle_id: string | null; run_id: string | null; target_kind: string; target_id: string; hypothesis: string;
-  candidate: CandidateRef & { id?: string }; champion_id: string | null; acceptance: NonNullable<ProgramConfig["acceptance"]>; contract_sha256: string | null; status: string; outcome: string | null; created_at: Date;
+  candidate: EvalCandidate; champion_id: string | null; acceptance: NonNullable<ProgramConfig["acceptance"]>; contract_sha256: string | null; status: string; outcome: string | null; created_at: Date;
 }
 const E_COLS = "id, org_id, program_id, program_version, root_id, session_id, handle_id, run_id, target_kind, target_id, hypothesis, candidate, champion_id, acceptance, contract_sha256, status, outcome, created_at";
-export interface ChampionRow { id: string; org_id: number; target_kind: string; target_id: string; version: number; status: string; candidate: CandidateRef & Record<string, unknown>; metrics: Record<string, unknown>; evaluation_id: string | null; program_id: string | null; applied_at: Date | null; applied_ref: string | null; rolled_back_at: Date | null; created_at: Date; created_by: string; applied_by: string | null; rolled_back_by: string | null; rollback_reason: string | null }
+export interface ChampionRow { id: string; org_id: number; target_kind: string; target_id: string; version: number; status: string; candidate: EvalCandidate & Record<string, unknown>; metrics: Record<string, unknown>; evaluation_id: string | null; program_id: string | null; applied_at: Date | null; applied_ref: string | null; rolled_back_at: Date | null; created_at: Date; created_by: string; applied_by: string | null; rolled_back_by: string | null; rollback_reason: string | null }
 const C_COLS = "id, org_id, target_kind, target_id, version, status, candidate, metrics, evaluation_id, program_id, applied_at, applied_ref, rolled_back_at, created_at, created_by, applied_by, rolled_back_by, rollback_reason";
+
+/** A bundle sealed with the workspace's key at `key`, as a candidate is. */
+async function sealBundle(orgId: number, key: string, bundle: Buffer, paths: string[]): Promise<BundleRef> {
+  const { objectStore } = await import("./storage.js");
+  const { sealBytes } = await import("./orgcrypto.js");
+  await (await objectStore()).put(key, await sealBytes(orgId, bundle, candidateAad(key)), "application/octet-stream");
+  return { key, sha256: (await import("node:crypto")).createHash("sha256").update(bundle).digest("hex"), bytes: bundle.length, paths };
+}
+/** A version's whole files: its whole candidate (a version from before mold_v0-303 kept its overlay only). */
+async function championFiles(orgId: number, c: EvalCandidate): Promise<TargetFile[] | null> {
+  const body = await candidateBytes(orgId, (c.full ?? c) as CandidateRef).catch(() => null);
+  return body ? filesOfBundle(body, c.executables ? new Set(c.executables) : undefined) : null;
+}
+/**
+ * mold_v0-303 (M3): what a candidate of this target is laid over and measured against: the current best's whole files, or
+ * with none, the target's current version (src/program-target.ts). Null: nothing (a person decides). A current best whose
+ * files cannot be read is nothing too: it fails closed to a person, never to an acceptance.
+ */
+async function baselineOf(orgId: number, kind: TargetKind, id: string): Promise<{ base: TargetBase | null; champion: ChampionRow | null } | null> {
+  const champ = await read(async (q) => (await q.query<ChampionRow>(`SELECT ${C_COLS} FROM harness_champions WHERE org_id = $1 AND target_kind = $2 AND target_id = $3 AND status = 'champion'`, [orgId, storedTargetKind(kind), id]))[0] ?? null);
+  if (champ) { const files = await championFiles(orgId, champ.candidate); return { base: files ? { label: `version ${champ.version}, the current best`, files } : null, champion: champ }; }
+  const cur = await targetCurrent(kind, id);
+  return cur ? { base: cur, champion: null } : null;
+}
 
 async function startAcceptance(orgId: number, h: HandleRow): Promise<void> {
   const conf = h.machine?.acceptance;
@@ -842,24 +938,45 @@ async function startAcceptance(orgId: number, h: HandleRow): Promise<void> {
   const m = await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND id = $2`, [orgId, h.step_of]))[0]);
   const from = await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND step_of = $2 AND state_id = $3 AND candidate IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [orgId, h.step_of, conf.candidate_from]))[0]);
   const a = conf.config;
-  const targetId = a.target.id ?? (a.target.from_input ? String(atPath(m?.inputs ?? {}, a.target.from_input) ?? "") : "");
-  const noTarget = !targetId;
+  // mold_v0-303 (M4): the kind as the rule says, or as the run's input names it.
+  const k = targetKindFor(a, m?.inputs ?? {});
+  const kind: TargetKind = "kind" in k ? k.kind : targetKindOf(a.target.kind) ?? "recipe";
+  const targetId = targetIdFor(a, m?.inputs ?? {});
   const id = newId("hev");
-  const candidate: CandidateRef = from?.candidate ?? { key: "", sha256: "", bytes: 0, paths: [], from_session: "" };
-  const off = from?.candidate ? offSurface(candidate.paths, a.surface) : [];
-  const contract = a.test?.sha256 ?? null;
+  let candidate: EvalCandidate = from?.candidate ?? { key: "", sha256: "", bytes: 0, paths: [], from_session: "" };
+  const reasons: string[] = !("kind" in k) ? [k.problem] : !targetId ? ["this run did not name the target to promote"] : !from?.candidate ? ["the candidate step sent no candidate"] : [];
+  let champ: ChampionRow | null = null;
+  // mold_v0-303 (M2, M3): the overlay laid over its baseline: the whole candidate, and what it changed, are what is judged.
+  if (!reasons.length) {
+    try {
+      const b = await baselineOf(orgId, kind, targetId);
+      champ = b?.champion ?? null;
+      const base = b?.base ?? null;
+      const over = await candidateBytes(orgId, from!.candidate!);
+      if (!over) reasons.push("the candidate's files could not be read");
+      else {
+        const merged = overlay(base?.files ?? [], await filesOfBundle(over));
+        const dir = `workspaces/org-${orgId}/.agent/evaluations/${id}`;
+        const full = await sealBundle(orgId, `${dir}/full.wse`, await bundleOf(merged), merged.map((f) => f.path));
+        const baseRef = base ? { ...(await sealBundle(orgId, `${dir}/base.wse`, await bundleOf(base.files), base.files.map((f) => f.path))), label: base.label } : null;
+        candidate = { ...from!.candidate!, changed: changedPaths(base?.files ?? [], merged), full, base: baseRef, executables: merged.filter((f) => f.executable).map((f) => f.path) };
+      }
+    } catch (e) { reasons.push(`the candidate could not be laid over its target: ${(e as Error).message}`.slice(0, 300)); }
+  }
+  const off = !reasons.length ? offSurface(candidate.changed ?? candidate.paths, a.surface) : [];
+  const contract = testFrozen(a.test) ? a.test!.sha256 : null;
   await tx(async (q) => {
     await q.query(`INSERT INTO harness_evaluations (id, org_id, program_id, program_version, root_id, session_id, handle_id, target_kind, target_id, hypothesis, candidate, acceptance, contract_sha256, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending')`,
-      [id, orgId, h.program_id ?? "unknown", h.program_version ?? 1, h.root_id, from?.session_id ?? null, h.id, a.target.kind, targetId || "unknown", maskSecrets(conf.hypothesis ?? "").slice(0, 8000), JSON.stringify(candidate), JSON.stringify(a), contract]);
+      [id, orgId, h.program_id ?? "unknown", h.program_version ?? 1, h.root_id, from?.session_id ?? null, h.id, storedTargetKind(kind), targetId || "unknown", maskSecrets(conf.hypothesis ?? "").slice(0, 8000), JSON.stringify(candidate), JSON.stringify(a), contract]);
     await q.query("UPDATE harness_children SET machine = machine || $3::jsonb WHERE org_id = $1 AND id = $2", [orgId, h.id, JSON.stringify({ evaluation: id })]);
   });
-  // What fails closed without running anything.
-  const champ = await read(async (q) => (await q.query<ChampionRow>(`SELECT ${C_COLS} FROM harness_champions WHERE org_id = $1 AND target_kind = $2 AND target_id = $3 AND status = 'champion'`, [orgId, a.target.kind, targetId]))[0] ?? null);
-  const reasons: string[] = noTarget ? ["this run did not name the target to promote"] : !from?.candidate ? ["the candidate step sent no candidate"] : [];
+  // What fails closed, or goes to a person, without running anything.
   if (reasons.length) { await decide(orgId, id, { outcome: "refused", reasons, metrics: empty(Number(0)) }, null); return; }
-  if (off.length || !a.test) {
-    await decide(orgId, id, decideAcceptance(a, { measured: null, offSurfacePaths: off, hasBest: !!champ, seed: seedOf(id) }), null);
+  const hasBest = !!candidate.base;
+  const changed = candidate.changed ?? candidate.paths;
+  if (off.length || !a.test || !testFrozen(a.test) || !changed.length || wordingOnly(changed)) {
+    await decide(orgId, id, decideAcceptance(a, { measured: null, offSurfacePaths: off, hasBest, seed: seedOf(id), changedPaths: changed }), null);
     return;
   }
   const { startRun } = await import("./runs.js");
@@ -920,19 +1037,22 @@ export async function evaluationStart(runId: string, lease: string): Promise<Eva
   needOn();
   const ev = await evaluationOfRun(runId, lease);
   const a = ev.acceptance, test = a.test;
-  if (!test) throw new PackError("this evaluation has no test", 409);
+  if (!test || !testFrozen(test)) throw new PackError("this evaluation has no frozen test", 409);
   // The test as frozen with the program's version, re-derived, never trusted from a stored field.
   const { contractSha } = await import("./program-spec.js");
   if (contractSha(test, sha256) !== ev.contract_sha256) throw new PackError("the test does not match the contract frozen with this program's version", 409);
-  return { evaluation: ev.id, test, metric: a.metric, floors: a.floors.map((f) => f.metric), has_candidate: !!ev.candidate.key, has_champion: !!ev.champion_id };
+  // mold_v0-303: the baseline is the current best, or the target's current version (kept with the evaluation).
+  return { evaluation: ev.id, test, metric: a.metric, floors: a.floors.map((f) => f.metric), has_candidate: !!ev.candidate.key, has_champion: !!ev.candidate.base || !!ev.champion_id };
 }
 export async function evaluationBundle(runId: string, lease: string, which: "candidate" | "champion"): Promise<Buffer | null> {
   needOn();
   const ev = await evaluationOfRun(runId, lease);
-  if (which === "candidate") return candidateBytes(ev.org_id, ev.candidate);
+  // mold_v0-303: the whole candidate (its baseline with its overlay laid over it), and the baseline as kept when it started.
+  if (which === "candidate") return candidateBytes(ev.org_id, (ev.candidate.full ?? ev.candidate) as CandidateRef);
+  if (ev.candidate.base) return candidateBytes(ev.org_id, ev.candidate.base);
   if (!ev.champion_id) return null;
   const [c] = await read((q) => q.query<ChampionRow>(`SELECT ${C_COLS} FROM harness_champions WHERE org_id = $1 AND id = $2`, [ev.org_id, ev.champion_id]));
-  return c ? candidateBytes(ev.org_id, c.candidate as CandidateRef) : null;
+  return c ? candidateBytes(ev.org_id, (c.candidate.full ?? c.candidate) as CandidateRef) : null;
 }
 export async function evaluationFile(runId: string, lease: string, index: number): Promise<Buffer> {
   needOn();
@@ -946,17 +1066,17 @@ export async function evaluationResult(runId: string, lease: string, r: Evaluati
   needOn();
   const ev = await evaluationOfRun(runId, lease);
   if (ev.status === "decided") return { outcome: ev.outcome ?? "decided" };
-  const off = offSurface(ev.candidate.paths ?? [], ev.acceptance.surface);
+  const off = offSurface(ev.candidate.changed ?? ev.candidate.paths ?? [], ev.acceptance.surface);
   const cases: MeasuredCase[] = Array.isArray(r.cases) ? r.cases.map((c) => ({ id: String(c.id), baseline: typeof c.baseline === "number" ? c.baseline : null, candidate: typeof c.candidate === "number" ? c.candidate : null, floors: c.floors ?? {} })) : [];
   const d = r.error && !r.tampered && !cases.length ? { outcome: "refused" as const, reasons: [r.error.slice(0, 500)], metrics: empty(0) }
-    : decideAcceptance(ev.acceptance, { measured: { cases, tampered: r.tampered ?? null }, offSurfacePaths: off, hasBest: !!ev.champion_id, seed: seedOf(ev.id) });
+    : decideAcceptance(ev.acceptance, { measured: { cases, tampered: r.tampered ?? null }, offSurfacePaths: off, hasBest: !!ev.candidate.base || !!ev.champion_id, seed: seedOf(ev.id), ...(ev.candidate.changed ? { changedPaths: ev.candidate.changed } : {}) });
   return { outcome: await decide(ev.org_id, ev.id, d, cases) };
 }
 
 // ---------------------------------------------------------------- staff: review, rollback, apply
 
-export interface EvaluationView { id: string; org_id: number; workspace?: string | null; program: string; program_version: number; root_id: string; target: { kind: string; id: string }; hypothesis: string; status: string; outcome: string | null; reasons: string[]; metrics: unknown; candidate: { sha256: string; bytes: number; paths: string[] }; decided_at: string | null; reviewed_by: string | null; review_decision: string | null; promoted_id: string | null; created_at: string }
-const evView = (e: Record<string, any>): EvaluationView => ({ id: e.id, org_id: e.org_id, workspace: e.slug ?? null, program: e.program_id, program_version: e.program_version, root_id: e.root_id, target: { kind: e.target_kind, id: e.target_id }, hypothesis: e.hypothesis, status: e.status, outcome: e.outcome, reasons: e.reasons ?? [], metrics: e.metrics ?? {}, candidate: { sha256: e.candidate?.sha256 ?? "", bytes: e.candidate?.bytes ?? 0, paths: e.candidate?.paths ?? [] }, decided_at: iso(e.decided_at), reviewed_by: e.reviewed_by ?? null, review_decision: e.review_decision ?? null, promoted_id: e.promoted_id ?? null, created_at: iso(e.created_at)! });
+export interface EvaluationView { id: string; org_id: number; workspace?: string | null; program: string; program_version: number; root_id: string; target: { kind: string; id: string }; hypothesis: string; status: string; outcome: string | null; reasons: string[]; metrics: unknown; candidate: { sha256: string; bytes: number; paths: string[]; changed?: string[]; base?: string | null }; decided_at: string | null; reviewed_by: string | null; review_decision: string | null; promoted_id: string | null; created_at: string }
+const evView = (e: Record<string, any>): EvaluationView => ({ id: e.id, org_id: e.org_id, workspace: e.slug ?? null, program: e.program_id, program_version: e.program_version, root_id: e.root_id, target: { kind: targetKindOf(e.target_kind) ?? e.target_kind, id: e.target_id }, hypothesis: e.hypothesis, status: e.status, outcome: e.outcome, reasons: e.reasons ?? [], metrics: e.metrics ?? {}, candidate: { sha256: e.candidate?.sha256 ?? "", bytes: e.candidate?.bytes ?? 0, paths: e.candidate?.paths ?? [], ...(e.candidate?.changed ? { changed: e.candidate.changed } : {}), ...(e.candidate?.base !== undefined ? { base: e.candidate.base?.label ?? null } : {}) }, decided_at: iso(e.decided_at), reviewed_by: e.reviewed_by ?? null, review_decision: e.review_decision ?? null, promoted_id: e.promoted_id ?? null, created_at: iso(e.created_at)! });
 export async function listEvaluations(orgId: number | null, filter: { program?: string; target?: string } = {}): Promise<EvaluationView[]> {
   needOn();
   const rows = await read((q) => q.query<Record<string, any>>(`/* tenant: the caller's workspace (staff: every workspace) */ SELECT e.*, o.slug FROM harness_evaluations e JOIN organizations o ON o.id = e.org_id
@@ -964,7 +1084,7 @@ export async function listEvaluations(orgId: number | null, filter: { program?: 
   return rows.map(evView);
 }
 export interface ChampionView { id: string; version: number; target: { kind: string; id: string }; status: string; metrics: unknown; evaluation: string | null; program: string | null; applied_at: string | null; applied_by: string | null; applied_ref: string | null; rolled_back_at: string | null; rollback_reason: string | null; created_at: string; workspace?: string | null }
-const champView = (c: ChampionRow & { slug?: string }): ChampionView => ({ id: c.id, version: c.version, target: { kind: c.target_kind, id: c.target_id }, status: c.status, metrics: c.metrics, evaluation: c.evaluation_id, program: c.program_id, applied_at: iso(c.applied_at), applied_by: c.applied_by, applied_ref: c.applied_ref, rolled_back_at: iso(c.rolled_back_at), rollback_reason: c.rollback_reason, created_at: iso(c.created_at)!, ...(c.slug ? { workspace: c.slug } : {}) });
+const champView = (c: ChampionRow & { slug?: string }): ChampionView => ({ id: c.id, version: c.version, target: { kind: targetKindOf(c.target_kind) ?? c.target_kind, id: c.target_id }, status: c.status, metrics: c.metrics, evaluation: c.evaluation_id, program: c.program_id, applied_at: iso(c.applied_at), applied_by: c.applied_by, applied_ref: c.applied_ref, rolled_back_at: iso(c.rolled_back_at), rollback_reason: c.rollback_reason, created_at: iso(c.created_at)!, ...(c.slug ? { workspace: c.slug } : {}) });
 export async function listChampions(orgId: number | null, filter: { target?: string } = {}): Promise<ChampionView[]> {
   needOn();
   const rows = await read((q) => q.query<ChampionRow & { slug: string }>(`/* tenant: the caller's workspace (staff: every workspace) */ SELECT c.${C_COLS.split(", ").join(", c.")}, o.slug FROM harness_champions c JOIN organizations o ON o.id = c.org_id
@@ -1006,9 +1126,13 @@ export async function rollbackChampion(by: string, id: string, input: { reason?:
   return champView(row!);
 }
 /**
- * A person takes a champion live. A recipe: a proposal against its current version, which staff accept in Recipes as for any
- * agent's (nothing is written to a recipe from here). Any other target is a record of who said it and what they did: this
- * shell pushes to no customer app and no default branch.
+ * A person takes a champion live. Nothing is written to a target from here without a second person's look:
+ *   recipe          a proposal against its current version (the files that differ from it), which staff accept in Recipes
+ *   harness_policy  mold_v0-303: a proposal of the agent profile's next version, its governance the version's policy.json,
+ *                   checked now; staff accept or decline it (decidePolicyProposal), and an accept is the profile's new version
+ *   mold            mold_v0-303: recorded as proposed to the mold; its patch (championPatch) is for a person to open the pull
+ *                   request with. No agent and no part of this app holds a token that writes to a mold
+ *   anything else   a record of who said it and what they did (`ref`)
  */
 export async function applyChampion(by: string, id: string, input: { ref?: unknown }): Promise<ChampionView> {
   needOn();
@@ -1017,22 +1141,92 @@ export async function applyChampion(by: string, id: string, input: { ref?: unkno
   if (!c) throw new PackError("no such version", 404);
   if (c.status !== "champion") throw new PackError("Only the current champion can be applied", 409);
   if (c.applied_at) throw new PackError("This version was already applied", 409);
-  let appliedRef = ref;
-  if (c.target_kind === "recipe") {
+  if (c.applied_ref) throw new PackError("This version is proposed already: its proposal is accepted or declined first", 409);
+  const kind = targetKindOf(c.target_kind);
+  let appliedRef = ref, pending = false;
+  if (kind === "recipe") {
     const R = await import("./recipes.js");
     if (!R.recipesOn()) throw new PackError("Workspace recipes are not on in this app", 404);
     const detail = await R.readRecipe(c.target_id);
     if (detail.version < 1) throw new PackError("This recipe has no version yet: give it its first version in Recipes, then apply this", 409);
-    const body = await candidateBytes(c.org_id, c.candidate as CandidateRef);
-    if (!body) throw new PackError("The candidate's files could not be read", 409);
-    const { readBundle } = await import("./workspace-bundle.js");
-    const files = readBundle(body).files.map((f: { path: string; body: Buffer }) => ({ path: f.path, data: f.body, executable: false }));
-    const made = await R.proposeRecipeVersion({ org_id: c.org_id, session_id: "", run_id: "", recipe: { id: c.target_id, version: detail.version } }, { note: `Champion version ${c.version} of a program's run (accepted by the guardian).`, removed: [], files });
+    const files = await championFiles(c.org_id, c.candidate);
+    if (!files) throw new PackError("The candidate's files could not be read", 409);
+    // The files that differ from the recipe's version now: a version kept whole is proposed as what it changes.
+    const now = new Map((detail.versions.find((v) => v.version === detail.version)?.files ?? []).map((f) => [f.path, f]));
+    const { createHash } = await import("node:crypto");
+    const changed = files.filter((f) => now.get(f.path)?.sha256 !== createHash("sha256").update(f.body).digest("hex") || (now.get(f.path)?.executable ?? f.executable) !== f.executable);
+    if (!changed.length) throw new PackError("Nothing to propose: this version's files are the recipe's current ones", 409);
+    const made = await R.proposeRecipeVersion({ org_id: c.org_id, session_id: "", run_id: "", recipe: { id: c.target_id, version: detail.version } }, { note: `Champion version ${c.version} of a program's run (accepted by the guardian).`, removed: [], files: changed.map((f) => ({ path: f.path, data: f.body, executable: f.executable })) });
     appliedRef = `recipe proposal ${made.id}`;
+  } else if (kind === "harness_policy") {
+    const { governance } = await championPolicy(c);
+    const A = await import("./agent-profiles.js");
+    const prof = await A.readProfile(c.target_id);
+    await A.checkConfig({ ...prof.config, governance }, by, prof.config); // refused now, in words, if it is not a policy that holds
+    appliedRef = `agent profile proposal: ${c.target_id} from version ${prof.version} (pending)`;
+    pending = true;
+  } else if (kind === "mold") {
+    appliedRef = ref || `proposed to the mold ${c.target_id}: a person opens the pull request from its patch`;
   } else if (!ref) throw new PackError("ref: say what was applied and where (this shell applies nothing by itself)", 400);
-  await tx((q) => q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_at = now(), applied_by = $2, applied_ref = $3 WHERE id = $1 AND applied_at IS NULL", [id, by, appliedRef]));
+  await tx((q) => (pending
+    ? q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_by = $2, applied_ref = $3 WHERE id = $1 AND applied_at IS NULL AND applied_ref IS NULL", [id, by, appliedRef])
+    : q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_at = now(), applied_by = $2, applied_ref = $3 WHERE id = $1 AND applied_at IS NULL", [id, by, appliedRef])));
+  return championById(id);
+}
+async function championById(id: string): Promise<ChampionView> {
   const [row] = await read((q) => q.query<ChampionRow & { slug: string }>(`/* tenant: staff, by version id */ SELECT c.${C_COLS.split(", ").join(", c.")}, o.slug FROM harness_champions c JOIN organizations o ON o.id = c.org_id WHERE c.id = $1`, [id]));
-  return champView(row!);
+  if (!row) throw new PackError("no such version", 404);
+  return champView(row);
+}
+/** A harness_policy version's policy: its policy.json, which must be a JSON object. */
+async function championPolicy(c: ChampionRow): Promise<{ governance: Record<string, unknown> }> {
+  const files = await championFiles(c.org_id, c.candidate);
+  const f = files?.find((x) => x.path === POLICY_FILE);
+  if (!f) throw new PackError(`This version has no ${POLICY_FILE}: there is no policy to propose`, 409);
+  let v: unknown;
+  try { v = JSON.parse(f.body.toString("utf8")); } catch { throw new PackError(`This version's ${POLICY_FILE} is not JSON`, 409); }
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new PackError(`This version's ${POLICY_FILE} is not a policy (a JSON object)`, 409);
+  return { governance: v as Record<string, unknown> };
+}
+/**
+ * mold_v0-303 (M4): staff decide a harness_policy version's proposal. Accept: the agent profile's next version, its
+ * governance this policy, against the version it was proposed from (someone saved one meanwhile: refused, propose again
+ * after a rollback). Decline: kept, with who and why, and nothing changes.
+ */
+export async function decidePolicyProposal(by: string, id: string, input: { decision?: unknown; reason?: unknown }): Promise<ChampionView> {
+  needOn();
+  if (input.decision !== "accept" && input.decision !== "decline") throw new PackError("decision: accept or decline", 400);
+  const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 1000) : "";
+  if (!reason) throw new PackError("reason: say why (it is kept with the decision)", 400);
+  const [c] = await read((q) => q.query<ChampionRow>(`/* tenant: staff, by version id */ SELECT ${C_COLS} FROM harness_champions WHERE id = $1`, [id]));
+  if (!c) throw new PackError("no such version", 404);
+  const from = /^agent profile proposal: .* from version (\d+) \(pending\)$/.exec(c.applied_ref ?? "");
+  if (targetKindOf(c.target_kind) !== "harness_policy" || c.applied_at || !from) throw new PackError("This version has no proposal waiting for a decision", 409);
+  let appliedRef: string;
+  if (input.decision === "accept") {
+    const { governance } = await championPolicy(c);
+    const A = await import("./agent-profiles.js");
+    const prof = await A.readProfile(c.target_id);
+    const saved = await A.updateProfile(by, c.target_id, { version: Number(from[1]), config: { ...prof.config, governance } });
+    appliedRef = `agent profile ${c.target_id} version ${saved.version} (accepted by ${by}: ${reason})`.slice(0, 300);
+  } else appliedRef = `declined by ${by}: ${reason}`.slice(0, 300);
+  await tx((q) => q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_at = now(), applied_ref = $2 WHERE id = $1 AND applied_at IS NULL", [id, appliedRef]));
+  return championById(id);
+}
+/**
+ * mold_v0-303 (M4): what a version changes against the baseline it was measured on, as a unified diff for a person to
+ * apply (`git apply`) and open a pull request with; for a mold, the only way it ever leaves the app. Staff only.
+ */
+export async function championPatch(id: string): Promise<{ id: string; target: { kind: string; id: string }; version: number; base: string | null; patch: string; files: { path: string; change: "added" | "modified"; binary: boolean }[] }> {
+  needOn();
+  const [c] = await read((q) => q.query<ChampionRow>(`/* tenant: staff, by version id */ SELECT ${C_COLS} FROM harness_champions WHERE id = $1`, [id]));
+  if (!c) throw new PackError("no such version", 404);
+  const files = await championFiles(c.org_id, c.candidate);
+  if (!files) throw new PackError("This version's files could not be read", 409);
+  const baseBody = c.candidate.base ? await candidateBytes(c.org_id, c.candidate.base).catch(() => null) : null;
+  if (c.candidate.base && !baseBody) throw new PackError("The files this version was measured against could not be read", 409);
+  const base = baseBody ? await filesOfBundle(baseBody) : [];
+  return { id: c.id, target: { kind: targetKindOf(c.target_kind) ?? c.target_kind, id: c.target_id }, version: c.version, base: c.candidate.base?.label ?? null, ...unifiedPatch(base, files) };
 }
 
 // ---------------------------------------------------------------- the tree, as the console reads it

@@ -28,6 +28,9 @@ export const ALLOW: [string, string, string][] = [
   ["features/tabs/tab-action.tsx", "Choose a file", "a form's file field (pick the file to upload into the record)"],
   ["features/admin/account-agent-icon.tsx", "Replace' : 'Upload'", "a form's image field (an account's agent icon)"],
   ["features/agent/recipes-page.tsx", "data-recipe-new-version", "a recipe's own New version, inside its record panel"],
+  // mold_v0-303: a program's own test files (its edit dialog) and one promoted mold version's patch (inside its panel).
+  ["features/agent/programs-page.tsx", "data-program-test-upload", "a program's acceptance test files, uploaded from inside its edit dialog"],
+  ["features/agent/programs-page.tsx", "data-mold-patch-download", "one promoted mold version's patch, downloaded from inside the program's panel"],
   ["features/admin/keyvault.tsx", "Import ${rows.length} key", "the import dialog's own submit, inside the dialog Actions ▾ opened"],
   ["features/files/files-page.tsx", "download />}>Download", "one stored file, downloaded from inside its version's side panel"],
   ["components/layout/record-view.tsx", "Export selected", "the selection bar's bulk action (the ticked rows), shown only while rows are ticked"],

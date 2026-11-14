@@ -48,7 +48,8 @@ export const catalogPacks = (list: readonly InstalledPack[]): CatalogPack[] =>
 
 let cache: { from: unknown; key: string; tools: GeneratedTool[] } | null = null;
 /** mold_v0-260: the catalog's own options from the flags (a test turning one regenerates it). */
-const catalogOptions = () => ({ record_inputs: featureOn("record_run_inputs"), tenants: featureOn("credential_sets") });
+// mold_v0-303: documents: read_<area>_files while document_preview is on (handle case "files").
+const catalogOptions = () => ({ record_inputs: featureOn("record_run_inputs"), tenants: featureOn("credential_sets"), documents: featureOn("document_preview") });
 /** Every generated tool of the build (checked when the packs were installed: src/packs.ts installPacks). */
 export function generatedTools(): GeneratedTool[] {
   const list = packs();
@@ -131,6 +132,12 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
     }
     // mold_v0-194: the values of a record's encrypted fields, for the roles allowed (src/record-areas.ts revealFor).
     case "reveal": operation("workspace", "reveal"); return dataApi.reveal(caller, area, a.key, a.fields);
+    // mold_v0-303: a record's files, or one file's contents, as the console's preview reads them (src/record-files.ts).
+    case "files": {
+      operation("workspace", "get");
+      const { agentRecordFiles } = await import("./record-files.js");
+      return agentRecordFiles(ws.id, { role: ws.role, userId: ws.userId }, area, a.key, a.file);
+    }
     // mold_v0-259 (flag teams): who sees it, where the area declares visibility (withVisibilityInput).
     case "create": operation("workspace", "create"); return dataApi.create(caller, area, a.key, { title: a.title, data: a.data ?? {}, ...(a.visibility !== undefined ? { visibility: a.visibility } : {}) });
     case "update": operation("workspace", "update"); return dataApi.update(caller, area, a.key, { title: a.title, data: a.data ?? {}, ...(a.visibility !== undefined ? { visibility: a.visibility } : {}) });

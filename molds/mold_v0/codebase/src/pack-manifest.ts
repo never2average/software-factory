@@ -32,7 +32,7 @@ import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { CheckSchema } from "./check-spec.js";
 import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
-import { PackAgentProfileSchema } from "./agent-profile-spec.js";
+import { PackAgentProfileSchema, PackRecipeSchema } from "./agent-profile-spec.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
 
@@ -177,6 +177,25 @@ const MemorySchema = z.object({
  * `api_version`. What only the whole build can check (areas, fields) is src/developer-config.ts developerSurfaceProblems.
  */
 const devPointer = z.string().max(200).regex(/^(\/([^~/]|~[01])*)*$/, "a JSON Pointer, like /id or /finding/title");
+const envName = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/, "an environment variable's name (A-Z, 0-9, _), never a secret's value");
+const lowerName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "lowercase letters, digits and _");
+/** A log-drain receiver's options (mold_v0-303; src/log-drain.ts reads them, src/developer-config.ts checks them against the build). */
+const LogDrainSchema = z.object({
+  secret_env: envName.optional(),
+  verify_env: envName.optional(),
+  window_minutes: z.number().int().min(1).max(1440).optional(),
+  max_bytes: z.number().int().min(1024).max(1048576).optional(),
+  deployments: z.object({
+    area: lowerName,
+    field: z.union([z.literal("$key"), lowerName]),
+    match: z.enum(["deployment_id", "project_id", "host"]).optional(),
+  }).strict(),
+  fields: z.object(Object.fromEntries(["deployment", "window_start", "window_end", "requests", "errors", "error_rate", "p95_ms", "mean_ms", "source", "buckets"]
+    .map((k) => [k, lowerName.optional()])) as Record<string, z.ZodOptional<typeof lowerName>>).strict().optional(),
+  sources: z.array(z.string().min(1).max(60)).min(1).max(20).optional(),
+  environments: z.array(z.string().min(1).max(60)).min(1).max(20).optional(),
+  source_label: z.string().trim().min(1).max(60).optional(),
+}).strict();
 const DeveloperSurfaceSchema = z.object({
   $comment: z.string().max(2000).optional(),
   events: z.array(z.object({
@@ -196,11 +215,18 @@ const DeveloperSurfaceSchema = z.object({
     description: z.string().trim().max(300).optional(),
     area: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
     items: devPointer.optional(),
-    key: devPointer,
+    key: devPointer.optional(),
     title: devPointer.optional(),
-    fields: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), devPointer),
+    fields: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), devPointer).optional(),
     types: z.array(z.string().min(1).max(120)).min(1).max(50).optional(),
-  }).strict()).max(20).optional(),
+    // mold_v0-303: how the sender signs, and a hosting provider's request logs kept as report records (src/log-drain.ts)
+    signature: z.enum(["standard", "vercel"]).optional(),
+    log_drain: LogDrainSchema.optional(),
+  }).strict().superRefine((r, ctx) => {
+    if (r.log_drain) return;
+    if (r.key === undefined) ctx.addIssue({ code: "custom", path: ["key"], message: "a receiver that is not a log drain names its key (a JSON Pointer)" });
+    if (r.fields === undefined) ctx.addIssue({ code: "custom", path: ["fields"], message: "a receiver that is not a log drain names its fields" });
+  })).max(20).optional(),
   api_version: z.enum(API_VERSIONS).optional(),
 }).strict();
 
@@ -435,6 +461,13 @@ export const PackJsonSchema = z.object({
    * written once into the platform's profiles, then staff's to edit. Used only while the app's `agent_harness` is on.
    */
   agent_profiles: z.array(PackAgentProfileSchema).max(20).optional(),
+  /**
+   * mold_v0-303: workspace recipes the app declares (src/agent-profile-spec.ts PackRecipeSchema; src/recipes.ts
+   * syncDeclaredRecipes brings them in): each an id, a name, a description and its files inline as text (a SKILL.md, a
+   * JSON Schema or config as `json`, a script with `executable: true`). A pack's agent profile names them (`recipes`), a
+   * program's acceptance test may run one (`acceptance.test.recipe`). Used only while workspace_recipes is on.
+   */
+  recipes: z.array(PackRecipeSchema).max(50).optional(),
   /** A workspace's team roles in the pack's words (mold_v0-262; src/teams.ts): the app's profile.json team_roles wins. */
   team_roles: TeamRolesSchema.optional(),
   /**
@@ -556,8 +589,8 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "programs" | "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles", "programs"] as const;
+export type DeclaredPack = Pick<PackDefinition, "programs" | "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles" | "recipes">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles", "programs", "recipes"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -616,6 +649,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.email) out.email = p.email;
   if (p.documents) out.documents = p.documents;
   if (p.agent_profiles?.length) out.agentProfiles = p.agent_profiles;
+  if (p.recipes?.length) out.recipes = p.recipes;
   return out;
 }
 

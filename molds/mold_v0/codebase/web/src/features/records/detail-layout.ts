@@ -50,7 +50,7 @@ export interface DetailRelated {
 }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
@@ -297,6 +297,8 @@ export interface PageAction {
     /** mold_v0-256: the linked record it runs on. */
     target?: { area: string; key: string; title: string | null } | null };
   moves?: { to: string; label: string; disabled: string | null }[];
+  /** mold_v0-303: a start_program action's program, its inputs filled from the record by the server. */
+  program?: { id: string; name: string; version: number; via: 'session' | 'runner'; inputs: Record<string, unknown> };
   fields?: PageFormField[];
   target?: { area: string; key: string } | null;
   /** create_record (mold_v0-256): the area, its fields filled from this record, its form (on the record's own page). */

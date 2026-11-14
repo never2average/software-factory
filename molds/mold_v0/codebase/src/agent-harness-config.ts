@@ -159,6 +159,11 @@ export interface NestedPolicy {
   handle?: string;
   /** Whether it may send a candidate (a machine's state): the wake sends `.candidate/` when it ends. */
   candidate?: boolean;
+  /**
+   * mold_v0-303: a root session a person started to run a program (src/program-start.ts) may spawn exactly that program,
+   * even one only people start (spawned_by []): its steps need a parent session, and this one is the person's.
+   */
+  permit_program?: string;
 }
 
 /**

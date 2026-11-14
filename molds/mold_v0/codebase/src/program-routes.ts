@@ -13,8 +13,13 @@
  *     GET  /program-champions                the versions, ?target=
  *     POST /program-champions/:id/rollback   {reason}: the version before becomes the champion again
  *     POST /program-champions/:id/apply      {ref?}: a person applies it (a recipe: a proposal staff accept in Recipes)
+ *     POST /program-champions/:id/proposal   mold_v0-303: {decision: accept | decline, reason} a harness_policy proposal
+ *     GET  /program-champions/:id/patch      mold_v0-303: the version's changes as a unified diff (a mold's way out)
  *
  *   the workspace, /api/agent (the person's own tree): GET /:id/tree  its children; POST /:id/children/:handle/cancel
+ *     GET  /programs                         mold_v0-303: the programs this person may start ("Run a program"), each with
+ *                                            its inputs schema and how it runs (src/program-start.ts)
+ *     POST /programs/:id/start               {inputs, budget_usd?, title?}: start one; 201 {session, program}
  */
 import { type NextFunction, type Request, type RequestHandler, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
@@ -44,11 +49,25 @@ export function programAdminRoutes(ob: Router, need: (p: "compute") => RequestHa
   ob.get("/program-champions", answer(async (req) => ({ champions: await N.listChampions(null, { target: req.query.target ? String(req.query.target) : undefined }) })));
   ob.post("/program-champions/:id/rollback", need("compute"), answer(async (req, res) => { const c = await N.rollbackChampion(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.champion_rollback", c.workspace ?? null, { version: c.id, reason: String((req.body ?? {}).reason ?? "").slice(0, 300) }); return { champion: c }; }));
   ob.post("/program-champions/:id/apply", need("compute"), answer(async (req, res) => { const c = await N.applyChampion(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.champion_apply", c.workspace ?? null, { version: c.id, ref: c.applied_ref }); return { champion: c }; }));
+  // mold_v0-303 (M4): a harness_policy version's pending proposal decided; a version's changes as a patch (a mold's only way out).
+  ob.post("/program-champions/:id/proposal", need("compute"), answer(async (req, res) => { const c = await N.decidePolicyProposal(who(req, res), id(req), req.body ?? {}); log(who(req, res), "program.champion_proposal", c.workspace ?? null, { version: c.id, decision: String((req.body ?? {}).decision ?? "").slice(0, 20), ref: c.applied_ref }); return { champion: c }; }));
+  ob.get("/program-champions/:id/patch", answer(async (req) => N.championPatch(id(req))));
 }
 
 /** The dock and the runs (mold_v0-292): whole-workspace paths, mounted ahead of /:id. */
 export function programDockRoutes(r: Router, orgOf: (res: Response) => number) {
   if (!N.nestedOn()) return;
+  // mold_v0-303: a person starts a program (the Agents page's Run a program), as the person the session's sign-in is.
+  const who = async (res: Response) => {
+    const s = res.locals.session as import("./app.js").Session;
+    const H = await import("./harness-sessions.js");
+    return { actor: H.actorOf(s), org: { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole } };
+  };
+  r.get("/programs", answer(async (_req, res) => ({ programs: await (await import("./program-start.js")).startablePrograms((await who(res)).actor) })));
+  r.post("/programs/:id/start", answer(async (req, res) => {
+    const { actor, org } = await who(res);
+    return (await import("./program-start.js")).startProgram(orgOf(res), actor, String(req.params.id), req.body ?? {}, org);
+  }, 201));
   r.get("/dock", answer(async (_req, res) => D.dockSections(orgOf(res))));
   r.get("/dock/:section", answer(async (req, res) => D.dockSection(orgOf(res), String(req.params.section))));
   r.get("/runs", answer(async (_req, res) => ({ runs: await D.activeRuns(orgOf(res)) })));

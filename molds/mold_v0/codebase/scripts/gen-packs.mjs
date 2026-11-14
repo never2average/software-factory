@@ -171,6 +171,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "engine",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "oauth_providers", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts", "programs",
+  // workspace recipes the app declares, inline (mold_v0-303, src/agent-profile-spec.ts PackRecipeSchema; src/recipes.ts brings them in)
+  "recipes",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
@@ -1350,6 +1352,8 @@ for (const [id, json, file] of entries) {
       metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
+      // mold_v0-303: its schedules that start an agent session or a program (the Schedules page lists them).
+      sessionSchedules: (def.schedules ?? []).filter((x) => x?.start_agent || x?.start_program).length,
       resultChecks: def.runResults?.check ?? [],
       // Its declarative checks' names (mold_v0-224: a client session's checks:<name> names one).
       checks: (def.checks ?? []).map((c) => String(c?.name)),
@@ -1451,6 +1455,43 @@ if (loaded.length === entries.length) {
   // The generated tools a workspace's client sees (mold_v0-106: the guide groups the tools by what they reach).
   mcp.tools = catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => ({ name: t.name, pack: t.pack, op: t.op, area: t.area ?? null, kind: t.kind ?? null }));
   mcp.records = [...RECORD_TOOL_NAMES];
+}
+// mold_v0-303: recipes, programs a person or a schedule starts, and acceptance tests that run a recipe, across the build:
+// a recipe's id is one pack's; a test's recipe is one the build declares (its cases among its files); a start_program
+// action or schedule names a declared program people may start (src/program-start.ts personStart says the same).
+if (loaded.length === entries.length) {
+  const recipeOwner = new Map();
+  for (const p of loaded) for (const r of p.definition.recipes ?? []) {
+    if (recipeOwner.has(r.id)) views.problems.push("pack " + p.id + ": recipe " + r.id + " is already pack " + recipeOwner.get(r.id).pack + "'s");
+    else recipeOwner.set(r.id, { pack: p.id, files: (r.files ?? []).map((f) => f.path) });
+  }
+  const programOf = new Map();
+  for (const p of loaded) for (const pr of p.definition.programs ?? []) programOf.set(pr.id, pr.config ?? {});
+  for (const p of loaded) for (const pr of p.definition.programs ?? []) {
+    const t = pr.config?.acceptance?.test;
+    if (!t || typeof t !== "object" || t.recipe === undefined) continue;
+    const rid = typeof t.recipe === "string" ? t.recipe : t.recipe?.id;
+    const rec = recipeOwner.get(rid);
+    if (!rec) views.problems.push("pack " + p.id + ": program " + pr.id + ": acceptance.test.recipe " + JSON.stringify(rid) + " is not a recipe the build's packs declare (recipes)");
+    else if (typeof t.cases_path === "string" && !rec.files.includes(t.cases_path)) views.problems.push("pack " + p.id + ": program " + pr.id + ": acceptance.test.cases_path " + t.cases_path + " is not a file of recipe " + rid);
+  }
+  const peopleStart = (id) => {
+    const c = programOf.get(id);
+    if (!c) return "is not a program the build's packs declare (programs)";
+    // mold_v0-303: a program with steps only people start (spawned_by []) runs in a session permitted to spawn exactly it.
+    return null;
+  };
+  for (const p of loaded) {
+    for (const ar of p.definition.recordAreas ?? []) for (const x of ar?.detail?.actions ?? []) {
+      if (x?.kind !== "start_program") continue;
+      const why = peopleStart(x.program);
+      if (why) views.problems.push("pack " + p.id + ": record area " + ar.name + "'s page: action start_program: program " + x.program + " " + why);
+    }
+    for (const sc of p.definition.schedules ?? []) if (sc?.start_program) {
+      const why = peopleStart(sc.start_program.program);
+      if (why) views.problems.push("pack " + p.id + ": schedule " + sc.name + ": start_program: program " + sc.start_program.program + " " + why);
+    }
+  }
 }
 process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mcp }) + "\\n");
 `);
@@ -1634,6 +1675,8 @@ const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []
 const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type === "reference" && !(a.links ?? []).some((l) => l.field === f.name)).map((f) => ({ field: f.name, area: f.to }))];
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
+/** mold_v0-303: the packs' schedules that start an agent session or a program: the Schedules page appears with one too. */
+const sessionScheduleCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.sessionSchedules ?? 0), 0);
 // due dates and clocks (mold_v0-191) post notices: the scheduled_alerts flag's (mold_v0-219)
 const dueAreaCount = !FEATURE_ON.scheduled_alerts ? 0 : recordAreas.filter((a) => a.due || (FEATURE_ON.record_clocks && a.clocks?.length)).length;
 /**
@@ -1682,7 +1725,7 @@ const ACCESS_JOINED = (() => {
 const ACCESS_FIELDS = ACCESS_JOINED.fields;
 const workspaceItems = [
   // Credentials (mold_v0-034) is Settings › Credentials since mold_v0-218: the Settings entry below Overview (settingsPage).
-  ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
+  ...(jobKindCount || sessionScheduleCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
   // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
   ...(packs.some((p) => defsByPack[p.id]?.store) ? [{ title: "Files", url: "/app/files", icon: "page", items: [] }] : []),
@@ -2470,7 +2513,7 @@ const profileSidebar = (() => {
   // mold_v0-280: a tab inside Settings is not a sidebar entry (Settings joins the declared sidebar on its own).
   const tabs = shownTabs().filter((t) => t.inside !== "settings"), listed = new Set(), out = [];
   const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
-  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !FEATURE_ON.company_email && "the build declares no credential field and no company email", schedules: !jobKindCount && "the build has no job kind to schedule",
+  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !FEATURE_ON.company_email && "the build declares no credential field and no company email", schedules: !jobKindCount && !sessionScheduleCount && "the build has no job kind to schedule",
     notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
     keys: profile.member_keys === false && "member API keys are off (profile.json member_keys)" };
   declared.forEach((g, i) => {

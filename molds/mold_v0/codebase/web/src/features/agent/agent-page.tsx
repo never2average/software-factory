@@ -12,7 +12,9 @@
 // (the first message, the model, the budget, Start), then the new session. mold_v0-261: the dialog offers the agent profiles this person
 // may start (src/agent-profiles.ts; staff set them up in Admin › Agent profiles), each with its model and budget; a list's
 // start_agent action opens it with its profile and first message (?start=<profile>&message=...), and a session's card says
-// which profile and version it runs with, and the record it was started from.
+// which profile and version it runs with, and the record it was started from. mold_v0-303 (flag nested_runs): Run a
+// program beside it, a modal too: the programs this person may start (GET /api/agent/programs, src/program-start.ts),
+// the chosen one's inputs as a form (its inputs schema), Run, then the session that runs it.
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tokens, TraceStream, useTrace } from './session-trace';
 import { AgentComposer } from './composer/agent-composer';
@@ -145,6 +147,11 @@ function AgentList({ area }: { area: Area }) {
     return () => window.removeEventListener('popstate', h);
   }, []);
   const budget = useBudgetDialogs(call, load);
+  // mold_v0-303: the programs this person may start (none, or the flag off: no Run a program button).
+  const [programs, setPrograms] = useState<StartableProgram[]>([]);
+  const [running, setRunning] = useState(false);
+  const mayRun = area === 'app' && featureOn('nested_runs') && !!data?.can_start;
+  useEffect(() => { if (mayRun) void call<{ programs: StartableProgram[] }>('GET', '/programs').then((d) => setPrograms(d.programs ?? []), () => setPrograms([])); }, [mayRun, call]);
   if (error) return <PageContainer><ErrorState error={error} /></PageContainer>;
   // mold_v0-287: an open session is the whole content area: no list beside it (the operator's exception to the side panel).
   if (open) return (<PageContainer>
@@ -183,7 +190,10 @@ function AgentList({ area }: { area: Area }) {
         ]} />}
         searchText={(s) => `${s.ref} ${s.title} ${PHASE_WORDS[s.phase]} ${s.started_by ?? ''} ${s.workspace?.slug ?? ''} ${s.pending_request ? askWords(s.pending_request) : ''}`}
         searchPlaceholder='Search sessions'
-        toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><StartButton onClick={() => setStarting(true)} /></div> : undefined}
+        toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'>
+          {mayRun && programs.length > 0 && <Button type='button' variant='outline' onClick={() => setRunning(true)} aria-label='Run a program' title='Run a program' data-agent-run-program=''>
+            <Icons.sparkles /><span className='sm:hidden'>Run</span><span className='hidden sm:inline'>Run a program</span></Button>}
+          <StartButton onClick={() => setStarting(true)} /></div> : undefined}
         // mold_v0-298: the shell's empty state (a title, a sentence) with the way to start one inside it, where this person may.
         empty={<EmptyState id={`${area}-agent-empty`} empty={{ title: 'No sessions yet', cta: null,
             text: area === 'app' ? (data?.can_start ? 'A session is the agent working on one task you give it. Start one and tell it what to do.' : 'A session is the agent working on one task. A member of this workspace who may use the agent can start one.')
@@ -198,6 +208,8 @@ function AgentList({ area }: { area: Area }) {
         if (!o && (params.get('start') || params.get('message'))) { const u = new URL(window.location.href); u.searchParams.delete('start'); u.searchParams.delete('message'); window.history.replaceState(null, '', u.toString()); }
       }}
         onStarted={(id) => { setStarting(false); void load().then(() => setOpen(id)); }} />}
+      {mayRun && running && <RunProgramDialog programs={programs} call={call} onOpenChange={setRunning}
+        onStarted={(id) => { setRunning(false); void load().then(() => setOpen(id)); }} />}
     </PageContainer>
   );
 }
@@ -282,6 +294,88 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
               placeholder="Summarise this workspace's records and say what needs attention first." onSend={submit} />
           </FormRow>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A program this person may start (src/program-start.ts StartableProgram). */
+interface StartableProgram { id: string; name: string; description: string; icon: string; version: number; inputs: Record<string, unknown>; via: 'session' | 'runner'; profile: string }
+type InputProp = { type?: string; description?: string; enum?: unknown[] };
+/** The inputs a form can ask one by one (each a string, number, integer or boolean), or null: the JSON box instead. */
+function simpleInputs(schema: Record<string, unknown>): { name: string; prop: InputProp; required: boolean }[] | null {
+  const props = (schema.properties ?? {}) as Record<string, InputProp>;
+  const required = new Set((schema.required ?? []) as string[]);
+  const list = Object.entries(props).map(([name, prop]) => ({ name, prop, required: required.has(name) }));
+  return list.every((x) => ['string', 'number', 'integer', 'boolean'].includes(String(x.prop.type))) ? list : null;
+}
+
+/**
+ * Run a program (mold_v0-303): a modal like Start a session. The program (each one this person may start), its inputs (a
+ * field each, or one JSON box for inputs a field cannot hold), Run; the server checks them against the program's schema.
+ */
+function RunProgramDialog({ programs, call, onOpenChange, onStarted }: { programs: StartableProgram[]; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void }) {
+  const [id, setId] = useState(programs[0]?.id ?? '');
+  const p = programs.find((x) => x.id === id) ?? null;
+  const fields = p ? simpleInputs(p.inputs) : null;
+  const [values, setValues] = useState<Record<string, string | boolean>>({});
+  const [json, setJson] = useState('{}');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setValues({}); setJson('{}'); }, [id]);
+  const inputsOf = (): Record<string, unknown> => {
+    if (!fields) { const v = JSON.parse(json || '{}') as unknown; if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('The inputs are one JSON object.'); return v as Record<string, unknown>; }
+    const out: Record<string, unknown> = {};
+    for (const f of fields) {
+      const v = values[f.name];
+      if (v === undefined || v === '') continue;
+      out[f.name] = f.prop.type === 'boolean' ? v === true : f.prop.type === 'number' || f.prop.type === 'integer' ? Number(v) : v;
+    }
+    return out;
+  };
+  const submit = async () => {
+    if (!p) return;
+    setBusy(true);
+    try {
+      const r = await call<{ session: Session }>('POST', `/programs/${encodeURIComponent(p.id)}/start`, { inputs: inputsOf() });
+      toast.success(`${p.name} started`); onStarted(r.session.id);
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-run-program-dialog=''
+        finalFocus={() => document.querySelector<HTMLElement>('[data-agent-run-program]')}>
+        <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+          <DialogHeader>
+            <DialogTitle>Run a program</DialogTitle>
+            <DialogDescription>{p?.description || 'Choose a program and give it what it needs. It runs as a session you can follow.'}</DialogDescription>
+          </DialogHeader>
+          <FormRow label='Program' htmlFor='agent-run-program'>
+            <NativeSelect id='agent-run-program' className='w-full' value={id} onChange={(e) => setId(e.target.value)} data-agent-run-program-select=''>
+              {programs.map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.name}</NativeSelectOption>)}
+            </NativeSelect>
+          </FormRow>
+          {fields ? fields.map((f) => (
+            <FormRow key={f.name} label={`${f.name.replace(/_/g, ' ')}${f.required ? '' : ' (optional)'}`} htmlFor={`agent-run-input-${f.name}`}>
+              {f.prop.type === 'boolean'
+                ? <input id={`agent-run-input-${f.name}`} type='checkbox' className='size-4' checked={values[f.name] === true} onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.checked }))} />
+                : Array.isArray(f.prop.enum)
+                  ? <NativeSelect id={`agent-run-input-${f.name}`} className='w-full' value={String(values[f.name] ?? '')} onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}>
+                      <NativeSelectOption value=''>Choose</NativeSelectOption>
+                      {f.prop.enum.map((o) => <NativeSelectOption key={String(o)} value={String(o)}>{String(o)}</NativeSelectOption>)}
+                    </NativeSelect>
+                  : <Input id={`agent-run-input-${f.name}`} type={f.prop.type === 'string' ? 'text' : 'number'} required={f.required} value={String(values[f.name] ?? '')}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))} placeholder={f.prop.description ?? ''} />}
+            </FormRow>
+          )) : p && (
+            <FormRow label='Inputs (JSON)' htmlFor='agent-run-inputs'>
+              <textarea id='agent-run-inputs' className='border-input min-h-32 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs' value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} />
+            </FormRow>
+          )}
+          <DialogFooter>
+            <Button type='button' variant='outline' disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type='submit' disabled={busy || !p} data-agent-run-program-start=''>{busy ? 'Starting…' : 'Run'}</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

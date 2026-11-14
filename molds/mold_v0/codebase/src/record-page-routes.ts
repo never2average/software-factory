@@ -11,7 +11,9 @@
  *        take one of them: start_run {input} (a run of the kind on this record, started as its generated start tool
  *        starts one; the run carries the record: src/runs.ts onRecord), move {to}, edit {title, data}, delete,
  *        start_agent (mold_v0-261, flag agent_harness: a workspace agent session with the action's profile, its first
- *        message filled from the record here, never from the browser; the session links back to the record)
+ *        message filled from the record here, never from the browser; the session links back to the record),
+ *        start_program (mold_v0-303, flag nested_runs: the action's program, its inputs filled from the record here;
+ *        src/program-start.ts)
  *
  * Who may: an action is offered (and taken) only by a role the action's `roles` and the area's own permission allow (the
  * kind's start tool for a run, the area's move and the transition's roles for a move, its update for an edit, its delete
@@ -90,6 +92,8 @@ export interface ActionView {
   agent?: { profile: string; name: string; version: number; message: string };
   /** open_url (mold_v0-262): the web address it opens in a new tab (null: the field holds none). */
   url?: string | null;
+  /** start_program (mold_v0-303): the program it starts, its inputs filled from this record, and how it runs. */
+  program?: { id: string; name: string; version: number; via: "session" | "runner"; inputs: Record<string, unknown> };
 }
 
 /** The moves of `area`'s lifecycle `role` may make to `to` (any state when undefined), from any state. */
@@ -223,6 +227,26 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const { fillTemplate } = await import("./agent-profile-spec.js");
         out.push({ ...base, label: x.label ?? `Start ${prof.name}`, disabled: unavailable ?? prof.disabled,
           agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", record) } });
+        break;
+      }
+      case "start_program": {
+        // mold_v0-303 (flag nested_runs): a program people may start, for a role that may (else not shown); its inputs
+        // from the record, here on the server (src/program-start.ts says who may and how it runs).
+        if (area.scope !== "workspace" || !may(area, "read", actor) || opts.org === undefined) continue;
+        if (role !== null && !canAccount(role, "launch")) continue;
+        const P = await import("./programs.js");
+        if (!P.programsOn()) continue;
+        const prog = await P.readProgram(x.program!).catch(() => null);
+        if (!prog || prog.status !== "active") continue;
+        const S = await import("./program-start.js");
+        if (S.actorProblem(actor.userId ? { kind: "person", user: actor.userId, name: null, role } : { kind: "key", user: null, name: null, role: null }, prog.config)) continue;
+        const how = S.personStart(prog.config);
+        const inputs = S.inputsFromRecord(x.input, record);
+        const { validateJson } = await import("./program-spec.js");
+        const bad = "refused" in how ? [] : validateJson(inputs, prog.config.inputs);
+        out.push({ ...base, label: x.label ?? `Run ${prog.name}`,
+          disabled: unavailable ?? ("refused" in how ? how.refused : bad.length ? `This record does not give the program what it needs: ${bad.slice(0, 2).join("; ")}` : null),
+          program: { id: prog.id, name: prog.name, version: prog.version, via: "refused" in how ? "session" : how.via, inputs } });
         break;
       }
       case "create_record": {
@@ -570,6 +594,15 @@ export function recordPageRouter(): Router {
         const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
         return { session: await H.startSession(s.org, H.actorOf(s), { message: a.agent!.message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
           { record: { area: area.name, key: record.key } }) };
+      }
+      case "start_program": {
+        // mold_v0-303: the inputs are the record's, filled here (whatever the browser sends); the session carries the record.
+        if (a.disabled) throw new PackError(a.disabled, 409);
+        const s = session(res);
+        const H = await import("./harness-sessions.js");
+        const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
+        return (await import("./program-start.js")).startProgram(s.org, H.actorOf(s), a.program!.id, { inputs: a.program!.inputs, title: `${a.program!.name}: ${record.title || record.key}` }, org,
+          { record: { area: area.name, key: record.key } });
       }
       default:
         throw new PackError(`${a.label} happens in the browser: nothing to send`, 400);

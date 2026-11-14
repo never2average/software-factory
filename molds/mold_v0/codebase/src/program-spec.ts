@@ -10,13 +10,31 @@
  *               does not know is refused when the program is saved, never ignored when a child's output is checked.
  */
 import { AGENT_PURPOSES, isPurpose, type AgentPurpose } from "./agent-purpose.js";
+import { ACCOUNT_ROLES, type AccountRole } from "./account-roles.js";
 
 export const PROGRAM_ID = /^[a-z][a-z0-9-]{1,39}$/;
-export const PROGRAM_LIMITS = { name: 80, description: 500, prompt: 20_000, note: 4000, schema_bytes: 64 * 1024, states: 64, transitions: 256, max_transitions: 256, foreach: 32 } as const;
+export const PROGRAM_LIMITS = { name: 80, description: 500, prompt: 20_000, note: 4000, schema_bytes: 64 * 1024, states: 64, transitions: 256, max_transitions: 256, foreach: 32, record_fields: 64 } as const;
 export const FAILURE_POLICIES = ["fail_fast", "continue", "escalate"] as const;
 export type FailurePolicy = (typeof FAILURE_POLICIES)[number];
-export const TARGET_KINDS = ["recipe", "harness_policy", "mold_ref"] as const;
+/**
+ * mold_v0-303: what an improvement changes. recipe: a workspace recipe's files; harness_policy: an agent profile's
+ * governance policy (its `policy.json`); mold: a mold's files, only ever proposed to a person (no agent writes to a mold).
+ * "mold_ref" is the earlier word for mold, still read; it is what the tables keep (storedTargetKind).
+ */
+export const TARGET_KINDS = ["recipe", "harness_policy", "mold"] as const;
 export type TargetKind = (typeof TARGET_KINDS)[number];
+export const targetKindOf = (v: unknown): TargetKind | null => (v === "mold_ref" ? "mold" : (TARGET_KINDS as readonly unknown[]).includes(v) ? (v as TargetKind) : null);
+/** The word the tables keep for a kind (their check constraints predate "mold"). */
+export const storedTargetKind = (k: TargetKind): string => (k === "mold" ? "mold_ref" : k);
+/**
+ * mold_v0-303: the trusted scorers the evaluator runs itself (src/program-scorers.ts), and the trusted "candidate" that is
+ * a file of the candidate's tree rather than a program: measurable artefacts (a policy, a schema) scored with no code of
+ * the candidate's running at all.
+ */
+export const BUILTIN_SCORERS = ["builtin:exact", "builtin:json-schema", "builtin:governance-sim"] as const;
+export const BUILTIN_FILE = "builtin:file";
+/** mold_v0-303 (M10): the most children a tree may ever start, whatever a profile or a program says; budget is the real limit. */
+export const TREE_HARD_MAX = 256;
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -160,13 +178,24 @@ export interface AcceptanceTest {
   /** The frozen contract: its files (uploads, each with its sha256), and how to run a candidate and score it. */
   files: { id: string; path: string; bytes: number; sha256: string; executable: boolean }[];
   sha256: string; cases_path: string; candidate_command: string[]; scorer_command: string[]; timeout_seconds: number;
+  /**
+   * mold_v0-303: the files are a recipe version's, frozen (each by its sha256) when the program is brought in or saved
+   * (src/programs.ts freezeTest). Declared with no files; until frozen, its `files` is empty and nothing is measured.
+   */
+  recipe?: { id: string; version: number | null };
 }
+/** mold_v0-303: whether a test's files are frozen (a test declared from a recipe is not until it is brought in). */
+export const testFrozen = (t: AcceptanceTest | undefined | null): boolean => !!t && t.files.length > 0 && SHA256.test(t.sha256);
 export interface Acceptance {
   metric: string; direction: "maximize" | "minimize"; min_lift: number;
   /** Every candidate must also meet these, on every case's average: fail closed if a metric is absent. */
   floors: { metric: string; min?: number; max?: number }[];
   surface: string[];
-  target: { kind: TargetKind; id?: string; from_input?: string };
+  /**
+   * What is promoted: its kind (or, mold_v0-303, the input naming it: kind_from_input, one of `kinds`) and its id (or the
+   * input naming it: from_input).
+   */
+  target: { kind?: TargetKind; kind_from_input?: string; kinds?: TargetKind[]; id?: string; from_input?: string };
   /** Absent: the outcome is needs_review, and a person decides. */
   test?: AcceptanceTest;
 }
@@ -176,6 +205,16 @@ export type DockKind = (typeof DOCK_KINDS)[number];
 /** mold_v0-295: `group` names the top bar tab its section sits under (a group's id: think, measure, ship or the app's own; by
  *  default its kind's: items think, climb measure, changes ship). */
 export interface ProgramDock { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; items?: string; title?: string; meta?: string[]; group?: string; also?: { section: string; label?: string; sub?: string; icon?: string; order?: number; kind?: DockKind; group?: string }[] }
+
+/**
+ * mold_v0-303 (M7): a program's results kept as records of a workspace area, written by the server once its outputs passed
+ * their schema (never by the agent): `fields` maps each field of the area to a dotted path in the outputs (or in each item
+ * of `items`, a list in the outputs); `key` and `title` are paths too (no key: the run's own handle, numbered per item).
+ * Provenance: the run (`run:program:<program>:<handle>`).
+ */
+export interface ProgramRecord { area: string; key?: string; title?: string; items?: string; fields: Record<string, string> }
+/** What parseProgram may check a record against: the build's workspace record areas (src/record-areas.ts). */
+export interface RecordAreaShape { name: string; scope?: string; fields: readonly string[] }
 
 export interface ProgramConfig {
   icon: string;
@@ -194,6 +233,9 @@ export interface ProgramConfig {
   machine?: Machine;
   acceptance?: Acceptance;
   dock?: ProgramDock;
+  record?: ProgramRecord;
+  /** mold_v0-303: the account roles that may start it (absent: every role that may start agent sessions). */
+  roles?: AccountRole[];
 }
 
 const ICON = /^[a-zA-Z][a-zA-Z0-9]{0,39}$/;
@@ -266,7 +308,7 @@ function machineProblems(raw: unknown, at: string): { machine?: Machine; problem
     if (typeof cf === "string" && !ids.has(cf)) out.push(`${at}.states[${i}].candidate_from: ${cf} is not a state`);
   }
   if (raw.result !== undefined && !ids.has(String(raw.result))) out.push(`${at}.result: ${String(raw.result)} is not a state`);
-  if (raw.max_children !== undefined && !(Number.isInteger(raw.max_children) && (raw.max_children as number) >= 1)) out.push(`${at}.max_children: a whole number`);
+  if (raw.max_children !== undefined && !(Number.isInteger(raw.max_children) && (raw.max_children as number) >= 1 && (raw.max_children as number) <= TREE_HARD_MAX)) out.push(`${at}.max_children: a whole number from 1 to ${TREE_HARD_MAX}`);
   return out.length ? { problems: out } : { machine: raw as unknown as Machine, problems: [] };
 }
 
@@ -286,35 +328,91 @@ function acceptanceProblems(raw: unknown, at: string, hash: (s: string) => strin
   if (!Array.isArray(floors) || !floors.every((f) => isObject(f) && typeof f.metric === "string" && METRIC.test(f.metric) && (typeof f.min === "number" || typeof f.max === "number"))) out.push(`${at}.floors: a list of {metric, min and/or max}`);
   if (!Array.isArray(raw.surface) || !raw.surface.length || !raw.surface.every((g) => typeof g === "string" && GLOB.test(g))) out.push(`${at}.surface: the paths a candidate may change (at least one, relative globs)`);
   const target = isObject(raw.target) ? raw.target : null;
-  if (!target || !TARGET_KINDS.includes(target.kind as TargetKind)) out.push(`${at}.target.kind: ${TARGET_KINDS.join(", ")}`);
-  else if ((typeof target.id !== "string" || !target.id) === (typeof target.from_input !== "string" || !target.from_input)) out.push(`${at}.target: exactly one of id or from_input`);
+  let cleanTarget: Acceptance["target"] | null = null;
+  if (!target) out.push(`${at}.target: {kind or kind_from_input, id or from_input}`);
+  else {
+    for (const k of Object.keys(target)) if (!["kind", "kind_from_input", "kinds", "id", "from_input"].includes(k)) out.push(`${at}.target.${k}: not a field of a target`);
+    const named = (v: unknown) => typeof v === "string" && v !== "";
+    // mold_v0-303 (M4): the kind is fixed, or read from an input (one of `kinds`, by default any).
+    if (named(target.kind) === named(target.kind_from_input)) out.push(`${at}.target: exactly one of kind (${TARGET_KINDS.join(", ")}) or kind_from_input (the input naming it)`);
+    else if (named(target.kind) && !targetKindOf(target.kind)) out.push(`${at}.target.kind: ${TARGET_KINDS.join(", ")}`);
+    if (target.kind_from_input !== undefined && !(typeof target.kind_from_input === "string" && /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/.test(target.kind_from_input))) out.push(`${at}.target.kind_from_input: an input's (dotted) name`);
+    const kinds = target.kinds === undefined ? undefined : Array.isArray(target.kinds) ? target.kinds.map(targetKindOf) : [null];
+    if (kinds && (!kinds.length || kinds.some((k) => !k))) out.push(`${at}.target.kinds: a list of ${TARGET_KINDS.join(", ")}`);
+    if (kinds && named(target.kind)) out.push(`${at}.target.kinds: only with kind_from_input`);
+    if (named(target.id) === named(target.from_input)) out.push(`${at}.target: exactly one of id or from_input`);
+    if (!out.some((p) => p.startsWith(`${at}.target`))) cleanTarget = {
+      ...(named(target.kind) ? { kind: targetKindOf(target.kind)! } : { kind_from_input: target.kind_from_input as string, ...(kinds ? { kinds: [...new Set(kinds as TargetKind[])] } : {}) }),
+      ...(named(target.id) ? { id: target.id as string } : { from_input: target.from_input as string }),
+    };
+  }
   let test: AcceptanceTest | undefined;
   if (raw.test !== undefined) {
     const t = isObject(raw.test) ? raw.test : {};
     const w = `${at}.test`;
-    const files = t.files;
-    if (!Array.isArray(files) || !files.length || !files.every((f) => isObject(f) && typeof f.id === "string" && UPLOAD.test(f.id) && typeof f.path === "string" && SAFE_PATH.test(f.path) && typeof f.sha256 === "string" && SHA256.test(f.sha256) && typeof f.bytes === "number")) out.push(`${w}.files: its uploaded files, each {id, path, bytes, sha256, executable}`);
+    for (const k of Object.keys(t)) if (!["files", "recipe", "sha256", "cases_path", "candidate_command", "scorer_command", "timeout_seconds"].includes(k)) out.push(`${w}.${k}: not a field of a test`);
+    // mold_v0-303 (M6): a recipe's version in place of uploads: frozen, file by file, when the program is brought in.
+    const recipe = t.recipe === undefined ? undefined : isObject(t.recipe) ? t.recipe : null;
+    if (recipe === null || (recipe && !(typeof recipe.id === "string" && /^[a-z][a-z0-9-]{1,39}$/.test(recipe.id) && (recipe.version === undefined || recipe.version === null || (Number.isInteger(recipe.version) && (recipe.version as number) >= 1)) && Object.keys(recipe).every((k) => k === "id" || k === "version"))))
+      out.push(`${w}.recipe: {id, version?} of the recipe holding the test's files (its cases and scorer)`);
+    const files = t.files === undefined && recipe ? [] : t.files;
+    const filesOk = Array.isArray(files) && files.every((f) => isObject(f) && typeof f.id === "string" && UPLOAD.test(f.id) && typeof f.path === "string" && SAFE_PATH.test(f.path) && typeof f.sha256 === "string" && SHA256.test(f.sha256) && typeof f.bytes === "number");
+    if (!filesOk || (!recipe && !(files as unknown[]).length)) out.push(`${w}.files: its uploaded files, each {id, path, bytes, sha256, executable} (or recipe: {id, version} in their place)`);
+    const frozen = filesOk && (files as unknown[]).length > 0;
     if (typeof t.cases_path !== "string" || !SAFE_PATH.test(t.cases_path)) out.push(`${w}.cases_path: the file listing the held-out cases`);
-    else if (Array.isArray(files) && !files.some((f) => isObject(f) && f.path === t.cases_path)) out.push(`${w}.cases_path: it is not one of the files`);
+    else if (frozen && !(files as unknown[]).some((f) => isObject(f) && f.path === t.cases_path)) out.push(`${w}.cases_path: it is not one of the files`);
     for (const k of ["candidate_command", "scorer_command"]) if (!Array.isArray(t[k]) || !(t[k] as unknown[]).length || !(t[k] as unknown[]).every((x) => typeof x === "string")) out.push(`${w}.${k}: a program and its arguments`);
+    // The built-ins: a scorer is one of the evaluator's own, alone; a "candidate" that is a file is that file's path.
+    const sc = Array.isArray(t.scorer_command) ? (t.scorer_command as unknown[]) : [];
+    if (typeof sc[0] === "string" && sc[0].startsWith("builtin:") && (!(BUILTIN_SCORERS as readonly string[]).includes(sc[0]) || sc.length !== 1)) out.push(`${w}.scorer_command: a built-in scorer is one of ${BUILTIN_SCORERS.join(", ")}, alone`);
+    const cc = Array.isArray(t.candidate_command) ? (t.candidate_command as unknown[]) : [];
+    if (typeof cc[0] === "string" && cc[0].startsWith("builtin:") && !(cc[0] === BUILTIN_FILE && cc.length === 2 && typeof cc[1] === "string" && SAFE_PATH.test(cc[1]))) out.push(`${w}.candidate_command: the built-in candidate is ["${BUILTIN_FILE}", "<path in the candidate>"]`);
     const timeout = t.timeout_seconds === undefined ? 300 : t.timeout_seconds;
     if (typeof timeout !== "number" || timeout < 1 || timeout > 3600) out.push(`${w}.timeout_seconds: from 1 to 3600`);
     if (!out.some((p) => p.startsWith(w))) {
       const clean = { files: (files as AcceptanceTest["files"]).map((f) => ({ id: f.id, path: f.path, bytes: f.bytes, sha256: f.sha256, executable: f.executable === true })),
         cases_path: t.cases_path as string, candidate_command: t.candidate_command as string[], scorer_command: t.scorer_command as string[], timeout_seconds: timeout as number };
-      test = { ...clean, sha256: contractSha(clean, hash) };
-      if (t.sha256 !== undefined && t.sha256 !== test.sha256) out.push(`${w}.sha256: does not match its files and commands (the contract is frozen by what is in it)`);
+      const ref = recipe ? { recipe: { id: recipe.id as string, version: (recipe.version as number | undefined) ?? null } } : {};
+      test = { ...clean, sha256: frozen ? contractSha(clean, hash) : "", ...ref };
+      if (frozen && t.sha256 !== undefined && t.sha256 !== test.sha256) out.push(`${w}.sha256: does not match its files and commands (the contract is frozen by what is in it)`);
     }
   }
   if (out.length) return { problems: out };
-  return { problems: [], acceptance: { metric: raw.metric as string, direction: raw.direction as Acceptance["direction"], min_lift: minLift as number, floors: floors as Acceptance["floors"], surface: raw.surface as string[], target: target as unknown as Acceptance["target"], ...(test ? { test } : {}) } };
+  return { problems: [], acceptance: { metric: raw.metric as string, direction: raw.direction as Acceptance["direction"], min_lift: minLift as number, floors: floors as Acceptance["floors"], surface: raw.surface as string[], target: cleanTarget!, ...(test ? { test } : {}) } };
 }
 
-/** A program's configuration as saved: checked and given its defaults. `hash` is sha256 of a string in hex. */
-export function parseProgram(raw: unknown, hash: (s: string) => string): { config?: ProgramConfig; problems: string[] } {
+/**
+ * mold_v0-303 (M7): what a program's `record` says wrongly. With the build's record areas (`areas`), an area that is not a
+ * workspace area of this build, or a field it does not have, is refused now; without them, only the shape (src/programs.ts
+ * checks the areas when it brings a program in).
+ */
+export function recordProblems(raw: unknown, areas?: readonly RecordAreaShape[] | null): string[] {
+  if (!isObject(raw)) return ["record: {area, key?, title?, items?, fields: {field: path}}"];
+  const out: string[] = [];
+  const PATHLIKE = /^(\$\.)?[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){0,15}$/;
+  for (const k of Object.keys(raw)) if (!["area", "key", "title", "items", "fields"].includes(k)) out.push(`record.${k}: not a field of a record`);
+  if (typeof raw.area !== "string" || !/^[a-z][a-z0-9_]{0,62}$/.test(raw.area)) out.push("record.area: the workspace record area its results are kept in");
+  for (const k of ["key", "title", "items"]) if (raw[k] !== undefined && !(typeof raw[k] === "string" && PATHLIKE.test(raw[k] as string))) out.push(`record.${k}: a dotted path in the outputs`);
+  const fields = raw.fields;
+  if (!isObject(fields) || !Object.keys(fields).length || Object.keys(fields).length > PROGRAM_LIMITS.record_fields || !Object.values(fields).every((p) => typeof p === "string" && PATHLIKE.test(p))) out.push(`record.fields: {field: dotted path in the outputs}, 1 to ${PROGRAM_LIMITS.record_fields}`);
+  if (out.length || !areas) return out;
+  const area = areas.find((a) => a.name === raw.area);
+  if (!area) return [`record.area: ${String(raw.area)} is not a record area of this app`];
+  if (area.scope !== undefined && area.scope !== "workspace") return [`record.area: ${area.name} is not a workspace area (a program's results are its workspace's)`];
+  for (const f of Object.keys(fields as object)) if (!area.fields.includes(f)) out.push(`record.fields.${f}: ${area.name} has no such field`);
+  return out;
+}
+/** A dotted path of a record's mapping, read in a value ("$." in front is the value itself). */
+export const recordPath = (v: unknown, p: string) => atPath(v, p.startsWith("$.") ? p.slice(2) : p);
+
+/**
+ * A program's configuration as saved: checked and given its defaults. `hash` is sha256 of a string in hex. `opts.areas`
+ * (mold_v0-303): the build's record areas, when the caller has them, to check a `record` against.
+ */
+export function parseProgram(raw: unknown, hash: (s: string) => string, opts: { areas?: readonly RecordAreaShape[] | null } = {}): { config?: ProgramConfig; problems: string[] } {
   if (!isObject(raw)) return { problems: ["config: an object"] };
   const out: string[] = [];
-  const known = new Set(["$comment", "icon", "purpose", "agent_profile", "prompt", "inputs", "outputs", "budget_usd", "limits", "failure_policy", "retries", "spawned_by", "machine", "acceptance", "dock"]);
+  const known = new Set(["$comment", "icon", "purpose", "agent_profile", "prompt", "inputs", "outputs", "budget_usd", "limits", "failure_policy", "retries", "spawned_by", "machine", "acceptance", "dock", "record", "roles"]);
   for (const k of Object.keys(raw)) if (!known.has(k)) out.push(`${k}: not a field of a program`);
   const icon = raw.icon === undefined ? "sparkles" : raw.icon;
   if (typeof icon !== "string" || !ICON.test(icon)) out.push("icon: an icon's name");
@@ -367,17 +465,27 @@ export function parseProgram(raw: unknown, hash: (s: string) => string): { confi
     }
     if (!out.some((p) => p.startsWith("dock."))) dock = d as unknown as ProgramDock;
   }
+  if (raw.record !== undefined) out.push(...recordProblems(raw.record, opts.areas));
+  // mold_v0-303: the account roles that may start it (src/program-start.ts programRoles); absent, every role that launches.
+  if (raw.roles !== undefined && !(Array.isArray(raw.roles) && raw.roles.length >= 1 && raw.roles.length <= ACCOUNT_ROLES.length
+    && raw.roles.every((r) => (ACCOUNT_ROLES as readonly unknown[]).includes(r)) && new Set(raw.roles).size === raw.roles.length))
+    out.push(`roles: account roles that may start it, each once (${ACCOUNT_ROLES.join(", ")})`);
   if (out.length) return { problems: out };
   return { problems: [], config: { icon: icon as string, ...(raw.purpose !== undefined ? { purpose: raw.purpose as AgentPurpose } : {}), agent_profile: (raw.agent_profile as string | null | undefined) ?? null, prompt, inputs: inputs as JsonSchema, outputs: outputs as JsonSchema,
     budget_usd: budget as number, limits: limits as ProgramConfig["limits"], failure_policy: fp as FailurePolicy, retries: retries as number, spawned_by: spawnedBy as string[],
-    ...(machine ? { machine } : {}), ...(acceptance ? { acceptance } : {}), ...(dock ? { dock } : {}) } };
+    ...(machine ? { machine } : {}), ...(acceptance ? { acceptance } : {}), ...(dock ? { dock } : {}), ...(raw.record !== undefined ? { record: raw.record as unknown as ProgramRecord } : {}),
+    ...(raw.roles !== undefined ? { roles: raw.roles as AccountRole[] } : {}) } };
 }
 
 /** A schema that asks for something: an empty `{"type": "object"}` asks for nothing, so a child need not hand anything in. */
 export const typedOutputs = (s: JsonSchema | null | undefined): JsonSchema | null => (s && (Object.keys((s.properties ?? {}) as object).length || ((s.required ?? []) as unknown[]).length || s.anyOf || s.oneOf || s.allOf || s.$ref) ? s : null);
 
-/** Whether a session of agent profile `profile` may spawn this program. */
-export const mayBeSpawnedBy = (c: Pick<ProgramConfig, "spawned_by">, profile: string | null) => c.spawned_by.includes("*") || (!!profile && c.spawned_by.includes(profile));
+/**
+ * Whether a session of agent profile `profile` may spawn this program. `permitted` (mold_v0-303): the session is a root a
+ * person started to run exactly this program (NestedPolicy.permit_program), which may spawn it whoever its spawned_by names.
+ */
+export const mayBeSpawnedBy = (c: Pick<ProgramConfig, "spawned_by">, profile: string | null, permitted: string | null = null) =>
+  permitted !== null || c.spawned_by.includes("*") || (!!profile && c.spawned_by.includes(profile));
 
 /** A value at a dotted path of a JSON value, or undefined. */
 export function atPath(v: unknown, path: string): unknown {
@@ -385,10 +493,17 @@ export function atPath(v: unknown, path: string): unknown {
   for (const p of path.split(".")) { if (!isObject(cur) || !(p in cur)) return undefined; cur = cur[p]; }
   return cur;
 }
-/** A prompt with its {name} placeholders filled from `values` (objects as JSON); an unknown placeholder is left as written. */
-export function renderPrompt(template: string, values: Record<string, unknown>): string {
-  return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k: string) => (k in values ? (values[k] === undefined || values[k] === null ? "" : typeof values[k] === "string" ? (values[k] as string) : JSON.stringify(values[k])) : m));
+/**
+ * A prompt with its {name} placeholders filled from `values` (objects as JSON); an unknown placeholder is left as written.
+ * mold_v0-303 (M5): a placeholder `declared` names (a state's or a program's own inputs) that has no value yet is blank,
+ * never shown as written: the first pass of a loop has no {feedback}.
+ */
+export function renderPrompt(template: string, values: Record<string, unknown>, declared: Iterable<string> = []): string {
+  const known = new Set(declared);
+  return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k: string) => (k in values ? (values[k] === undefined || values[k] === null ? "" : typeof values[k] === "string" ? (values[k] as string) : JSON.stringify(values[k])) : known.has(k) ? "" : m));
 }
+/** The names a schema declares as its properties (a program's inputs). */
+export const declaredInputs = (s: JsonSchema | null | undefined): string[] => (s && isObject(s.properties) ? Object.keys(s.properties) : []);
 /** Whether a path matches a surface glob: * within one segment, ** across segments, ? one character. */
 export function globMatch(glob: string, path: string): boolean {
   const re = "^" + glob.split("**").map((part) => part.split("*").map((x) => x.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("?", "[^/]")).join("[^/]*")).join(".*") + "$";

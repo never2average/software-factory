@@ -32,7 +32,7 @@ import { answerCheck, declaredChecks, findCheck } from "./checks.js";
 import { addOrigin, covers, listOrigins, mintClientSession, originAllowed, removeOrigin, resolveClientSession, revokeClientSession, type ResolvedSession } from "./developer-sessions.js";
 import { actorLabel, ApiProblem, asApiActor, developerSurface, type ApiActor } from "./developer-surface.js";
 import * as hooks from "./developer-webhooks.js";
-import { createSource, deleteSource, listSources, receive } from "./developer-inbound.js";
+import { createSource, deleteSource, handshake, listSources, receive } from "./developer-inbound.js";
 import { dataApi, type DataCaller } from "./data-api.js";
 import { getDb } from "./db.js";
 import { publicUrl } from "./console-url.js";
@@ -208,7 +208,13 @@ export function developerApiRouter(): Router {
 
   // ---------- webhooks in: signed by the sender, no key ----------
   v1.post("/inbound/:id", async (req, res) => {
-    try { res.json(await receive(String(req.params.id), req.headers, res.locals.rawBody as string)); }
+    // mold_v0-303: a log-drain provider's verification header is set on the reply.
+    try { res.json(await receive(String(req.params.id), req.headers, res.locals.rawBody as string, { header: (n, v) => void res.setHeader(n, v) })); }
+    catch (e) { sendProblem(res, e); }
+  });
+  // A provider proving the endpoint (mold_v0-303: Vercel's GET with x-vercel-verify expected back); nothing written.
+  v1.get("/inbound/:id", async (req, res) => {
+    try { res.json(await handshake(String(req.params.id), { header: (n, v) => void res.setHeader(n, v) })); }
     catch (e) { sendProblem(res, e); }
   });
 

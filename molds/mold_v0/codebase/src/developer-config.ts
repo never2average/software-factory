@@ -62,12 +62,28 @@ export interface InboundReceiver {
   area: string;
   /** JSON Pointer to a list in the payload: each item is one record (absent: the payload is one record). */
   items?: string;
-  /** JSON Pointers into the payload (or the item): its key, its title, and each field. */
-  key: string;
+  /** JSON Pointers into the payload (or the item): its key, its title, and each field (optional for a log drain). */
+  key?: string;
   title?: string;
-  fields: Record<string, string>;
+  fields?: Record<string, string>;
   /** Only payloads whose `type` is one of these are written (absent: any). */
   types?: string[];
+  /** How the sender signs (mold_v0-303): "standard" (Standard Webhooks, the default) or "vercel" (x-vercel-signature). */
+  signature?: "standard" | "vercel";
+  /** A hosting provider's request logs reduced to per-deployment, per-window report records (mold_v0-303, src/log-drain.ts). */
+  log_drain?: LogDrainDeclaration;
+}
+/** A log-drain receiver's options as declared (their shape is src/pack-manifest.ts's; src/log-drain.ts reads them). */
+export interface LogDrainDeclaration {
+  secret_env?: string;
+  verify_env?: string;
+  window_minutes?: number;
+  max_bytes?: number;
+  deployments: { area: string; field: string; match?: "deployment_id" | "project_id" | "host" };
+  fields?: Partial<Record<string, string>>;
+  sources?: string[];
+  environments?: string[];
+  source_label?: string;
 }
 export interface DeveloperSurfaceConfig {
   events: DeveloperEvent[];
@@ -129,8 +145,37 @@ export function developerSurfaceProblems(cfg: DeveloperSurfaceConfig, areas: Are
       if (a && !a.fields.includes(f)) out.push(`webhooks_in[${i}].fields.${f}: not a field of ${r.area}`);
       if (!POINTER.test(p)) out.push(`webhooks_in[${i}].fields.${f}: ${p} is not a JSON Pointer`);
     }
+    if (!r.log_drain && (r.key === undefined || r.fields === undefined)) out.push(`webhooks_in[${i}]: a receiver that is not a log drain names its key and fields`);
+    out.push(...logDrainProblems(i, r, areas));
   }
   if (cfg.api_version !== undefined && !(API_VERSIONS as readonly string[]).includes(cfg.api_version)) out.push(`api_version: ${cfg.api_version} is not one of ${API_VERSIONS.join(", ")}`);
+  return out;
+}
+
+const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/**
+ * What only the whole build can say of a log-drain receiver (mold_v0-303; src/log-drain.ts re-exports it): its secret
+ * and verification token are environment names, its deployments area and field are the build's, and each mapped
+ * report field is a field of its area. Here, not in src/log-drain.ts, because this file has no imports (gen-packs).
+ */
+export function logDrainProblems(i: number, r: unknown, areas: { name: string; scope: string; fields: string[] }[]): string[] {
+  const ld = (r as { log_drain?: unknown } | null)?.log_drain;
+  if (!ld || typeof ld !== "object" || Array.isArray(ld)) return [];
+  const o = ld as Record<string, unknown>;
+  const out: string[] = [];
+  const at = `webhooks_in[${i}].log_drain`;
+  for (const k of ["secret_env", "verify_env"] as const)
+    if (o[k] !== undefined && !(typeof o[k] === "string" && ENV_NAME.test(o[k] as string))) out.push(`${at}.${k}: an environment variable's name (A-Z, 0-9, _), never a secret's value`);
+  const d = (o.deployments && typeof o.deployments === "object" ? o.deployments : {}) as Record<string, unknown>;
+  const depName = typeof d.area === "string" && NAME.test(d.area) ? d.area : "deployments";
+  const depField = typeof d.field === "string" && (NAME.test(d.field) || d.field === "$key") ? d.field : "$key";
+  const dep = areas.find((a) => a.name === depName);
+  if (!dep) out.push(`${at}.deployments.area: ${depName} is not one of the build's record areas`);
+  else if (depField !== "$key" && !dep.fields.includes(depField)) out.push(`${at}.deployments.field: not a field of ${dep.name}`);
+  const rep = areas.find((a) => a.name === (r as { area?: string }).area);
+  const fm = (o.fields && typeof o.fields === "object" ? o.fields : {}) as Record<string, unknown>;
+  if (rep) for (const [k, f] of Object.entries(fm)) if (typeof f === "string" && !rep.fields.includes(f)) out.push(`${at}.fields.${k}: ${f} is not a field of ${rep.name}`);
   return out;
 }
 
