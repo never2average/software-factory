@@ -2,7 +2,7 @@
 
 import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
-import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
+import { packPages, packTabs, recordAdminNav, recordAreas } from '@/config/pack-nav.generated';
 import { settingsGroups, settingsTabUrl } from '@/config/settings';
 import { useBreadcrumbLeaf, useBreadcrumbTitleAt } from '@/lib/breadcrumb-leaf';
 import { placeOfEntry, useActiveNavEntry } from '@/hooks/use-active-nav-entry';
@@ -38,7 +38,30 @@ const PACK_TITLES = new Map<string, string>([
   // "Controls"); /admin/records and /app/records have no page of their own, so they are no crumb.
   ...recordAreas.flatMap((a) => [[`/admin/records/${a.name}`, a.label], [`/app/records/${a.name}`, a.label]] as [string, string][])
 ]);
-const RECORDS = /^\/(admin|app)\/records$/;
+// mold_v0-300: the staff Records entries of in-page tabs (/admin/records-group/<id>): /admin/records-group is no page,
+// so no crumb, and an entry is named by its label ("Blocks"), never its id.
+const RECORDS = /^\/(admin|app)\/records(-group)?$/;
+const recordGroupEntries = recordAdminNav.flatMap((g) => g.items).filter((i) => i.inPageTabs?.length);
+for (const g of recordGroupEntries) PACK_TITLES.set(g.url, g.title);
+/**
+ * mold_v0-300: a record area shown as an in-page tab, not as an entry of its own: a customer sections tab's area tab, a
+ * staff Records entry's member list. Its list and its records are crumbed as the parent entry, then the tab's label
+ * ("Workspace setup / Tenants / Acme"), never as if the area were an entry of the sidebar's.
+ */
+const sectionParents = packTabs.filter((t) => t.kind === 'sections');
+const isSub = (t: (typeof packTabs)[number]) => sectionParents.some((p) => p.pack === t.pack && (p.sections ?? []).includes(t.id));
+const tabAreas = (t: (typeof packTabs)[number]) => t.kind === 'area' ? [t.area, ...(t.areas ?? []).map((a) => a.area)].filter((a): a is string => !!a) : [];
+/** An area a tab of its own (a sidebar entry) shows: crumbed as that entry, as before. */
+const entryAreas = new Set(packTabs.filter((t) => !isSub(t)).flatMap(tabAreas));
+const IN_PAGE_AREAS = new Map<string, BreadcrumbItem[]>([
+  ...sectionParents.flatMap((parent) => (parent.sections ?? []).flatMap((id) => {
+    const sub = packTabs.find((t) => t.pack === parent.pack && t.id === id);
+    const areas = sub ? tabAreas(sub).filter((a) => !entryAreas.has(a)) : [];
+    return areas.map((a) => [`/app/records/${a}`, [{ title: parent.label, link: parent.url }, { title: sub!.label, link: sub!.url }]] as [string, BreadcrumbItem[]]);
+  })),
+  ...recordGroupEntries.flatMap((g) => (g.inPageTabs ?? []).filter((t) => t.area).map((t) =>
+    [`/admin/records/${t.area}`, [{ title: g.title, link: g.url }, { title: t.label, link: `${g.url}?tab=${t.id}` }]] as [string, BreadcrumbItem[]]))
+].reverse()); // the first tab that shows an area names it (a Map keeps the last of a key)
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 
 const AGENT_PAGE = /^\/(app|admin)\/agent$/;
@@ -67,6 +90,8 @@ export function useBreadcrumbs(search = '') {
     const crumbs = segments.flatMap((segment, index): BreadcrumbItem[] => {
       const path = `/${segments.slice(0, index + 1).join('/')}`;
       if (RECORDS.test(path)) return [];
+      const inPage = IN_PAGE_AREAS.get(path);
+      if (inPage) return inPage;
       // mold_v0-259: a team's page (/app/settings/teams/<id>): Teams is Settings' tab (no page of its own), the team by its id.
       if (path === '/app/settings/teams') return [{ title: 'Teams', link: settingsTabUrl('teams') ?? '/app/settings' }];
       if (path.startsWith('/app/settings/teams/') && index === 3) return [{ title: `Team ${decode(segment)}`, link: path }];

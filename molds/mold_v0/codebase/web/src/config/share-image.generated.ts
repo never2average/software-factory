@@ -3,9 +3,9 @@ import type { ShareImageSpec } from '@/features/site/share-image-types';
 
 /** The share image (mold_v0-093): drawn from these words and the build's brand, or the brand's own picture (brand/share-image.png). */
 export const shareImage: ShareImageSpec = {
-  "alt": "Workspace: Connect an MCP client, run agents and read their results.",
+  "alt": "Workspace: Connect your agent, run work and read the results.",
   "name": "Workspace",
-  "headline": "Connect an MCP client, run agents and read their results.",
+  "headline": "Connect your agent, run work and read the results.",
   "subheadline": null,
   "brand": null
 };

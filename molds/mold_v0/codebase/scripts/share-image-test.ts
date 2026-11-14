@@ -59,7 +59,7 @@ try {
   let g = gen({});
   assert.equal(g.status, 0, g.stderr);
   const neutral = specOf(copy);
-  assert.deepEqual(neutral, { alt: "Workspace: Connect an MCP client, run agents and read their results.", name: "Workspace", headline: "Connect an MCP client, run agents and read their results.", subheadline: null, brand: null },
+  assert.deepEqual(neutral, { alt: "Workspace: Connect your agent, run work and read the results.", name: "Workspace", headline: "Connect your agent, run work and read the results.", subheadline: null, brand: null },
     "the neutral shell: its name and tagline (the console's description only repeats it)");
   assert.equal(readFileSync(path.join(ROOT, "web", "src", "config", "share-image.generated.ts"), "utf8"), readFileSync(path.join(copy, "web", "src", "config", "share-image.generated.ts"), "utf8"),
     "the shell's own generated module is the neutral one");

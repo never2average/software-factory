@@ -6,6 +6,7 @@
 // mold_v0-251).
 //   start_run  its form, a full card in the page's place (?act=<id>), the kind's arguments pre-filled from the record
 //   move       a menu of the states it may move to; one it may not move to now stays listed, disabled, with why
+//              (mold_v0-300: only one open now: a button named by that move)
 //   edit       the record's edit form, a full card in the page's place (?act=<id>)
 //   delete     the confirm question (the console's ConfirmDialog), then the record's list
 //   link       the record its field names; copy_link the page's address, with a toast
@@ -160,10 +161,11 @@ function ActionButton({ a, primary, busy, take }: { a: PageAction; primary?: boo
 
 /** A move as a button: a menu of the states it may move to (one it may not move to now: disabled, with why). */
 function MoveButton({ a, primary, take }: { a: PageAction; primary?: boolean; take: (a: PageAction, to?: string) => void }) {
-  const moves = a.moves ?? [];
-  if (moves.length === 1 && !moves[0]!.disabled) return (
-    <Button type='button' variant={primary ? 'default' : 'outline'} size='sm' data-page-action={a.id} {...(primary ? { 'data-primary': '' } : {})} onClick={() => take(a, moves[0]!.to)}>
-      {ICON.move}{a.label}
+  // mold_v0-300: one state it may move to now: a button named by that move ("Suspend"), never a menu of one choice.
+  const one = singleMove(a);
+  if (one) return (
+    <Button type='button' variant={primary ? 'default' : 'outline'} size='sm' data-page-action={a.id} data-move-to={one.to} {...(primary ? { 'data-primary': '' } : {})} onClick={() => take(a, one.to)}>
+      {ICON.move}{one.label}
     </Button>
   );
   return (
@@ -175,6 +177,12 @@ function MoveButton({ a, primary, take }: { a: PageAction; primary?: boolean; ta
     </DropdownMenu>
   );
 }
+
+/** mold_v0-300: the one move an action may make now (the others disabled or none), else null. */
+export const singleMove = (a: Pick<PageAction, 'moves'>) => {
+  const open = (a.moves ?? []).filter((m) => !m.disabled);
+  return open.length === 1 ? open[0]! : null;
+};
 
 /** A disabled item stays at full strength (its label muted), so its reason reads as clearly as any text in the menu. */
 const DISABLED_ITEM = 'data-disabled:opacity-100';
@@ -194,6 +202,11 @@ function MoveItems({ a, take }: { a: PageAction; take: (a: PageAction, to?: stri
 
 /** One action as a menu item (More, a row's menu): disabled ones say why under their label. */
 function ActionItem({ a, take }: { a: PageAction; take: (a: PageAction, to?: string) => void }) {
+  // mold_v0-300: a move with one state open now is one item named by that move, not a submenu of one choice.
+  const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
+  if (one) return (
+    <DropdownMenuItem onClick={() => take(a, one.to)} data-page-action={a.id} data-move-to={one.to}>{ICON.move}{one.label}</DropdownMenuItem>
+  );
   if (a.kind === 'move' && (a.moves?.length ?? 0) > 0 && !a.disabled) return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger data-page-action={a.id}>{ICON.move}{a.label}</DropdownMenuSubTrigger>

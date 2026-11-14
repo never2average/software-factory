@@ -98,6 +98,8 @@ const stepId = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letter
  * the account reached a session-engine stage, `stage:onboarded|simulated|reported`), the shell's steps in its words
  * (`shell_steps`: joined, connected, tools, first_call), the note shown for a step that starts work to someone who may
  * not (`viewer_note`, with `launch` on the step), and the `workflow`: the tool groups that make up using it fully.
+ * mold_v0-300: `shell_steps` alone is any pack's, a config pack's too (scripts/gen-packs.mjs setupConfigOf: the shell's
+ * steps in its words, the connection steps optional; each step one pack's words); the rest stays a host pack's.
  */
 const ShellStepWords = z.object({ label: plain(120).optional(), help: plain(600).optional(), prompt: plain(400).optional() }).strict();
 /**
@@ -473,7 +475,8 @@ export const PackJsonSchema = z.object({
   account_stages: AccountStagesSchema.optional(),
   /** The shell's texts in the product's words (mold_v0-141; TextsSchema above). */
   texts: TextsSchema.optional(),
-  /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
+  /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above).
+   *  mold_v0-300: a config pack's setup is `shell_steps` only (the shell's steps reworded, connection steps optional). */
   setup: SetupSchema.optional(),
   /** The account context and memory component, turned on (mold_v0-142; src/account-context.ts): MemorySchema above. */
   memory: MemorySchema.optional(),

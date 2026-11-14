@@ -135,6 +135,26 @@ export function cellText(v: unknown): string {
   if (typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${cellText(x)}`).join(', ');
   return String(v);
 }
+/**
+ * mold_v0-300: a cell holding a list of objects, as one line per item (its name, title, label or id; else its pairs in
+ * words), or null when the value is not such a list. The table shows a count ("2 steps") that opens to these lines.
+ */
+export function itemLines(v: unknown): string[] | null {
+  if (!Array.isArray(v) || !v.length || !v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) return null;
+  return v.map((x) => {
+    const o = x as Record<string, unknown>;
+    const name = ['name', 'title', 'label', 'id', 'key'].map((k) => o[k]).find((n) => typeof n === 'string' || typeof n === 'number');
+    return name != null && name !== '' ? String(name) : cellText(o);
+  });
+}
+/** mold_v0-300: a count of a column's items in words, its noun from the column ("2 steps", "1 step"; else "items"). */
+export function itemCount(n: number, column: string): string {
+  const words = columnWords(column).toLowerCase().trim();
+  // A plural column names its items ("steps"); another names them once ("check": "2 checks"); none reads "items".
+  const many = !words ? 'items' : /(s|data|info)$/.test(words) ? words : `${words}s`;
+  const one = /ies$/.test(many) ? many.replace(/ies$/, 'y') : /(ss|us|data|info)$/.test(many) ? many : /(ches|shes|xes)$/.test(many) ? many.replace(/es$/, '') : many.replace(/s$/, '');
+  return `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
+}
 /** Whether a column holds numbers only (right-aligned, tabular). */
 export const numericColumn = (rows: readonly Record<string, unknown>[], k: string) => rows.some((r) => typeof r[k] === 'number') && rows.every((r) => r[k] == null || typeof r[k] === 'number');
 

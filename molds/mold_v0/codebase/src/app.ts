@@ -120,12 +120,13 @@ async function setup(s: Session, since?: string) {
   const shellWords = (id: string, label: string, help: string) => ({ label: cfg.shell_steps?.[id]?.label ?? label, help: cfg.shell_steps?.[id]?.help ?? help,
     ...(id !== "joined" && cfg.shell_steps?.[id]?.optional ? { optional: true as const } : {}) });
   type Step = { id: string; label: string; done: boolean; at: Date | string | null; optional?: true; help: string };
+  // mold_v0-300: the connected tool is an "agent" in every step's words, never a "client" (operator rule 2026-11-13).
   const steps: Step[] = [
     { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },
     { id: "connected", ...shellWords("connected", `Add the ${P} connector to your agent`,
-      `${P} runs inside the agent you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
+      `${P} runs inside the agent you already use. Pick your agent under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
     { id: "tools", ...shellWords("tools", `Switch the ${P} tools on`,
-      `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
+      `Your agent has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other agents, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
     { id: "first_call", ...shellWords("first_call", `Ask ${P} something`, `Your first question checks everything works end to end. Type: "What can ${P} do?"`), done: Boolean(m.first_call), at: m.first_call },
   ];
   for (const st of own) {
@@ -598,7 +599,7 @@ export function appRouter() {
   // account. Logged, since the client name on those events is gone for good.
   api.delete("/clients/:client", async (req, res) => {
     const s = S(res);
-    if (!s.user) throw new AppError("Sign in as a person to remove a client from your list", 403);
+    if (!s.user) throw new AppError("Sign in as a person to remove an agent from your list", 403);
     const client = String(req.params.client);
     const r = await (await getDb()).query(
       "UPDATE mcp_events SET client = NULL WHERE org_id = $1 AND user_id = $3 AND client = $2 RETURNING id", [s.org, client, s.user]);

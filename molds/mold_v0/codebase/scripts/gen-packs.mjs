@@ -155,8 +155,8 @@ export const DEFAULT_PROFILE = {
   name: "Workspace",
   mcp_server_name: "workspace",
   console_title: "Workspace",
-  console_description: "Your workspace: connect an MCP client, run agents and read their results.",
-  short_description: "Connect an MCP client, run agents and read their results.",
+  console_description: "Your workspace: connect your agent, run work and read the results.",
+  short_description: "Connect your agent, run work and read the results.",
   email_sender_name: "Workspace",
   email_from_address: "no-reply@example.com",
 };
@@ -1971,6 +1971,8 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
 const SHELL_SETUP_STEPS = ["joined", "connected", "tools", "first_call"];
 const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
+/** mold_v0-300: which pack words each of the shell's setup steps (setup.shell_steps), once checked. */
+const shellStepOwner = new Map();
 /** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
 let engineWords = null;
 /** The account context and memory component's pages and words for the console (mold_v0-142); null when it is off. */
@@ -2108,6 +2110,15 @@ let developerOwner = null, developerFacts = null;
     }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
+  // mold_v0-300: the server reads one pack's setup (src/host.ts setupConfig: the first that has one), so every pack's
+  // shell_steps join into one: the host pack's that declares the Setup page, else the first pack that words a step.
+  const worded = packConfig.filter((c) => c.setup);
+  if (worded.length > 1) {
+    const into = worded.find((c) => c.pack === setupOwner) ?? worded[0];
+    into.setup = { ...into.setup, shell_steps: Object.assign({}, ...worded.map((c) => c.setup.shell_steps ?? {})) };
+    for (const c of worded) if (c !== into) delete c.setup;
+    for (let i = packConfig.length - 1; i >= 0; i--) if (Object.keys(packConfig[i]).length <= 1) packConfig.splice(i, 1);
+  }
   refuse();
 }
 // ---------- Settings, from the features registry (mold_v0-219) ----------
@@ -2197,7 +2208,8 @@ if (engineWords) {
 }
 /**
  * A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. `setup` is a
- * host pack's, one per build (a pack's own checklist steps are pack.json onboarding): its steps' ids are new, each placed
+ * host pack's, one per build (a pack's own checklist steps are pack.json onboarding), except `setup.shell_steps`, any
+ * pack's (mold_v0-300: each step one pack's words): its steps' ids are new, each placed
  * after a step there is, a `stage:` step only in a build with the session engine (its host tables), a `launch` step only
  * with a viewer_note; its workflow's group ids and tools are each once.
  */
@@ -2207,7 +2219,18 @@ function setupConfigOf(p) {
   if (hints?.length) out.error_hints = hints;
   const st = p.json?.setup;
   if (!st) return out;
-  if (!p.host) { fail(at, "setup is a host pack's (its Setup page): a pack's own checklist steps are pack.json onboarding"); return out; }
+  // mold_v0-300: the shell's steps in a pack's words (setup.shell_steps: words, connection steps optional) are any pack's,
+  // a config pack's too (a product used mostly in the console marks the connection optional); each step one pack's words.
+  for (const id of Object.keys(st.shell_steps ?? {})) {
+    if (shellStepOwner.has(id)) fail(at, `setup.shell_steps ${id}: pack ${shellStepOwner.get(id)} words it too: one pack's words`);
+    else shellStepOwner.set(id, p.id);
+  }
+  if (!p.host) {
+    const other = Object.keys(st).filter((k) => k !== "$comment" && k !== "shell_steps");
+    if (other.length) { fail(at, `setup ${other.join(", ")}: a config pack's setup is shell_steps only (the shell's steps in its words); the Setup page's own steps and workflow are a host pack's, a pack's own checklist steps are pack.json onboarding`); return out; }
+    if (st.shell_steps) out.setup = { shell_steps: st.shell_steps };
+    return out;
+  }
   if (setupOwner) { fail(at, `setup: host pack ${setupOwner} declares the Setup page too: one pack's`); return out; }
   setupOwner = p.id;
   const engine = ["products", "scenarios", "simulations", "agent_sessions"].every((t) => packs.some((x) => (x.schema?.tables ?? []).includes(t)));

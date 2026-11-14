@@ -16,7 +16,8 @@ import { ResponsiveContainer } from 'recharts';
 import { Box } from '@/components/layout/chart-grid';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { PackChartSpec } from '@/config/pack-nav.generated';
+import { recordAreas, type PackChartSpec } from '@/config/pack-nav.generated';
+import { RUN_STATUS_COLOR, type BadgeColor, type LaidOutArea } from '@/features/records/detail-layout';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';
@@ -63,6 +64,50 @@ const bucketLabel = (d: string, all: string[]) => {
 const slot = (i: number) => `var(--viz-${(i % 8) + 1})`;
 /** The ordinal step of option i of n (5 steps, light to dark on the light theme). */
 const step = (i: number, n: number) => `var(--viz-ord-${n <= 1 ? 3 : Math.round((i * 4) / (n - 1)) + 1})`;
+
+/**
+ * mold_v0-300: a status chart in its badges' tones. A chart of one metric grouped by an enum whose values have tones
+ * (a run's status, as its ToneBadge reads, features/records/detail-layout.ts RUN_STATUS_COLOR; a check result's; an
+ * area's badge colours, its detail header's badges[].colors) colours each value as its badge does, so Succeeded is green
+ * and Running blue on the chart and in the list alike. Each tone is a validated chart token with its own light and dark
+ * step (web/src/styles/theme.css --viz-*): success the green slot, danger the red, info the blue, warning the amber,
+ * neutral the muted text grey; a badge's own viz-N is that slot. Anything else keeps the categorical palette.
+ */
+const TONE_FILL: Record<BadgeColor, string> = {
+  success: 'var(--viz-3)', danger: 'var(--viz-8)', info: 'var(--viz-1)', warning: 'var(--viz-4)', neutral: 'var(--muted-foreground)',
+  'viz-1': 'var(--viz-1)', 'viz-2': 'var(--viz-2)', 'viz-3': 'var(--viz-3)', 'viz-4': 'var(--viz-4)',
+  'viz-5': 'var(--viz-5)', 'viz-6': 'var(--viz-6)', 'viz-7': 'var(--viz-7)', 'viz-8': 'var(--viz-8)',
+};
+/** A run result's tones (features/runs/run-page.tsx RESULT_COLOR, the same values). */
+const RESULT_TONE: Record<string, BadgeColor> = { pass: 'success', fail: 'danger', error: 'danger', not_applicable: 'neutral', unknown: 'warning' };
+/**
+ * The tone of each group key, when every key (bar the "none" group, null) is a value of one toned enum: the run
+ * statuses, the result statuses, or an area's enum field with badge colours (a value it gives none of is neutral, as its
+ * badge is). Two areas' fields that both fit but disagree give no tones (the palette, never a guess). Exported for
+ * scripts/console-tabs-test.ts.
+ */
+export function enumTones(keys: (string | null)[], areas: readonly LaidOutArea[] = recordAreas as LaidOutArea[]): BadgeColor[] | null {
+  const vals = keys.filter((k): k is string => k !== null);
+  if (!vals.length) return null;
+  const of = (map: Record<string, BadgeColor>) => keys.map((k) => (k === null ? 'neutral' : map[k] ?? 'neutral'));
+  for (const map of [RUN_STATUS_COLOR, RESULT_TONE]) if (vals.every((k) => k in map)) return of(map);
+  let found: BadgeColor[] | null = null;
+  for (const a of areas) {
+    for (const b of a.detail?.header?.badges ?? []) {
+      if (!b.colors || !Object.keys(b.colors).length) continue;
+      const f = a.fields.find((x) => x.name === b.field && x.type === 'enum');
+      const opts = new Set((f?.options ?? []).map((o) => (typeof o === 'string' ? o : o.value)));
+      if (!f || !vals.every((k) => opts.has(k)) || !vals.some((k) => k in b.colors!)) continue;
+      const t = of(b.colors);
+      if (found && found.some((x, i) => x !== t[i])) return null;
+      found = t;
+    }
+  }
+  return found;
+}
+/** The fills of a chart of one metric's groups by their tones, or null (several metrics, an ordinal chart, no toned enum). */
+const toneFills = (chart: PackChartSpec, ms: MetricAnswer[], keys: (string | null)[]) =>
+  ms.length === 1 && chart.palette !== 'ordinal' ? enumTones(keys)?.map((t) => TONE_FILL[t]) ?? null : null;
 
 // ---------- the pieces ----------
 
@@ -136,15 +181,17 @@ function frameOf(chart: PackChartSpec, ms: MetricAnswer[]): Frame {
   const first = ms[0]!;
   if (first.kind === 'series') {
     const categories = first.buckets!.map((d) => bucketLabel(d, first.buckets!));
+    const tones = toneFills(chart, ms, first.series!.map((s) => s.key));
     const series = ms.length === 1
-      ? first.series!.map((s, i, all) => ({ key: `s${i}`, label: s.label, values: s.values, color: chart.palette === 'ordinal' ? step(i, all.length) : slot(i) }))
+      ? first.series!.map((s, i, all) => ({ key: `s${i}`, label: s.label, values: s.values, color: tones?.[i] ?? (chart.palette === 'ordinal' ? step(i, all.length) : slot(i)) }))
       : ms.map((m, i) => ({ key: `s${i}`, label: m.label, values: m.series![0]!.values, color: slot(i) }));
     return { unit, categories, series, time: true, note };
   }
   if (first.kind === 'groups') {
     const categories = first.groups!.map((g) => g.label);
     if (ms.length === 1) {
-      const colors = first.groups!.map((_, i, all) => (chart.palette === 'ordinal' ? step(i, all.length) : slot(0)));
+      const tones = toneFills(chart, ms, first.groups!.map((g) => g.key));
+      const colors = first.groups!.map((_, i, all) => tones?.[i] ?? (chart.palette === 'ordinal' ? step(i, all.length) : slot(0)));
       return { unit, categories, series: [{ key: 's0', label: first.label, values: first.groups!.map((g) => g.value), color: slot(0), colors }], time: false, note };
     }
     // Several metrics over the same groups: match their groups by key.

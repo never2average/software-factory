@@ -11,6 +11,8 @@
 //            (src/record-areas.ts writeFromRepository, source "lane:samples"), so read-only and sealed areas take them.
 //            mold_v0-298: referenced areas first (whatever the chain), and a shared area with no samples that a required
 //            reference points at gets a few placeholder rows; an area still left empty is listed with the reason.
+//            mold_v0-300: a reference with a `where` names only a row it keeps (the server's own test, conditionHolds);
+//            a required one that keeps none skips its area with the reason, and one area failing never stops the rest.
 //   runs     a few runs of the build's job kinds, finished, failed and running, each over a workspace asset record
 //            when the kind reads one (targets.asset), with results against the shared check samples; written straight
 //            into the throwaway database as the platform (the runs engine's own rows), ids run_lane_<n>.
@@ -23,8 +25,10 @@ export const SAMPLES = 8;
 export const SOURCE = "lane:samples";
 const DAY = 86_400_000;
 
-type Field = { name: string; type: string; options?: (string | { value: string })[]; to?: string; multiple?: boolean; min?: number; max?: number; max_length?: number; required?: boolean; label?: string };
-type Area = { name: string; pack: string; label: string; scope: string; role: string; fields: Field[]; repo: { kind: string } | null; samples?: { key: string }[] };
+type Field = { name: string; type: string; options?: (string | { value: string })[]; to?: string; multiple?: boolean; min?: number; max?: number; max_length?: number; required?: boolean; label?: string; where?: unknown };
+type Area = { name: string; pack: string; label: string; scope: string; role: string; fields: Field[]; repo: { kind: string } | null; samples?: { key: string; data?: Record<string, unknown> }[] };
+/** The keys of an area's rows, those a reference's `where` keeps when one is given (mold_v0-300). */
+type KeysOf = (area: string, where?: unknown) => string[];
 
 const optionValues = (f: Field) => (f.options ?? []).map((o) => (typeof o === "string" ? o : o.value));
 const day = (offset: number) => new Date(Date.now() + offset * DAY).toISOString().slice(0, 10);
@@ -32,7 +36,7 @@ const singular = (label: string) => label.replace(/ies$/i, "y").replace(/(?<!s)s
 
 /** The value of field `f` for the n-th sample (0-based), or undefined to leave it empty. */
 /** (Exported for scripts/record-pages-3-test.ts.) */
-export function valueOf(f: Field, n: number, i: number, keysOf: (area: string) => string[], areaNamed: (field: string) => string | null, area = "records"): unknown {
+export function valueOf(f: Field, n: number, i: number, keysOf: KeysOf, areaNamed: (field: string) => string | null, area = "records"): unknown {
   switch (f.type) {
     case "enum": { const o = optionValues(f); if (!o.length) return undefined; const v = o[(n + i) % o.length]; return f.multiple ? [v] : v; }
     case "boolean": return n % 3 === 0;
@@ -42,7 +46,8 @@ export function valueOf(f: Field, n: number, i: number, keysOf: (area: string) =
     }
     case "date": return day((n * 9 + i * 3) % 60 - 30);
     case "reference": case "link": {
-      const keys = f.to ? keysOf(f.to) : [];
+      // mold_v0-300: only the records the field's `where` keeps (the server refuses any other, see checkRecord).
+      const keys = f.to ? keysOf(f.to, f.type === "reference" ? f.where : undefined) : [];
       if (!keys.length) return undefined;
       const k = keys[n % keys.length];
       return f.multiple || (f.type === "link" && f.name.endsWith("s")) ? [k] : k;
@@ -68,10 +73,25 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   const ra = await imp("src/record-areas.ts");
   const { getDb } = await imp("src/db.ts");
   const { asPlatform } = await imp("src/tenant-scope.ts");
+  // mold_v0-300: a reference's `where` is tested as the server tests it (src/pack-api.ts conditionHolds, used by
+  // src/record-areas.ts checkRecord), against the data the lane world wrote for each row.
+  const { conditionHolds } = await imp("src/pack-api.ts");
   const areas = ra.recordAreas() as Area[];
   const seeded = new Map<string, string[]>();
-  for (const a of areas) if (a.scope === "platform" && a.samples?.length) seeded.set(a.name, a.samples.map((x) => x.key));
-  const keysOf = (name: string) => seeded.get(name) ?? [];
+  const rowData = new Map<string, Map<string, Record<string, unknown>>>(); // area -> key -> the data written
+  const remember = (area: string, rows: { key: string; data?: Record<string, unknown> }[]) => {
+    const m = rowData.get(area) ?? new Map<string, Record<string, unknown>>();
+    for (const r of rows) m.set(r.key, r.data ?? {});
+    rowData.set(area, m);
+  };
+  for (const a of areas) if (a.scope === "platform" && a.samples?.length) { seeded.set(a.name, a.samples.map((x) => x.key)); remember(a.name, a.samples); }
+  const holds = (where: unknown, data: Record<string, unknown> | undefined) => {
+    try { return !!data && conditionHolds(where, data); } catch { return false; }
+  };
+  const keysOf: KeysOf = (name, where) => {
+    const keys = seeded.get(name) ?? [];
+    return where ? keys.filter((k) => holds(where, rowData.get(name)?.get(k))) : keys;
+  };
   const areaNamed = (field: string) => areas.find((a) => [field, `${field}s`, `${field}es`].includes(a.name) && seeded.has(a.name))?.name ?? null;
   const out = { records: 0, runs: 0, results: 0, skipped: [] as string[], filled: [] as string[] };
   const byName = new Map(areas.map((a) => [a.name, a]));
@@ -100,6 +120,7 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
     try {
       for (const o of ops) await ra.putPlatform(null, t.name, o.key, { title: o.title, version: null, data: o.data }, "put", { source: SOURCE, fingerprint: `lane-placeholder:${o.key}` });
       seeded.set(t.name, ops.map((o) => o.key));
+      remember(t.name, ops);
       state.set(t.name, "done");
       out.filled.push(`${t.name} (a shared area with no samples): ${ops.length} placeholder row(s), so the areas that must point at one could be seeded`);
     } catch (e) {
@@ -131,7 +152,12 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
     }
     const keys = Array.from({ length: SAMPLES }, (_, n) => `${a.name.replace(/_/g, "-")}-${n + 1}`);
     // A required reference to the area itself names an earlier row of the same batch (the first row, the first).
-    const self = (name: string) => (name === a.name ? keys : keysOf(name));
+    // mold_v0-300: with a `where`, only an earlier row of the batch that it keeps (the rows built so far).
+    const built = new Map<string, Record<string, unknown>>();
+    const self: KeysOf = (name, where) => {
+      if (name !== a.name) return keysOf(name, where);
+      return where ? keys.filter((k) => built.has(k) && holds(where, built.get(k))) : keys;
+    };
     const ops = keys.map((key, n) => {
       const data: Record<string, unknown> = {};
       a.fields.forEach((f, i) => {
@@ -139,14 +165,24 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
         const v = selfRef && !f.required ? undefined : valueOf(f, selfRef ? Math.max(n - 1, 0) : n, i, selfRef ? self : keysOf, areaNamed, a.name);
         if (v !== undefined) data[f.name] = v;
       });
+      built.set(key, data);
       return { op: "put", area: a.name, key, title: `${singular(a.label)} ${n + 1}`, data };
     });
     // Required references with nothing to point at: said with the reason, rather than a bare refusal from the store.
     const unmet = refsOf(a).filter((f) => f.required && f.to !== a.name && !keysOf(f.to!).length)
       .map((f) => `its required ${f.name} points at ${f.to}, which has no rows (${why.get(f.to!) ?? (state.get(f.to!) === "doing" ? "the two areas point at each other" : "it has no samples")})`);
+    // mold_v0-300: a required reference whose `where` keeps none of the target's rows: the area is skipped with the
+    // reason, rather than written and refused by the store (an optional one is left empty by valueOf).
+    for (const f of refsOf(a)) {
+      if (!f.required || f.type !== "reference" || !f.where || f.to === a.name || !keysOf(f.to!).length) continue;
+      if (!keysOf(f.to!, f.where).length) unmet.push(`its required ${f.name} may name only ${f.to} records its where keeps (${JSON.stringify(f.where).slice(0, 120)}), and none of the ${keysOf(f.to!).length} row(s) there matches`);
+    }
+    const whereUnmet = unmet.filter((u) => u.includes("its where keeps"));
+    if (whereUnmet.length) { state.set(a.name, "failed"); why.set(a.name, whereUnmet.join("; ")); return; }
     try {
       await ra.writeFromRepository(orgId, a.pack, SOURCE, ops, new Map(ops.map((o) => [`${o.area}\u0000${o.key}`, `lane:${o.key}`])));
       seeded.set(a.name, ops.map((o) => o.key));
+      remember(a.name, ops);
       out.records += ops.length;
       state.set(a.name, "done");
     } catch (e) {
@@ -155,9 +191,14 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
     }
   }
 
-  for (const a of own) await seedArea(a);
+  // mold_v0-300: one area that throws (anything outside its own write) is named in `skipped`; the others are still seeded.
+  const attempt = async (a: Area) => {
+    try { await seedArea(a); }
+    catch (e) { state.set(a.name, "failed"); why.set(a.name, `seeding it failed: ${(e as Error).message.slice(0, 200)}`); }
+  };
+  for (const a of own) await attempt(a);
   // A loop of references: an area refused while the other was half-way is tried once more, now that the rest have rows.
-  for (const a of own) if (state.get(a.name) === "failed") { state.delete(a.name); why.delete(a.name); await seedArea(a); }
+  for (const a of own) if (state.get(a.name) === "failed") { state.delete(a.name); why.delete(a.name); await attempt(a); }
   for (const a of own) if (!seeded.has(a.name)) out.skipped.push(`${a.name}: ${why.get(a.name) ?? "not seeded"}`);
 
   // Runs of the build's job kinds: finished, failed and running, newest first, over a workspace asset when the kind reads one.
@@ -168,7 +209,8 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   const STATES = ["succeeded", "failed", "succeeded", "running", "succeeded", "cancelled", "succeeded", "failed", "succeeded", "succeeded"] as const;
   const SECONDS = [312, 1250, 95, 4020, 760, 41, 2210, 188, 530, 1475];
   const COSTS = [0.42, 1.87, 0.06, 3.1, 12.4, 0.0, 2.35, 0.91, 5.6, 0.18];
-  if (kinds.length) {
+  // mold_v0-300: a refused run insert is reported, never a throw that loses the records written above.
+  if (kinds.length) try {
     const db = await getDb();
     await asPlatform(async () => {
       for (let n = 0; n < STATES.length; n++) {
@@ -200,6 +242,8 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
         }
       }
     });
+  } catch (e) {
+    out.skipped.push(`sample runs: ${(e as Error).message.slice(0, 200)}`);
   }
   return out;
 }

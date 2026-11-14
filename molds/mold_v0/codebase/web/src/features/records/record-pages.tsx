@@ -34,7 +34,7 @@ import { useRecordCredentials } from '@/features/credentials/record-credentials'
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
-import { LINKED_PARAM, badgeColor, columnUnit, layoutOf, numberWords, optionWords, parseLinked } from './detail-layout';
+import { LINKED_PARAM, addedByWords, badgeColor, columnUnit, layoutOf, numberWords, optionWords, parseLinked } from './detail-layout';
 import { LaidOutRecord, ToneBadge } from './detail-page';
 import { EntriesTable } from './record-detail-entries';
 import { entriesLine, entriesText, entriesView, entryObjects } from '@/lib/record-entries';
@@ -58,8 +58,6 @@ type Detail = { record: RecordRow; links: { field: string; area: string; records
   provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null };
   /** mold_v0-259 (flag teams): whether this person may change who sees it (Share). */
   can_share?: boolean };
-/** Where a workspace record came from, in words (mold_v0-236). */
-const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -229,7 +227,8 @@ export const chipValues = (f: RecordFieldSpec | undefined, v: unknown): string[]
   f && f.type === 'json' && (f as RecordFieldSpec & { display?: string }).display === 'chips' && featureOn('record_pages') && Array.isArray(v) && v.length
     && v.every((x) => typeof x === 'string' || typeof x === 'number') ? v.map(String) : null;
 /** A number in its unit: "$0.42" for dollars, else the record page's words for a unit (5m 0s, 87.4%). */
-const moneyOr = (v: unknown, unit: string) => (/^(usd|\$)$/i.test(unit.trim()) ? `$${Number(v).toFixed(2)}` : numberWords(v, unit));
+// mold_v0-300: numberWords reads dollars itself now, with thousands grouped ($1,250.00).
+const moneyOr = (v: unknown, unit: string) => numberWords(v, unit);
 
 /** A chip's words, when its field asks for them (pack field `chip_words: true`, mold_v0-289): web-app reads "Web app". */
 const chipWords = (f: RecordFieldSpec | undefined, values: string[] | null) => !values || !(f as { chip_words?: boolean } | undefined)?.chip_words ? values
@@ -355,6 +354,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           const v = raw(r);
           if (!relatedValues.data && !relatedValues.error) return <span className='bg-muted inline-block h-3 w-8 animate-pulse rounded' aria-busy='true' />;
           if (v == null || v === '') return dash;
+          // mold_v0-300: a latest status (an enum) as the badge its own record page gives it; a number with its unit.
+          if (f && f.type === 'enum' && !f.encrypted) {
+            const from = recordAreas.find((a) => a.name === c.area);
+            return (
+              <span className='flex flex-wrap gap-1' data-related-cell={c.id} data-enum-cell={c.id}>
+                {(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(from ? layoutOf(from) : null, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}
+              </span>
+            );
+          }
+          const unit = f?.type === 'number' ? (() => { const from = recordAreas.find((a) => a.name === c.area); return from ? columnUnit(from, f.name) : f.unit; })() : undefined;
+          if (unit) return <span className='tabular-nums' data-related-cell={c.id}>{moneyOr(v, unit)}</span>;
           return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : logCell(f, v) ?? fieldText(f, v, r.key)}</span>;
         }
       };
@@ -505,7 +515,7 @@ export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { a
             <dl>
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
-              {data.provenance?.by && <Field label='Added by'>{ADDED_BY[data.provenance.by] ?? data.provenance.by}</Field>}
+              {data.provenance?.by && <Field label='Added by'>{addedByWords(data.provenance.by, true)}</Field>}
               {/* mold_v0-259 (flag teams): who sees it, and Share for the people who may change it. */}
               {base === 'app' && data.record.visibility && visibilityOf(area) && (
                 <Field label='Who sees it'>
