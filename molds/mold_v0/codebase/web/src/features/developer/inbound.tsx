@@ -40,7 +40,6 @@ export function InboundTab({ offer }: { offer: Offer }) {
       <RecordView<Source>
         id='app-developer-sources' compact noun='sources' properties rows={data?.data ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
         searchText={(s) => `${s.description ?? ''} ${s.receiver} ${s.id}`} searchPlaceholder='Search sources'
-        filters={<span className='text-muted-foreground text-xs'>Other systems send their events here, signed; each one becomes records.</span>}
         primary={<Allowed need='manage'><Button size='sm' onClick={() => setAdding(true)} data-add-source=''>Add source</Button></Allowed>}
         actions={(s) => [lock({ label: 'Delete', destructive: true, onSelect: () => void remove(s) }, 'manage')]}
         detailTitle={(s) => s.description ?? s.receiver}
