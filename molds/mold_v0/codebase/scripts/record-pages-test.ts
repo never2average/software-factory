@@ -553,7 +553,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(fv, /isDocument\(v\)\) return <JsonValue v=\{v\} recordKey=\{recordKey\} empty=\{dash\} \/>/, "FieldValue: a json value drawn readable");
   assert.equal((pages.match(/<FieldValue [^>]*recordKey=\{(?:r|data\.record)\.key\} \/>/g) ?? []).length, 2, "a record's page and an open row's card pass the record's key");
   assert.match(staff, /<FieldValue area=\{area\} base='admin' f=\{f\} v=\{data\.record\.data\[f\.name\]\} recordKey=\{data\.record\.key\} \/>/, "a staff record's page too");
-  assert.match(pages, /fieldText\(f, r\.data\[name\], r\.key\)/, "a list's cell: one line");
+  assert.match(pages, /shownText\(f, r\.data\[name\], r\.key\)/, "a list's cell: one line (mold_v0-309: shownText, fieldText's words with a number grouped)");
   assert.match(board, /isDocument\(v\)\) return jsonLine\(v, recordKey\);/, "a board's card: one line");
   assert.doesNotMatch(board, /JSON\.stringify/, "board.tsx never prints raw JSON");
   assert.match(jv, /jsonView\(v, recordKey\)/, "JsonValue draws jsonView");
@@ -807,8 +807,10 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
         return r.stdout;
       };
       const record = (key: string, title: string, data: Record<string, unknown>) => ({ key, title, data, version: null, updated_at: "2026-11-06T09:30:00.000Z" });
+      // mold_v0-309: dates within 7 days read in relative words (further off, the day): the build started two days ago.
+      const NEAR = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
       const failedBuild = record("build-1042", "Build 1042", { status: "failed", summary: "Nightly build of the main branch", project: "checkout", environment: "staging-eu", tier: "production", branch: "main",
-        commit: "9f4c2e1a7b3d", triggered_by: "Schedule", started: "2026-11-05", duration: 1312, tests_passed: 1180, tests_failed: 4, coverage: 87.4, artifact: "https://artifacts.example.com/builds/1042.tar.gz",
+        commit: "9f4c2e1a7b3d", triggered_by: "Schedule", started: NEAR, duration: 1312, tests_passed: 1180, tests_failed: 4, coverage: 87.4, artifact: "https://artifacts.example.com/builds/1042.tar.gz",
         failure: "4 tests failed in the payments suite.", log_excerpt: "step 7/9: test\nFAIL payments/refund.spec\n", config: { runner: "large", cache: true } });
       const dom = draw("failed", { area: "builds", record: failedBuild, links: [], provenance: { by: "run" }, noActions: true });
       const count = (re: RegExp) => (dom.match(re) ?? []).length;
@@ -819,7 +821,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const facts = /data-record-facts="">([\s\S]*?)<\/dl>/.exec(dom)?.[1] ?? "";
       assert.equal((facts.match(/data-detail-field=""/g) ?? []).length, 8, "eight facts");
       assert.match(facts, /title="1,312 s"[^>]*>21m 52s</, "a number with its unit (mold_v0-256: seconds as a duration in words, the exact number on hover)"); assert.match(facts, /87\.4%/, "a percentage closed up");
-      assert.match(facts, /<time datetime="2026-11-05"[^>]*>[^<]*(ago|yesterday|today)<\/time>/, "a date in relative words, its exact date on hover");
+      assert.match(facts, new RegExp(`<time datetime="${NEAR}"[^>]*>[^<]*(ago|yesterday|today)</time>`), "a date in relative words, its exact date on hover");
       assert.match(facts, /href="https:\/\/artifacts\.example\.com\/builds\/1042\.tar\.gz"/, "an address as a link");
       assert.match(facts, /aria-label="Copy Commit"/, "a copyable fact: its copy button");
       assert.match(dom, /data-record-creator="">Added by <span[^>]*>an automatic run<\/span>/, "who added it");

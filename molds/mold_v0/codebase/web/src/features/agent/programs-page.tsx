@@ -74,7 +74,7 @@ export function ProgramsPage({ bare = false }: { bare?: boolean } = {}) {
   const waiting = (data?.evaluations ?? []).filter((e) => e.outcome === 'needs_review' && !e.review_decision);
   const cols: RecordCol<Summary>[] = [
     { key: 'name', label: 'Program', title: true, keep: true, type: 'text', className: 'min-w-60', value: (r) => r.name, render: (r) => <span className='font-medium'>{r.name}</span> },
-    { key: 'kind', label: 'Kind', type: 'text', value: (r) => (r.machine ? 'Steps' : 'One run'), render: (r) => <span className='text-sm'>{r.machine ? 'Steps' : 'One run'}</span> },
+    { key: 'kind', label: 'Kind', type: 'text', value: (r) => (r.machine ? 'Steps' : 'One run'), render: (r) => <span className='text-sm whitespace-nowrap' data-program-kind=''>{r.machine ? 'Steps' : 'One run'}</span> /* mold_v0-309: one line on a phone */ },
     { key: 'guard', label: 'Acceptance', type: 'text', value: (r) => (r.acceptance ? 'Yes' : 'No'), render: (r) => <span className='text-sm'>{r.acceptance ? 'Yes' : 'No'}</span> },
     { key: 'version', label: 'Version', type: 'number', value: (r) => r.version, render: (r) => <span className='tabular-nums'>{r.version}</span> },
     { key: 'status', label: 'Status', type: 'text', value: (r) => r.status, render: (r) => <StatusBadge s={r.status} /> },

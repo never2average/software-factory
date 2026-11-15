@@ -98,7 +98,16 @@ export function runAppRouter(): Router {
     const counts = runs.length ? await (await getDb()).query<{ run_id: string; status: string; n: number }>(
       "SELECT run_id, status, count(*)::int AS n FROM run_results WHERE org_id = $1 AND run_id = ANY ($2::text[]) GROUP BY 1, 2", [org, runs.map((x) => x.id)]) : [];
     // A pack that withholds its results tool (mold_v0-067) shows no result counts either.
-    return { runs: runs.map((x) => ({ ...x, results: packOpWithheld(x.pack, "run_results") ? {} : Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
+    // mold_v0-309: each run's target by its record's title (as the person reads it), never only its key.
+    const asset = (x: (typeof runs)[number]) => (x as { targets?: { asset?: { area?: unknown; key?: unknown } } }).targets?.asset;
+    const byArea = new Map<string, string[]>();
+    for (const x of runs) { const a = asset(x); if (typeof a?.area === "string" && typeof a.key === "string") byArea.set(a.area, [...(byArea.get(a.area) ?? []), a.key]); }
+    const { recordTitles } = await import("./record-areas.js");
+    const titles = new Map(await Promise.all([...byArea].map(async ([area, keys]) => [area, await recordTitles(org, area, keys, actor(res) as never).catch(() => new Map<string, string>())] as const)));
+    return { runs: runs.map((x) => {
+      const a = asset(x), title = typeof a?.area === "string" && typeof a.key === "string" ? titles.get(a.area)?.get(a.key) : undefined;
+      return { ...x, ...(title ? { target_title: title } : {}), results: packOpWithheld(x.pack, "run_results") ? {} : Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) };
+    }) };
   }));
   // mold_v0-079: a preview's approval, by the workspace's owner, signed in (a key never approves: an agent holding one
   // cannot say yes for a person). Only when a kind of the build waits for one.

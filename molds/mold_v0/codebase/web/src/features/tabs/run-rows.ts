@@ -12,6 +12,8 @@ export type Run = {
   id: string; pack: string; kind: string; status: string; cost_usd: number; budget_usd?: number; attempt?: number; max_attempts?: number;
   targets?: Record<string, unknown>; error_kind?: string | null; error: string | null; cancel_requested?: boolean;
   created_at: string; started_at: string | null; ended_at: string | null; results: Record<string, number>;
+  /** mold_v0-309: its target record's title, as the person reads it (GET /api/runs). */
+  target_title?: string;
 };
 /** A record a run names: its area and key. */
 export type Ref = { area: string; key: string };

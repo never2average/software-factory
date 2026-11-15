@@ -6,6 +6,7 @@
 import { Badge } from '@/components/ui/badge';
 import type { RecordCol } from '@/components/layout/record-view';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
+import { When } from '@/features/portal/shared';
 
 export type ClockStatus = 'not_started' | 'on_track' | 'due_soon' | 'overdue' | 'paused' | 'met' | 'missed';
 export interface ClockView {
@@ -44,7 +45,7 @@ export function clockColumns<T extends WithClocks>(area: RecordAreaSpec): Record
       render: (r) => {
         const v = r.clocks?.[c.name];
         if (!v?.due_on) return <span className='text-muted-foreground'>—</span>;
-        return <span className='flex items-center gap-2 whitespace-nowrap'><span className='tabular-nums'>{v.due_on}</span><ClockText v={v} /></span>;
+        return <span className='flex items-center gap-2 whitespace-nowrap'><span className='tabular-nums'><When d={v.due_on} /></span><ClockText v={v} /></span>;
       }
     },
     {
@@ -71,8 +72,9 @@ export function ClockSection({ record, events }: { record: WithClocks; events?: 
           <div key={v.name} className='contents'>
             <dt className='text-muted-foreground text-sm'>{v.label}</dt>
             <dd className='flex flex-wrap items-center gap-2 text-sm'>
-              <span className='tabular-nums'>{v.due_on ?? '—'}</span><ClockBadge v={v} />
-              {v.stopped_at && <span className='text-muted-foreground'>stopped {v.stopped_at.slice(0, 10)}</span>}
+              {/* mold_v0-309: the console's one date rule (near: relative words; else the day; the exact date on hover). */}
+              <span className='tabular-nums'><When d={v.due_on} never='—' /></span><ClockBadge v={v} />
+              {v.stopped_at && <span className='text-muted-foreground'>stopped <When d={v.stopped_at} /></span>}
             </dd>
           </div>
         ))}
@@ -80,7 +82,7 @@ export function ClockSection({ record, events }: { record: WithClocks; events?: 
       {!!events?.length && (
         <ul className='flex flex-col gap-1 text-sm'>
           {events.map((e, i) => (
-            <li key={i} className='text-muted-foreground'><span className='tabular-nums'>{e.at.slice(0, 10)}</span> · {e.label}: {e.what}</li>
+            <li key={i} className='text-muted-foreground'><span className='tabular-nums'><When d={e.at} /></span> · {e.label}: {e.what}</li>
           ))}
         </ul>
       )}

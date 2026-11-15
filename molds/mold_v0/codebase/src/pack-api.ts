@@ -406,6 +406,9 @@ export function referenceWhereWords(w: ReferenceWhere, label: (field: string) =>
   return "all" in w ? w.all.map(one).join(" and ") : one(w);
 }
 
+/** mold_v0-309: whether a person may give a field's value (a field `set_by: "action"` only the app's actions set). */
+export const personSets = (f: { set_by?: string }) => f.set_by !== "action";
+
 export const RecordFieldSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -428,7 +431,7 @@ export const RecordFieldSchema = z.object({
   encrypted: z.boolean().optional(),
   /** Who may reveal an encrypted field (default: the roles that may update the area's records). */
   reveal_roles: z.array(role).min(1).max(4).optional(),
-  /** mold_v0-289: the unit a number reads with in lists (usd, s, min, %); a chips field's values in plain words. */
+  /** mold_v0-289: the unit a number reads with in lists (usd, s, min, %; mold_v0-309: "percent", a share from 0 to 1 shown times 100, and "percent_100", already 0 to 100); a chips field's values in plain words. */
   unit: z.string().trim().min(1).max(12).optional(),
   chip_words: z.boolean().optional(),
   /**
@@ -457,8 +460,22 @@ export const RecordFieldSchema = z.object({
   display: z.enum(["chips"]).optional(),
   /** mold_v0-282/285 (flag record_resources): a database field's provider ("core", the default: a schema in the app's own database). */
   provider: z.enum(DATABASE_PROVIDERS, { error: (i) => databaseProviderError(i.input) }).optional(),
+  /**
+   * mold_v0-309: "action": a field only the app's own actions set (a run's result, a page action, a pack tool, an
+   * import; a test's status or date). It is left out of the Add and Edit forms, and a person's write (the console, the
+   * data API with a person's or account key) that sends a value other than the stored one is refused; a person's edit
+   * keeps the stored value. Never required (a person adds the record without it).
+   */
+  set_by: z.enum(["action"]).optional(),
+  /**
+   * mold_v0-309: a text field holding machine words ("probe-iac"): each known value's words ({"probe-iac": "Infrastructure
+   * probe"}), shown in lists, pages and the history; a value it does not name is shown as stored. The value stays as is.
+   */
+  labels: z.record(z.string().min(1).max(200), z.string().trim().min(1).max(80)).refine((m) => Object.keys(m).length <= 200, "at most 200 labels").optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
+  if (f.labels && f.type !== "text") bad(`labels are for a text field (an enum's options carry their own labels)`, "labels");
+  if (f.set_by && f.required) bad("a field set by an action is not required: a person adds the record without it", "required");
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
   if (f.searchable && !f.encrypted) bad("searchable is for an encrypted field (any other field is filtered as it is)", "searchable");
   if (f.encrypted && !ENCRYPTABLE_TYPES.includes(f.type as (typeof ENCRYPTABLE_TYPES)[number])) bad(`an encrypted field is text, number, date, boolean, json or enum (a ${f.type} field is read by the shell itself)`, "encrypted");
@@ -1120,7 +1137,7 @@ export function conditionIssues(fields: readonly { name: string; type?: string; 
     if (c.fact !== undefined) {
       const extra = (["field", "clock", "is", "before", "after", "within_days"] as const).filter((k) => c[k] !== undefined);
       const ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => c[k] !== undefined);
-      if (!facts) out.push("a test of a computed fact (fact) is only for a notice: the page has the fact's value, the server does not");
+      if (!facts) out.push("a test of a computed fact (fact) is only for a notice or a section: the page has the fact's value, the server does not");
       else if (!facts[c.fact]?.computed) out.push(`fact ${c.fact} is not a computed fact of the header (header.facts[${c.fact}] with computed)`);
       if (extra.length) out.push(`a fact's test names the fact alone: it has no ${extra.join(" or ")}`);
       if (ops.length !== 1) out.push(`a fact's test is one of empty, equals, in or not_in (it has ${ops.length ? ops.join(" and ") : "none"})`);
@@ -1179,7 +1196,9 @@ export const DetailHistorySchema = z.object({ fields: z.array(name).min(1).max(6
 /** A code view (mold_v0-256): a field as syntax-highlighted JSON, YAML or text, with line numbers, copy and download. */
 export const DetailCodeSchema = z.object({ field: name, language: z.enum(CODE_LANGUAGES).optional() }).strict();
 /** A table view (mold_v0-256): a json field holding a list of objects as a table, its columns its items' keys (or `columns`). */
-export const DetailTableSchema = z.object({ field: name, columns: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,62}$/, "a key of the list's items")).min(1).max(RELATED_COLUMNS_MAX).optional() }).strict();
+const tableKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,62}$/, "a key of the list's items");
+/** mold_v0-309: a column is an item key, or {key, label}: its own heading (else the key in words, "repoId" reads "Repo ID"). */
+export const DetailTableSchema = z.object({ field: name, columns: z.array(z.union([tableKey, z.object({ key: tableKey, label: plainWords(40) }).strict()])).min(1).max(RELATED_COLUMNS_MAX).optional() }).strict();
 /** A file browser (mold_v0-256): the record's documents and files as a tree, the open one previewed (the document cards). */
 export const DetailFilesSchema = z.object({ fields: z.array(name).min(1).max(20).optional() }).strict();
 /**
@@ -1325,7 +1344,10 @@ export type DetailAction = z.output<typeof DetailActionSchema>;
  *            `badges` (single-choice enum fields, each value's colour a theme token: BADGE_COLORS; a value left out
  *            is neutral), `creator` (false hides "Added by", the record's provenance; mold_v0-236), and up to 8 `facts`
  *            (a field, its label, a number's unit), each formatted by its type: a date relative with the exact date on
- *            hover, a number with its unit, a link or address as a link, an enum as its badge
+ *            hover, a number with its unit, a link or address as a link, an enum as its badge. mold_v0-309: a fact with
+ *            `hide_empty: true` is left out while it has no value (else it reads "—"), and one with `when` (a condition
+ *            on the record's fields and clocks, as a section's) only while it holds; a number's unit may be a share
+ *            ("percent": 0 to 1, shown times 100, as a metric's; "percent_100" or "%": already 0 to 100)
  *   notices  banners shown while a condition on the record's fields holds (tone info, warning or danger)
  *   tabs     the page's tabs, each with its sections (at least one each); one tab draws no strip
  *   unplaced what of the area's fields no section, fact or header names: "show" (the default: an "Other details"
@@ -1341,7 +1363,9 @@ export const RecordDetailSchema = z.object({
     }).strict()).max(3).optional(),
     creator: z.boolean().optional(),
     // mold_v0-256: a fact may be computed from related records (DetailComputedSchema) in place of a field of the record.
-    facts: z.array(z.object({ field: name.optional(), label: plainWords(40).optional(), unit: plainWords(12).optional(), computed: DetailComputedSchema.optional() }).strict())
+    facts: z.array(z.object({ field: name.optional(), label: plainWords(40).optional(), unit: plainWords(12).optional(), computed: DetailComputedSchema.optional(),
+      // mold_v0-309: left out while it has no value (a count of 0, a latest with none), never a "—"; or shown only while `when` holds.
+      hide_empty: z.boolean().optional(), when: DetailConditionSchema.optional() }).strict())
       .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows two rows of four`).optional(),
   }).strict().optional(),
   notices: z.array(DetailNoticeSchema).max(6).optional(),
@@ -1383,7 +1407,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
   const clocksOf = (a as { clocks?: { name: string }[] }).clocks ?? [];
   const condition = (w: DetailCondition, ...path: (string | number)[]) => {
     // mold_v0-298: a notice may test a computed header fact.
-    for (const m of conditionIssues(a.fields, clocksOf, w, "the area", path[0] === "notices" ? d.header?.facts ?? [] : undefined)) bad(m, ...path, ...(/^\S+ is (not one of the area's fields|encrypted)/.test(m) && !w.all && !w.any ? ["field"] : []));
+    // mold_v0-309: and a section's condition too (a section shown while a related count is above 0).
+    for (const m of conditionIssues(a.fields, clocksOf, w, "the area", path[0] === "notices" || (path[0] === "tabs" && path[2] === "sections") ? d.header?.facts ?? [] : undefined)) bad(m, ...path, ...(/^\S+ is (not one of the area's fields|encrypted)/.test(m) && !w.all && !w.any ? ["field"] : []));
   };
   const h = d.header;
   if (h?.title) shown(h.title, "the title", "header", "title");
@@ -1395,6 +1420,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if ((h?.badges ?? []).findIndex((x) => x.field === b.field) !== i) bad(`${b.field} has two badges`, "header", "badges", i, "field");
   }
   for (const [i, x] of (h?.facts ?? []).entries()) {
+    // mold_v0-309: a fact shown only while its condition holds (one over the record's own fields and clocks).
+    if (x.when) condition(x.when, "header", "facts", i, "when");
     // mold_v0-256: a fact computed from related records (its area's fields are checked across the build).
     if (x.computed) {
       const c = x.computed;
@@ -2473,7 +2500,10 @@ export const TabSchema = z.object({
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
   // mold_v0-260 (flag overview_cards): also recent_runs and attention, up to 4 cards.
   rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL), chart:<one of the pack's charts> or recent:<a record area>")).min(1).max(4).optional(),
-  /** An area tab's own narrowing of its one area's rows (mold_v0-175): a list filter, {field: value} or {field: {op: value}}. */
+  /**
+   * An area tab's own narrowing of its one area's rows (mold_v0-175): a list filter, {field: value} or {field: {op: value}}.
+   * mold_v0-309: a runs or reports tab's, its runs by job kind: {"kind": "<a kind>"} or {"kind": {"in": ["<kind>", ...]}}.
+   */
   filter: z.record(z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "a field of the area (or key, title, updated_at)"), z.unknown())
     .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
   /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
@@ -2522,7 +2552,12 @@ export const TabSchema = z.object({
   if (t.rail && !(t.include ?? []).includes("setup")) bad("rail is for a home tab: an overview tab that includes setup", "rail");
   if (t.rail && new Set(t.rail).size !== t.rail.length) bad("a card is listed twice", "rail");
   if (t.rail?.includes("notices") && !(t.include ?? []).includes("notices")) bad("the notices card is for a tab that includes notices (/app/notices leads there)", "rail");
-  if (t.filter && (t.kind !== "area" || !t.area || t.areas)) bad("filter is for an area tab over one area (area)", "filter");
+  if (t.filter && (t.kind === "runs" || t.kind === "reports")) {
+    // mold_v0-309: a runs tab narrowed to some job kinds.
+    const k = t.filter.kind as unknown, names = typeof k === "string" ? [k] : k && typeof k === "object" && !Array.isArray(k) && Object.keys(k).length === 1 && Array.isArray((k as { in?: unknown }).in) ? (k as { in: unknown[] }).in : null;
+    if (Object.keys(t.filter).some((x) => x !== "kind") || !names?.length || names.length > 20 || !names.every((n) => typeof n === "string" && /^[a-z][a-z0-9_]{1,62}$/.test(n)))
+      bad(`a ${t.kind} tab's filter names its job kinds only: {"kind": "<kind>"} or {"kind": {"in": ["<kind>", ...]}} (at most 20)`, "filter");
+  } else if (t.filter && (t.kind !== "area" || !t.area || t.areas)) bad("filter is for an area tab over one area (area), or a runs or reports tab by job kind", "filter");
   if (t.kind === "sections" && !t.sections) bad("a sections tab names the tabs it shows (sections)", "sections");
   if (t.sections && t.kind !== "sections") bad("sections is for a sections tab", "sections");
   if (t.sections && new Set(t.sections).size !== t.sections.length) bad("a tab is listed twice", "sections");

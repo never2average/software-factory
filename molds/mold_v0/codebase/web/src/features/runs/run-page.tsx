@@ -148,7 +148,7 @@ function RunBody({ d, live, reload }: { d: RunPageData; live: boolean; reload: (
                 : <span className='text-muted-foreground'>No record</span>}
             </Fact>}
             <Fact label='Started by'><span className='break-words'>{r.by}</span></Fact>
-            <Fact label='Started'>{r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} relative /> : <span className='text-muted-foreground'>—</span>}</Fact>
+            <Fact label='Started'>{r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} /> : <span className='text-muted-foreground'>—</span>}</Fact>
             <Fact label='Duration'><span className='tabular-nums' data-run-duration=''>{took === null ? (r.status === 'queued' ? 'Waiting to start' : '—') : durationWords(took)}</span></Fact>
             <Fact label='Cost'>
               <span className='flex flex-col gap-1.5'>
@@ -162,8 +162,8 @@ function RunBody({ d, live, reload }: { d: RunPageData; live: boolean; reload: (
           <p className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-4 text-xs' data-run-meta=''>
             <span className='min-w-0 break-all'>ID <span className='text-foreground font-mono'>{r.id}</span></span>
             {r.max_attempts > 1 && <><span aria-hidden>·</span><span>Attempt <span className='text-foreground'>{r.attempt} of {r.max_attempts}</span></span></>}
-            <span aria-hidden>·</span><span>Queued <DateText v={r.created_at} relative /></span>
-            {r.ended_at && <><span aria-hidden>·</span><span>Ended <DateText v={r.ended_at} relative /></span></>}
+            <span aria-hidden>·</span><span>Queued <DateText v={r.created_at} /></span>
+            {r.ended_at && <><span aria-hidden>·</span><span>Ended <DateText v={r.ended_at} /></span></>}
           </p>
         </CardContent>
       </Card>

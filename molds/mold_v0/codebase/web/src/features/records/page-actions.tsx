@@ -253,9 +253,9 @@ export function usePageActionsBar(host: ActionHost, actions: readonly PageAction
   const destructive = more.filter((a) => a.kind === 'delete'), rest = more.filter((a) => a.kind !== 'delete');
   return {
     card, panel,
-    bar: (
-      // mold_v0-262: wraps inside the header at any width (it never keeps its one-line width, which clipped More at 390 px).
-      // mold_v0-298: on a phone one row: the primary action fills it, the secondary ones move into More.
+    bar: (<>
+      {/* mold_v0-262: wraps inside the header at any width (it never keeps its one-line width, which clipped More at 390 px).
+          mold_v0-298: on a phone one row: the primary action fills it, the secondary ones move into More. */}
       <div className='flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end max-sm:flex-nowrap max-sm:[&>[data-primary]]:min-w-0 max-sm:[&>[data-primary]]:flex-1' data-page-actions='' aria-busy={loading || undefined}>
         {primary && <ActionButton a={primary} primary busy={busy === primary.id} take={take} />}
         {!!secondary.length && <span className='contents max-sm:hidden'>{secondary.map((a) => <ActionButton key={a.id} a={a} busy={busy === a.id} take={take} />)}</span>}
@@ -277,6 +277,10 @@ export function usePageActionsBar(host: ActionHost, actions: readonly PageAction
         </DropdownMenu>
         {dialog}
       </div>
+      {/* mold_v0-309: a greyed-out primary action's reason, as words under the bar on a phone (no hover there); the
+          tooltip and the accessible description stay for wider screens and screen readers. */}
+      {primary?.disabled && <p className='text-muted-foreground basis-full text-xs leading-snug sm:hidden' aria-hidden data-action-why-shown={primary.id}>{primary.disabled}</p>}
+      </>
     )
   };
 }
