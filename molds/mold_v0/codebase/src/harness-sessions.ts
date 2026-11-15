@@ -341,6 +341,10 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   const vaultKeys = eff.keys.flatMap((k) => (k.kind === "platform" ? [{ provider: k.provider, label: k.label, env: k.env }] : []));
   // mold_v0-271: the profile's workspace recipes expanded into its uploads at the version in force now (its own files
   // win a path both name), frozen with the session as the uploads are; which versions it used kept beside them.
+  // mold_v0-312: the workspace's connections its pack profile gives as variables (names frozen here, values each wake).
+  const C = await import("./connection-env.js");
+  const connectionStart = await C.connectionEnvForStart(orgId, prof, actor);
+  const connectionEnv = connectionStart.frozen;
   const { uploads, recipes } = eff.recipes.length ? await (await import("./recipes.js")).expandRecipes(eff.uploads, eff.recipes) : { uploads: eff.uploads, recipes: [] };
   Object.assign(policy, {
     flavour: flavour.id, model: eff.model, provider: eff.provider, hooks: resolveHooks(flavour, {}),
@@ -351,6 +355,7 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     // mold_v0-262: its profile's workspace credentials, for a session a workspace owner starts (anyone else's: none).
     ...(workspaceKeys.length && actor.kind === "person" && actor.role === "owner" ? { credentials: workspaceKeys } : {}),
     ...(vaultKeys.length ? { vault_keys: vaultKeys } : {}),
+    ...(connectionEnv.length ? { connection_env: connectionEnv } : {}),
     ...(opts.followOn ? { follow_on: opts.followOn } : {}),
   });
   if (eff.governance) {
@@ -403,6 +408,8 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name, attachments) VALUES ($1, $2, 'person', $3, 'pending', $4, $5, $6)",
       [id, orgId, message, actor.user, actor.name, JSON.stringify(attachmentsOf(files, repositories))]);
     if (repositories.length) await systemMessage(q, { id, org_id: orgId }, `${actor.name ?? "Someone"} gave this session read access to ${repositories.join(", ")}.`);
+    const envWords = C.connectionEnvWords(connectionStart);
+    if (envWords) await systemMessage(q, { id, org_id: orgId }, envWords);
   });
   try { await queueWake(orgId, id, "start", actor, org); }
   catch (e) {
@@ -1185,7 +1192,20 @@ export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput):
 
 /** One finished turn of the agent: its words for the person; the messages it answered are marked so. */
 export async function wakeTurn(runId: string, leaseToken: string, t: { text?: unknown; cost_usd?: unknown; answered?: unknown }): Promise<{ id: number }> {
-  const body = typeof t.text === "string" ? t.text.slice(0, MAX_MESSAGE_CHARS) : "";
+  let body = typeof t.text === "string" ? t.text.slice(0, MAX_MESSAGE_CHARS) : "";
+  // mold_v0-312: the server's own backstop: a connection's secret the agent wrote is redacted here too (the runner
+  // redacts what it holds first; src/connection-env.ts). Read before the transaction (opening them reads the store).
+  // The lease first: a caller without it learns nothing and costs nothing.
+  if (body) await read((q) => wakeOf(q, runId, leaseToken, false));
+  if (body) {
+    const [run] = await read((q) => q.query<{ org_id: number; spec: { connection_env?: import("./connection-env.js").FrozenConnectionEnv[] } | null }>(
+      "/* tenant: the wake's own run, by id */ SELECT org_id, spec FROM runs WHERE id = $1", [runId]));
+    if (run?.spec?.connection_env?.length) {
+      const { runSecrets } = await import("./credentials.js");
+      const { redactText } = await import("./credential-redact.js");
+      body = redactText(body, await runSecrets({ id: runId, org_id: Number(run.org_id), pack: "_agent", spec: { connection_env: run.spec.connection_env }, targets: null }));
+    }
+  }
   return tx(async (q) => {
     const w = await wakeOf(q, runId, leaseToken, true);
     const s = w.session;

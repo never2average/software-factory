@@ -2840,7 +2840,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
     ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a),
-    ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail } : {}),
+    // mold_v0-312: a test_connection action's probe (the call it makes) is the server's: the console gets the action only.
+    ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail.actions?.some((x) => x?.probe) ? { ...a.detail, actions: a.detail.actions.map(({ probe: _p, ...x }) => x) } : a.detail } : {}),
     ...(FEATURE_ON.teams && a.visibility && a.scope === "workspace" ? { visibility: typeof a.visibility.inherit === "string" ? { inherit: a.visibility.inherit } : { modes: a.visibility.modes, default: a.visibility.default, ...(a.visibility.collaborators ? { collaborators: true } : {}) } } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +

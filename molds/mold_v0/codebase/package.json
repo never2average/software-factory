@@ -10,6 +10,8 @@
     "db:reset": "tsx --env-file-if-exists=.env scripts/reset-db.ts",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:rehearse": "tsx scripts/migration-rehearsal.ts",
+    "test:connection-test": "tsx scripts/connection-test-test.ts",
+    "test:connection-env": "tsx scripts/connection-env-test.ts",
     "test:migrations": "tsx scripts/migrations-test.ts",
     "test:zero-pack": "tsx scripts/zero-pack-test.ts",
     "test:context-memory": "tsx scripts/context-memory-test.ts",

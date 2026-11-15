@@ -18,6 +18,7 @@ process.env.APP_VAULT_KEY = randomBytes(32).toString("base64");
 process.env.APP_REGISTRY = "scripts/fixtures/registry.json";
 process.env.APP_WORKER_TOKEN ??= `test-worker-${randomBytes(8).toString("hex")}`;
 process.env.REASONS_ENABLED = "off";
+process.env.APP_TEST_WORLD = "1"; // mold_v0-312: test-only stand-ins (src/connection-test.ts) are honoured in this world only
 process.env.APP_AUTOSCALE ??= "off";
 // Every workspace has an allowance unless a test says otherwise: an account with none starts no run (mold_v0-018).
 process.env.APP_ORG_MONTHLY_BUDGET_USD ??= "1000";

@@ -74,6 +74,8 @@ import { templateProblems } from "./text-template.js";
 import { configProblems, PackAgentProfileSchema, PackRecipeSchema, packRecipeProblems, PROFILE_ID, templateNames, DEFAULT_PROFILE } from "./agent-profile-spec.js";
 
 import { CheckSchema } from "./check-spec.js";
+import { ConnectionTestSchema, connectionTestProblems } from "./connection-test-config.js";
+import { connectionEnvProblems } from "./connection-env-config.js";
 export { z };
 
 /** The workspace (a customer account) a tool call or a route works for. */
@@ -1270,7 +1272,7 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage", "test_connection"] as const;
 /** A program's id (src/program-spec.ts PROGRAM_ID, the same rule). */
 export const PROGRAM_REF = /^[a-z][a-z0-9-]{1,39}$/;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
@@ -1311,6 +1313,10 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *              small object with this record's bucket settings and say in plain words whether it works (src/workspace-
  *              storage.ts testStorageRecord); writes the declared status and tested fields; offered to the roles that
  *              may update the record
+ *   test_connection (mold_v0-312) on a workspace connection record (an account at a compute provider, a network, a
+ *              database): one HTTPS call its `probe` declares (src/connection-test-config.ts), made on the server with
+ *              the record's own fields (a secret opened there only, never returned or logged), said in plain words;
+ *              writes the probe's status and tested fields (set_by "action"); offered to the roles that may update it
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1340,6 +1346,8 @@ export const DetailActionSchema = z.object({
   first_message: z.string().trim().min(1).max(4000).optional(),
   /** mold_v0-303: a start_program action's program (one the build's packs declare). */
   program: z.string().regex(PROGRAM_REF, "a program's id (lowercase letters, digits and -)").optional(),
+  /** mold_v0-312: a test_connection action's call (src/connection-test-config.ts ConnectionTestSchema). */
+  probe: ConnectionTestSchema.optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1528,6 +1536,12 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     // mold_v0-305: a storage Test is a workspace record's (the pack checks that the area is its object_storage one).
     if (x.kind === "test_storage" && a.scope === "platform") bad("a shared (platform) area holds no workspace's storage: test_storage is for the pack's object_storage area", i, "kind");
     if (x.kind === "test_storage" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a test_storage action writes the record's status", i, "roles");
+    // mold_v0-312: a connection's Test names its probe, checked against the area's own fields and contract.
+    if (x.probe !== undefined && x.kind !== "test_connection") bad(`probe is for a test_connection action, not ${x.kind}`, i, "probe");
+    if (x.kind === "test_connection") {
+      if (!x.probe) bad("a test_connection action declares its probe (the call it makes, by the record's fields)", i, "probe");
+      else for (const p of connectionTestProblems(a as Parameters<typeof connectionTestProblems>[0], x.probe)) bad(p.message, i, ...p.path);
+    }
     if (x.area !== undefined && x.kind !== "create_record") bad(`area is for a create_record action, not ${x.kind}`, i, "area");
     if (x.kind === "create_record" && !x.area) bad("a create_record action names the area it adds a record to", i, "area");
     if (x.target !== undefined && x.kind !== "start_run") bad(`target is for a start_run action, not ${x.kind}`, i, "target");
@@ -3212,6 +3226,15 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     const r = PackAgentProfileSchema.safeParse(x);
     if (!r.success) { problems.push(at(`agentProfiles[${i}]: ${r.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`)); continue; }
     for (const m of configProblems(r.data)) problems.push(at(`agent profile ${r.data.id}: ${m}`));
+    // mold_v0-312: its connection_env names this pack's own workspace areas; no variable its credentials also set.
+    if (r.data.connection_env) {
+      const taken = (r.data.keys ?? []).flatMap((k) => {
+        const [pk, f] = k.name.split("/");
+        const c = pk === p.id ? (p.credentials ?? []).find((x) => (x as { name?: string })?.name === f) as { deliver_as?: { env?: string } } | undefined : undefined;
+        return c?.deliver_as?.env ? [c.deliver_as.env] : [];
+      });
+      for (const m of connectionEnvProblems(r.data.connection_env, p.recordAreas ?? [], taken)) problems.push(at(`agent profile ${r.data.id}: ${m}`));
+    }
     if (profileIds.has(r.data.id)) problems.push(at(`agent profile ${r.data.id} is declared twice`));
     profileIds.add(r.data.id);
   }

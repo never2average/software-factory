@@ -180,6 +180,8 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   if (!d || !workspaceStorageOn()) throw new PackError("Workspace object storage is off in this app", 404);
   const { findArea, workspaceStored, getFor, workspaceRecords } = await import("./record-areas.js");
   const area = findArea(d.area)!;
+  // mold_v0-312: this record as the person sees it (visibility honoured): else no test at all.
+  if (!(await getFor(orgId, area.name, key, actor))) throw new PackError(`no ${area.name} record ${key}`, 404);
   const row = (await workspaceStored(orgId, area, [key])).get(key);
   if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
   const inUseNow = row.data[d.fields.use] === true;
