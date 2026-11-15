@@ -727,13 +727,15 @@ python3 .claude/scripts/provision.py <app_id> --deploy --dry-run
 Then, once you have said yes to this deploy:
 
 ```
-python3 .claude/scripts/provision.py <app_id> --deploy --allow-unverified-mold "<why>" --background
+python3 .claude/scripts/provision.py <app_id> --deploy --background
 python3 .claude/scripts/provision.py <app_id> status
 ```
 
-`--allow-unverified-mold` is needed for every mold_v0 deploy today: the release gate wants this repository's own
-GitHub checks for the commit, and none run yet (ticket mold_v0-001, set aside by the operator on 2026-10-22). The reason is recorded in
-`infrastructure.json` `deploy_gate.override`. A check that failed still refuses.
+The release gate deploys only a commit whose mold_v0 checks passed: this repository's `.github/workflows/mold-v0.yml`
+(mold_v0-001; `molds/mold_v0/MOLD.md` "CI") runs on every push to `main`, finishing about 30 minutes after the merge.
+Deploy from an up-to-date `main` once its run is green (the dry run above says what it read: green, still running,
+failed or missing). A failed check refuses; `--allow-unverified-mold "<why>"` is the emergency way round, and the reason
+is recorded in `infrastructure.json` `deploy_gate.override`.
 
 What the deploy does: a fresh build copy (`build/<app_id>/`: the shell, the brand, the packs, checked), the API
 project first (its own free Neon Postgres on the first deploy, proven empty; the keys the shell mints), then the
@@ -797,7 +799,7 @@ The staff guide is the first page of **Docs** in the admin console (`/admin/docs
 | Want to | Run |
 |---|---|
 | see what is waiting across the factory (pull requests, tickets, deploys that are behind, leftovers) | `python3 .claude/scripts/sweep.py plan --json`; clean-up preview `python3 .claude/scripts/sweep.py clean --dry-run` |
-| redeploy after a merged change to the shell or a pack | `provision.py <app_id> --deploy --dry-run`, then (after a yes, except where a standing instruction pre-approves that app) `--deploy --allow-unverified-mold "<why>" --background` |
+| redeploy after a merged change to the shell or a pack | `provision.py <app_id> --deploy --dry-run`, then, once its `mold_v0` checks on `main` are green (after a yes, except where a standing instruction pre-approves that app), `--deploy --background` |
 | try the next release's database changes on a copy of the live database first (always, before a deploy that adds or edits a migration on an app with users) | `python3 .claude/scripts/provision.py <app_id> --rehearse-migrations --dry-run`, then `--rehearse-migrations --yes` after your yes. It makes a temporary Neon branch, applies the migrations there, measures them, and deletes the branch; the live database is only read. It needs a Neon API key on this machine, by name; if it is missing it stops and says how to add it |
 | re-prove that no account can read another's rows | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
 | go back after a bad release | a failed deploy goes back by itself (both projects). To go back by hand on Vercel: in each project (the API first, then the console) open **Deployments**, the deployment that served before (`infrastructure.json` `vercel.release.before` names both), then **Instant Rollback**; the next good deploy is promoted past it. On its own server: `python3 .claude/scripts/provision.py <app_id> --rollback-remote --dry-run`, then without `--dry-run`. The database is never rolled back, which is why a release that changes it is rehearsed on a copy first (the row above) |

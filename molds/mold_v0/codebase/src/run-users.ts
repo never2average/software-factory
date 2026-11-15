@@ -92,9 +92,13 @@ export function processesOf(uid: number): number[] {
   return out;
 }
 
-/** Every process of the user, gone (kill -KILL -1 as that user signals all of its processes but itself). */
+/**
+ * Every process of the user, gone (kill -KILL -1 as that user signals all of its processes but itself). The shell's own
+ * kill, never procps's /bin/kill: some builds of procps-ng 4.0.4 refuse "-1" ("failed to parse argument") and signal
+ * nothing.
+ */
 export function killUser(as: { uid: number; gid: number }) {
-  spawnSync("/bin/kill", ["-KILL", "-1"], { uid: as.uid, gid: as.gid, stdio: "ignore", timeout: 10_000 });
+  spawnSync("/bin/sh", ["-c", "kill -KILL -1"], { uid: as.uid, gid: as.gid, stdio: "ignore", timeout: 10_000 });
 }
 
 /** Killed again a few times until /proc shows none; false when some are still alive. */

@@ -113,7 +113,7 @@ async function setup(s: Session, since?: string) {
   const used = new Set(workflow.length ? (await db.query<{ name: string }>(
     `SELECT DISTINCT name FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok`, [s.org])).map((r) => r.name) : []);
   const errors = await db.query<{ at: Date; name: string | null; error: string | null }>(
-    `/* tenant: who = org_id = $1, the session's account */ SELECT at, name, error FROM mcp_events WHERE ${who} AND NOT ok ORDER BY at DESC LIMIT 5`, args);
+    `/* tenant: who = org_id = $1, the session's account */ SELECT at, name, error FROM mcp_events WHERE ${who} AND NOT ok ORDER BY at DESC, id DESC LIMIT 5`, args);
   const stageAt = own.some((st) => st.done_when.startsWith("stage:")) ? admin.engineStagesAt(await admin.accountFacts(s.slug)) : {};
   const textOnly = clients.length > 0 && clients.every((c) => !WIDGET_CLIENTS.test(c.client));
   // mold_v0-298: a connection step the product marks optional is shown but not counted.

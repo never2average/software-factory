@@ -4286,6 +4286,35 @@ profile module only. Without one (no brand, a brand with no colour) the theme's 
 pack's product with no brand of its own) draws shades of its theme's green, and builds exactly the generated files it
 built before.
 
+## CI (mold_v0-001)
+
+`.github/workflows/mold-v0.yml` at the repository root tests the shell on every pull request that touches
+`molds/mold_v0/**` (or the workflow, `.github/mold-v0/`, `.github/actions/mold-v0-setup/`, `leakcheck.py`,
+`lib/deploy_gate.py`) and on **every** push to `main`, whatever it touched, because the deploy gate ("The CI gate" under
+"How the factory runs it") needs a run for the exact commit it deploys. No secrets, no deploy. Node 22 (the images' `node:22-slim`), `npm ci` of the server,
+`orchestrator/` and `web/` from their lockfiles with npm's download cache. A newer push to a pull request cancels its
+older run; runs on `main` are never cancelled. Its jobs, each one a check the gate requires:
+
+| check | what it runs | about |
+|---|---|---|
+| `static checks` | `leakcheck.py scan` (generic rules only: CI has no local denylist), `suites.py check`, `deploy_gate.py --self-test`, `check:vocabulary`, `check:tenant-sql`, and the generated files' `--check` (gen-packs, export-mcp-tools, sync-docs-corpus, data-map) | 5 min |
+| `typecheck` | `npm run typecheck` (server, orchestrator, web) | 8 min |
+| `tests 1/6` ... `tests 6/6` | every `test:*` script of `package.json`, plus the functional lane's embedded-database `smoke`, `check:rls` and `test:migrations`, plus the `scripts/*-test.ts` files no script names yet, dealt into six shards by `.github/mold-v0/suites.py` | 20 to 30 min each (estimated; CI's first run measures) |
+| `mold_v0 checks` | passes only when every job above passed: the one name to watch (before making it a required check in branch protection, drop the pull-request `paths` filter: a required check that never runs holds a pull request forever) | seconds |
+
+The suites run as root (`sudo`), as on the factory machine, so the root halves run too (a user per run, the
+evaluator's own user in `nested-runs-review`, the firewall, the offline tools). Browser halves (`--browser`) do not:
+CI has no Chromium; they stay with the lanes. Each suite starts its own embedded database; none reads a `DATABASE_URL`.
+A new `test:*` script is picked up by itself; a new `scripts/*-test.ts` that no script names fails `suites.py check`
+until it is added to `package.json` or `EXTRA`. Each shard uploads its logs and `times.json` (seconds per suite;
+artifact `mold-v0-tests-<n>`, 7 days): copy the numbers into `SECONDS` in `suites.py` when the shards drift apart.
+A run takes about 30 minutes wall-clock (about 170 runner-minutes, free on a public repository).
+
+Locally, the same commands: `python3 .github/mold-v0/suites.py list --shards 6` (which suite is where),
+`python3 .github/mold-v0/suites.py run --only test:ledger,smoke` (named suites) or `run --shard 2/6`. To rerun on
+GitHub: the run's page, **Re-run failed jobs** (or `gh run rerun <run id> --failed`); a fresh run of a commit:
+**Actions › mold_v0 › Run workflow** (`gh workflow run mold-v0.yml --ref <branch>`).
+
 ## How the factory runs it
 
 mold_v0 is a **single-service mold**: [mold.json](mold.json) says so, and every factory script hands such an app to
@@ -4507,17 +4536,17 @@ repository's** checks for the commit being deployed: HEAD of the checkout the de
 `molds/mold_v0/codebase` on disk is exactly that commit (no tracked change, no untracked file, and no ignored file the
 deploy would carry other than mold.json's `source_excludes`, such as `node_modules` and `.env`). Then:
 
-- once mold_v0-001 names the shell's own workflow in [mold.json](mold.json) (`source.ci.workflow`), that workflow's run
-  for the commit must have passed with every job it defines, the same rules as mold_v1's `ci.yml`;
-- until then, at least one of this repository's **own** checks (a GitHub Actions run of its workflows) must have
-  succeeded for that commit, and no check or status at all (from any app) may have failed or still be running. A
-  check or status posted by an outside app (a git-connected deploy service, a bot) can refuse a deploy but never pass
-  one, and a skipped check never counts. None of these checks tests the shell yet, so a green verdict says only "this
-  repository's own checks passed for this commit", and the recorded verdict says exactly what was read.
+- [mold.json](mold.json) `source.ci.workflow` names the shell's own workflow, `.github/workflows/mold-v0.yml`
+  (mold_v0-001, "CI" above): its run for the commit (a push run first, else a pull request's run of the same commit)
+  must have passed with every job it defines, the same rules as mold_v1's `ci.yml`. A failed job is *red*, a run still
+  going is *pending*, no run for the commit (a push GitHub has not started yet) is *missing*;
+- with `source.ci.workflow` set back to null, the older rule: at least one of this repository's **own** checks (a GitHub
+  Actions run of its workflows) must have succeeded for that commit, and no check or status at all (from any app) may
+  have failed or still be running. A check or status posted by an outside app can refuse a deploy but never pass one.
 
-Today this repository runs no workflow, so the verdict is *missing* and a mold_v0 deploy needs
-`--allow-unverified-mold "<reason>"` (recorded in `infrastructure.json` `deploy_gate.override`). A check that failed, one
-still running, GitHub not answering, no GitHub `origin`, or an uncommitted change refuses as for any mold.
+Anything but green refuses, and `--allow-unverified-mold "<reason>"` (recorded in `infrastructure.json`
+`deploy_gate.override`) stays the way round for an emergency. GitHub not answering, no GitHub `origin`, or an
+uncommitted change refuses as for any mold.
 
 **Known before the first deploy (mold_v0-029).** The codebase commits `web/package-lock.json`, so the server deploy's
 preflight no longer refuses for it and the console project can install exactly.

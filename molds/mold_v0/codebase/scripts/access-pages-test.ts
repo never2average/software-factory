@@ -317,7 +317,10 @@ async function inner() {
     assert.deepEqual(R.accessFormProblems(allTypes), [], "every data type is a valid field");
     const allSaved = await put(operator, { version: 3, config: allTypes });
     assert.equal(allSaved.status, 200, JSON.stringify(allSaved.body));
-    const typed = { website: "https://acme.example", f_text: "hello", f_long: "two\nlines", f_email: "x@acme.example", f_number: "12.5", f_choice: "a", f_multi: ["a", "b"], f_url: "acme.example", f_date: "2026-02-28", f_yes: "yes" };
+    // The fixture pack's own question (required, in the build copy --browser makes); a build of no pack has none, and
+    // an answer to a question the form does not ask is dropped.
+    const packAsks = declared.some((f) => f.key === "website");
+    const typed = { ...(packAsks ? { website: "https://acme.example" } : {}), f_text: "hello", f_long: "two\nlines", f_email: "x@acme.example", f_number: "12.5", f_choice: "a", f_multi: ["a", "b"], f_url: "acme.example", f_date: "2026-02-28", f_yes: "yes" };
     const typeSend = (answers: Record<string, unknown>) => call("POST", "/api/access-requests", {}, { email: `t-${STAMP}@acme.example`, company: "Types Co", answers });
     const typeRefusals: [Record<string, unknown>, RegExp][] = [
       [{ ...typed, f_text: "" }, /F text is required/], [{ ...typed, f_email: "nope" }, /F email: enter a valid email/], [{ ...typed, f_number: "abc" }, /F number: enter a number/],
