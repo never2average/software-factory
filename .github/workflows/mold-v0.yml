@@ -4,7 +4,8 @@
 # workflow passed for (molds/mold_v0/mold.json source.ci.workflow names this file), so each commit on main needs a run.
 # Every job below is required by that gate: it reads the job names from this file at the commit (a matrix job once per
 # value of its one-line list), so keep `shard: [...]` on one line and the names stable.
-# No secrets, no deploy: every suite starts its own embedded database (PGlite) and fake services.
+# No secrets, no deploy: every suite starts its own embedded database (PGlite) and fake services; the race suites get a
+# fresh database each on the tests job's throwaway Postgres service.
 name: mold_v0
 
 on:
@@ -75,6 +76,17 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
+    services:
+      # The race suites' real Postgres (concurrent transactions PGlite cannot hold); suites.py makes a database per suite.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MOLD_V0_PG_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/mold-v0-setup

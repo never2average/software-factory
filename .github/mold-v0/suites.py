@@ -11,7 +11,11 @@ WHAT RUNS. Every `test:*` script of the codebase's package.json (a new one is pi
 until a measured time is written into SECONDS below), minus SKIP (each with its reason), plus EXTRA: the functional
 lane's embedded-database runs of `smoke`, `check:rls` and `test:migrations` (exactly as
 molds/mold_v0/testing/functional/lane.json runs them) and the test files no package.json script names yet. Every
-suite gets a database of its own: the embedded one it starts itself (PGlite), never a DATABASE_URL from outside.
+suite gets a database of its own: the embedded one it starts itself (PGlite), never a DATABASE_URL from outside. The
+race suites (`*-race`: concurrent transactions PGlite cannot hold) need a real Postgres: each gets a fresh database,
+created and dropped here, on the server MOLD_V0_PG_URL names (CI: the tests job's postgres service; locally, any
+throwaway server, e.g. `docker run --rm -e POSTGRES_PASSWORD=pg -p 5432:5432 postgres:16`). Without MOLD_V0_PG_URL
+they fail, saying so; they are never skipped.
 Browser halves (`--browser`) are not run: CI has no Chromium, and the suites that look for Playwright skip their drawn
 checks by themselves. Run as root (the workflow uses sudo), the suites that need root (run users, the evaluator's
 own user in nested-runs-review, the firewall, the offline tools) run their root halves, as on the factory machine.
@@ -37,6 +41,10 @@ EXTRA = {
     "smoke": (["npm", "run", "--silent", "smoke"], {"PGLITE_DIR": "{tmp}"}, ["DATABASE_URL", "CLICKHOUSE_URL"]),
     "check:rls": (["npm", "run", "--silent", "check:rls"], {"PGLITE_DIR": "{tmp}"}, ["DATABASE_URL"]),
     "test:migrations": (["npm", "run", "--silent", "test:migrations"], {"DATABASE_URL": ""}, ["MIGRATIONS_PG_URL"]),
+    # Concurrent transactions on a real Postgres: {pg} is a fresh database on MOLD_V0_PG_URL's server.
+    "test:nested-runs-race": (["npm", "run", "--silent", "test:nested-runs-race"], {"DATABASE_URL": "{pg}"}, []),
+    "test:run-charges-race": (["npm", "run", "--silent", "test:run-charges-race"], {"DATABASE_URL": "{pg}"}, []),
+    "test:run-start-race": (["npm", "run", "--silent", "test:run-start-race"], {"DATABASE_URL": "{pg}"}, []),
     "file:chart-tones": (["node_modules/.bin/tsx", "--tsconfig", "web/tsconfig.json", "scripts/chart-tones-test.ts"], {}, []),
     "file:detail-action-keys": (["node_modules/.bin/tsx", "scripts/detail-action-keys-test.ts"], {}, []),
     "file:error-classes": (["node_modules/.bin/tsx", "scripts/error-classes-test.ts"], {}, []),
@@ -125,6 +133,27 @@ def check():
     return 1 if problems else 0
 
 
+def _pg(sql, url):
+    """Run one statement on MOLD_V0_PG_URL's server (psql); the error text, or None."""
+    try:
+        r = subprocess.run(["psql", url, "-v", "ON_ERROR_STOP=1", "-qc", sql], capture_output=True, text=True, timeout=60)
+        return None if r.returncode == 0 else (r.stderr or r.stdout).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return str(e)
+
+
+def _database(name):
+    """A fresh database for a race suite: (url, drop) or (None, why)."""
+    base = os.environ.get("MOLD_V0_PG_URL", "")
+    if not base: return None, "MOLD_V0_PG_URL is not set: a race suite needs a throwaway Postgres server (see the top of this file)"
+    db = "suite_" + re.sub(r"[^a-z0-9]", "_", name.lower()) + f"_{os.getpid()}"
+    err = _pg(f'DROP DATABASE IF EXISTS "{db}"', base) or _pg(f'CREATE DATABASE "{db}"', base)
+    if err: return None, f"could not create database {db}: {err}"
+    m = re.match(r"^(postgres(?:ql)?://[^/?]+)(/[^?]*)?(\?.*)?$", base)
+    if not m: return None, "MOLD_V0_PG_URL is not a postgres://user:password@host:port/database address"
+    return m.group(1) + "/" + db + (m.group(3) or ""), lambda: _pg(f'DROP DATABASE IF EXISTS "{db}" WITH (FORCE)', base)
+
+
 def _kill(p):
     try: os.killpg(p.pid, 9)
     except OSError: pass
@@ -139,11 +168,17 @@ def run(names, out):
         env = {k: v for k, v in os.environ.items() if k not in ALWAYS_REMOVED and k not in unset}
         env.update({k: v.replace("{tmp}", tmp) for k, v in env_add.items()})
         env.setdefault("CI", "true")
+        drop = None; no_db = None
+        if any("{pg}" in v for v in env_add.values()):
+            url, drop = _database(name)
+            if url: env.update({k: v.replace("{pg}", url) for k, v in env_add.items() if "{pg}" in v})
+            else: no_db, drop = drop, None
         log = os.path.join(out, re.sub(r"[^A-Za-z0-9_.-]", "_", name) + ".log")
         print(f"::group::{name}", flush=True)
         t0 = time.time(); rc = None
         with open(log, "w") as f:
             try:
+                if no_db: raise OSError(no_db)
                 p = subprocess.Popen(argv, cwd=CODEBASE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                      errors="replace", start_new_session=True)
                 timer = threading.Timer(SUITE_TIMEOUT, lambda: _kill(p)); timer.start()
@@ -155,6 +190,7 @@ def run(names, out):
                 f.write(f"[suites.py] could not start: {e}\n"); rc = 127
         secs = round(time.time() - t0)
         shutil.rmtree(tmp, ignore_errors=True)
+        if drop: drop()
         print("::endgroup::", flush=True)
         ok = rc == 0
         results.append({"suite": name, "ok": ok, "rc": rc, "seconds": secs})
