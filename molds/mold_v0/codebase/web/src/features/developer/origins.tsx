@@ -42,7 +42,6 @@ export function OriginsTab({ offer }: { offer: Offer }) {
       <RecordView<Row>
         id='app-developer-origins' compact noun='origins' rows={rows} rowKey={(r) => r.origin} cols={cols} loading={!data}
         searchText={(r) => r.origin} searchPlaceholder='Search origins'
-        filters={<span className='text-muted-foreground text-xs'>Browsers call this app&apos;s API with a client session from these origins only. A secret key is never accepted from a browser.</span>}
         actions={(r) => (r.from === 'app' ? [] : [lock({ label: 'Remove', destructive: true, onSelect: () => void remove(r) }, 'manage')])}
         empty={<p className='text-muted-foreground py-10 text-center text-sm'>No origins yet. Add the address of the web app that calls this API with a client session.</p>}
       />

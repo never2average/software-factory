@@ -74,7 +74,6 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
         id='app-developer-webhooks' compact noun='endpoints' properties rows={endpoints} rowKey={(e) => e.id} cols={cols} loading={!data}
         openKey={open} onOpenChange={setOpen}
         searchText={(e) => `${e.url} ${e.description ?? ''} ${eventsWords(e)} ${e.status}`} searchPlaceholder='Search endpoints'
-        filters={<span className='text-muted-foreground text-xs'>Signed as Standard Webhooks. Retried for about a day; an endpoint failing 30 times in a row is disabled until you enable it again.</span>}
         primary={<Allowed need='manage'><Button size='sm' onClick={() => setAdding(true)} data-add-endpoint=''>Add endpoint</Button></Allowed>}
         actions={(e) => [
           lock({ label: 'Send test ping', onSelect: () => void ping(e), disabled: e.status !== 'enabled' }, 'manage'),
