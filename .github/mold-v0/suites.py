@@ -16,8 +16,8 @@ race suites (`*-race`: concurrent transactions PGlite cannot hold) need a real P
 created and dropped here, on the server MOLD_V0_PG_URL names (CI: the tests job's postgres service; locally, any
 throwaway server, e.g. `docker run --rm -e POSTGRES_PASSWORD=pg -p 5432:5432 postgres:16`). Without MOLD_V0_PG_URL
 they fail, saying so; they are never skipped.
-Browser halves (`--browser`) are not run: CI has no Chromium, and the suites that look for Playwright skip their drawn
-checks by themselves. Run as root (the workflow uses sudo), the suites that need root (run users, the evaluator's
+Browser halves (`--browser`) are not run; the drawn checks that need only a headless Chromium (CHROME_BIN, or
+Playwright's chromium-headless-shell) are: the workflow installs one and names it in CHROME_BIN. Run as root (the workflow uses sudo), the suites that need root (run users, the evaluator's
 own user in nested-runs-review, the firewall, the offline tools) run their root halves, as on the factory machine.
 
 SHARDS. Suites are dealt longest first onto the shard with the least expected time so far (deterministic: same

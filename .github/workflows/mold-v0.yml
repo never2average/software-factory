@@ -95,6 +95,26 @@ jobs:
           sudo git config --system --add safe.directory '*'
           sudo git config --system user.name "mold_v0 CI"
           sudo git config --system user.email "ci@example.com"
+      - name: A headless Chromium for the suites' drawn checks (the runner's own CHROME_BIN is a full Chrome that needs a display)
+        run: |
+          npx -y playwright@1.64.1 install --with-deps chromium-headless-shell
+          bin=$(ls -d "$HOME"/.cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell | sort | tail -1)
+          test -x "$bin"
+          echo "CHROME_BIN=$bin" >> "$GITHUB_ENV"
+      - name: TEMP diagnose kill -1 as a run user
+        continue-on-error: true
+        run: |
+          uname -a; sudo cat /proc/self/status | grep -E "NoNewPrivs|Seccomp|Cap"; ulimit -a | head -20
+          sudo python3 - <<'PY'
+          import subprocess,time,os
+          p=subprocess.Popen(["sleep","60"],user=65000,group=65000); time.sleep(0.3)
+          r=subprocess.run(["/bin/kill","-KILL","-1"],user=65000,group=65000,capture_output=True,text=True)
+          print("kill rc",r.returncode,repr(r.stdout),repr(r.stderr)); time.sleep(0.3)
+          print("poll",p.poll())
+          if p.poll() is None: print(open(f"/proc/{p.pid}/status").read())
+          r=subprocess.run(["strace","-f","-e","trace=kill","/bin/kill","-KILL","-1"],user=65000,group=65000,capture_output=True,text=True); print(r.stderr[-2000:])
+          p.kill()
+          PY
       - name: Suites of shard ${{ matrix.shard }} (as root, as on the factory machine)
         # Root lets the suites that need it run their root halves (a user per run, the evaluator's own user, the
         # firewall); the runner is a throwaway machine. The shard list: python3 .github/mold-v0/suites.py list --shards 6
