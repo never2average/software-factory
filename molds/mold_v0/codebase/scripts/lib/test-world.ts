@@ -47,6 +47,10 @@ export async function startHttp() {
   Object.assign(process.env, { CLERK_SECRET_KEY: "sk_test_mock", CLERK_API_URL: mock.url, CLERK_FRONTEND_API_URL: mock.url, CLERK_JWT_KEY: pem });
   const { createApp } = await import("../../src/http.js");
   const server = createApp().listen(0, "127.0.0.1");
+  // The client (fetch) is in this process too: a test that blocks it a while (a spawnSync of a build) lets the
+  // server's 5-second keep-alive timer close a socket the client is about to reuse, and the next request reads
+  // ECONNRESET (Node 22's fetch does not retry it). The server never closes an idle socket; close() still does.
+  server.keepAliveTimeout = 0;
   await new Promise((r) => server.once("listening", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const { getDb } = await import("../../src/db.js");
