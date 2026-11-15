@@ -49,7 +49,16 @@ export interface DetailRelated {
   match_field?: string;
 }
 /** The record's runs (mold_v0-254). */
-export interface DetailRuns { kinds?: string[]; limit?: number }
+export interface DetailRuns { kinds?: string[]; limit?: number; /** mold_v0-310: also the runs and agent sessions that made or changed it. */ wrote?: boolean }
+/**
+ * A run or a workspace agent session that made or changed a record (mold_v0-310; the server's src/record-runs.ts RunLink):
+ * its page, its title (a run's kind in words, a session's title), its status and when it started.
+ */
+export interface RunLink { kind: 'run' | 'session'; id: string; title: string; status: string; at: string; href: string; run_id?: string; program?: string }
+/** The record's writers: the run or session that made it, those that changed it since (newest first). */
+export interface RecordWriters { made: RunLink | null; changed: RunLink[] }
+/** "the run Build app", "the agent session Fix the tests", "the program Find problems in the agent session …" in words (no link). */
+export const runLinkKind = (l: Pick<RunLink, 'kind' | 'program'>) => (l.kind === 'run' ? 'the run' : l.program ? `the program ${l.program} in the agent session` : 'the agent session');
 export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
@@ -352,10 +361,14 @@ export interface RecordRun { id: string; pack: string; kind: string; status: str
 export type RunsData = { total: number; runs: RecordRun[];
   /** mold_v0-261 (flag agent_harness): the workspace agent sessions started from the record. */
   sessions?: { total: number; rows: { id: string; title: string; phase: string; profile: { id: string; name: string; version: number } | null; started_by: string | null;
-    spent_usd: number; budget_usd: number; created_at: string; last_activity_at: string }[] } };
+    spent_usd: number; budget_usd: number; created_at: string; last_activity_at: string }[] };
+  /** mold_v0-310 (`wrote`): the runs and agent sessions that made or changed the record. */
+  wrote?: (RunLink & { how: 'Made' | 'Changed' })[] };
 export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | HistoryData | undefined>;
   /** mold_v0-256: the header's computed facts, by their place among the facts. */
-  facts?: Record<string, ComputedFact> }
+  facts?: Record<string, ComputedFact>;
+  /** mold_v0-310: the run or agent session that made the record, and those that changed it. */
+  writers?: RecordWriters }
 
 /** A section's key in the page's data: its tab's and its own place. */
 export const sectionKey = (tab: number, section: number) => `${tab}-${section}`;
@@ -433,7 +446,7 @@ export function factShown(fact: DetailFact, data: Record<string, unknown>, clock
 /** One field's change: before and after (an encrypted field: neither, only that it changed). */
 export interface FieldChange { field: string; label?: string; before?: unknown; after?: unknown; redacted?: boolean }
 /** One change of a record (src/record-history.ts): what, who, when, each field's before and after. */
-export interface RecordChangeView { id: number; at: string; action: 'created' | 'updated' | 'moved' | 'deleted'; by: string; title: { before: string | null; after: string | null } | null; changes: FieldChange[] }
+export interface RecordChangeView { id: number; at: string; action: 'created' | 'updated' | 'moved' | 'deleted'; by: string; /** mold_v0-310: the run or session it was made in */ run?: RunLink; title: { before: string | null; after: string | null } | null; changes: FieldChange[] }
 export type HistoryData = { changes: RecordChangeView[]; more: boolean; since: string | null };
 /**
  * Where a workspace record came from, as words after "Added by" (mold_v0-236; mold_v0-300: plain words, "Added by an

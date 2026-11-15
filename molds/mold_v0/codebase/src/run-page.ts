@@ -9,6 +9,7 @@
  *                                     each tab's content: the timeline (its events as log lines), the agent (harness,
  *                                     model, turns, tokens and cost by model), the tools it called, its results (required
  *                                     outputs, the checks), the files it wrote, the records it touched or created
+ *                                     (mold_v0-310: what it wrote from src/record-runs.ts writtenBy)
  *   GET  /api/runs/<id>/events?after=<event id>   the events since (the page polls while the run is queued or running)
  *   POST /api/runs/<id>/rerun         a new run of the same kind with the same input (and record), as its start tool
  *   POST /api/runs/<id>/stop          the run cancelled, as its cancel tool cancels one
@@ -213,9 +214,10 @@ export async function runPage(c: PageCaller, id: string) {
   const t = r.targets?.asset as { area?: unknown; key?: unknown } | undefined;
   if (t && typeof t.area === "string" && typeof t.key === "string") add({ area: t.area, key: t.key }, "Target");
   for (const x of checks.slice(0, 200)) { add(x.check, "Checked"); add(x.asset, "Checked"); }
-  const writes = await withTenant(c.orgId, async () => (await getDb()).query<{ area: string; key: string; created: boolean }>(
-    `SELECT area, key, written_by = $2 AS created FROM workspace_records WHERE org_id = $1 AND (written_by = $2 OR updated_by = $2) ORDER BY updated_at DESC LIMIT 100`, [c.orgId, `run:${r.id}`]));
-  for (const w of writes) add({ area: w.area, key: w.key }, w.created ? "Created" : "Changed");
+  // mold_v0-310 (src/record-runs.ts): what it wrote, its workspace hook's writes and a session wake's tool calls included,
+  // from the records' writers and their history. The page's Related tab lists them first, as "Records it wrote".
+  const { writtenBy } = await import("./record-runs.js");
+  for (const w of (await writtenBy(c.orgId, { run: r.id })).slice(0, 100)) for (const how of w.how) add({ area: w.area, key: w.key }, how);
   const relatedRows: { area: string; key: string; title: string | null; how: string[] }[] = [];
   for (const x of [...related.values()].slice(0, 100)) {
     let row: RecordRow | null = null;

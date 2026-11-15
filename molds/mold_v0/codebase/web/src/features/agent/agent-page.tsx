@@ -526,6 +526,7 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [howOpen, setHowOpen] = useState(false);
+  const [recordsOpen, setRecordsOpen] = useState(false);
   const load = useCallback(() => call<{ session: Detail }>('GET', `/${id}`).then((r) => { setD(r.session); setError(null); }, (e: Error) => setError(e)), [call, id]);
   useEffect(() => { void load(); const h = () => void load(); window.addEventListener('agent-session-changed', h); return () => window.removeEventListener('agent-session-changed', h); }, [load]);
   // The stream tells it when the phase or spend moved (the trace itself comes down the stream); this catches anything else.
@@ -577,7 +578,9 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
         <h1 ref={titleRef} className='min-w-0 flex-1 truncate text-base font-medium' style={{ minWidth: titleRoom }} title={d.title} data-agent-session-title=''>{d.title}</h1>
         {dock.bar}
         <Controls area={area} s={d} call={call} onChange={changed} budget={budget}
-          extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) }]} />
+          extra={[{ label: 'How this session runs', icon: <Icons.settings />, onSelect: () => setHowOpen(true) },
+            // mold_v0-310: the records it wrote (a workspace's own session page only).
+            ...(area === 'app' ? [{ label: 'Records it wrote', icon: <Icons.table />, onSelect: () => setRecordsOpen(true) }] : [])]} />
       </div>
       {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['idle', 'paused', 'withdrawn', 'budget', 'continued'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
       <TraceStream sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
@@ -596,9 +599,43 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
           <Details d={d} />
         </DialogContent>
       </Dialog>
+      {recordsOpen && <WroteDialog id={d.id} call={call} onOpenChange={setRecordsOpen} />}
     </div>
     {dock.modal}
     </div>
+  );
+}
+
+/** A record a session wrote (GET /api/agent/<id>/records, src/record-runs.ts): only those this person may read. */
+interface WroteRecord { area: string; key: string; title: string | null; label: string; how: ('Created' | 'Changed')[]; at: string }
+/** mold_v0-310: the records this session wrote (its tool calls, its programs' results), each linked to its page. */
+function WroteDialog({ id, call, onOpenChange }: { id: string; call: Call; onOpenChange: (o: boolean) => void }) {
+  const [got, setGot] = useState<{ records: WroteRecord[]; total: number } | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  useEffect(() => { call<{ records: WroteRecord[]; total: number }>('GET', `/${id}/records`).then(setGot, (e: Error) => setError(e)); }, [call, id]);
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className='max-h-[85dvh] overflow-y-auto sm:max-w-xl' data-agent-records=''>
+        <DialogHeader>
+          <DialogTitle>Records it wrote</DialogTitle>
+          <DialogDescription>The records this session added or changed, and those its programs kept. Only the ones you may open are listed.</DialogDescription>
+        </DialogHeader>
+        {error ? <ErrorState error={error} /> : !got ? <LoadingCards count={1} /> : !got.records.length ? <p className='text-muted-foreground text-sm'>None yet.</p> : (
+          <ul className='divide-y text-sm' data-agent-records-list=''>
+            {got.records.map((x) => (
+              <li key={`${x.area}/${x.key}`} className='flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2.5' data-agent-record={x.key}>
+                <span className='flex min-w-0 flex-col'>
+                  <Link href={`/app/records/${encodeURIComponent(x.area)}/${encodeURIComponent(x.key)}`} className='font-medium break-words underline-offset-4 hover:underline'>{x.title || x.key}</Link>
+                  <span className='text-muted-foreground text-xs'>{x.label} · <When d={x.at} /></span>
+                </span>
+                <span className='flex gap-1.5'>{x.how.map((w) => <Badge key={w} variant='outline' className='font-normal'>{w}</Badge>)}</span>
+              </li>
+            ))}
+            {got.total > got.records.length && <li className='text-muted-foreground py-2.5 text-xs'>The newest {got.records.length} of {got.total}.</li>}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -6,7 +6,8 @@
  *
  *   kept      only while the flag is on, only for a workspace area whose layout has a history section: an app that
  *             declares none writes exactly as before (no transaction of its own, no line).
- *   a line    the action (created, updated, moved, deleted), who ("<kind>:<who>" as workspace_records.updated_by), when,
+ *   a line    the action (created, updated, moved, deleted), who ("<kind>:<who>" as workspace_records.updated_by) and
+ *             the agent session's wake it was made in (`via`, mold_v0-310: src/record-runs.ts links the line to it), when,
  *             the title before and after when it changed, and each declared field that changed with its value before and
  *             after. A write that changes nothing writes no line.
  *   redacted  an encrypted field (mold_v0-194) is only ever {field, redacted: true}: that it changed, never a value (its
@@ -55,12 +56,12 @@ export async function writeHistory(area: RecordArea, c: RecordChange, tx: Querya
   const title = h.before && h.after && (h.before.title ?? null) !== (h.after.title ?? null) ? { before: h.before.title ?? null, after: h.after.title ?? null } : null;
   if (action === "updated" && !changes.length && !title) return;
   await tx.query(
-    "INSERT INTO record_changes (org_id, pack, area, key, action, by, title, changes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-    [c.orgId, area.pack, area.name, c.key, action, h.by?.slice(0, 200) ?? null, title ? JSON.stringify(title) : null, JSON.stringify(changes)]);
+    "INSERT INTO record_changes (org_id, pack, area, key, action, by, title, changes, via) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    [c.orgId, area.pack, area.name, c.key, action, h.by?.slice(0, 200) ?? null, title ? JSON.stringify(title) : null, JSON.stringify(changes), h.via?.slice(0, 200) ?? null]);
 }
 
 /** A line as the page reads it. */
-export interface HistoryLine { id: number; at: string; action: "created" | "updated" | "moved" | "deleted"; by: string | null; title: { before: string | null; after: string | null } | null; changes: StoredChange[] }
+export interface HistoryLine { id: number; at: string; action: "created" | "updated" | "moved" | "deleted"; by: string | null; /** mold_v0-310 */ via: string | null; title: { before: string | null; after: string | null } | null; changes: StoredChange[] }
 
 /**
  * A record's history in workspace `orgId`, newest first: at most `limit` lines (1 to 100) older than `before` (a line's
@@ -75,13 +76,13 @@ export async function recordHistory(orgId: number, area: RecordArea, key: string
   let before = opts.before ?? null, more = false;
   // A field filter can leave lines out: read pages of the table until the page is full or the record's lines end.
   for (let pages = 0; pages < 20 && lines.length <= limit; pages++) {
-    const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string | number; at: Date; action: HistoryLine["action"]; by: string | null; title: HistoryLine["title"]; changes: StoredChange[] }>(
-      `SELECT id, at, action, by, title, changes FROM record_changes WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::bigint IS NULL OR id < $5)
+    const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string | number; at: Date; action: HistoryLine["action"]; by: string | null; via: string | null; title: HistoryLine["title"]; changes: StoredChange[] }>(
+      `SELECT id, at, action, by, via, title, changes FROM record_changes WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::bigint IS NULL OR id < $5)
         ORDER BY id DESC LIMIT ${limit + 1}`, [orgId, area.pack, area.name, key, before]));
     for (const r of rows) {
       const changes = (r.changes ?? []).filter((x) => !want || want.has(x.field)).map((x) => (enc.has(x.field) ? { field: x.field, redacted: true as const } : x));
       if (want && !changes.length && r.action === "updated") continue;
-      lines.push({ id: Number(r.id), at: new Date(r.at).toISOString(), action: r.action, by: r.by, title: want ? null : r.title, changes });
+      lines.push({ id: Number(r.id), at: new Date(r.at).toISOString(), action: r.action, by: r.by, via: r.via ?? null, title: want ? null : r.title, changes });
     }
     if (rows.length <= limit) break;
     before = Number(rows[rows.length - 1]!.id);

@@ -7,6 +7,7 @@
  *     POST   /                      {message, title?, mode?: conversation | task, budget_usd?} start one (a member or more;
  *                                    a budget up to the setting's, or the ceiling for a billing manager or owner)
  *     GET    /:id                   one session: its transcript, requests, budget raises and wakes
+ *     GET    /:id/records           the records it wrote (mold_v0-310; src/record-runs.ts), those this person may read
  *     POST   /:id/messages          {message, files?, repositories?} the person who started it: guidance mid-run, or a wake
  *     GET    /composer?session=     what the composer offers (mold_v0-290; src/agent-composer.ts): attaching files and the
  *                                    workspace's repositories, with limits or the reason not; never a token
@@ -159,6 +160,8 @@ export function agentAppRouter(): Router {
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
   programDockRoutes(r, (res) => S(res).org); // mold_v0-292: ahead of /:id, which they would otherwise match
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
+  // mold_v0-310: the records this session wrote (its wakes' tool calls, its programs' results), those this person may read.
+  r.get("/:id/records", answer(async (req, res) => (await import("./record-runs.js")).sessionRecords(S(res).org, id(req), { role: S(res).accountRole ?? null, userId: S(res).user ?? null })));
   r.get("/:id/trace/stream", answer(traceStream((req, res, after) => H.sessionTrace(S(res).org, id(req), actor(res), after))));
   r.get("/:id/trace", answer(async (req, res) => H.sessionTrace(S(res).org, id(req), actor(res), req.query.after)));
   r.get("/:id/trace/:step", answer(async (req, res) => H.sessionTraceStep(S(res).org, id(req), actor(res), String(req.params.step))));

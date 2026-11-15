@@ -3,7 +3,7 @@
 // GET /api/records/_page/<area>/<key>): newest first, each change as who did what and when (the exact time on hover),
 // then each field that changed: its label, its value before (struck through) and after, formatted as the record's own
 // fields are; a long text as a line diff (added and removed lines marked, unchanged runs folded); an encrypted field only
-// "changed", never a value. Show more reads the older ones. No count beside the title; light and dark alike.
+// "changed", never a value. Show more reads the older ones. mold_v0-310: a change made in a run or an agent session links it. No count beside the title; light and dark alike.
 import { useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { refTarget, refWords, shownText } from './record-pages';
 import { EntriesTable } from './record-detail-entries';
 import { entriesView } from '@/lib/record-entries';
 import { When } from '@/features/portal/shared';
+import { RunLinkText } from './run-link';
 
 const ACTION_ICON: Record<RecordChangeView['action'], keyof typeof import('@/components/icons').Icons> = { created: 'add', updated: 'edit', moved: 'arrowRight', deleted: 'trash' };
 
@@ -203,6 +204,8 @@ export function HistoryList({ area, data, url, empty, titles: own }: { area: Rec
               <div className='flex min-w-0 flex-1 flex-col gap-3'>
                 <p className='text-sm leading-7'>
                   <span className='font-medium'>{h.by}</span>{' '}
+                  {/* mold_v0-310: the run or agent session the change was made in, linked to its page. */}
+                  {h.run && <><span className='text-muted-foreground'>in</span> <RunLinkText link={h.run} />{' '}</>}
                   <span className='text-muted-foreground'>{h.action === 'created' ? 'added it' : h.action === 'deleted' ? 'deleted it' : h.action === 'moved' ? 'moved it' : `changed ${fields.length === 1 ? 'one field' : `${fields.length} fields`}`}</span>
                   {when && <> <span className='text-muted-foreground'>·</span> <time dateTime={when.iso} title={when.hover} className='text-muted-foreground'>{when.text}</time></>}
                   <span className='sr-only'> ({CHANGE_WORDS[h.action]})</span>

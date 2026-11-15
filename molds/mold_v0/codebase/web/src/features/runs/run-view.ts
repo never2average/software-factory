@@ -42,6 +42,8 @@ export function runTabs(d: Pick<RunPageData, 'timeline' | 'agent' | 'tools' | 'r
   return RUN_TABS.filter((t) => t === 'timeline' ? d.timeline.events.length > 0 : t === 'agent' ? !!d.agent : t === 'tools' ? d.tools.length > 0
     : t === 'results' ? !!d.results && (d.results.outputs.length > 0 || d.results.checks.length > 0) : t === 'files' ? !!d.files && (d.files.files.length > 0 || d.files.version !== null) : d.related.length > 0);
 }
+/** mold_v0-310: a related record the run created or changed (the run page's "Records it wrote"). */
+export const wroteIt = (x: { how: string[] }) => x.how.includes('Created') || x.how.includes('Changed');
 /** A run's events as the log viewer's lines (numbered in order). */
 export const eventLines = (events: readonly EventLine[]): LogLine[] => events.map((e, i) => ({ n: i + 1, id: e.id, at: e.at, level: e.level, source: e.source, text: e.message }));
 /** Its cost against its budget, in words: "$0.42 of $2.00". */
