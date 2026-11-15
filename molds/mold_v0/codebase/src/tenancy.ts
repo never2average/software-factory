@@ -6,7 +6,8 @@
  *   1. revoke access: API keys, worker tokens of its jobs, gateway tokens of its sessions
  *   2. stop work: queued and running sessions cancelled, simulations and research closed
  *   3. purge transcripts from the live store (ClickHouse or Postgres)
- *   4. purge every R2 prefix of the org (transcripts, research, reports, diffs, exports)
+ *   4. purge every R2 prefix of the org (transcripts, research, reports, diffs, exports, workspaces): mold_v0-308, from
+ *      the workspace's own bucket (src/workspace-storage.ts) and from the platform's (objects stored before it had one)
  *   5. delete the organization row (Postgres cascades to every tenant table)
  *   6. write a tombstone with counts only (no names, no content)
  *
@@ -15,7 +16,7 @@
 import { forgetOrgKey } from "./orgcrypto.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
-import { keys, listKeys, deleteKeys, objectStore, s3Ready } from "./storage.js";
+import { bucketReadyFor, deleteKeysEverywhere, keys, listKeysEverywhere, localObjectStore, s3Ready } from "./storage.js";
 import { baseTranscripts } from "./transcripts.js";
 import { forgetArchivedOrg } from "./archive.js";
 import { ENV } from "./env-names.js";
@@ -35,10 +36,11 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   orgId = Math.trunc(orgId);
   const [org] = await db.query<{ id: number }>("SELECT id FROM organizations WHERE id = $1", [orgId]);
   const count = async (sql: string) => Number((await db.query<{ n: number }>(sql, [orgId]))[0]?.n ?? 0);
-  const bucket = await s3Ready();
-  const objects = bucket
-    ? (await Promise.all(PREFIX_KINDS.map((k) => listKeys(keys.orgPrefix(k, orgId))))).flat()
-    : [];
+  // mold_v0-308: the platform's bucket, or the workspace's own (read before the cascade takes its storage record).
+  const platformBucket = await s3Ready();
+  const bucket = platformBucket || (await bucketReadyFor(keys.orgPrefix("workspaces", orgId)));
+  const listAll = async () => (await Promise.all(PREFIX_KINDS.map((k) => listKeysEverywhere(keys.orgPrefix(k, orgId))))).flat();
+  const objects = bucket ? await listAll() : [];
   // The session engine's tables are a host pack's (mold_v0-049): with none in this build there is none of its work.
   const engine = sessionEngine(), research = researchJobs();
   const counts = {
@@ -85,15 +87,17 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   log(`org ${orgId}: transcripts purged from ${baseTranscripts().kind}`);
 
   // 4. Object storage.
-  if (objects.length) await deleteKeys(objects.map((o) => o.key));
+  // Each from every bucket it may be in (mold_v0-308): the workspace's own and the platform's.
+  if (objects.length) await deleteKeysEverywhere(objects.map((o) => o.key));
   if (bucket) {
-    const left = (await Promise.all(PREFIX_KINDS.map((k) => listKeys(keys.orgPrefix(k, orgId))))).flat();
+    const left = await listAll();
     if (left.length) throw new Error(`org ${orgId}: ${left.length} object(s) still in the bucket after the purge; re-run deleteOrg`);
   }
   log(`org ${orgId}: ${objects.length} object(s) purged from the bucket`);
-  // Workspace snapshots kept in a local directory instead (mold_v0-033, APP_STORAGE_DIR without R2).
-  if (!bucket && ENV.APP_STORAGE_DIR) {
-    const local = await objectStore();
+  // Workspace snapshots kept in a local directory instead (mold_v0-033, APP_STORAGE_DIR without a platform bucket; with
+  // a workspace's own bucket too, what was kept there before it had one).
+  const local = !platformBucket && ENV.APP_STORAGE_DIR ? localObjectStore() : null;
+  if (local) {
     const mine = await local.list(keys.orgPrefix("workspaces", orgId));
     await local.remove(mine);
     log(`org ${orgId}: ${mine.length} workspace snapshot(s) removed from ${ENV.APP_STORAGE_DIR}`);

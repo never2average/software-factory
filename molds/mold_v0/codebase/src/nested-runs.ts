@@ -34,7 +34,7 @@ import { canAccount, type AccountRole } from "./account-roles.js";
 import { revokeToolTokens } from "./harness-reach.js";
 import { ChildPolicyRefused, effectiveWeb, intersectChildPolicy, type ProgramSide } from "./nested-policy.js";
 import { declaredInputs, renderPrompt, storedTargetKind, targetKindOf, testFrozen, TREE_HARD_MAX, typedOutputs, validateJson, type FailurePolicy, type JsonSchema, type Machine, type MachineState, type ProgramConfig, type TargetKind } from "./program-spec.js";
-import { bundleOf, changedPaths, filesOfBundle, overlay, POLICY_FILE, TARGET_DIR, targetBrief, targetCurrent, targetIdFor, targetKindFor, unifiedPatch, type TargetBase, type TargetFile } from "./program-target.js";
+import { bundleOf, changedPaths, filesOfBundle, overlay, POLICY_FILE, TARGET_DIR, targetBrief, targetCurrent, targetIdFor, targetKindFor, unifiedPatch, type PatchFile, type TargetBase, type TargetFile } from "./program-target.js";
 import { machineBegin, machineStep, resolveSource, type MachineRun, type StepSpec } from "./program-machine.js";
 import { decideAcceptance, offSurface, seedOf, wordingOnly, type Decision, type MeasuredCase } from "./program-acceptance.js";
 import { programForSpawn, programsForProfile, sha256 } from "./programs.js";
@@ -85,10 +85,12 @@ export interface HandleRow {
 }
 const H_COLS = "id, org_id, root_id, parent_id, session_id, step_of, state_id, kind, program_id, program_version, name, child_no, inputs, outputs_schema, budget_usd, pool_used_usd, spent_usd, status, queue_reason, answer, outputs, error, failure_policy, retries, retries_used, attention, machine, candidate, cancel_requested_at, created_at, settled_at";
 /** A machine's column: its definition and state, frozen with the handle (machine), or a step's place in its machine (step). */
-interface HandleMachine { spec?: Machine; run?: MachineRun; step?: { entry: number; index: number; bindings?: Record<string, unknown> }; pending?: PendingChild | null; acceptance?: { config: NonNullable<ProgramConfig["acceptance"]>; candidate_from: string; hypothesis?: string | null } }
+interface HandleMachine { spec?: Machine; run?: MachineRun; step?: { entry: number; index: number; bindings?: Record<string, unknown> }; pending?: PendingChild | null;
+  /** mold_v0-308: the program a step's state runs, at the version it started with (its records are that program's). */
+  step_program?: { id: string; version: number }; acceptance?: { config: NonNullable<ProgramConfig["acceptance"]>; candidate_from: string; hypothesis?: string | null } }
 export interface CandidateRef { key: string; sha256: string; bytes: number; paths: string[]; from_session: string }
 /** A child's session as it will start: built once, when it is spawned (or when a step reaches its turn). */
-interface PendingChild { policy: AgentPolicy; title: string; message: string; profile: { id: string; version: number } | null; schema?: JsonSchema | null }
+interface PendingChild { policy: AgentPolicy; title: string; message: string; profile: { id: string; version: number } | null; schema?: JsonSchema | null; program?: { id: string; version: number } | null }
 
 export interface HandleView {
   handle: string; name: string; ref: string | null; kind: HandleRow["kind"]; program: string | null; program_version: number | null; state: string | null; status: ChildStatus; settled: boolean;
@@ -449,7 +451,9 @@ async function startHandle(orgId: number, h: HandleRow): Promise<void> {
           pending.profile?.id ?? null, pending.profile?.version ?? null, parent.id, h.root_id, parent.depth + 1, ref, h.program_id, h.program_version]);
       await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)", [id, orgId, pending.message, parent.started_by, parent.started_by_name]);
       // A step's outputs are checked against its state's (or its program's) schema, frozen when it starts.
-      const won = await q.query("UPDATE harness_children SET session_id = $3, outputs_schema = coalesce(outputs_schema, $4), machine = coalesce(machine, '{}'::jsonb) - 'pending', updated_at = now() WHERE org_id = $1 AND id = $2 AND session_id IS NULL AND settled_at IS NULL AND cancel_requested_at IS NULL RETURNING id", [orgId, h.id, id, pending.schema ? JSON.stringify(pending.schema) : null]);
+      // mold_v0-308: a step that runs another program keeps which (and its version), so its records are that program's.
+      const won = await q.query("UPDATE harness_children SET session_id = $3, outputs_schema = coalesce(outputs_schema, $4), machine = (coalesce(machine, '{}'::jsonb) - 'pending') || $5::jsonb, updated_at = now() WHERE org_id = $1 AND id = $2 AND session_id IS NULL AND settled_at IS NULL AND cancel_requested_at IS NULL RETURNING id",
+        [orgId, h.id, id, pending.schema ? JSON.stringify(pending.schema) : null, JSON.stringify(h.step_of && pending.program ? { step_program: pending.program } : {})]);
       if (!won.length) throw new LostStart();
     });
     sessionId = id;
@@ -492,7 +496,7 @@ async function buildStepPending(parent: H.SessionRow, h: HandleRow): Promise<Pen
   }
   const built = await buildChild(parent, h.id, { name: `${m.name}: ${state.id}`.slice(0, MAX_NAME), prompt, inputs, profile: config?.agent_profile ?? parent.profile_id, config, schema, depth: parent.depth + 1, role: null, candidate });
   if (target?.uploads.length) built.policy.uploads = [...(built.policy.uploads ?? []).filter((u) => !u.path.startsWith(`${TARGET_DIR}/`)), ...target.uploads];
-  return { ...built, schema };
+  return { ...built, schema, program: stepProgram ? { id: stepProgram.id, version: stepProgram.version } : null };
 }
 /** A base's files as uploads at .target/<path> (a recipe's are uploads already; the rest are kept as uploads now). */
 async function targetUploads(base: TargetBase | null): Promise<NonNullable<AgentPolicy["uploads"]>> {
@@ -595,7 +599,8 @@ export async function settleHandle(q: Queryable, orgId: number, handleId: string
 async function afterSettleOf(orgId: number, handleId: string): Promise<void> {
   const h = await read(async (q) => (await q.query<HandleRow>(`SELECT ${H_COLS} FROM harness_children WHERE org_id = $1 AND id = $2`, [orgId, handleId]))[0]);
   if (!h || !h.settled_at) return;
-  if (h.status === "done" && !h.step_of && (h.kind === "program" || h.kind === "machine")) await keepRecords(orgId, h);
+  // mold_v0-308: a machine's step whose state runs another program writes that program's records too.
+  if (h.status === "done" && (h.step_of ? h.kind === "step" && !!h.machine?.step_program : h.kind === "program" || h.kind === "machine")) await keepRecords(orgId, h);
   if (h.step_of) await advanceMachine(orgId, h);
   else if (h.status === "error") await applyFailurePolicy(orgId, h);
   await wakeParentIfDone(orgId, h.parent_id);
@@ -605,9 +610,12 @@ async function afterSettleOf(orgId: number, handleId: string): Promise<void> {
 /**
  * mold_v0-303 (M7): a settled program's outputs kept as its program's records say (src/program-records.ts), by the server,
  * after its outputs passed their schema. A write refused (an area changed since) is said on the parent's trace; it never
- * changes how the child settled.
+ * changes how the child settled. mold_v0-308: a machine's step whose state runs another program is that program's run:
+ * its records are that program's (at the version the step started with), provenance the step.
  */
-async function keepRecords(orgId: number, h: HandleRow): Promise<void> {
+async function keepRecords(orgId: number, h0: HandleRow): Promise<void> {
+  const sp = h0.step_of ? h0.machine?.step_program ?? null : null;
+  const h = sp ? { ...h0, program_id: sp.id, program_version: sp.version } : h0;
   if (!h.program_id || !h.program_version || h.outputs === null || h.outputs === undefined) return;
   const config = await read((q) => programConfigOf(q, h)).catch(() => null);
   if (!config?.record) return;
@@ -1155,8 +1163,12 @@ export async function applyChampion(by: string, id: string, input: { ref?: unkno
     const now = new Map((detail.versions.find((v) => v.version === detail.version)?.files ?? []).map((f) => [f.path, f]));
     const { createHash } = await import("node:crypto");
     const changed = files.filter((f) => now.get(f.path)?.sha256 !== createHash("sha256").update(f.body).digest("hex") || (now.get(f.path)?.executable ?? f.executable) !== f.executable);
-    if (!changed.length) throw new PackError("Nothing to propose: this version's files are the recipe's current ones", 409);
-    const made = await R.proposeRecipeVersion({ org_id: c.org_id, session_id: "", run_id: "", recipe: { id: c.target_id, version: detail.version } }, { note: `Champion version ${c.version} of a program's run (accepted by the guardian).`, removed: [], files: changed.map((f) => ({ path: f.path, data: f.body, executable: f.executable })) });
+    // mold_v0-308: what the candidate removed against the baseline it was measured on (its `.deleted` list), where the
+    // recipe still has it. A file the recipe gained since is never removed by a version that did not know of it.
+    const kept = new Set(c.candidate.full?.paths ?? files.map((f) => f.path));
+    const removed = (c.candidate.base?.paths ?? []).filter((p) => !kept.has(p) && now.has(p)).sort();
+    if (!changed.length && !removed.length) throw new PackError("Nothing to propose: this version's files are the recipe's current ones", 409);
+    const made = await R.proposeRecipeVersion({ org_id: c.org_id, session_id: "", run_id: "", recipe: { id: c.target_id, version: detail.version } }, { note: `Champion version ${c.version} of a program's run (accepted by the guardian).`, removed, files: changed.map((f) => ({ path: f.path, data: f.body, executable: f.executable })) });
     appliedRef = `recipe proposal ${made.id}`;
   } else if (kind === "harness_policy") {
     const { governance } = await championPolicy(c);
@@ -1215,9 +1227,10 @@ export async function decidePolicyProposal(by: string, id: string, input: { deci
 }
 /**
  * mold_v0-303 (M4): what a version changes against the baseline it was measured on, as a unified diff for a person to
- * apply (`git apply`) and open a pull request with; for a mold, the only way it ever leaves the app. Staff only.
+ * apply (`git apply`) and open a pull request with; for a mold, the only way it ever leaves the app. Staff only. A file the
+ * candidate removed (its `.deleted` list, mold_v0-308) is a git deletion.
  */
-export async function championPatch(id: string): Promise<{ id: string; target: { kind: string; id: string }; version: number; base: string | null; patch: string; files: { path: string; change: "added" | "modified"; binary: boolean }[] }> {
+export async function championPatch(id: string): Promise<{ id: string; target: { kind: string; id: string }; version: number; base: string | null; patch: string; files: PatchFile[] }> {
   needOn();
   const [c] = await read((q) => q.query<ChampionRow>(`/* tenant: staff, by version id */ SELECT ${C_COLS} FROM harness_champions WHERE id = $1`, [id]));
   if (!c) throw new PackError("no such version", 404);

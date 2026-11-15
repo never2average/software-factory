@@ -7,6 +7,9 @@
 // 1. The words: every kind has a title and one sentence, no placeholder left unfilled; the API's plain not-found page
 //    says the console's words (src/status-pages.ts NOT_FOUND_WORDS = statusText('not_found')). Which addresses are
 //    pages (mold_v0-155, web/src/lib/console-routes.ts): every dynamic route decided, unknown ones in each area known.
+// 1c. A 404 inside an area's layout unlights its frame from the first paint (mold_v0-308, web/src/lib/page-not-found.tsx):
+//    the areas' not-found pages are the marked kind, the mark is a layout effect, and the status page's own style names
+//    the trail's and the sidebar entries' slots as the components draw them.
 // 2. The API: a browser's unknown address is a 404 page (the console's when it answers, else the plain one with the same
 //    words); an API client's, an /api address and the API's own pages are answered as before.
 // With --browser, the console itself (next build for this sign-in, next start against this API; under Clerk the lane
@@ -16,6 +19,8 @@
 // 4. Unknown addresses: the site's, the portal's, the admin console's, sign-in's, a pack page, a record area, a doc, a
 //    host page: 404 and the not-found page, inside the area's shell where there is one; never the API's own text; drawn
 //    on the server (mold_v0-155): the page's HTML carries it and its links.
+// 4c. From the first paint (mold_v0-308): every frame the browser paints while a 404 inside /app or /admin is shown,
+//    from the server's HTML on and after a navigation in the browser, has no visible trail and no lit sidebar entry.
 // 4b. Hydrated cleanly (mold_v0-206): the site's, the portal's and the admin console's not-found pages, the console's mode
 //    Light and Dark, come up with no page error and nothing on the console (React's #418 among them); the server's HTML is
 //    drawn for the address, never for /_not-found, the route the proxy rewrote it to.
@@ -92,6 +97,30 @@ try {
     for (const [a, area] of [["/app/x", "app"], ["/admin/x/y", "admin"], ["/auth/x", "auth"], ["/console-status/not-found", "site"], ["/privacy", "site"]])
       assert.equal(routes.notFoundAreaFor(a), area);
     ok(`the console's addresses: ${manifest.routes.length} page routes (every dynamic one resolved from its registry or left to its page), the build's docs and pages known; unknown addresses in every area are drawn as that area's not-found page`);
+  }
+
+  // ---------- 1c. a 404 inside an area's layout: no lit entry, no trail, from the first paint (mold_v0-308) ----------
+  {
+    const web = (rel: string) => readFileSync(path.join(ROOT, "web", "src", rel), "utf8");
+    for (const area of ["app", "admin"]) {
+      const nf = web(`app/${area}/not-found.tsx`);
+      assert.match(nf, /<StatusPage kind='not_found' area='[a-z]+' frame='inline' level=\{1\} \/>/, `app/${area}/not-found.tsx: a page's own 404 (level 1: the kind that is marked)`);
+    }
+    const lib = web("lib/page-not-found.tsx");
+    assert.match(lib, /export function useMarkNotFound\(on: boolean\) \{\n  useLayoutEffect\(/, "the mark is a layout effect: the frame's redraw lands before the browser paints");
+    assert.doesNotMatch(lib, /\buseEffect\b/, "never a passive effect (it would paint the lit frame first)");
+    const status = web("features/status/status-page.tsx");
+    assert.match(status, /const ownNotFound = kind === 'not_found' && \(level === 1 \|\| frame === 'full'\);\n  useMarkNotFound\(ownNotFound\);/, "the status page marks its own 404");
+    assert.equal((status.match(/\{ownNotFound \? <NotFoundFrameStyle \/> : null\}/g) ?? []).length, 2, "and draws the frame's style with it, inline and full");
+    const css = /export const NOT_FOUND_FRAME_CSS =\n([\s\S]*?);\n/.exec(lib)?.[1] ?? "";
+    for (const sel of ['header [data-slot="breadcrumb"]{visibility:hidden}', '[data-slot="sidebar-menu-button"][data-active]:not(:hover)', '[data-slot="sidebar-menu-sub-button"][data-active]:not(:hover)'])
+      assert.ok(css.includes(sel), `the frame's style names ${sel}`);
+    assert.match(web("components/ui/breadcrumb.tsx"), /<nav aria-label='breadcrumb' data-slot='breadcrumb'/, "the trail's slot as the style names it");
+    assert.match(web("components/layout/header.tsx"), /<header[\s\S]*<Breadcrumbs \/>[\s\S]*<\/header>/, "the trail is in the top bar's <header>");
+    const sidebar = web("components/ui/sidebar.tsx");
+    for (const slot of ["sidebar-menu-button", "sidebar-menu-sub-button"])
+      assert.match(sidebar, new RegExp(`slot: '${slot}',\\n\\s+sidebar: '[a-z-]+',\\n\\s+size,\\n\\s+active: isActive`), `${slot}: its slot and data-active as the style names them`);
+    ok("a 404 inside an area's layout: the areas' not-found pages are marked, the mark is a layout effect, and the status page's own style unlights the trail's and the sidebar's slots from the first paint");
   }
 
   const http = await startHttp();
@@ -347,6 +376,43 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     if (url.startsWith("/app/") || url.startsWith("/admin/")) assert.equal(trail, undefined, `${url}: a 404 has no trail (mold_v0-298), got ${JSON.stringify(trail)}`);
   }
   ok("unknown addresses: the site's, sign-in's and every portal and admin route (pages, packs, records, docs, host pages) are a 404 with the not-found page, inside the area's shell where there is one; drawn on the server (in the page's HTML, its links with it)");
+
+  // 4c. From the first paint (mold_v0-308): every frame painted while the 404 is shown, sampled before each paint.
+  {
+    const sampler = () => {
+      const w = window as any;
+      w.__litFrames = [];
+      const sample = (when: string) => {
+        if (!document.querySelector('[data-status-page="not_found"]')) return;
+        const trail = [...document.querySelectorAll('header [data-slot="breadcrumb"]')].some((e) => { const st = getComputedStyle(e); return st.visibility !== "hidden" && st.display !== "none" && !!e.textContent?.trim(); });
+        const lit = [...document.querySelectorAll('[data-slot="sidebar-menu-button"][data-active], [data-slot="sidebar-menu-sub-button"][data-active]')]
+          .filter((e) => !e.matches(":hover") && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(getComputedStyle(e).backgroundColor)).map((e) => e.textContent?.trim() ?? "");
+        if (trail || lit.length) w.__litFrames.push({ when, trail, lit, at: location.pathname });
+      };
+      document.addEventListener("DOMContentLoaded", () => sample("parsed"));
+      const loop = () => { sample("frame"); requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+    };
+    const rows: string[] = [];
+    for (const [who, from, to] of [[w.owner, null, "/app/no-such-page"], [w.staff, null, "/admin/no-such-page"], [w.owner, "/app", "/app/no-such-page"], [w.staff, "/admin", "/admin/no-such-page"]] as const) {
+      const c = await ctxFor(who);
+      try {
+        await c.addInitScript(sampler);
+        const p = await c.newPage();
+        if (from) {
+          await p.goto(from, { waitUntil: "networkidle" });
+          // A navigation in the browser (the app router's own push), the frame kept.
+          await p.evaluate((u: string) => (window as any).next.router.push(u), to);
+        } else await p.goto(to, { waitUntil: "networkidle" });
+        await p.locator('[data-status-page="not_found"]').first().waitFor({ timeout: 20000 });
+        await p.waitForTimeout(1000);
+        const lit = await p.evaluate(() => (window as any).__litFrames as unknown[]);
+        assert.deepEqual(lit, [], `${from ? `${from} then ${to}` : to}: a painted frame with a trail or a lit entry while the 404 was shown`);
+        rows.push(from ? `${from} -> ${to}` : to);
+      } finally { await c.close(); }
+    }
+    ok(`a 404 inside /app and /admin: no painted frame had a trail or a lit sidebar entry (${rows.join(", ")})`);
+  }
 
   // 4b. Hydrated cleanly (mold_v0-206): the not-found page drawn on the server for an unknown address, the site's, the
   // portal's and the admin console's, comes up in the browser with no page error and nothing on the console (React's

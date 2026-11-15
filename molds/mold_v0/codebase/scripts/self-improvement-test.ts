@@ -13,6 +13,8 @@
 //       refused when the program is saved
 //   M10 the tree's ceiling: generous by default, settable, never past the hard maximum
 //   wording only goes to a person
+//   deletions (mold_v0-308): a candidate's .candidate/.deleted list removes base files: the merge, the evaluator's bundle,
+//       the recipe proposal (removed) and the patch (a git deletion) all honour it; a deletion off the surface is refused
 // The guardian runs here in-process with the evaluator's same-user mode (no root needed); scripts/nested-runs-review-test.ts
 // runs it with its three users and empty networks as root.
 import "./lib/test-world.js";
@@ -121,6 +123,16 @@ await item("M2/M4: an overlay on its base, what it changed, a patch, the kind fr
   assert.deepEqual(p.files, [{ path: "lib/x.js", change: "added", binary: false }, { path: "run.js", change: "modified", binary: false }]);
   assert.match(p.patch, /diff --git a\/run\.js b\/run\.js\n--- a\/run\.js\n\+\+\+ b\/run\.js\n@@ -1,1 \+1,1 @@\n-old\n\+new\n/);
   assert.match(p.patch, /new file mode 100644\n--- \/dev\/null\n\+\+\+ b\/lib\/x\.js\n@@ -0,0 \+1,1 @@\n\+x\n\\ No newline at end of file\n/);
+  // mold_v0-308: a deletion list removes base files; it is never a file of the candidate; a file written wins over it.
+  const del = T.overlay(base, [f("run.js", "new\n"), f(".deleted", "# gone\nREADME.md\n./bin/go\nnot-there\n\nrun.js\n")]);
+  assert.deepEqual(del.map((x) => x.path), ["run.js"], "README.md and bin/go removed; run.js written; the list itself is not a file");
+  assert.deepEqual(T.changedPaths(base, del), ["README.md", "bin/go", "run.js"], "a removed file is a change");
+  assert.deepEqual(T.deletedPaths(base, del), ["README.md", "bin/go"]);
+  const dp = T.unifiedPatch(base, del);
+  assert.deepEqual(dp.files, [{ path: "README.md", change: "deleted", binary: false }, { path: "bin/go", change: "deleted", binary: false }, { path: "run.js", change: "modified", binary: false }]);
+  assert.match(dp.patch, /diff --git a\/README\.md b\/README\.md\ndeleted file mode 100644\n--- a\/README\.md\n\+\+\+ \/dev\/null\n@@ -1,1 \+0,0 @@\n-about\n/);
+  assert.match(dp.patch, /diff --git a\/bin\/go b\/bin\/go\ndeleted file mode 100755\n--- a\/bin\/go\n\+\+\+ \/dev\/null\n@@ -1,2 \+0,0 @@\n-#!\/bin\/sh\n-echo\n/);
+  assert.match(T.targetBrief({ kind: "recipe", id: "x", base: { label: "b", files: base }, surface: ["*"] }), /list its path on a line of \.candidate\/\.deleted/);
   const acc = S.parseProgram({ prompt: "x", machine, acceptance: baseAcceptance }, hash).config!.acceptance!;
   assert.deepEqual(T.targetKindFor(acc, { kind: "mold" }), { kind: "mold" });
   assert.deepEqual(T.targetKindFor(acc, { kind: "mold_ref" }), { kind: "mold" });
@@ -290,6 +302,42 @@ await item("M3, as root: the overlay is scored over its base by the evaluator's 
   await finish(r.root.c, "parked");
 });
 
+await item("deletions: a candidate's .deleted list removes a file from the scored candidate, the recipe proposal and the patch", async () => {
+  const files = [await upload("run.js", WEAK), await upload("lib.js", LIB), await upload("README.md", "How to run it.\n")];
+  await R.createRecipe("staff-1", { id: "calc-del", name: "Calc deletions", files: files.map((f) => ({ id: f.id, path: f.path, executable: false })) });
+  const r = await improve("improve-recipe", { target: "calc-del" }, bundle({ "run.js": USES_LIB, ".deleted": "README.md\n" }));
+  assert.match(r.step.w.first[0]!.text, /\.candidate\/\.deleted/, "the brief says how to remove a file");
+  const ev = await evaluationOf(r.m.handle);
+  assert.deepEqual(ev.candidate.changed, ["README.md", "run.js"], "the removal is a change");
+  assert.deepEqual(ev.candidate.full.paths, ["lib.js", "run.js"], "the whole candidate has no README.md and no .deleted");
+  const run = await runs.claimRun("w-si", { runId: ev.run_id! });
+  assert.ok(run, "the evaluation was claimed");
+  const scored = await T.filesOfBundle((await N.evaluationBundle(run!.run.id, run!.lease_token, "candidate"))!);
+  assert.deepEqual(scored.map((x) => x.path), ["lib.js", "run.js"], "the evaluator's candidate bundle has the file removed");
+  const base = await T.filesOfBundle((await N.evaluationBundle(run!.run.id, run!.lease_token, "champion"))!);
+  assert.deepEqual(base.map((x) => x.path), ["README.md", "lib.js", "run.js"], "its baseline still has it");
+  assert.ok(await harness.runWorkspaceHarness(client, run!, { allowSameUser: true, egress: "off" }));
+  const d = await evaluationOf(r.m.handle);
+  assert.equal(d.outcome, "accepted", `${d.reasons}`);
+  const champ = (await N.listChampions(org.orgId, { target: "calc-del" })).find((c) => c.status === "champion")!;
+  const patch = await N.championPatch(champ.id);
+  assert.deepEqual(patch.files, [{ path: "README.md", change: "deleted", binary: false }, { path: "run.js", change: "modified", binary: false }]);
+  assert.match(patch.patch, /deleted file mode 100644\n--- a\/README\.md\n\+\+\+ \/dev\/null\n@@ -1,1 \+0,0 @@\n-How to run it\.\n/);
+  await N.applyChampion("op", champ.id, {});
+  const prop = (await R.readRecipe("calc-del")).proposals.find((p) => p.status === "pending")!;
+  assert.deepEqual(prop.changed, ["run.js"], "only the changed file is sent");
+  assert.deepEqual(prop.removed, ["README.md"], "the removed file is proposed as removed");
+  assert.deepEqual(prop.files.map((x) => x.path).sort(), ["lib.js", "run.js"]);
+  await finish(r.root.c, "parked");
+
+  // A removal off the declared surface (lib.js) is refused, with nothing run.
+  const off = await improve("improve-recipe", { target: "calc-del" }, bundle({ "run.js": GOOD, ".deleted": "lib.js\n" }));
+  const o = await evaluationOf(off.m.handle);
+  assert.equal(o.outcome, "refused"); assert.match(o.reasons[0]!, /outside its declared surface: lib\.js/);
+  assert.equal(o.run_id, null);
+  await finish(off.root.c, "parked");
+});
+
 await item("wording only: a change of a recipe's words alone goes to a person, with nothing run", async () => {
   const r = await improve("improve-recipe", { target: "calc" }, bundle({ "README.md": "How to run it, better.\n" }));
   const d = await evaluationOf(r.m.handle);
@@ -380,6 +428,27 @@ await item("M7: a program's results are written as workspace records by the serv
   assert.equal(byKey.get("p-1")?.title, "builds are slow"); assert.deepEqual(byKey.get("p-2")?.data, { statement: "deploys fail", severity: 5 });
   const [prov] = await db.query<{ provenance: string; written_by: string }>("SELECT provenance, written_by FROM workspace_records WHERE org_id = $1 AND area = 'si_problems' AND key = 'p-1'", [org.orgId]);
   assert.equal(prov!.provenance, "run"); assert.equal(prov!.written_by, `run:program:find-problems:${h.handle}`);
+  await finish(root.c, "parked");
+});
+
+await item("M7 (mold_v0-308): a machine step whose state runs another program writes that program's records, provenance the step", async () => {
+  // find-problems (the item above) keeps its results as si_problems records; a machine whose state runs it does too.
+  const m = { max_transitions: 2, states: [{ id: "find", entry: true, program: "find-problems" }], transitions: [] };
+  await P.createProgram("staff-1", { id: "steps-find", name: "Steps find", config: { prompt: "x", outputs: { type: "object" }, spawned_by: ["*"], machine: m } });
+  const root = await rootWake();
+  const mh = await N.spawnChild(root.ctx, { program: "steps-find", inputs: {}, budget_usd: 2 });
+  const [step] = await db.query<{ id: string; session_id: string; machine: { step_program?: { id: string; version: number } } }>("SELECT id, session_id, machine FROM harness_children WHERE step_of = $1 ORDER BY child_no", [mh.handle]);
+  assert.ok(step?.session_id, "the step started");
+  assert.equal(step!.machine.step_program?.id, "find-problems", "the step keeps the program its state runs");
+  const c = await claim(step!.session_id); const s = await start(c);
+  assert.equal((await N.submitOutputs(s.ctx, { outputs: { problems: [{ id: "p-step-1", statement: "a step found this", severity: 2 }] } })).ok, true);
+  await finish(c);
+  await N.nestedTick();
+  const [rec] = await db.query<{ title: string; provenance: string; written_by: string }>("SELECT title, provenance, written_by FROM workspace_records WHERE org_id = $1 AND area = 'si_problems' AND key = 'p-step-1'", [org.orgId]);
+  assert.ok(rec, "the step's program's record was written");
+  assert.equal(rec!.title, "a step found this");
+  assert.equal(rec!.provenance, "run"); assert.equal(rec!.written_by, `run:program:find-problems:${step!.id}`);
+  await N.cancelChildrenOf(org.orgId, root.w.session_id, "done with the test");
   await finish(root.c, "parked");
 });
 
