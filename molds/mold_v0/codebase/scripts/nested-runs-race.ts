@@ -22,6 +22,10 @@ const db = await getDb();
 await import("../src/server.js");
 const H = await import("../src/harness-sessions.js");
 const Nested = await import("../src/nested-runs.js");
+// The tree's cap under test: a profile's max_children of 8 (the default is 32 since mold_v0-303; 8 keeps N spawns well past it).
+Nested.setNestedRunsForTest({ max_children: 8 });
+const CAP = Nested.nestedLimits().children;
+assert.equal(CAP, 8, "the profile's cap is in force");
 
 const { createOrg } = await import("../src/auth.js");
 const { saveSettingValues } = await import("../src/platform-keys.js");
@@ -77,7 +81,7 @@ for (let round = 0; round < ROUNDS; round++) {
   await db.query("DELETE FROM harness_children WHERE org_id = $1 AND status = 'queued'", [org.orgId]);
   await Promise.allSettled(Array.from({ length: N }, (_, i) => Nested.spawnChild(i % 2 ? ctx : childCtx, { prompt: `cap ${i}`, budget_usd: 0.1 })));
   const [cap] = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM harness_children WHERE org_id = $1 AND root_id = $2 AND kind IN ('prompt', 'program', 'step')", [org.orgId, s.id]);
-  assert.ok(cap!.n <= 8, `round ${round}: ${cap!.n} children in one tree`);
+  assert.ok(cap!.n <= CAP, `round ${round}: ${cap!.n} children in one tree (cap ${CAP})`);
   worstTree = Math.max(worstTree, cap!.n);
 
   // Several settlers at once charge once.
@@ -85,5 +89,5 @@ for (let round = 0; round < ROUNDS; round++) {
   assert.equal(settled.filter(Boolean).length, 1, "settled exactly once");
   await db.query("DELETE FROM harness_gateway_holds WHERE run_id = $1", [childClaim!.run.id]);
 }
-console.log(`ok: ${ROUNDS} rounds of ${N} at once: carved at most $${worstCarved.toFixed(2)} of $5 (${wonTotal} spawns won); held at most $${worstHeld.toFixed(4)} of $0.50 (${heldRefused} refused); a child settled by six at once, once; a tree spawned into from two levels at once reached ${worstTree} children of 8`);
+console.log(`ok: ${ROUNDS} rounds of ${N} at once: carved at most $${worstCarved.toFixed(2)} of $5 (${wonTotal} spawns won); held at most $${worstHeld.toFixed(4)} of $0.50 (${heldRefused} refused); a child settled by six at once, once; a tree spawned into from two levels at once reached ${worstTree} children of ${CAP}`);
 process.exit(0);
