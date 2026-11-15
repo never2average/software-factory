@@ -17,7 +17,7 @@
  *                           `valid`: 1 when the policy is a policy at all
  */
 import { governToolUse, webPolicyProblems, type FrozenGovernance } from "./agent-governance.js";
-import { schemaProblems, validateJson, type JsonSchema } from "./program-spec.js";
+import { schemaProblems, validateJson, type JsonSchema } from "./json-schema.js";
 
 export interface ScoredCase { id: string; input: unknown; expected?: unknown }
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

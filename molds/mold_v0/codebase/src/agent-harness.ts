@@ -40,6 +40,7 @@ import { linkTools, RUN_TOOL_CATALOG, verifyToolSet } from "./run-tools.js";
 import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-users.js";
 import { runIsolation, startRunProxy, type HarnessOptions, type RunnerClient, type RunProxy } from "./run-harness.js";
 import { fetchPinned, type FetchOptions } from "./agent-workspace.js";
+import { ENV } from "./env-names.js";
 import { gitCredentialFiles } from "./agent-workspace-steps.js";
 
 /** The workspace's MCP server name the CLI gets (src/agent-harness-config.ts WORKSPACE_SERVER: the same word). */
@@ -278,7 +279,7 @@ export interface AgentHarnessOptions { agentCli?: AgentCliOverride; clock?: () =
   repositoryFetch?: { remote: (fullName: string) => string; options: FetchOptions } }
 const REPOSITORIES = "repos";
 /** The most one repository's copy may hold: the size a workspace may be (src/workspace-bundle.ts). */
-const REPOSITORY_MAX_BYTES = () => Number(process.env.APP_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
+const REPOSITORY_MAX_BYTES = () => Number(ENV.APP_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
 
 const STATE = "state", WORK = "work", HOME = "home";
 /** The file in a session's scratch (beside its state, never in a checkpoint) naming the wake that holds it. */
