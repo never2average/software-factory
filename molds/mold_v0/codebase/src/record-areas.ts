@@ -193,7 +193,8 @@ export interface RecordChange {
    * and data before (null: it is new) and after (null: deleted), as stored before sealing (an encrypted field's value is
    * compared, never kept), and who wrote it ("<kind>:<who>", as workspace_records.updated_by).
    */
-  history?: { before: { title: string | null; data: Record<string, unknown> } | null; after: { title: string | null; data: Record<string, unknown> } | null; by: string | null };
+  history?: { before: { title: string | null; data: Record<string, unknown> } | null; after: { title: string | null; data: Record<string, unknown> } | null; by: string | null;
+    /** mold_v0-310: the agent session's wake the write was made in ("run:<run id>", src/record-runs.ts), if any. */ via?: string | null };
 }
 const changeListeners: ((c: RecordChange) => unknown)[] = [];
 /** Hear every workspace record change once it is stored (after its transaction commits): nothing it does undoes the change. */
@@ -581,9 +582,9 @@ export function shareFor(orgId: number, name: string, key: string, given: unknow
     const vis = (await visibilityForWrite(orgId, area, actor, given, prev.stored, txScope.getStore()?.tx))!;
     const who = writerText(writerOf(actor, null));
     const [r] = await withTenant(orgId, async () => (await q()).query<Row>(
-      `UPDATE workspace_records SET visibility = $5, team_id = $6, owner_id = $7, collaborators = $8, updated_by = $9
+      `UPDATE workspace_records SET visibility = $5, team_id = $6, owner_id = $7, collaborators = $8, updated_by = $9, updated_via = $10
         WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 RETURNING key, title, data, updated_at${visCols(area)}`,
-      [orgId, area.pack, area.name, key, vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, who]));
+      [orgId, area.pack, area.name, key, vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, who, currentVia()]));
     if (!r) throw new PackError(`no ${area.name} record ${key}`, 404);
     auditData(orgId, { action: "update", pack: area.pack, area: area.name, key });
     return toRecord(area, r, orgId);
@@ -859,6 +860,14 @@ export const asWriterUnlessSet = <T>(w: RecordWriter, fn: () => T): T => (writer
 /** The writer set for this call, if any. */
 export const currentWriter = (): RecordWriter | null => writerScope.getStore() ?? null;
 /**
+ * mold_v0-310 (sql/migrations/0071_record_runs.sql): the run a write happens in, beside its writer: "run:<run id>" of a
+ * workspace agent session's wake, whose tool calls write as the person (people) or as a pack's tool (run:tool:<name>).
+ * Kept as workspace_records.written_via / updated_via and record_changes.via; src/record-runs.ts links a record to it.
+ */
+const viaScope = new AsyncLocalStorage<string>();
+export const asVia = <T>(via: string, fn: () => T): T => viaScope.run(via.replace(/[\u0000-\u001f]/g, "").slice(0, 200), fn);
+export const currentVia = (): string | null => viaScope.getStore() ?? null;
+/**
  * mold_v0-309: one of the app's own actions on a person's behalf (a page action's server side, such as Test storage):
  * a write inside `fn` may set a field `set_by: "action"`, as a run's or a pack tool's may.
  */
@@ -924,21 +933,24 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     // repository's index taking a row over makes it the repository's) and records only who wrote it last.
     const kind = writer.by === "shell" ? null : writer.by, who = writerText(writer);
     // mold_v0-259: the visibility columns a write sets (none: they stay as they are, NULL on a new row).
-    const visInto = vis ? ", " + VIS_WRITE.join(", ") : "", visSet = vis ? VIS_WRITE.map((c, i) => ", " + c + " = $" + (12 + i)).join("") : "";
+    const visInto = vis ? ", " + VIS_WRITE.join(", ") : "", visSet = vis ? VIS_WRITE.map((c, i) => ", " + c + " = $" + (13 + i)).join("") : "";
+    // mold_v0-310: the agent session's wake it is written in, if any (a repository's index never is).
+    const via = meta ? null : currentVia();
     const [r] = prev === null
       ? await db.query<Row>(
         // mold_v0-259: a new record's visibility (flag teams, an area that declares one); else the columns stay NULL.
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by${visInto}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12${vis ? ", $13, $14, $15, $16, $17, $18" : ""})
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by, written_via, updated_via${visInto}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $13${vis ? ", $14, $15, $16, $17, $18, $19" : ""})
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at${visCols(area)}`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null,
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null, via,
           ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, vis.inherit_area ?? null, vis.inherit_key ?? null] : [])])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
         `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now(),
             written_by = CASE WHEN $9::text IS NOT NULL AND provenance IS DISTINCT FROM 'repository' THEN $11 ELSE written_by END,
-            provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11${visSet}
+            written_via = CASE WHEN $9::text IS NOT NULL AND provenance IS DISTINCT FROM 'repository' THEN $12 ELSE written_via END,
+            provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11, updated_via = $12${visSet}
           WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at${visCols(area)}`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who,
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who, via,
           ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, vis.inherit_area ?? null, vis.inherit_key ?? null] : [])]);
     if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
     auditData(orgId, { action: action ?? (prev === null ? "create" : "update"), pack: area.pack, area: area.name, key }); // mold_v0-197: never the values
@@ -948,7 +960,7 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
 
 /** A change's history input (mold_v0-256): before (the row as read), after (as written, before sealing) and its writer. */
 const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } | null, after: { title: string | null; data: Record<string, unknown> }, w: RecordWriter): RecordChange["history"] =>
-  ({ before: prev ? { title: prev.record.title, data: prev.opened } : null, after, by: writerText(w) });
+  ({ before: prev ? { title: prev.record.title, data: prev.opened } : null, after, by: writerText(w), via: currentVia() });
 
 /**
  * mold_v0-260 (flag record_rules): an area's checks on save. Each names a declarative check (mold_v0-196), its inputs
@@ -1080,7 +1092,7 @@ async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, nam
     [orgId, area.pack, area.name, checkKey(key), source])).length > 0);
   if (gone) auditData(orgId, { action: "delete", pack: area.pack, area: area.name, key });
   if (gone) await changed({ orgId, pack: area.pack, area: area.name, key, change: "deleted", record: null,
-    history: { before: null, after: null, by: writerText(source !== null ? { by: "repository", id: source } : writerOf(actor, null)) } });
+    history: { before: null, after: null, by: writerText(source !== null ? { by: "repository", id: source } : writerOf(actor, null)), via: source !== null ? null : currentVia() } });
   return gone;
 }
 

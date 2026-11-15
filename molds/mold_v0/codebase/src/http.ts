@@ -496,7 +496,10 @@ export function createApp() {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    // mold_v0-310: what a workspace agent session's tool calls write is marked with its wake (src/record-runs.ts links it).
+    const run = org.agentSession?.run;
+    if (run) { const { asVia } = await import("./record-areas.js"); await asVia(`run:${run}`, () => transport.handleRequest(req, res, req.body)); }
+    else await transport.handleRequest(req, res, req.body);
   };
   const wwwAuthenticate = (tokenSent = false) => mcpOAuth.oauthOn() ? mcpOAuth.wwwAuthenticate(tokenSent ? "invalid_token" : undefined) : oauthServer()
     ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${MCP_URL()}/.well-known/oauth-protected-resource"`

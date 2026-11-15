@@ -1064,6 +1064,11 @@ export const DetailRelatedSchema = z.object({
 export const DetailRunsSchema = z.object({
   kinds: z.array(name).min(1).max(20).optional(),
   limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
+  /**
+   * mold_v0-310: also the runs and workspace agent sessions that created or changed the record (src/record-runs.ts), each
+   * linked to its page, under "Made and changed by" (the header's "Made by" line names only the first).
+   */
+  wrote: z.boolean().optional(),
 }).strict();
 
 /**

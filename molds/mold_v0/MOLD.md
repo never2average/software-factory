@@ -4062,6 +4062,52 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   secret. Tests: `scripts/log-drain-test.ts`.
 - Tests: `scripts/self-improvement-test.ts`, `scripts/nested-runs-test.ts`, `scripts/nested-runs-review-test.ts` (as root).
 
+## Records and the runs that wrote them (mold_v0-310)
+
+Under `record_pages` (sessions also need `agent_harness`): a workspace record links to the job run or workspace agent
+session that made or changed it, and a run or session lists the records it wrote. One module reads both ways,
+`src/record-runs.ts`.
+
+- **What links.** A write's writer (`workspace_records.written_by` / `updated_by`, `record_changes.by`, mold_v0-236 and
+  mold_v0-256) already names a job run (`run:run_<id>`; its workspace hook writes `run:run:run_<id>`) and a program's
+  result (`run:program:<program>:<handle>`; the handle's child session, else the session that spawned it). Those are read
+  as they are, older rows included. A person's write, staff, an import, the email intake, a pack's tool or route outside a
+  session and the shell link nothing ("Added by" still says who).
+- **What is stored, and why one migration.** A workspace agent session acts as the person who started it (`people:<id>`)
+  or calls a pack's tool (`run:tool:<name>`), so its writer cannot say the session. `sql/migrations/0071_record_runs.sql`
+  adds `via` beside the writer, never instead of it: `workspace_records.written_via` / `updated_via` and
+  `record_changes.via`, `"run:<run id>"` of the session's wake whose tool call made the write (`src/http.ts` wraps a call
+  carrying a session token in `asVia`; the record store and the history listener write it). The run names its session
+  (`runs.harness_session_id`). Partial indexes on the run writers and the vias find a run's or a session's records inside
+  a workspace. Rollback: `sql/rollback/0071_record_runs.sql` drops the three columns and the six indexes; the writers stay.
+- **Served.** `GET /api/records/_page/<area>/<key>` answers `writers: {made, changed}` (each a `RunLink`: `kind` `run` or
+  `session`, `id`, `title` (a run's kind in words, a session's title), `status`, `at`, `href`, a session's `run_id` and a
+  program's `program`); a history line its `run`. `GET /api/runs/<id>/page` lists what the run wrote among its related
+  records ("Created", "Changed"; a wake's tool calls included). `GET /api/agent/<id>/records` answers the records a
+  session wrote: its wakes' writes and the results of the programs it ran or that ran as it (`{records: [{area, key,
+  title, label, how, at}], total}`, the newest 100).
+- **Who sees what.** Every query is the workspace's own (`org_id`, under row-level security): another workspace's run or
+  session is not found, and its record written under the same ids links nothing. A run whose pack's MCP settings withhold
+  its status is never linked; a session only while the agent is on. A record is listed only when the person may read it
+  (its area's read permission and its own visibility, `getFor`).
+- **Drawn.** The record header's line says "Made by the run <title>" / "the agent session <title>" / "the program <name>
+  in the agent session <title>" beside "Added by", and "Changed by" the latest other one (`web/src/features/records/
+  run-link.tsx`); a history line "<who> in the agent session <title> changed …"; the run page's Related tab puts "Records
+  it wrote" first; the agent session page's menu has "Records it wrote".
+- **Pack config.** A layout's runs section may also list the runs and sessions that made or changed the record:
+
+  ```json
+  { "title": "Runs", "runs": { "kinds": ["rebuild"], "limit": 5, "wrote": true } }
+  ```
+
+  `wrote` (optional, default off) adds "Made and changed by" under the section's runs and sessions, each linked, marked
+  Made or Changed (`DetailRunsSchema`; `packs/pack.schema.json` regenerated).
+
+Proof: `tsx scripts/record-runs-test.ts` (writer forms; a record's Made by / Changed by / history links / `wrote` for a
+job run, its hook, an agent session's wake and a program's child session; a run's and a session's records; a record the
+person may not read; another workspace), with `npm run test:record-pages`, `npm run test:run-page`,
+`npm run test:nested-runs` and `scripts/agent-dock-test.ts` unchanged.
+
 ## Early access form (mold_v0-266, mold_v0-289)
 
 The early-access (request-access) form is one JSON config end to end. It can be declared in the app's pack or spec, it is what the staff table reads and writes, and it drives the public form, the validation, the stored request, the requests list and its side panel, the export and the notification email, with no per-field code: a field added in the table appears everywhere without a deploy. With nothing saved and nothing declared, the form is exactly what the build declares, drawn by the same code.

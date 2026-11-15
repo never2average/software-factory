@@ -6,7 +6,9 @@
  *
  *   GET  /api/records/_page/<area>/<key>[?tab=<id>]
  *        {actions, sections}: the page's actions this person may take on the record (each with why it is disabled, when
- *        it is), and the open tab's related lists and runs (a section the person may not read: {hidden: true})
+ *        it is), and the open tab's related lists and runs (a section the person may not read: {hidden: true});
+ *        mold_v0-310: `writers` {made, changed}, the run or agent session that made the record and those that changed it
+ *        (src/record-runs.ts), and each history line's `run`
  *   POST /api/records/_page/<area>/<key>/actions/<id>
  *        take one of them: start_run {input} (a run of the kind on this record, started as its generated start tool
  *        starts one; the run carries the record: src/runs.ts onRecord), move {to}, edit {title, data}, delete,
@@ -35,6 +37,7 @@ import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { packs } from "./packs.js";
 import { personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
+import { lineLinks, recordWriters } from "./record-runs.js";
 import { asAction, findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 const listForWorkspace = listFor;
 import { withTenant } from "./tenant-scope.js";
@@ -401,7 +404,9 @@ export async function byWords(s: Session) {
 async function historyOf(org: number, area: RecordArea, key: string, h: { fields?: string[]; limit?: number }, before: number | null, by: (id: string | null) => string) {
   const got = await recordHistory(org, area, key, { limit: h.limit ?? 20, before, fields: h.fields ?? null });
   const person = (id: string) => by(id);
-  return { more: got.more, changes: got.lines.map((l) => ({ id: l.id, at: l.at, action: l.action, by: changedByWords(l.by, person), title: l.title, changes: l.changes })) };
+  // mold_v0-310: each line's run or agent session, linked (src/record-runs.ts), when the person may open it.
+  const runs = await lineLinks(org, got.lines);
+  return { more: got.more, changes: got.lines.map((l, i) => ({ id: l.id, at: l.at, action: l.action, by: changedByWords(l.by, person), ...(runs[i] ? { run: runs[i] } : {}), title: l.title, changes: l.changes })) };
 }
 
 export function recordPageRouter(): Router {
@@ -482,6 +487,7 @@ export function recordPageRouter(): Router {
     const ti = layout.tabs.indexOf(tab);
     const sections: Record<string, unknown> = {};
     let by: ((id: string | null) => string) | null = null;
+    let writers: Awaited<ReturnType<typeof recordWriters>> | null = null;
     for (const [si, s] of tab.sections.entries()) {
       const id = `${ti}-${si}`;
       if (s.related) {
@@ -513,7 +519,10 @@ export function recordPageRouter(): Router {
         // mold_v0-261 (flag agent_harness): the workspace agent sessions started from this record, beside its runs.
         const H = await import("./harness-sessions.js");
         const ss = await H.recordSessions(org, { area: area.name, key: record.key }, H.actorOf(session(res)), s.runs!.limit ?? 5);
+        // mold_v0-310: `wrote`: the runs and sessions that made or changed it too (the header's writers, read once).
+        if (s.runs.wrote) writers ??= await recordWriters(org, area, record.key);
         sections[id] = { total: got.total - (got.runs.length - shown.length), runs: shown.map(({ requested_by, ...x }) => ({ ...x, by: by!(requested_by) })),
+          ...(s.runs.wrote ? { wrote: [...(writers!.made ? [{ ...writers!.made, how: "Made" }] : []), ...writers!.changed.map((x) => ({ ...x, how: "Changed" }))] } : {}),
           ...(ss.total ? { sessions: { total: ss.total, rows: ss.sessions.map((x) => ({ id: x.id, title: x.title, phase: x.phase, profile: x.profile, started_by: x.mine ? "You" : x.started_by,
             spent_usd: x.spent_usd, budget_usd: x.budget_usd, created_at: x.created_at, last_activity_at: x.last_activity_at })) } } : {}) };
       } else if (s.history) {
@@ -522,7 +531,9 @@ export function recordPageRouter(): Router {
         sections[id] = await historyOf(org, area, record.key, s.history, null, by);
       }
     }
-    return { actions: await pageActions(area, record, actor, { org }), sections, facts };
+    // mold_v0-310: the run or agent session that made the record and those that changed it since (the header's "Made by").
+    writers ??= await recordWriters(org, area, record.key);
+    return { actions: await pageActions(area, record, actor, { org }), sections, facts, writers };
   }));
 
   // mold_v0-256: a history section's older lines (Show more): ?section=<tab>-<section>&before=<line id>.

@@ -7,7 +7,8 @@
 //   tabs         each shown only when it has something (?tab=): Timeline (its events in the event/log viewer, following
 //                while it runs), Agent (harness, model, turns, tokens and cost by model), Tools (each call, its input
 //                and output collapsed), Results (its required outputs, the checks' results), Files (what it wrote, as a
-//                tree with each file's facts or preview), Related (the records it ran on, checked, created or changed)
+//                tree with each file's facts or preview), Related (the records it ran on, checked, created or changed;
+//                mold_v0-310: those it wrote first, as "Records it wrote")
 // While the run is queued or running the page asks for new events every two seconds (GET /api/runs/<id>/events?after=)
 // and stops once it ends (reading the whole page once more for its final results, files and spend).
 import Link from 'next/link';
@@ -33,7 +34,7 @@ import { formatValue } from '@/features/tabs/charts';
 import { RESULT_LABELS, runStatusText } from '@/features/tabs/run-rows';
 import { cn } from '@/lib/utils';
 
-import { RUN_POLL_MS, costWords, eventLines, ranFor, runTabs, sessionHref, TAB_WORDS, LIVE, type EventLine, type ModelUsage, type Ref, type RunHead, type RunPageData, type RunTab, type Since, type ToolCall } from './run-view';
+import { RUN_POLL_MS, costWords, eventLines, ranFor, runTabs, wroteIt, sessionHref, TAB_WORDS, LIVE, type EventLine, type ModelUsage, type Ref, type RunHead, type RunPageData, type RunTab, type Since, type ToolCall } from './run-view';
 export type { RunPageData } from './run-view';
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -419,11 +420,22 @@ function FilesTab({ files }: { files: NonNullable<RunPageData['files']> }) {
   );
 }
 
+/** mold_v0-310: the records it created or changed first, as "Records it wrote"; then the others it ran on, targeted or checked. */
 function RelatedTab({ related }: { related: RunPageData['related'] }) {
+  const wrote = related.filter(wroteIt), others = related.filter((x) => !wroteIt(x));
   return (
-    <Section id='related' title='Records'>
-      <ul className='divide-y' data-run-related=''>
-        {related.map((x) => {
+    <>
+      {wrote.length > 0 && <RelatedList id='wrote' title='Records it wrote' rows={wrote} />}
+      {others.length > 0 && <RelatedList id='related' title={wrote.length ? 'Other records' : 'Records'} rows={others} />}
+    </>
+  );
+}
+
+function RelatedList({ id, title, rows }: { id: string; title: string; rows: RunPageData['related'] }) {
+  return (
+    <Section id={id} title={title}>
+      <ul className='divide-y' data-run-related={id === 'wrote' ? 'wrote' : ''}>
+        {rows.map((x) => {
           const h = recordHref(x);
           return (
             <li key={`${x.area}/${x.key}`} className='flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6' data-related-record={x.key}>

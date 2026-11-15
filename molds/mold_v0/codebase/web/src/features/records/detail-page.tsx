@@ -23,6 +23,7 @@
 import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
+import { RunLinkText } from './run-link';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
@@ -409,6 +410,8 @@ const runHref = (_pack: string, id: string) => `/app/runs/${encodeURIComponent(i
 /** The record's runs (mold_v0-254): newest first, at most its limit, each with its state, timing, cost and who started it. */
 function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: RunsData | undefined }) {
   const runs = data?.runs ?? [];
+  // mold_v0-310 (`wrote`): the runs and agent sessions that made or changed it.
+  const wrote = data?.wrote ?? [];
   // mold_v0-261 (flag agent_harness): the workspace agent sessions started from this record (its start_agent actions).
   const sessions = data?.sessions?.rows ?? [];
   if (page.data && !data) return null;
@@ -425,7 +428,7 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
       link={tab && data && data.total > runs.length ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
-        : !runs.length && !sessions.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
+        : !runs.length && !sessions.length && !wrote.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
         : (<>
           {runs.length > 0 && <>
           <div className='hidden overflow-x-auto md:block'>
@@ -460,8 +463,29 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
           </ul>
           </>}
           {sessions.length > 0 && <RecordSessions rows={sessions} total={data?.sessions?.total ?? sessions.length} />}
+          {wrote.length > 0 && <RecordWriterList rows={wrote} top={runs.length > 0 || sessions.length > 0} />}
         </>)}
     </ListCard>
+  );
+}
+
+/** The runs and agent sessions that made or changed a record (mold_v0-310, a runs section's `wrote`): each opens its page. */
+function RecordWriterList({ rows, top }: { rows: NonNullable<RunsData['wrote']>; top: boolean }) {
+  return (
+    <div className={cn(top && 'border-t')} data-record-writers=''>
+      <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>Made and changed by</p>
+      <ul className='divide-y'>
+        {rows.map((x) => (
+          <li key={`${x.kind}:${x.id}`} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-writer={x.id}>
+            <span className='flex min-w-0 flex-col gap-0.5'>
+              <Link href={x.href} className='font-medium break-words underline-offset-4 hover:underline'>{x.title}</Link>
+              <span className='text-muted-foreground text-xs'>{x.kind === 'run' ? 'Run' : x.program ? `Program ${x.program}, agent session` : 'Agent session'} · <DateText v={x.at} /></span>
+            </span>
+            <ToneBadge color={x.how === 'Made' ? 'success' : 'info'}>{x.how}</ToneBadge>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -608,6 +632,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
     .filter((x) => (x.computed || !!x.f) && factShown(x, record.data, record.clocks, page.data?.facts?.[String(x.i)]));
   const notices = shownNotices(layout, record.data, record.clocks, page.data?.facts); // mold_v0-298: a notice may test a computed fact
   const added = h.creator !== false && provenance?.by ? addedByWords(provenance.by) : null;
+  const made = h.creator !== false ? page.data?.writers?.made ?? null : null, lastRun = h.creator !== false ? page.data?.writers?.changed[0] ?? null : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
   const sectionId = (i: number) => `detail-${tabId(tab.label)}-${i}`;
@@ -665,6 +690,9 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
           <p className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-4 text-xs' data-record-meta=''>
             {added && <span data-record-creator=''>Added by <span className='text-foreground'>{added}</span></span>}
             {added && <span aria-hidden>·</span>}
+            {/* mold_v0-310: the run or agent session it came from, and the latest one that changed it since, linked. */}
+            {made && <><span data-record-made-by=''>Made by <RunLinkText link={made} /></span><span aria-hidden>·</span></>}
+            {lastRun && <><span data-record-changed-by=''>Changed by <RunLinkText link={lastRun} /></span><span aria-hidden>·</span></>}
             <span className='min-w-0 break-all'>ID <span className='text-foreground font-mono'>{record.key}</span></span>
             {record.version && <><span aria-hidden>·</span><span>Version <span className='text-foreground'>{record.version}</span></span></>}
             {updated && <><span aria-hidden>·</span><span>Updated <DateText v={record.updated_at} /></span></>}
