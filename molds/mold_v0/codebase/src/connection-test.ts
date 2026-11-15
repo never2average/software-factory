@@ -55,7 +55,7 @@ export function setResolverForTest(r: Resolver | null) { resolver = r ?? systemR
  */
 function standin(): string | null {
   const v = ENV.APP_CONNECTION_TEST_STANDIN;
-  if (!v || process.env.NODE_ENV === "production" || process.env.APP_TEST_WORLD !== "1") return null;
+  if (!v || process.env.NODE_ENV === "production" || ENV.APP_TEST_WORLD !== "1") return null;
   try { const u = new URL(v); return u.protocol === "http:" && u.hostname === "127.0.0.1" ? v.replace(/\/$/, "") : null; } catch { return null; }
 }
 
