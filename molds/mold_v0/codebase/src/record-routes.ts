@@ -42,7 +42,7 @@ import { customerSession, type Session } from "./app.js";
 import type { GeneratedOp } from "./mcp-catalog.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { tabAreas } from "./metric-spec.js";
-import { PackError, type Tab } from "./pack-api.js";
+import { PackError, personSets, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
 import { anyArea, discardSharedFile, mountFileRoutes, recordUploadMax, uploadMax, uploadSharedFile } from "./record-files.js";
@@ -152,7 +152,7 @@ export function recordAdminRouter(): Router {
       repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
       // mold_v0-282 (flag record_resources): a database field takes no value (the platform creates it), so the form leaves
       // it out and says instead what is created (mold_v0-285: a schema of the record's own in the app's own database).
-      fields: a.fields.filter((f) => f.type !== "database").map(formField),
+      fields: a.fields.filter((f) => f.type !== "database" && personSets(f)).map(formField), // mold_v0-309: nor a field only the app's actions set
       ...(resourcesShown(a) ? { resources: await (await import("./record-resources.js")).formResources(a) } : {}),
       // mold_v0-271: the most bytes a file staff upload into its file fields may have (null: it takes none).
       ...(uploadMax(a, true) !== null && (create || edit) ? { upload_max: uploadMax(a, true) } : {}),

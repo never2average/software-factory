@@ -33,9 +33,9 @@ import { featureOn } from "./features.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { packs } from "./packs.js";
-import { ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
+import { personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
-import { findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
+import { asAction, findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 const listForWorkspace = listFor;
 import { withTenant } from "./tenant-scope.js";
 
@@ -185,7 +185,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       case "edit": {
         // mold_v0-305: an area with encrypted fields is edited too (each a secret input left empty: its value is kept).
         if (!writes || !may(area, "update", actor) || areaOpWithheld(area.name, "update")) continue;
-        const fields = area.fields.filter((f) => f.type !== "file" && f.name !== area.lifecycle?.field);
+        // mold_v0-309: a field only the app's actions set is not the form's (its stored value is kept).
+        const fields = area.fields.filter((f) => f.type !== "file" && f.name !== area.lifecycle?.field && personSets(f));
         out.push({ ...base, label: x.label ?? "Edit", disabled: unavailable, ...(opts.withForms === false ? {} : { fields: fields.map(formField) }) });
         break;
       }
@@ -273,7 +274,7 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const singular = target.label.replace(/ies$/i, "y").replace(/(?<!s)s$/i, "");
         const { uploadMax } = await import("./record-files.js");
         out.push({ ...base, label: x.label ?? `Add ${singular.charAt(0).toLowerCase()}${singular.slice(1)}`, disabled: unavailable,
-          create: { area: target.name, label: target.label, values, ...(opts.withForms === false ? {} : { fields: target.fields.map(formField), upload_max: uploadMax(target),
+          create: { area: target.name, label: target.label, values, ...(opts.withForms === false ? {} : { fields: target.fields.filter(personSets).map(formField), upload_max: uploadMax(target),
             ...((target as { key_from_title?: boolean }).key_from_title ? { key_from_title: true } : {}) }) } });
         break;
       }
@@ -621,7 +622,8 @@ export function recordPageRouter(): Router {
         // mold_v0-305: never a key in the answer; the bucket's own words, cleaned (src/storage.ts bucketErrorInWords).
         if (a.disabled) throw new PackError(a.disabled, 409);
         const W = await import("./workspace-storage.js");
-        return W.testStorageRecord(session(res).org, record.key, actor);
+        // mold_v0-309: the app's own action: it may set the fields `set_by: "action"` (the test's status and date).
+        return asAction(() => W.testStorageRecord(session(res).org, record.key, actor));
       }
       default:
         throw new PackError(`${a.label} happens in the browser: nothing to send`, 400);

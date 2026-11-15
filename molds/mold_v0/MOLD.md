@@ -3611,6 +3611,37 @@ on), `npm run test:console-tabs` (a laid-out build's console typechecks), `npm r
 `scripts/fixtures/packs/fixture_pages` (projects, environments, builds), whose pages a lane world draws in light and dark
 at 1440 and 390 px with each copy's toast and the clipboard read back.
 
+## Record display (mold_v0-309)
+
+Generic display rules and pack options, all optional (a pack that names none reads as before, but for the rules):
+
+- **Facts**: `{"field": "approver", "hide_empty": true}` leaves a fact out while it has no value (a computed count of 0
+  too; else it reads "—"); `{"field": "failure", "when": {"field": "status", "equals": "failed"}}` shows it only while
+  its condition holds (a section's condition, checked at build). A section's `when` may also test a computed header
+  fact (`{"fact": 3, "empty": false}`), as a notice's may.
+- **Units**: a number field's or a fact's `unit` may be `"percent"` (a share from 0 to 1: 0.024 reads "2.4%", as a
+  metric's) or `"percent_100"` / `"%"` (already 0 to 100). `ms` reads "240 ms" under a second, then "1.2s" (one decimal
+  under 10 s). List cells group digits ("4,210") as the record page does.
+- **Dates**: one rule on a record page, its lists and panels: within 7 days relative words, the full date on hover;
+  further off the day ("15 Nov 2026"). Facts, sections, related tables, the Deadlines card and the History tab alike; a
+  log's change in the History tab is its entries table.
+- **Fields**: `"set_by": "action"` keeps a field only the app's actions set (a run, a pack tool, an index, a page action
+  such as Test storage) out of every Add and Edit form; a person's write sending another value is refused (409), one
+  leaving it out keeps the stored value; never with `required`. A text field's `"labels": {"probe-iac": "Infrastructure
+  probe"}` shows known values in words (an unknown value as stored; the value is kept as is).
+- **Tables**: a table section's `columns` may be `{"key": "repoId", "label": "Repository"}`; a key in words writes short
+  words in capitals ("Repo ID", "URL", "CI system").
+- **Runs tabs**: `"filter": {"kind": "scan_repo"}` or `{"kind": {"in": ["scan_repo", "scan_iac"]}}` lists only those job
+  kinds' runs; a run's target is its record's title, linked.
+- **Titles**: a reference's title in a list, a record's page or a related list is the record's title as the reader reads
+  it: a sealed area's title opened (never its ciphertext); a row titled only by its key takes a merged tab's partner's
+  title (a workspace record matched to a library record), and so does a merged tab's row.
+- **Lane samples** (`molds/mold_v0/testing/console/seed.mts` `honourRules`): a lifecycle's field its initial state, the
+  workspace storage area a bucket and endpoint of its check's shape (never used), a required repository owner/name;
+  an area whose `on_save` rules refuse generic values is still skipped, with the reason.
+
+Proof: `npm run test:record-display`.
+
 ## Record pages, part 2: related lists, runs, actions (mold_v0-254)
 
 Under the same flag (`record_pages`, off by default; off, `/api/records/_page` answers nothing and the generated files

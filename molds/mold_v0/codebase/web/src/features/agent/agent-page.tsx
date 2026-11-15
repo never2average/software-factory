@@ -301,7 +301,9 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
 
 /** A program this person may start (src/program-start.ts StartableProgram). */
 interface StartableProgram { id: string; name: string; description: string; icon: string; version: number; inputs: Record<string, unknown>; via: 'session' | 'runner'; profile: string }
-type InputProp = { type?: string; description?: string; enum?: unknown[] };
+type InputProp = { type?: string; title?: string; description?: string; enum?: unknown[] };
+/** mold_v0-309: an input's label: its schema title, else its name in words ("target_url" reads "Target url"). */
+export const inputLabel = (name: string, prop: InputProp) => (prop.title?.trim() || name.replace(/[_-]+/g, ' ').trim().replace(/^./, (c) => c.toUpperCase()));
 /** The inputs a form can ask one by one (each a string, number, integer or boolean), or null: the JSON box instead. */
 function simpleInputs(schema: Record<string, unknown>): { name: string; prop: InputProp; required: boolean }[] | null {
   const props = (schema.properties ?? {}) as Record<string, InputProp>;
@@ -355,7 +357,8 @@ function RunProgramDialog({ programs, call, onOpenChange, onStarted }: { program
             </NativeSelect>
           </FormRow>
           {fields ? fields.map((f) => (
-            <FormRow key={f.name} label={`${f.name.replace(/_/g, ' ')}${f.required ? '' : ' (optional)'}`} htmlFor={`agent-run-input-${f.name}`}>
+            // mold_v0-309: each input by its schema title (else its name in words), its description as the hint under it.
+            <FormRow key={f.name} label={`${inputLabel(f.name, f.prop)}${f.required ? '' : ' (optional)'}`} htmlFor={`agent-run-input-${f.name}`} hint={f.prop.description || undefined}>
               {f.prop.type === 'boolean'
                 ? <input id={`agent-run-input-${f.name}`} type='checkbox' className='size-4' checked={values[f.name] === true} onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.checked }))} />
                 : Array.isArray(f.prop.enum)
@@ -364,7 +367,7 @@ function RunProgramDialog({ programs, call, onOpenChange, onStarted }: { program
                       {f.prop.enum.map((o) => <NativeSelectOption key={String(o)} value={String(o)}>{String(o)}</NativeSelectOption>)}
                     </NativeSelect>
                   : <Input id={`agent-run-input-${f.name}`} type={f.prop.type === 'string' ? 'text' : 'number'} required={f.required} value={String(values[f.name] ?? '')}
-                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))} placeholder={f.prop.description ?? ''} />}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))} />}
             </FormRow>
           )) : p && (
             <FormRow label='Inputs (JSON)' htmlFor='agent-run-inputs'>

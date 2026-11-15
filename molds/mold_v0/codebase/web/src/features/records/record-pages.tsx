@@ -117,7 +117,17 @@ export function fieldText(f: RecordFieldSpec | undefined, v: unknown, recordKey?
   if (f?.type === 'enum') return optionLabel(f, v);
   if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10);
+  // mold_v0-309: a text field's known value in its words (pack field `labels`); any other as stored.
+  if (f?.type === 'text' && typeof v === 'string' && f.labels?.[v]) return f.labels[v]!;
   return cell(v, recordKey);
+}
+/**
+ * mold_v0-309: a value as a cell, a peek or a change shows it (fieldText's words, kept raw for search and CSV): a number
+ * with its digits grouped ("4,210"), as a record's page shows it.
+ */
+export function shownText(f: RecordFieldSpec | undefined, v: unknown, recordKey?: string): string {
+  if (f?.type === 'number' && !f.encrypted && (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))))) return numberWords(v);
+  return fieldText(f, v, recordKey);
 }
 /** A list cell's short line for a log or timeline (mold_v0-298): how many entries and the latest; null for anything else. */
 function logCell(f: RecordFieldSpec | undefined, v: unknown): string | null {
@@ -206,7 +216,7 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         if (unit && r.data[name] != null) return <span className='tabular-nums'>{moneyOr(r.data[name], unit)}</span>;
         // mold_v0-298: a date as the console says dates (relative when near, the day otherwise; the exact time on hover).
         if (type === 'date' && !f?.encrypted && typeof r.data[name] === 'string' && r.data[name] !== '') return <When d={r.data[name] as string} />;
-        const t = logCell(f, r.data[name]) ?? fieldText(f, r.data[name], r.key);
+        const t = logCell(f, r.data[name]) ?? shownText(f, r.data[name], r.key);
         return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums', type === 'date' && 'whitespace-nowrap')}>{t}</span> : dash;
       }
     };
@@ -279,7 +289,9 @@ export function FieldValue({ area, base, f, v, recordKey, titles }: { area: Reco
     if (docs) return <JsonValue v={docs} recordKey={recordKey} empty={dash} />;
   }
   if (!f.encrypted && f.type !== 'file' && isDocument(v)) return <JsonValue v={v} recordKey={recordKey} empty={dash} />;
-  return <>{fieldText(f, v, recordKey) || dash}</>;
+  // mold_v0-309: a date by the console's one rule (near: relative words; else the day; the exact date on hover).
+  if (f.type === 'date' && !f.encrypted && typeof v === 'string' && v !== '') return <When d={v} />;
+  return <>{shownText(f, v, recordKey) || dash}</>;
 }
 
 /** The empty state inside the table: what fills the area and, for staff, where to fill it now. */
@@ -365,7 +377,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           }
           const unit = f?.type === 'number' ? (() => { const from = recordAreas.find((a) => a.name === c.area); return from ? columnUnit(from, f.name) : f.unit; })() : undefined;
           if (unit) return <span className='tabular-nums' data-related-cell={c.id}>{moneyOr(v, unit)}</span>;
-          return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : logCell(f, v) ?? fieldText(f, v, r.key)}</span>;
+          return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : logCell(f, v) ?? shownText(f, v, r.key)}</span>;
         }
       };
     });

@@ -12,8 +12,11 @@ import { fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { cn } from '@/lib/utils';
 import { diffCounts, foldDiff, isLongText, lineDiff } from './code-text';
-import { CHANGE_WORDS, columnUnit, dateWords, numberWords, type FieldChange, type HistoryData, type RecordChangeView } from './detail-layout';
-import { fieldText, refTarget, refWords } from './record-pages';
+import { CHANGE_WORDS, columnUnit, dateRule, numberWords, type FieldChange, type HistoryData, type RecordChangeView } from './detail-layout';
+import { refTarget, refWords, shownText } from './record-pages';
+import { EntriesTable } from './record-detail-entries';
+import { entriesView } from '@/lib/record-entries';
+import { When } from '@/features/portal/shared';
 
 const ACTION_ICON: Record<RecordChangeView['action'], keyof typeof import('@/components/icons').Icons> = { created: 'add', updated: 'edit', moved: 'arrowRight', deleted: 'trash' };
 
@@ -29,7 +32,32 @@ function ValueText({ area, field, v, titles }: { area: RecordAreaSpec; field: st
   if (refTarget(area, f)) return <>{refWords(v, titles?.[field])}</>;
   // A number with the unit its page gives it (a duration in seconds in words), as the record's own facts read.
   if (f?.type === 'number') { const unit = columnUnit(area, field); if (unit) return <>{numberWords(v, unit)}</>; }
-  return <>{fieldText(f, v) || String(v)}</>;
+  // mold_v0-309: a date by the page's one rule (near: relative words; else the day), never the stored "2026-11-15".
+  if (f?.type === 'date' && !f.encrypted && typeof v === 'string') return <When d={v} />;
+  return <>{shownText(f, v) || String(v)}</>;
+}
+/** mold_v0-309: a log or timeline's entries (a list of entries, or JSON lines), as the record's own table; else null. */
+const logOf = (area: RecordAreaSpec, field: string, v: unknown) => {
+  const f = area.fields.find((x) => x.name === field);
+  return !f || f.encrypted || f.type === 'file' || v == null || v === '' ? null : entriesView(v);
+};
+/** mold_v0-309: a log's change: its entries before (muted) and after, each the entries table the record's page draws. */
+function LogChange({ area, c, action, label }: { area: RecordAreaSpec; c: FieldChange; action: RecordChangeView['action']; label: string }) {
+  const before = action === 'created' ? null : logOf(area, c.field, c.before), after = logOf(area, c.field, c.after);
+  return (
+    <div className='flex min-w-0 flex-col gap-3' data-history-log=''>
+      {action !== 'created' && (
+        <div className='text-muted-foreground flex min-w-0 flex-col gap-1' data-history-before=''>
+          <span className='text-xs'>Before</span>
+          {before ? <EntriesTable view={before} raw={c.before} label={`${label} before`} /> : <ValueText area={area} field={c.field} v={c.before} />}
+        </div>
+      )}
+      <div className='flex min-w-0 flex-col gap-1' data-history-after=''>
+        {action !== 'created' && <span className='text-muted-foreground text-xs'>After</span>}
+        {after ? <EntriesTable view={after} raw={c.after} label={action === 'created' ? label : `${label} after`} /> : <ValueText area={area} field={c.field} v={c.after} />}
+      </div>
+    </div>
+  );
 }
 
 /** A long text's change as a line diff. */
@@ -62,6 +90,13 @@ function FieldRow({ area, c, action, titles }: { area: RecordAreaSpec; c: FieldC
     <div className='grid gap-1 sm:grid-cols-[minmax(8rem,12rem)_1fr] sm:gap-4' data-history-field={c.field} data-redacted=''>
       <dt className='text-muted-foreground text-xs font-medium sm:pt-0.5'>{label}</dt>
       <dd className='text-muted-foreground flex items-center gap-1.5 text-sm'><Icons.lock aria-hidden className='size-3.5' />Changed · encrypted, so its values are not shown</dd>
+    </div>
+  );
+  // mold_v0-309: a log's entries as the entries table (never one flattened line), before and after.
+  if (logOf(area, c.field, c.after) || (action !== 'created' && logOf(area, c.field, c.before))) return (
+    <div className='grid gap-1 sm:grid-cols-[minmax(8rem,12rem)_1fr] sm:gap-4' data-history-field={c.field}>
+      <dt className='text-muted-foreground text-xs font-medium sm:pt-0.5'>{label}</dt>
+      <dd className='min-w-0 text-sm'><LogChange area={area} c={c} action={action} label={label} /></dd>
     </div>
   );
   const long = isLongText(c.before, c.after) && typeof (c.before ?? '') === 'string' && typeof (c.after ?? '') === 'string';
@@ -156,7 +191,7 @@ export function HistoryList({ area, data, url, empty, titles: own }: { area: Rec
       <ol className='flex flex-col'>
         {all.map((h, i) => {
           const Icon = (Icons as Record<string, React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>>)[ACTION_ICON[h.action]]!;
-          const when = dateWords(h.at);
+          const when = dateRule(h.at);
           const fields = [...(h.title ? [{ field: '$title', label: 'Title', before: h.title.before, after: h.title.after }] : []), ...h.changes];
           return (
             <li key={h.id} className='relative flex gap-3 px-4 py-4 sm:px-6' data-history-change={h.action}>
@@ -169,7 +204,7 @@ export function HistoryList({ area, data, url, empty, titles: own }: { area: Rec
                 <p className='text-sm leading-7'>
                   <span className='font-medium'>{h.by}</span>{' '}
                   <span className='text-muted-foreground'>{h.action === 'created' ? 'added it' : h.action === 'deleted' ? 'deleted it' : h.action === 'moved' ? 'moved it' : `changed ${fields.length === 1 ? 'one field' : `${fields.length} fields`}`}</span>
-                  {when && <> <span className='text-muted-foreground'>·</span> <time dateTime={when.iso} title={when.absolute} className='text-muted-foreground'>{when.relative}</time></>}
+                  {when && <> <span className='text-muted-foreground'>·</span> <time dateTime={when.iso} title={when.hover} className='text-muted-foreground'>{when.text}</time></>}
                   <span className='sr-only'> ({CHANGE_WORDS[h.action]})</span>
                 </p>
                 {!!fields.length && h.action !== 'deleted' && (

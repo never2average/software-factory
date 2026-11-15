@@ -233,7 +233,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
 
   const L = await web("features/records/detail-layout.ts");
   assert.deepEqual([L.numberWords(1312, "s"), L.numberWords(45, "s"), L.numberWords(90, "min"), L.numberWords(400, "ms"), L.numberWords(200000, "s"), L.numberWords(87.4, "%"), L.numberWords(1312)],
-    ["21m 52s", "45s", "1h 30m", "0.4s", "2d 7h", "87.4%", "1,312"], "a number with a unit of time reads as a duration");
+    ["21m 52s", "45s", "1h 30m", "400 ms", "2d 7h", "87.4%", "1,312"], "a number with a unit of time reads as a duration (mold_v0-309: under a second in ms, as ms)");
   const builds = { name: "builds", fields: [], detail: areaOf(FIXTURE, "builds").detail };
   assert.deepEqual([L.columnUnit(builds, "duration"), L.columnUnit(builds, "coverage"), L.columnUnit(builds, "tests_passed")], ["s", "%", undefined], "a related list's column takes the unit its area's page gives it");
   assert.deepEqual(L.linkPieces("https://artifacts.example.com/builds/1042/output.tar.gz?sig=abc&exp=1"), ["https://artifacts.example.com/", "builds/", "1042/", "output.tar.gz?", "sig=", "abc&", "exp=", "1"], "an address cut after its slashes, never inside a word");
@@ -296,7 +296,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   const rp = strip(src("features/runs/run-page.tsx")), cv = strip(src("features/records/code-view.tsx")), hs = strip(src("features/records/history-section.tsx")), fb = strip(src("features/records/file-browser.tsx"));
   assert.doesNotMatch(dp, /data-section-count|relatedCountWords|runsCountWords|First \$\{|Latest \$\{/, "no count beside a section's title");
   assert.match(dp, /const unit = f\.type === 'number' \? columnUnit\(target, f\.name\) : undefined;/, "a related list's number with its unit");
-  assert.match(dp, /if \(relative && f\.type === 'url' && typeof v === 'string'\) return <LinkText href=\{v\} \/>;/, "a fact's address through LinkText");
+  assert.match(dp, /if \(fact && f\.type === 'url' && typeof v === 'string'\) return <LinkText href=\{v\} \/>;/, "a fact's address through LinkText");
   assert.match(dp, /linkPieces\(href\)\.map\(\(p, i\) => <span key=\{i\} className='inline-block max-w-full truncate align-bottom'>/, "each piece whole, a long one truncated");
   assert.match(dp, /\[overflow-wrap:normal\] \[word-break:normal\]/, "never broken inside a word");
   assert.doesNotMatch((/export function LinkText\b[\s\S]*?\n\}\n/.exec(dp)?.[0] ?? "").replace(/<TooltipContent[^>]*>/, ""), /break-all|break-words/, "no breaking inside a word on a fact's address (its tooltip shows it whole)");

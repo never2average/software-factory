@@ -2830,7 +2830,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
-  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n  /** mold_v0-289: the unit a number reads with (usd, s, min, %). */\n  unit?: string;\n  /** mold_v0-289: a chips field's values in plain words. */\n  chip_words?: boolean;\n" +
+  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n  /** mold_v0-289: the unit a number reads with (usd, s, min, %). */\n  unit?: string;\n  /** mold_v0-289: a chips field's values in plain words. */\n  chip_words?: boolean;\n  /** mold_v0-309: a text field's known values in words. */\n  labels?: Record<string, string>;\n  /** mold_v0-309: set only by the app's actions (never in a form). */\n  set_by?: 'action';\n" +
   (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
   (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") +
   (FEATURE_ON.record_resources ? "  /** mold_v0-285: a database field's provider: core, a schema of its own in the app's database. */\n  provider?: 'core';\n" : "") + "}\n\n" +
@@ -3071,7 +3071,8 @@ function viewsModule() {
     // A home tab's headline row (mold_v0-203): its declared cards' metrics, so the page draws the row and leaves those
     // numbers out of its number charts below; the cards' own numbers come from the server, as a list tab's.
     ...(t.kind === "overview" && (t.include ?? []).includes("setup") && t.sparklines?.length ? { headline: t.sparklines } : {}),
-    ...(t.filter ? { filtered: true } : {}),
+    // mold_v0-309: a runs or reports tab's job kinds (its filter); an area tab's rows read narrowed by the server.
+    ...(t.filter && (t.kind === "runs" || t.kind === "reports") ? { run_kinds: typeof t.filter.kind === "string" ? [t.filter.kind] : t.filter.kind.in } : t.filter ? { filtered: true } : {}),
     ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
     // The tab's primary action (mold_v0-208): what its button says and opens (the server says who may use it).
@@ -3124,6 +3125,7 @@ function viewsModule() {
     "  headline?: string[];\n" +
     "  /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */\n" +
     "  filtered?: boolean;\n" +
+    "  /** A runs or reports tab's job kinds (mold_v0-309: its filter): only their runs are listed. */\n  run_kinds?: string[];\n" +
     "  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */\n" +
     "  sections?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +

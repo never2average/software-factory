@@ -13,6 +13,11 @@
 //            reference points at gets a few placeholder rows; an area still left empty is listed with the reason.
 //            mold_v0-300: a reference with a `where` names only a row it keeps (the server's own test, conditionHolds);
 //            a required one that keeps none skips its area with the reason, and one area failing never stops the rest.
+//            mold_v0-309: each area's own rules over its values are honoured (honourRules): a lifecycle's field holds its
+//            initial state (a new record starts there; a sample naming another is refused), the declared
+//            workspace storage area gets a bucket name and an https endpoint of the shape its check takes (never used:
+//            use is false, no keys), and a required repository field an owner/name. What is still refused (an area's
+//            on_save rules, a required person or json field) is listed in `skipped` with the reason.
 //   runs     a few runs of the build's job kinds, finished, failed and running, each over a workspace asset record
 //            when the kind reads one (targets.asset), with results against the shared check samples; written straight
 //            into the throwaway database as the platform (the runs engine's own rows), ids run_lane_<n>.
@@ -26,7 +31,10 @@ export const SOURCE = "lane:samples";
 const DAY = 86_400_000;
 
 type Field = { name: string; type: string; options?: (string | { value: string })[]; to?: string; multiple?: boolean; min?: number; max?: number; max_length?: number; required?: boolean; label?: string; where?: unknown };
-type Area = { name: string; pack: string; label: string; scope: string; role: string; fields: Field[]; repo: { kind: string } | null; samples?: { key: string; data?: Record<string, unknown> }[] };
+type Area = { name: string; pack: string; label: string; scope: string; role: string; fields: Field[]; repo: { kind: string } | null; samples?: { key: string; data?: Record<string, unknown> }[];
+  lifecycle?: { field: string; initial: string } | null; on_save?: { check: string; message: string }[] };
+/** The declared workspace storage (src/workspace-storage.ts storageDecl), while the app looks for one. */
+export type StorageRule = { area: string; fields: { bucket: string; endpoint: string; use: string; access_key_id: string; secret_access_key: string; status?: string; tested?: string } } | null;
 /** The keys of an area's rows, those a reference's `where` keeps when one is given (mold_v0-300). */
 type KeysOf = (area: string, where?: unknown) => string[];
 
@@ -65,6 +73,29 @@ export function valueOf(f: Field, n: number, i: number, keysOf: KeysOf, areaName
   }
 }
 
+/**
+ * mold_v0-309: a sample row's values under its area's own rules (exported for scripts/record-display-309-test.ts):
+ *   lifecycle  its field the initial state: the store starts a new record there and refuses any other
+ *   storage    the declared workspace storage area: a bucket name as S3 takes it (lowercase, digits, dashes), an https
+ *              endpoint with no path, `use` false (the lane world's files never go there), no keys, no test result
+ *   repository a required repository field: owner/name (an optional one stays empty, as an optional url does)
+ */
+export function honourRules(a: Pick<Area, "name" | "fields" | "lifecycle">, data: Record<string, unknown>, n: number, storage: StorageRule = null): Record<string, unknown> {
+  const out = { ...data };
+  if (a.lifecycle?.field) out[a.lifecycle.field] = a.lifecycle.initial;
+  if (storage && storage.area === a.name) {
+    const f = storage.fields;
+    out[f.bucket] = `lane-${a.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${n + 1}`.slice(0, 63).replace(/-+$/, "");
+    out[f.endpoint] = "https://storage.example.com";
+    out[f.use] = false;
+    for (const k of [f.access_key_id, f.secret_access_key, f.status, f.tested]) if (k) delete out[k];
+  }
+  for (const fl of a.fields) if (fl.type === "repository" && fl.required && out[fl.name] === undefined) out[fl.name] = `example/${a.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${n + 1}`;
+  return out;
+}
+/** Why an area's write may still be refused by rules the lane world cannot meet with generic values, or "". */
+const rulesWords = (a: Area) => (a.on_save?.length ? ` (its save rules, on_save ${a.on_save.map((r) => r.check).join(", ")}, judge the sample values: a generic value cannot meet them)` : "");
+
 /** A reference or link field and the area it points at (not the area itself). */
 const refsOf = (a: Area) => a.fields.filter((f) => (f.type === "reference" || f.type === "link") && !!f.to);
 
@@ -77,6 +108,8 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   // src/record-areas.ts checkRecord), against the data the lane world wrote for each row.
   const { conditionHolds } = await imp("src/pack-api.ts");
   const areas = ra.recordAreas() as Area[];
+  // mold_v0-309: the declared workspace storage area's own check (bucket name and endpoint shapes), when it is looked for.
+  const storage: StorageRule = await imp("src/workspace-storage.ts").then((w) => (w.workspaceStorageOn?.() ? w.storageDecl() : null)).catch(() => null);
   const seeded = new Map<string, string[]>();
   const rowData = new Map<string, Map<string, Record<string, unknown>>>(); // area -> key -> the data written
   const remember = (area: string, rows: { key: string; data?: Record<string, unknown> }[]) => {
@@ -115,7 +148,7 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
     const ops = Array.from({ length: n }, (_, i) => {
       const data: Record<string, unknown> = {};
       t.fields.forEach((f, j) => { const v = valueOf(f, i, j, keysOf, areaNamed, t.name); if (v !== undefined) data[f.name] = v; });
-      return { key: `${t.name.replace(/_/g, "-")}-lane-${i + 1}`, title: `${singular(t.label)} ${i + 1}`, data };
+      return { key: `${t.name.replace(/_/g, "-")}-lane-${i + 1}`, title: `${singular(t.label)} ${i + 1}`, data: honourRules(t, data, i, storage) };
     });
     try {
       for (const o of ops) await ra.putPlatform(null, t.name, o.key, { title: o.title, version: null, data: o.data }, "put", { source: SOURCE, fingerprint: `lane-placeholder:${o.key}` });
@@ -165,8 +198,9 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
         const v = selfRef && !f.required ? undefined : valueOf(f, selfRef ? Math.max(n - 1, 0) : n, i, selfRef ? self : keysOf, areaNamed, a.name);
         if (v !== undefined) data[f.name] = v;
       });
-      built.set(key, data);
-      return { op: "put", area: a.name, key, title: `${singular(a.label)} ${n + 1}`, data };
+      const kept = honourRules(a, data, n, storage);
+      built.set(key, kept);
+      return { op: "put", area: a.name, key, title: `${singular(a.label)} ${n + 1}`, data: kept };
     });
     // Required references with nothing to point at: said with the reason, rather than a bare refusal from the store.
     const unmet = refsOf(a).filter((f) => f.required && f.to !== a.name && !keysOf(f.to!).length)
@@ -187,7 +221,7 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
       state.set(a.name, "done");
     } catch (e) {
       state.set(a.name, "failed");
-      why.set(a.name, unmet.length ? unmet.join("; ") : (e as Error).message.slice(0, 200));
+      why.set(a.name, unmet.length ? unmet.join("; ") : `${(e as Error).message.slice(0, 200)}${rulesWords(a)}`);
     }
   }
 

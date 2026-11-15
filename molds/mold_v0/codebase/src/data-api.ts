@@ -12,7 +12,7 @@
  * tools of mold_v0-060): each entry names its function, its door, the record action it needs and whether it writes.
  */
 import type { AccountRole } from "./account-roles.js";
-import { PackError, type RecordInput, type RecordOperation, type RecordQuery } from "./pack-api.js";
+import { PackError, personSets, type RecordInput, type RecordOperation, type RecordQuery } from "./pack-api.js";
 import { adminRecords, areaOrThrow, areaSummary, asWriterUnlessSet, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, shareFor, workspaceRecords, type Actor } from "./record-areas.js";
 
 /** Who a workspace call is for: the workspace (from the session or key, never from input), the person's role and id. */
@@ -80,7 +80,7 @@ export const dataApi = {
     const a = areaOrThrow(area);
     const { mayImport } = await import("./record-areas.js");
     const { formField } = await import("./tab-actions.js");
-    return { area: a.name, label: a.label, import: a.scope === "workspace" && mayImport(a, actorOf(c)), fields: a.fields.filter((f) => f.name !== a.lifecycle?.field).map(formField) };
+    return { area: a.name, label: a.label, import: a.scope === "workspace" && mayImport(a, actorOf(c)), fields: a.fields.filter((f) => f.name !== a.lifecycle?.field && personSets(f)).map(formField) }; // mold_v0-309: set_by "action" fields are the app's own
   },
 };
 

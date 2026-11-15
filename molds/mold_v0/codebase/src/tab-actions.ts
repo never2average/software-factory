@@ -34,7 +34,7 @@ import { buildViews } from "./metrics.js";
 import { areaListAction, tabAction, tabRoles, type SpecTab } from "./metric-spec.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { generatedTools, permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema, referenceWhereWords, type TabAction } from "./pack-api.js";
+import { AgentJobKindSchema, JobKindSchema, PackError, personSets, RecordFieldSchema, referenceWhereWords, type TabAction } from "./pack-api.js";
 import { fill } from "./vocabulary.js";
 import { packs } from "./packs.js";
 import { findArea, may, recordAreas } from "./record-areas.js";
@@ -146,7 +146,7 @@ export function tabActionAppRouter(): Router {
     const area = findArea(a.area!), role = roleOf(res);
     const actor = { role, userId: session(res).user ?? null };
     const allowed = !!area && !areaOpWithheld(area.name, "create") && (role === null || canAccount(role, "edit")) && may(area, "read", actor) && may(area, "create", actor);
-    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.map(formField),
+    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.filter(personSets).map(formField), // mold_v0-309: no field only the app's actions set
       // mold_v0-256 (flag record_pages): the Key filled from the Title, where the area says so.
       ...((area as { key_from_title?: boolean }).key_from_title && featureOn("record_pages") ? { key_from_title: true } : {}) } : null, upload_max: area ? uploadMax(area) : null };
   };

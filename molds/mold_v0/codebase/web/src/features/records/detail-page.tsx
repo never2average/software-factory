@@ -43,7 +43,7 @@ import { useInRecordPanel } from '@/components/layout/detail-panel';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
-  addedByWords, BADGE_CLASS, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
+  addedByWords, BADGE_CLASS, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
@@ -58,7 +58,7 @@ import { linesOf } from './log-lines';
 import { LogViewer } from './log-viewer';
 import { FormHost } from '@/features/tabs/tab-action';
 import { areaFieldLabel, findRecordArea } from './registry';
-import { Chips, chipValues, FieldValue, fieldText, refTarget, refWords, type RecordRow } from './record-pages';
+import { Chips, chipValues, FieldValue, fieldText, refTarget, shownText, refWords, type RecordRow } from './record-pages';
 import { inheritedVisibility, ShareButton, VisibilityBadge, visibilityOf } from '@/features/teams/visibility';
 
 type Links = { field: string; area: string; records: { key: string; title: string | null }[] }[];
@@ -101,23 +101,28 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   );
 }
 
-/** A date: relative words, the exact date on hover and focus (and to a screen reader, through <time>). */
-export function DateText({ v, relative }: { v: unknown; relative: boolean }) {
-  const w = dateWords(v);
+/**
+ * A date by the page's one rule (mold_v0-309, ./detail-layout.ts dateRule): within 7 days relative words, else the day
+ * ("15 Nov 2026"); the other form on hover and focus (and to a screen reader, through <time>).
+ */
+export function DateText({ v }: { v: unknown }) {
+  const w = dateRule(v);
   if (!w) return <>{String(v)}</>;
   return (
     <Tooltip>
-      <TooltipTrigger render={<time dateTime={w.iso} tabIndex={0} className='decoration-muted-foreground/50 cursor-default underline decoration-dotted underline-offset-4' />}>
-        {relative ? w.relative : w.absolute}
+      <TooltipTrigger render={<time dateTime={w.iso} tabIndex={0} className='decoration-muted-foreground/50 cursor-default underline decoration-dotted underline-offset-4 whitespace-nowrap' />}>
+        {w.text}
       </TooltipTrigger>
-      <TooltipContent>{relative ? w.absolute : w.relative}</TooltipContent>
+      <TooltipContent>{w.hover}</TooltipContent>
     </Tooltip>
   );
 }
 
 /** A field's value on the laid-out page: by its type, an enum as its badge, a date and a number in words, the rest as everywhere. */
-function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, unit, titles }: {
-  area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; f: RecordFieldSpec; v: unknown; recordKey: string; relative?: boolean; unit?: string;
+function LaidOutValue({ area, base, layout, f, v, recordKey, fact = false, unit, titles }: {
+  area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; f: RecordFieldSpec; v: unknown; recordKey: string;
+  /** A header fact's value (an address wraps at its slashes). */
+  fact?: boolean; unit?: string;
   /** mold_v0-262: a reference's records' titles (the record's ref_titles of this field). */
   titles?: Record<string, string>;
 }) {
@@ -130,12 +135,12 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, u
       {(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(layout, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}
     </span>
   );
-  if (f.type === 'date') return <DateText v={v} relative={relative} />;
+  if (f.type === 'date') return <DateText v={v} />;
   if (f.type === 'number') return isTimeUnit(unit)
     ? <span className='tabular-nums' title={`${numberWords(v)} ${unit}`}>{numberWords(v, unit)}</span>
     : <span className='tabular-nums'>{numberWords(v, unit)}</span>;
   // mold_v0-256: an address in a fact wraps at its slashes (never inside a word), a piece too long for its box truncated.
-  if (relative && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
+  if (fact && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
   // mold_v0-298: a block (FieldValue may draw a log's table), still inline-sized beside a fact's label.
   return <span className='block whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
 }
@@ -223,7 +228,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   // own route answers a workspace area's list as hidden, and the section is not drawn).
   if (s.runs && base !== 'app') return null;
   // mold_v0-262: a section shown only while its condition holds on the record.
-  if (!sectionShown(s, record.data, record.clocks)) return null;
+  if (!sectionShown(s, record.data, record.clocks, page.data?.facts)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
   // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
@@ -317,7 +322,9 @@ function RelatedCell({ target, f, v, recordKey, titles, base = 'app' }: { target
   // mold_v0-256: a number with the unit its own page gives it (a duration in seconds reads "21m 52s", a share "87.4%").
   const unit = f.type === 'number' ? columnUnit(target, f.name) : undefined;
   if (unit) return <span className='tabular-nums' title={isTimeUnit(unit) ? `${numberWords(v)} ${unit}` : undefined} data-unit={unit}>{numberWords(v, unit)}</span>;
-  const t = fieldText(f, v, recordKey);
+  // mold_v0-309: a date by the page's one rule, on one line (never the stored "2026-11-12").
+  if (f.type === 'date' && !f.encrypted) return <DateText v={v} />;
+  const t = shownText(f, v, recordKey);
   return <span className={cn('line-clamp-2', f.type === 'number' && 'tabular-nums')}>{t}</span>;
 }
 
@@ -356,8 +363,8 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
                 {rows.map((r) => (
                   <tr key={r.key} className='hover:bg-muted/40 border-b transition-colors' data-related-row={r.key}>
                     <td className={cn(TD, 'min-w-40')}>
-                      <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
-                      {r.title && r.title !== r.key && <span className='text-muted-foreground block font-mono text-xs break-all'>{r.key}</span>}
+                      {/* mold_v0-309: the title alone (its key on hover), never the key printed under it. */}
+                      <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline' title={r.title && r.title !== r.key ? r.key : undefined}>{r.title || r.key}</Link>
                     </td>
                     {cols.map((f) => <td key={f.name} className={cn(TD, f.type === 'number' && 'text-right')}><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} titles={r.ref_titles?.[f.name]} base={base} /></td>)}
                     <td className={cn(TD, 'w-10 text-right')}><RowActions host={hostOf(r)} actions={r.actions} href={href(r.key)} /></td>
@@ -411,7 +418,7 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   );
   const kind = (r: (typeof runs)[number]) => { const h = runHref(r.pack, r.id); const label = runKindLabel(r.pack, r.kind);
     return h ? <Link href={h} className='font-medium underline-offset-4 hover:underline' data-run-link={r.id}>{label}</Link> : <span className='font-medium'>{label}</span>; };
-  const started = (r: (typeof runs)[number]) => (r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} relative /> : <span className='text-muted-foreground'>—</span>);
+  const started = (r: (typeof runs)[number]) => (r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} /> : <span className='text-muted-foreground'>—</span>);
   const took = (r: (typeof runs)[number]) => duration(runSeconds(r)) || '—';
   return (
     <ListCard id={id} kind='runs' title={s.title}
@@ -468,7 +475,7 @@ function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions'
           <li key={x.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-session={x.id}>
             <span className='flex min-w-0 flex-col gap-0.5'>
               <Link href={`/app/agent?session=${encodeURIComponent(x.id)}`} className='font-medium break-words underline-offset-4 hover:underline'>{x.title}</Link>
-              <span className='text-muted-foreground text-xs'>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} relative /></span>
+              <span className='text-muted-foreground text-xs'>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} /></span>
             </span>
             <span className='flex shrink-0 items-center gap-3 text-xs'>
               <ToneBadge color={x.phase === 'failed' ? 'danger' : x.phase === 'awaiting_approval' ? 'warning' : ['working', 'starting', 'waking', 'waiting'].includes(x.phase) ? 'info' : 'neutral'}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
@@ -504,7 +511,7 @@ function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: Detai
   const v = answer.value;
   const shown = f.type === 'enum' ? <ToneBadge color={badgeColor(tl, f.name, v)}>{optionWords(f, v)}</ToneBadge>
     : f.type === 'number' ? <span className='tabular-nums'>{numberWords(v, fact.unit ?? columnUnit(target, f.name))}</span>
-    : f.type === 'date' ? <DateText v={v} relative />
+    : f.type === 'date' ? <DateText v={v} />
     : <span className='break-words'>{fieldText(f, v)}</span>;
   if (!answer.record) return shown;
   return (
@@ -597,7 +604,8 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const subtitle = field(h.subtitle);
   // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
-    .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden : !!x.f));
+    // mold_v0-309: a fact with hide_empty left out while it has no value, one with `when` while it does not hold.
+    .filter((x) => (x.computed || !!x.f) && factShown(x, record.data, record.clocks, page.data?.facts?.[String(x.i)]));
   const notices = shownNotices(layout, record.data, record.clocks, page.data?.facts); // mold_v0-298: a notice may test a computed fact
   const added = h.creator !== false && provenance?.by ? addedByWords(provenance.by) : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
@@ -649,7 +657,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
                 </FieldCell>
               ) : (
                 <FieldCell key={x.field} label={x.label ?? x.f!.label} copy={copyOf(x.f!, record.data[x.field!])}>
-                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} relative unit={x.unit} titles={record.ref_titles?.[x.field!]} /></span>
+                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} fact unit={x.unit} titles={record.ref_titles?.[x.field!]} /></span>
                 </FieldCell>
               ))}
             </dl>
@@ -659,7 +667,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             {added && <span aria-hidden>·</span>}
             <span className='min-w-0 break-all'>ID <span className='text-foreground font-mono'>{record.key}</span></span>
             {record.version && <><span aria-hidden>·</span><span>Version <span className='text-foreground'>{record.version}</span></span></>}
-            {updated && <><span aria-hidden>·</span><span>Updated <DateText v={record.updated_at} relative /></span></>}
+            {updated && <><span aria-hidden>·</span><span>Updated <DateText v={record.updated_at} /></span></>}
           </p>
         </CardContent>
       </Card>

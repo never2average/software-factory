@@ -34,7 +34,7 @@ export interface DetailSection {
   /** mold_v0-256: a field as highlighted JSON, YAML or text. */
   code?: { field: string; language?: 'json' | 'yaml' | 'text' };
   /** mold_v0-256: a json list field as a table. */
-  table?: { field: string; columns?: string[] };
+  table?: { field: string; columns?: (string | { key: string; label: string })[] };
   /** mold_v0-256: the record's documents and files as a tree with a preview. */
   files?: { fields?: string[] };
   /** mold_v0-262: shown only while this condition holds on the record. */
@@ -68,7 +68,11 @@ export interface DetailActionSpec {
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
 export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition }
-export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed }
+export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed;
+  /** mold_v0-309: left out while it has no value (else "—"). */
+  hide_empty?: boolean;
+  /** mold_v0-309: shown only while this condition holds on the record. */
+  when?: DetailCondition }
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
 /** An area's page layout as the build passes it on (pack.json record_areas[].detail). */
 export interface DetailLayout {
@@ -205,16 +209,35 @@ export function dateWords(v: unknown, now = Date.now()): { relative: string; abs
   return { relative, absolute, iso: dayOnly ? (v as string) : d.toISOString() };
 }
 
+/** Within this many days a date reads in relative words (the console's rule, features/portal/shared.tsx dateLabel). */
+export const NEAR_DAYS = 7;
+/**
+ * mold_v0-309: a record page's one date rule (header facts, sections, the History tab, related lists): within 7 days
+ * relative words ("yesterday", "3 hours ago", "in 2 days"), the exact date on hover; further off the day ("15 Nov
+ * 2026"), its exact form (a time's hour too) and the relative words on hover. Never the stored "2026-11-15".
+ */
+export function dateRule(v: unknown, now = Date.now()): { text: string; hover: string; iso: string; near: boolean } | null {
+  const w = dateWords(v, now);
+  if (!w) return null;
+  const t = Date.parse(w.iso.length === 10 ? `${w.iso}T00:00:00Z` : w.iso);
+  // A day alone is near by calendar day (today's UTC day against its own), a time by its distance from now.
+  const near = w.iso.length === 10 ? Math.abs(Math.round((t - Math.floor(now / DAY) * DAY) / DAY)) <= NEAR_DAYS : Math.abs(t - now) < NEAR_DAYS * DAY;
+  return near ? { text: w.relative, hover: w.absolute, iso: w.iso, near } : { text: w.absolute.replace(/,.*$/, ''), hover: w.absolute.includes(',') ? `${w.absolute} (${w.relative})` : w.relative, iso: w.iso, near };
+}
+
 /** The units of time a number may carry (mold_v0-256): such a number reads as a duration ("21m 52s"), not a count. */
 const TIME_UNITS: Record<string, number> = { ms: 0.001, s: 1, sec: 1, secs: 1, second: 1, seconds: 1, min: 60, mins: 60, minute: 60, minutes: 60, h: 3600, hr: 3600, hrs: 3600, hour: 3600, hours: 3600 };
 /** Whether a unit is one of time (its number reads as a duration). */
 export const isTimeUnit = (unit?: string) => !!unit && unit.trim().toLowerCase() in TIME_UNITS;
 /** mold_v0-300: whether a unit is a currency in dollars (usd, $), which reads "$0.90". */
 export const isCurrencyUnit = (unit?: string) => !!unit && ['usd', '$', 'dollars'].includes(unit.trim().toLowerCase());
-/** A duration in seconds in words: "45s", "21m 52s", "3h 4m", "2d 5h" (under a second: "0.4s"). */
+/**
+ * A duration in seconds in words: "45s", "21m 52s", "3h 4m", "2d 5h"; under 10 s one decimal ("1.2s", "0.4s"; mold_v0-309:
+ * 1180 ms is "1.2s", never "1s").
+ */
 export function durationWords(seconds: number): string {
   const s = Math.abs(seconds), sign = seconds < 0 ? '-' : '';
-  if (s < 1) return `${sign}${Math.round(s * 10) / 10}s`;
+  if (s < 9.95) return `${sign}${Math.round(s * 10) / 10}s`;
   const t = Math.round(s);
   if (t < 60) return `${sign}${t}s`;
   if (t < 3600) return `${sign}${Math.floor(t / 60)}m ${t % 60}s`;
@@ -222,12 +245,21 @@ export function durationWords(seconds: number): string {
   return `${sign}${Math.floor(t / 86400)}d ${Math.floor((t % 86400) / 3600)}h`;
 }
 /**
+ * mold_v0-309: the units of a share. "percent" (as a metric's) is a share from 0 to 1, shown times 100 (0.024 reads
+ * "2.4%"); "percent_100" a value already from 0 to 100, shown as it is (as "%" always was: 87.4 reads "87.4%").
+ */
+export const isShareUnit = (unit?: string) => !!unit && ['percent', 'percent_100'].includes(unit.trim().toLowerCase());
+/**
  * A number with its unit: grouped digits, a unit after a space ("%" and "×" close up); a unit of time (s, min, h, ms)
- * as a duration in words (mold_v0-256: "21m 52s", never 1312).
+ * as a duration in words (mold_v0-256: "21m 52s", never 1312; mold_v0-309: under a second in ms, "240 ms"); a share
+ * ("percent": 0.024 reads "2.4%"; "percent_100": 87.4 reads "87.4%").
  */
 export function numberWords(v: unknown, unit?: string): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   if (!Number.isFinite(n)) return v == null ? '' : String(v);
+  const u = unit?.trim().toLowerCase();
+  if (u === 'percent' || u === 'percent_100') return `${(u === 'percent' ? n * 100 : n).toLocaleString('en', { maximumFractionDigits: 1 })}%`;
+  if (u === 'ms' && Math.abs(n) < 1000) return `${Math.round(n).toLocaleString('en')} ms`;
   if (unit && isTimeUnit(unit)) return durationWords(n * TIME_UNITS[unit.trim().toLowerCase()]!);
   // mold_v0-300: a currency in dollars reads "$0.90" or "$1,250.00", never "0.9 USD" (a fraction of a cent keeps 4 places).
   if (unit && isCurrencyUnit(unit)) {
@@ -386,6 +418,18 @@ export const readsComputed = (layout: DetailLayout) => (layout.header?.facts ?? 
 /** A computed fact's value as the server answers it: a count, the latest record's value (and that record), or hidden. */
 export type ComputedFact = { hidden: true } | { hidden?: false; op: 'count'; value: number; capped: boolean; area: string; via?: string }
   | { hidden?: false; op: 'latest'; value: unknown; area: string; field: string; record: { key: string; title: string | null } | null };
+/**
+ * mold_v0-309: whether a header fact is shown: its `when` holds (on the record's fields and clocks), and, with
+ * `hide_empty`, it has a value (a field's, or a computed one's: a count above 0, a latest value; one still loading is
+ * kept, so the header does not jump). A computed fact the server hides is never shown.
+ */
+export function factShown(fact: DetailFact, data: Record<string, unknown>, clocks: ClockStates = null, answer?: ComputedFact | null): boolean {
+  if (fact.computed && answer?.hidden) return false;
+  if (fact.when && !conditionHolds(fact.when, data, clocks)) return false;
+  if (!fact.hide_empty) return true;
+  if (fact.computed) return !answer || (!answer.hidden && (answer.op === 'count' ? answer.value > 0 : !isEmptyValue(answer.value)));
+  return !!fact.field && !isEmptyValue(data[fact.field]);
+}
 /** One field's change: before and after (an encrypted field: neither, only that it changed). */
 export interface FieldChange { field: string; label?: string; before?: unknown; after?: unknown; redacted?: boolean }
 /** One change of a record (src/record-history.ts): what, who, when, each field's before and after. */
@@ -423,7 +467,9 @@ export function createHref(a: Pick<PageAction, 'create'>): string | null {
 export const declaresCreate = (layout: DetailLayout | null) => (layout?.actions ?? []).some((a) => a.kind === 'create_record');
 
 /** Whether a section is drawn on this record (mold_v0-262: its `when` holds, or it has none). */
-export const sectionShown = (s: DetailSection, data: Record<string, unknown>, clocks: ClockStates = null) => !s.when || conditionHolds(s.when, data, clocks);
+/** mold_v0-309: a section's condition may test a computed header fact (`fact`: its place among the facts), as a notice's. */
+export const sectionShown = (s: DetailSection, data: Record<string, unknown>, clocks: ClockStates = null, facts?: Record<string, unknown> | null) =>
+  !s.when || conditionHolds(s.when, data, clocks, Date.now(), facts);
 /**
  * The link and reference fields the Linked records card lists (mold_v0-262): none when the layout says `linked: false`;
  * else those the page does not show already (placed as a fact, or as a field of a section of any tab).

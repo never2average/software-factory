@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { cellText, codeFile, codeText, columnWords, itemCount, itemLines, numericColumn, tableColumns, tableRows, tokensOf, TOKEN_CLASS, type CodeLanguage } from './code-text';
+import { cellText, codeFile, codeText, columnWords, tableColumnSpecs, itemCount, itemLines, numericColumn, tableColumns, tableRows, tokensOf, TOKEN_CLASS, type CodeLanguage } from './code-text';
 import { downloadText } from './log-viewer';
 
 const LANGUAGE_WORDS: Record<CodeLanguage, string> = { json: 'JSON', yaml: 'YAML', text: 'Text' };
@@ -74,9 +74,12 @@ function Cell({ v, column }: { v: unknown; column: string }) {
   );
 }
 
-export function JsonTable({ value, columns, label, copy, empty }: { value: unknown; columns?: string[]; label: string; copy: (text: string, done: string) => void; empty: string }) {
+export function JsonTable({ value, columns, label, copy, empty }: { value: unknown; columns?: (string | { key: string; label: string })[]; label: string; copy: (text: string, done: string) => void; empty: string }) {
   const rows = useMemo(() => tableRows(value), [value]);
-  const cols = useMemo(() => (rows ? tableColumns(rows, columns) : []), [rows, columns]);
+  // mold_v0-309: a declared column may carry its own heading ({key, label}); else the key in words.
+  const spec = useMemo(() => tableColumnSpecs(columns), [columns]);
+  const cols = useMemo(() => (rows ? tableColumns(rows, spec.keys) : []), [rows, spec]);
+  const heading = (c: string) => spec.labels[c] ?? columnWords(c);
   // mold_v0-300: an unset field (nothing, an empty text, an empty list or object) shows the section's own empty words.
   const unset = value == null || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && !value.length) || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value as object).length);
   if (!rows || !rows.length) return (
@@ -92,7 +95,7 @@ export function JsonTable({ value, columns, label, copy, empty }: { value: unkno
     <div className='flex min-w-0 flex-col' data-json-table=''>
       <div className='hidden overflow-x-auto md:block'>
         <table className='w-full text-sm' aria-label={label}>
-          <thead className='[&_tr]:border-b'><tr>{cols.map((c) => <th key={c} scope='col' className={cn(TH, num(c) && 'text-right')}>{columnWords(c)}</th>)}</tr></thead>
+          <thead className='[&_tr]:border-b'><tr>{cols.map((c) => <th key={c} scope='col' className={cn(TH, num(c) && 'text-right')}>{heading(c)}</th>)}</tr></thead>
           <tbody className='[&_tr:last-child]:border-0'>
             {rows.map((r, i) => (
               <tr key={i} className='hover:bg-muted/40 border-b' data-json-row={i}>
@@ -108,7 +111,7 @@ export function JsonTable({ value, columns, label, copy, empty }: { value: unkno
             <dl className='grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs'>
               {cols.map((c) => (
                 <div key={c} className='flex min-w-0 flex-col gap-0.5'>
-                  <dt className='text-muted-foreground'>{columnWords(c)}</dt>
+                  <dt className='text-muted-foreground'>{heading(c)}</dt>
                   <dd className={cn('min-w-0 text-sm break-words', num(c) && 'tabular-nums')}><Cell v={r[c]} column={c} /></dd>
                 </div>
               ))}

@@ -133,7 +133,7 @@ try {
     assert.deepEqual(L.linkedShown(bl, ["project", "environment", "other"]), ["other"], "Linked records leaves out the links shown as facts");
     assert.deepEqual(L.linkedShown(areaOf(FIXTURE, "releases").detail, ["project", "service"]), [], "linked: false: none");
     const dp = readFileSync(path.join(WEB, "features", "records", "detail-page.tsx"), "utf8");
-    assert.match(dp, /if \(!sectionShown\(s, record\.data, record\.clocks\)\) return null;/, "the page draws a section only while its condition holds");
+    assert.match(dp, /if \(!sectionShown\(s, record\.data, record\.clocks, page\.data\?\.facts\)\) return null;/, "the page draws a section only while its condition holds (mold_v0-309: one may test a computed fact)");
     assert.match(dp, /listed\.has\(l\.field\)/, "the Linked records card lists only what linkedShown keeps");
     const rp = readFileSync(path.join(WEB, "features", "records", "record-pages.tsx"), "utf8");
     assert.match(rp, /<Chips values=\{chips\} max=\{4\} \/>/, "a list cell: four chips, then +N");

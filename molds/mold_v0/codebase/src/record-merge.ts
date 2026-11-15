@@ -8,7 +8,7 @@
  * rows that no earlier area holds (rows: all), so a key is listed once and the order never depends on how the database
  * sorts keys against another area's. An area with rows: matched only adds its fields to rows already listed (a lookup
  * by key, 100 keys at a time). A row's fields are the union of its areas' fields, the first area in the tab's order with
- * a value giving each; its title the first one with a title; its time the latest.
+ * a value giving each; its title the first one with a title (mold_v0-309: one other than the key first); its time the latest.
  *
  * Paging. `next` names the stage (the area being listed) and that area's own cursor ("~m" + base64url JSON [stage, key]),
  * so a page picks up where the last one ended. A page is filled from at most a few reads of each area; it may hold fewer
@@ -59,7 +59,8 @@ export function mergeRow(key: string, parts: { area: string; record: RecordRow |
   const data: Record<string, unknown> = {};
   for (const { record } of held) for (const [k, v] of Object.entries(record.data)) if (k[0] !== "$" && empty(data[k]) && !empty(v)) data[k] = v;
   return {
-    key, title: held.find((p) => p.record.title)?.record.title ?? null, data,
+    // mold_v0-309: a title that is more than the key (a library record's name over a workspace row titled by its key).
+    key, title: held.find((p) => p.record.title && p.record.title !== key)?.record.title ?? held.find((p) => p.record.title)?.record.title ?? null, data,
     updated_at: held.map((p) => p.record.updated_at).sort().at(-1)!, areas: held.map((p) => p.area),
   };
 }

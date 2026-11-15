@@ -89,10 +89,11 @@ export function DueSoonClocksCard() {
                   <span className='text-muted-foreground block truncate text-xs'>{r.area_label} · {r.clock_label}</span>
                 </span>
                 <span className='flex shrink-0 flex-col items-end gap-1'>
-                  <Badge variant={r.overdue ? 'destructive' : 'secondary'} data-clock-status={r.status}>
+                  {/* mold_v0-309: one overdue marker: the badge says by how long (its due day on hover); the date only when it does not. */}
+                  <Badge variant={r.overdue ? 'destructive' : 'secondary'} data-clock-status={r.status} title={r.overdue && r.overdue_days ? r.due_on ?? undefined : undefined}>
                     {r.overdue ? (r.overdue_days ? `Overdue ${r.overdue_days}d` : 'Overdue') : 'Due soon'}
                   </Badge>
-                  {r.due_at && <time dateTime={r.due_at} title={r.due_on ?? undefined} className={cn('text-xs tabular-nums', r.overdue ? 'text-destructive' : 'text-muted-foreground')}>{relativeDue(r.due_at, data.as_of)}</time>}
+                  {r.due_at && !(r.overdue && r.overdue_days) && <time dateTime={r.due_at} title={r.due_on ?? undefined} className={cn('text-xs tabular-nums', r.overdue ? 'text-destructive' : 'text-muted-foreground')}>{relativeDue(r.due_at, data.as_of)}</time>}
                 </span>
               </Link>
             </li>

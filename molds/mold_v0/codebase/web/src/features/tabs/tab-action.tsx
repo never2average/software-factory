@@ -83,7 +83,9 @@ export const actionLabel = (a: NonNullable<PackTabSpec['action']>) =>
   a.label ?? (a.kind === 'start_run' ? fill('Start {run}') : a.kind === 'new_schedule' ? 'New schedule' : a.kind === 'link' ? 'Open' : 'New record');
 
 // The toolbar's own button size (as Export beside it); a phone: the icon alone, square.
-const ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0';
+const ACTION_CLASS = 'ml-auto shrink-0';
+/** mold_v0-309: a toolbar action's word on a phone: its label's first word ("Add", "New", "Start"), never the icon alone. */
+export const shortLabel = (label: string) => label.trim().split(/\s+/)[0] ?? label;
 
 /**
  * The button itself, the last control of the list's search row (mold_v0-217): a normal primary button, the icon and its
@@ -94,12 +96,12 @@ export function ToolbarAction({ label, icon, onClick, href }: { label: string; i
   if (href) return (
     <Button aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS} nativeButton={false}
       render={href.startsWith('/') ? <Link href={href} /> : <a href={href} target='_blank' rel='noopener noreferrer' />}>
-      {icon}<span className='hidden sm:inline'>{label}</span>
+      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className='hidden sm:inline'>{label}</span>
     </Button>
   );
   return (
     <Button type='button' onClick={onClick} aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS}>
-      {icon}<span className='hidden sm:inline'>{label}</span>
+      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className='hidden sm:inline'>{label}</span>
     </Button>
   );
 }

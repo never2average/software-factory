@@ -72,6 +72,10 @@ export interface RecordFieldSpec {
   unit?: string;
   /** mold_v0-289: a chips field's values in plain words. */
   chip_words?: boolean;
+  /** mold_v0-309: a text field's known values in words. */
+  labels?: Record<string, string>;
+  /** mold_v0-309: set only by the app's actions (never in a form). */
+  set_by?: 'action';
 }
 
 export const recordAreas: RecordAreaSpec[] = [];
@@ -185,6 +189,8 @@ export interface PackTabSpec {
   headline?: string[];
   /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */
   filtered?: boolean;
+  /** A runs or reports tab's job kinds (mold_v0-309: its filter): only their runs are listed. */
+  run_kinds?: string[];
   /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
   sections?: string[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */

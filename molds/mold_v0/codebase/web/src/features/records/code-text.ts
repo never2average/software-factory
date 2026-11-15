@@ -124,8 +124,19 @@ export function tableColumns(rows: readonly Record<string, unknown>[], declared?
   for (const r of rows) for (const k of Object.keys(r)) if (!seen.includes(k)) seen.push(k);
   return seen.slice(0, 8);
 }
-/** A column key in words: words split at _ and capitals, the first capitalised. */
-export const columnWords = (k: string) => { const w = k.replace(/[_.-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase(); return w.charAt(0).toUpperCase() + w.slice(1); };
+/** Short words written in capitals (mold_v0-309: "repoId" reads "Repo ID", "url" "URL", "ciSystem" "CI system"). */
+const ACRONYMS = new Set(['id', 'ids', 'url', 'urls', 'uri', 'api', 'ci', 'cd', 'ip', 'sql', 'ssh', 'sso', 'json', 'csv', 'pdf', 'html', 'http', 'https', 'dns', 'ssl', 'tls', 'ui', 'ux', 'sha', 'utc', 'aws', 'gcp', 'llm', 'mcp']);
+/** A column key in words: words split at _ and capitals, the first capitalised, a known short word in capitals. */
+export const columnWords = (k: string) => {
+  const words = k.replace(/[_.-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const w = words.map((x) => (x === 'ids' ? 'IDs' : x === 'urls' ? 'URLs' : ACRONYMS.has(x) ? x.toUpperCase() : x)).join(' ');
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
+/** mold_v0-309: a table section's columns as declared (a key, or {key, label}): their keys and their headings. */
+export const tableColumnSpecs = (declared?: readonly (string | { key: string; label: string })[]) => ({
+  keys: declared?.map((c) => (typeof c === 'string' ? c : c.key)),
+  labels: Object.fromEntries((declared ?? []).flatMap((c) => (typeof c === 'string' ? [] : [[c.key, c.label] as const]))) as Record<string, string>,
+});
 /** A cell: a number grouped, a boolean Yes or No, a list joined, an object as key: value pairs, nothing a dash. */
 export function cellText(v: unknown): string {
   if (v == null || v === '') return '—';

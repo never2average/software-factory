@@ -742,14 +742,20 @@ export async function withRefTitles<T extends { data: Record<string, unknown> }>
   const wanted = new Map<string, Set<string>>();
   for (const l of links) for (const r of rows) for (const k of keysOf(r.data?.[l.field])) (wanted.get(l.area) ?? wanted.set(l.area, new Set()).get(l.area)!).add(k);
   const titles = new Map<string, Map<string, string>>();
+  // mold_v0-309: a merged tab's partners of an area (the other areas of a tab that lists it with others, by key): a row
+  // whose own title is missing or only its key takes its partner's (a workspace record matched to a library record).
+  const partners = await mergedPartners(actor, orgId, area.scope);
   await asViewerOf(actor, async () => {
     for (const [name, set] of wanted) {
-      const t = findArea(name)!, keys = [...set].slice(0, 2000);
-      const got = t.scope === "platform"
-        ? await (await q()).query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [t.pack, t.name, keys])
-        : await withTenant(orgId!, async () => (await q()).query<{ key: string; title: string | null }>(
-          "SELECT key, title FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, t.pack, t.name, keys]));
-      titles.set(name, new Map(got.filter((x) => x.title).map((x) => [x.key, x.title!])));
+      const keys = [...set].slice(0, 2000);
+      const own = await titlesIn(orgId, findArea(name)!, keys);
+      let bare = keys.filter((k) => !own.has(k) || own.get(k) === k);
+      for (const p of partners.get(name) ?? []) {
+        if (!bare.length) break;
+        for (const [k, t] of await titlesIn(orgId, p, bare)) if (t !== k) own.set(k, t);
+        bare = bare.filter((k) => !own.has(k) || own.get(k) === k);
+      }
+      titles.set(name, own);
     }
   });
   return rows.map((r) => {
@@ -757,6 +763,51 @@ export async function withRefTitles<T extends { data: Record<string, unknown> }>
     for (const l of links) for (const k of keysOf(r.data?.[l.field])) { const t = titles.get(l.area)?.get(k); if (t) (out[l.field] ??= {})[k] = t; }
     return Object.keys(out).length ? { ...r, ref_titles: out } : r;
   });
+}
+
+/**
+ * The titles of some records of `t` as the caller reads them (inside asViewerOf), one query: a sealed area's title opened
+ * with the workspace's key, as the record's own page opens it (toRecord); one that does not open is left out (its key
+ * shows), never its ciphertext (mold_v0-309).
+ */
+async function titlesIn(orgId: number | null, t: RecordArea, keys: string[]): Promise<Map<string, string>> {
+  if (!keys.length) return new Map();
+  const got = t.scope === "platform"
+    ? await (await q()).query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [t.pack, t.name, keys])
+    : orgId === null ? []
+    : await withTenant(orgId, async () => {
+      const rows = await (await q()).query<{ key: string; title: string | null }>(
+        "SELECT key, title FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, t.pack, t.name, keys]);
+      return Promise.all(rows.map(async (x) => {
+        if (!isSealed(x.title)) return x;
+        try { return { key: x.key, title: await open(orgId, x.title as string) }; } catch { return { key: x.key, title: null }; }
+      }));
+    });
+  return new Map(got.filter((x) => x.title && !isSealed(x.title)).map((x) => [x.key, x.title!]));
+}
+/**
+ * mold_v0-309: the titles of some records of area `name` as `actor` reads them in workspace `orgId` (a runs tab's
+ * targets): none for an area they may not read or one read live; a sealed title opened, never its ciphertext.
+ */
+export async function recordTitles(orgId: number, name: string, keys: string[], actor: Actor): Promise<Map<string, string>> {
+  const t = findArea(name);
+  if (!t || isLive(t) || !may(t, "read", actor) || !keys.length) return new Map();
+  return asViewerOf(actor, () => titlesIn(orgId, t, [...new Set(keys)].filter((k) => KEY.test(k)).slice(0, 2000)));
+}
+/** mold_v0-309: each area's merged-tab partners (the other areas a tab lists with it), those `actor` may read. */
+async function mergedPartners(actor: Actor, orgId: number | null, scope: string): Promise<Map<string, RecordArea[]>> {
+  const out = new Map<string, RecordArea[]>();
+  try {
+    const { buildViews } = await import("./metrics.js");
+    const { tabAreas } = await import("./metric-spec.js");
+    for (const t of buildViews().tabs) {
+      const list = tabAreas(t as never).map((a) => findArea(a.area)).filter((a): a is RecordArea => !!a && !isLive(a) && may(a, "read", actor)
+        && !((scope === "platform" || orgId === null) && a.scope === "workspace"));
+      if (list.length < 2) continue;
+      for (const a of list) out.set(a.name, [...(out.get(a.name) ?? []), ...list.filter((b) => b.name !== a.name && !(out.get(a.name) ?? []).includes(b))]);
+    }
+  } catch { /* no tabs to read: none */ }
+  return out;
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -807,6 +858,36 @@ export const asWriter = <T>(w: RecordWriter, fn: () => T): T => writerScope.run(
 export const asWriterUnlessSet = <T>(w: RecordWriter, fn: () => T): T => (writerScope.getStore() ? fn() : writerScope.run(w, fn));
 /** The writer set for this call, if any. */
 export const currentWriter = (): RecordWriter | null => writerScope.getStore() ?? null;
+/**
+ * mold_v0-309: one of the app's own actions on a person's behalf (a page action's server side, such as Test storage):
+ * a write inside `fn` may set a field `set_by: "action"`, as a run's or a pack tool's may.
+ */
+const actionScope = new AsyncLocalStorage<true>();
+export const asAction = <T>(fn: () => T): T => actionScope.run(true, fn);
+/**
+ * mold_v0-309: a person's write of an area with fields `set_by: "action"` (anything but a run, a pack tool, an index or
+ * an action): a field it sends with another value than the stored one is refused; one it leaves out (or sends as it is
+ * stored) keeps the stored value. Returns what to carry over, and the input without those fields (exported for
+ * scripts/record-display-309-test.ts).
+ */
+export function actionFieldsOf(area: RecordArea, actor: Actor, meta: WriteMeta | null, given: unknown, stored: Record<string, unknown> | null): { input: unknown; carried: Record<string, unknown> } {
+  const fields = area.fields.filter((f) => (f as { set_by?: string }).set_by === "action");
+  if (!fields.length || meta || actionScope.getStore() || writerOf(actor, meta).by !== "people") return { input: given, carried: {} };
+  const input = given && typeof given === "object" && !Array.isArray(given) ? { ...(given as Record<string, unknown>) } : given;
+  const carried: Record<string, unknown> = {};
+  const blank = (v: unknown) => v === undefined || v === null || v === "";
+  for (const f of fields) {
+    const was = stored?.[f.name];
+    if (input && typeof input === "object" && Object.prototype.hasOwnProperty.call(input, f.name)) {
+      const v = (input as Record<string, unknown>)[f.name];
+      if (!(blank(v) && blank(was)) && JSON.stringify(v) !== JSON.stringify(was))
+        throw new PackError(`${f.label} of ${area.label} records is set by the app's own actions, not by hand: leave it out`, 409);
+      delete (input as Record<string, unknown>)[f.name];
+    }
+    if (!blank(was)) carried[f.name] = was;
+  }
+  return { input, carried };
+}
 const writerOf = (actor: Actor, meta: WriteMeta | null): RecordWriter =>
   meta ? { by: "repository", id: meta.source } : writerScope.getStore() ?? (actor.role !== null || actor.userId ? { by: "people", id: actor.userId } : { by: "run", id: null });
 const writerText = (w: RecordWriter) => (w.id ? `${w.by}:${w.id}` : w.by).replace(/[\u0000-\u001f]/g, "").slice(0, 200);
@@ -916,7 +997,10 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   if (!prev && mode === "update") throw new PackError(`no ${area.name} record ${key}`, 404);
   assertMay(area, prev ? "update" : "create", actor);
   // Encrypted fields (mold_v0-194): the mask, or a field left out, keeps the stored value; null clears it.
-  const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
+  const enc = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
+  // mold_v0-309: a field only the app's actions set: a person's write keeps it as stored (another value is refused).
+  const own = actionFieldsOf(area, actor, meta, enc.input, prev?.opened ?? null);
+  const given = own.input, carried = { ...enc.carried, ...own.carried };
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.

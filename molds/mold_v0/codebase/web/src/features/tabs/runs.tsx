@@ -56,8 +56,14 @@ function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
     },
     { key: 'status', label: 'Status', type: 'select', options: RUN_STATUSES, keep: true, value: (r) => r.status, render: (r) => statusText(r) },
     ...(anyTarget ? [{
-      key: 'target', label: target, type: 'select', value: (r) => runTarget(r)?.key ?? null,
-      render: (r) => { const t = runTarget(r); return t ? <span className='font-mono text-xs break-all'>{t.key}</span> : dash; }
+      key: 'target', label: target, type: 'select', value: (r) => r.target_title ?? runTarget(r)?.key ?? null,
+      // mold_v0-309: the record's title, linked to it (its key on hover); a record the person may not read, its key.
+      render: (r) => {
+        const t = runTarget(r);
+        if (!t) return dash;
+        const text = r.target_title ? <span className='line-clamp-2' title={t.key}>{r.target_title}</span> : <span className='font-mono text-xs break-all'>{t.key}</span>;
+        return findRecordArea('app', t.area) ? <Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} className='underline-offset-4 hover:underline' onClick={(e) => e.stopPropagation()} data-run-target={t.key}>{text}</Link> : text;
+      }
     } satisfies RecordCol<Run>] : []),
     {
       key: reports ? 'ended' : 'started', label: reports ? 'Finished' : 'Started', type: 'date',
@@ -104,7 +110,7 @@ export function RunResults({ id }: { id: string }) {
 
 /** The runs (or, `reports`, the finished runs) of the workspace as the database table. */
 export function RunsTable({ tab, reports, summary }: {
-  tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty' | 'action'>; reports: boolean;
+  tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty' | 'action'> & { run_kinds?: string[] }; reports: boolean;
   /** Above the toolbar: the tab's four cards (mold_v0-181, ./sparklines.tsx; mold_v0-208: cards, search, table). */
   summary?: ReactNode;
 }) {
@@ -112,9 +118,10 @@ export function RunsTable({ tab, reports, summary }: {
   // mold_v0-217: the action's button in the search row; its form a full card in the list's place while open (?start=1).
   const { button: action, card } = useTabAction(tab.action ? tab : null, reload);
   const runs = useMemo(() => {
-    const all = data?.runs ?? [];
+    // mold_v0-309: a tab narrowed to some job kinds (its filter) lists only theirs.
+    const all = (data?.runs ?? []).filter((r) => !tab.run_kinds?.length || (r.pack === tab.pack && tab.run_kinds.includes(r.kind)));
     return reports ? all.filter((r) => FINISHED.has(r.status) && r.status !== 'cancelled') : all;
-  }, [data, reports]);
+  }, [data, reports, tab.run_kinds, tab.pack]);
   const cols = useMemo(() => columns(reports, runs), [reports, runs]);
   // mold_v0-254 (flag record_pages): a record page's run links here with ?run=<id>: that run open beside the list.
   const [runParam, setRunParam] = useQueryState('run');
