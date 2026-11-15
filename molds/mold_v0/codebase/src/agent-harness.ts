@@ -441,11 +441,12 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // platform key vault entries, fetched with the lease
     // as a run's are (the engine records which were delivered): each in its env (never over one the wake sets itself) or
     // its file, and redacted from everything the wake writes.
-    if (policy.credentials?.length || policy.vault_keys?.length) {
+    // mold_v0-312: and the workspace's connections its profile names (connection_env), each in its variable.
+    if (policy.credentials?.length || policy.vault_keys?.length || policy.connection_env?.length) {
       const got = await client.credentials(run.id, lease);
       const dir = path.join(scratch, "credentials");
       for (const c of got.credentials) {
-        secrets.push({ name: c.name, value: c.value });
+        if (!(c as { plain?: boolean }).plain) secrets.push({ name: c.name, value: c.value });
         if ("env" in c && c.env && !(c.env in env)) env[c.env] = c.value;
         else if ("file" in c && c.file && /^[A-Za-z0-9._-]{1,100}$/.test(c.file)) {
           mkdirSync(dir, { recursive: true, mode: 0o700 });

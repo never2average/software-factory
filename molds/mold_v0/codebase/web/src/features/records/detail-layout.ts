@@ -59,7 +59,7 @@ export interface RunLink { kind: 'run' | 'session'; id: string; title: string; s
 export interface RecordWriters { made: RunLink | null; changed: RunLink[] }
 /** "the run Build app", "the agent session Fix the tests", "the program Find problems in the agent session …" in words (no link). */
 export const runLinkKind = (l: Pick<RunLink, 'kind' | 'program'>) => (l.kind === 'run' ? 'the run' : l.program ? `the program ${l.program} in the agent session` : 'the agent session');
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage' | 'test_connection';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
@@ -73,6 +73,8 @@ export interface DetailActionSpec {
   profile?: string; first_message?: string;
   /** mold_v0-304: a start_program action's program (its inputs in `input`, mapped from the record). */
   program?: string;
+  /** mold_v0-312: a test_connection action's call stays on the server (gen-packs leaves it out of the console's copy). */
+  probe?: never;
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */

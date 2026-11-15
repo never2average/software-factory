@@ -4164,7 +4164,8 @@
                         "start_agent",
                         "open_url",
                         "start_program",
-                        "test_storage"
+                        "test_storage",
+                        "test_connection"
                       ]
                     },
                     "place": {
@@ -4589,6 +4590,138 @@
                     "program": {
                       "type": "string",
                       "pattern": "^[a-z][a-z0-9-]{1,39}$"
+                    },
+                    "probe": {
+                      "type": "object",
+                      "properties": {
+                        "by": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "probes": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 60,
+                                "pattern": "^[^\\n\\r{}<>]*$"
+                              },
+                              "method": {
+                                "type": "string",
+                                "enum": [
+                                  "GET",
+                                  "HEAD",
+                                  "POST"
+                                ]
+                              },
+                              "url": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                              },
+                              "headers": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                }
+                              },
+                              "body": {},
+                              "expect": {
+                                "type": "object",
+                                "properties": {
+                                  "status": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "const": "2xx"
+                                      },
+                                      {
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "integer",
+                                          "minimum": 200,
+                                          "maximum": 299
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "json_path": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_$-]{1,64}(\\.[A-Za-z0-9_$-]{1,64}){0,9}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 15
+                              },
+                              "hosts": {
+                                "minItems": 1,
+                                "maxItems": 10,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^(\\*\\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+                                }
+                              }
+                            },
+                            "required": [
+                              "method",
+                              "url"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "status": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "tested": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        }
+                      },
+                      "required": [
+                        "probes"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -9532,6 +9665,80 @@
               },
               "required": [
                 "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "connection_env": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "area": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "where": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  }
+                },
+                "use": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "prefix": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9]{1,30}_$"
+                },
+                "roles": {
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "billing",
+                      "member"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  }
+                }
+              },
+              "required": [
+                "area",
+                "prefix",
+                "fields"
               ],
               "additionalProperties": false
             }

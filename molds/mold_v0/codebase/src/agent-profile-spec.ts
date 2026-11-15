@@ -20,6 +20,7 @@
  */
 import { z } from "zod";
 import { AGENT_PURPOSES } from "./agent-purpose.js";
+import { ConnectionEnvListSchema } from "./connection-env-config.js";
 import { ALLOW_ALL_DOMAINS, GOVERNANCE_LIMITS, normalizeDomains, webPolicyProblems, type Governance } from "./agent-governance.js";
 
 /** The profile every session uses unless another is chosen: the platform settings, as they are. Never archived. */
@@ -165,6 +166,11 @@ export const PackAgentProfileSchema = z.object({
    * keep), each its id and optionally a version (absent: its latest when a session starts).
    */
   recipes: z.array(ProfileRecipeSchema).max(10, "at most 10 recipes").optional(),
+  /**
+   * mold_v0-312: the workspace's own connection records its sessions receive as environment variables of their sandbox
+   * (src/connection-env-config.ts; checked against this pack's areas by validatePack), never in a prompt or a message.
+   */
+  connection_env: ConnectionEnvListSchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type PackAgentProfile = z.output<typeof PackAgentProfileSchema>;

@@ -17,7 +17,9 @@
  *        start_program (mold_v0-303, flag nested_runs: the action's program, its inputs filled from the record here;
  *        src/program-start.ts),
  *        test_storage (mold_v0-305, flag workspace_storage: the declared object_storage area's record's bucket written,
- *        read and deleted once with its own settings; src/workspace-storage.ts testStorageRecord)
+ *        read and deleted once with its own settings; src/workspace-storage.ts testStorageRecord),
+ *        test_connection (mold_v0-312: a workspace connection record's own call, its pack's probe made on the server
+ *        with the record's fields; src/connection-test.ts testConnectionRecord)
  *
  * Who may: an action is offered (and taken) only by a role the action's `roles` and the area's own permission allow (the
  * kind's start tool for a run, the area's move and the transition's roles for a move, its update for an edit, its delete
@@ -262,6 +264,12 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const W = await import("./workspace-storage.js");
         if (!W.isStorageArea(area.name)) continue;
         out.push({ ...base, label: x.label ?? "Test", disabled: unavailable });
+        break;
+      }
+      case "test_connection": {
+        // mold_v0-312: a workspace's own connection record, for a role that may update it (the test writes its status).
+        if (!writes || opts.org === undefined || !x.probe || !may(area, "update", actor) || areaOpWithheld(area.name, "update")) continue;
+        out.push({ ...base, label: x.label ?? "Test connection", disabled: unavailable });
         break;
       }
       case "create_record": {
@@ -635,6 +643,12 @@ export function recordPageRouter(): Router {
         const W = await import("./workspace-storage.js");
         // mold_v0-309: the app's own action: it may set the fields `set_by: "action"` (the test's status and date).
         return asAction(() => W.testStorageRecord(session(res).org, record.key, actor));
+      }
+      case "test_connection": {
+        // mold_v0-312: the call is the pack's (never the browser's); never a secret or the service's body in the answer.
+        if (a.disabled) throw new PackError(a.disabled, 409);
+        const C = await import("./connection-test.js");
+        return asAction(() => C.testConnectionRecord(session(res).org, area, record.key, declared.probe!, actor));
       }
       default:
         throw new PackError(`${a.label} happens in the browser: nothing to send`, 400);

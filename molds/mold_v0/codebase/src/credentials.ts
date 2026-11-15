@@ -370,6 +370,8 @@ export async function hasCredential(orgId: number, pack: string, name: string): 
  */
 export interface Delivered {
   name: string; env?: string; file?: string; path_env?: string; operator?: boolean; value: string;
+  /** mold_v0-312: a connection's plain field (a bucket's name, an endpoint): delivered, but no secret to redact. */
+  plain?: boolean;
   /** mold_v0-260: a credential set's values one by one (the run's output is redacted of each, not only of the whole). */
   entries?: string[];
   /**
@@ -392,7 +394,9 @@ export interface RunCredentials {
 }
 
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
-export interface RunForCredentials { id?: string; org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[]; vault_keys?: { provider: string; label: string; env: string }[] } | null; targets: Record<string, unknown> | null }
+export interface RunForCredentials { id?: string; org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[]; vault_keys?: { provider: string; label: string; env: string }[];
+  /** mold_v0-312: an agent session's connections as variables (src/connection-env.ts), frozen from its policy. */
+  connection_env?: import("./connection-env.js").FrozenConnectionEnv[] } | null; targets: Record<string, unknown> | null }
 
 /** The asset (its key, and the area when the run names one) and environment a run targets. */
 const targetOf = (targets: Record<string, unknown> | null) => {
@@ -418,6 +422,15 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
   const out: RunCredentials = { credentials: [], missing: [] };
   await operatorCredentials(run, out, opts);
   await vaultKeys(run, out, opts);
+  // mold_v0-312: an agent session's workspace connections, each as its variable (the run row's own workspace only).
+  // Delivered (and audited) only when the run fetches its credentials; the redaction path (mint: false, runSecrets) asks
+  // connectionSecrets instead, which never audits or fails.
+  if (run.pack === "_agent" && Array.isArray(run.spec?.connection_env) && run.spec.connection_env.length && opts.mint !== false) {
+    const C = await import("./connection-env.js");
+    const got = await C.connectionEnvValues(run.org_id, run.spec.connection_env, { strict: opts.strict, audit: true });
+    if (run.id) { C.rememberDelivered(run.id, got.delivered); await C.noteChangedConnections(run.id, run.org_id, got.changed); }
+    out.credentials.push(...got.delivered); out.missing.push(...got.missing);
+  }
   if (!names.length) return out;
   const { asset, area, environment, tenant } = targetOf(run.targets);
   const sets = names.some((n) => { const sp = findCredential(run.pack, n); return !!sp && (sp.bound_to === "tenant" || !!sp.entries); }) ? await setsOn() : false;
@@ -613,8 +626,10 @@ async function vaultKeys(run: RunForCredentials, out: RunCredentials, opts: { st
 
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
-  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length && !run.spec?.vault_keys?.length) return [];
-  const pasted = (await runCredentials(run, { strict: true, mint: false })).credentials.flatMap((c) => [{ name: c.name, value: c.value }, ...(c.entries ?? []).map((v) => ({ name: c.name, value: v }))]);
+  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length && !run.spec?.vault_keys?.length && !run.spec?.connection_env?.length) return [];
+  const conn = run.pack === "_agent" && run.spec?.connection_env?.length ? await (await import("./connection-env.js")).connectionSecrets(run) : [];
+  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length && !run.spec?.vault_keys?.length) return conn;
+  const pasted = [...conn, ...(await runCredentials(run, { strict: true, mint: false })).credentials.filter((c) => !c.plain).flatMap((c) => [{ name: c.name, value: c.value }, ...(c.entries ?? []).map((v) => ({ name: c.name, value: v }))])];
   // mold_v0-014: and every GitHub App token minted for the run (expired or revoked ones too: the run may have printed them).
   const fields = (run.spec?.credentials ?? []).map((n) => findCredential(run.pack, n));
   if (!run.id) return pasted;

@@ -40,6 +40,7 @@ import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedF
 import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
+import { secretsToClear } from "./secret-binding.js";
 import { asViewerOf, mayShare, VISIBILITY_COLUMNS, visibilityForWrite, visibilityOf, visibilityShown, type StoredVisibility, type VisibilityWrite } from "./visibility.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -1013,6 +1014,8 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   // mold_v0-309: a field only the app's actions set: a person's write keeps it as stored (another value is refused).
   const own = actionFieldsOf(area, actor, meta, enc.input, prev?.opened ?? null);
   const given = own.input, carried = { ...enc.carried, ...own.carried };
+  // mold_v0-312: a kept secret bound to where it goes (src/secret-binding.ts) is cleared when that changes without it.
+  for (const k of secretsToClear(area, prev?.opened ?? null, given)) delete carried[k];
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.

@@ -138,6 +138,11 @@ export interface AgentPolicy {
    * run's credentials (src/credentials.ts) and redacted from everything the wake writes.
    */
   vault_keys?: { provider: string; label: string; env: string }[];
+  /**
+   * mold_v0-312: the workspace's connection records each wake receives as environment variables (names and fields only;
+   * src/connection-env.ts), frozen from its pack profile's connection_env; delivered with the credentials and redacted.
+   */
+  connection_env?: import("./connection-env.js").FrozenConnectionEnv[];
   /** mold_v0-267: the primary inference provider's key (its vault label): the gateway uses it for this session's requests. */
   inference_key?: string | null;
   /** mold_v0-267: the files uploaded into its workspace (written into the scratch on every wake; executables made so). */
@@ -261,6 +266,7 @@ export function agentKind(policy?: AgentPolicy): JobKind {
     workspace: false, args: {}, credentials: [...(p.credentials ?? [])],
     // mold_v0-267: its profile's platform keys (delivered with the credentials) and its primary provider's key label.
     ...(p.vault_keys?.length ? { vault_keys: p.vault_keys.map((k) => ({ ...k })) } : {}),
+    ...(p.connection_env?.length ? { connection_env: JSON.parse(JSON.stringify(p.connection_env)) } : {}),
     ...(p.inference_key ? { provider_key: { provider: p.provider, label: p.inference_key } } : {}),
     // mold_v0-291: a run in a tree: the gateway holds each request's worst cost from its budget (src/nested-runs.ts admitTreeRequest).
     ...(p.nested ? { nested: true } : {}),

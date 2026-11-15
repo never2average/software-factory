@@ -103,7 +103,8 @@ async function packProfiles(): Promise<{ pack: string; p: PackAgentProfile }[]> 
 }
 /** A pack's declared profile as a stored config (its governance's domains normalized). */
 export function packConfig(p: PackAgentProfile): ProfileConfig {
-  const { id: _i, name: _n, description: _d, $comment: _c, ...rest } = p;
+  // mold_v0-312: connection_env is the pack's own (read from its declaration when a session starts), never a stored config.
+  const { id: _i, name: _n, description: _d, $comment: _c, connection_env: _e, ...rest } = p;
   const c = ProfileConfigSchema.parse(rest);
   if (c.governance) c.governance = normalizeGovernance(c.governance).governance;
   return c;
