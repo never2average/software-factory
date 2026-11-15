@@ -1,0 +1,21 @@
+name: mold_v0 setup
+description: Node (the version of the codebase's Dockerfiles) and the codebase's three installs (server, orchestrator, web console), from their lockfiles, with npm's download cache.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        # The shell's images are FROM node:22-slim (molds/mold_v0/codebase/Dockerfile, web/Dockerfile).
+        node-version: "22"
+        cache: npm
+        cache-dependency-path: |
+          molds/mold_v0/codebase/package-lock.json
+          molds/mold_v0/codebase/orchestrator/package-lock.json
+          molds/mold_v0/codebase/web/package-lock.json
+    - name: npm ci (server, orchestrator, web)
+      shell: bash
+      working-directory: molds/mold_v0/codebase
+      run: |
+        npm ci --no-audit --no-fund
+        npm --prefix orchestrator ci --no-audit --no-fund
+        npm --prefix web ci --no-audit --no-fund

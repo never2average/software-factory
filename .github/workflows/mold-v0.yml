@@ -1,0 +1,114 @@
+# mold_v0's own checks (ticket mold_v0-001; molds/mold_v0/MOLD.md "CI"). The in-tree shell (molds/mold_v0/codebase,
+# operator decision D1) is tested here on every pull request that touches it and on EVERY push to main, whatever it
+# touched: the factory's deploy gate (.claude/scripts/lib/deploy_gate.py) deploys a mold_v0 app only from a commit this
+# workflow passed for (molds/mold_v0/mold.json source.ci.workflow names this file), so each commit on main needs a run.
+# Every job below is required by that gate: it reads the job names from this file at the commit (a matrix job once per
+# value of its one-line list), so keep `shard: [...]` on one line and the names stable.
+# No secrets, no deploy: every suite starts its own embedded database (PGlite) and fake services.
+name: mold_v0
+
+on:
+  pull_request:
+    paths:
+      - "molds/mold_v0/**"
+      - ".github/workflows/mold-v0.yml"
+      - ".github/mold-v0/**"
+      - ".github/actions/mold-v0-setup/**"
+      - ".claude/scripts/leakcheck.py"
+      - ".claude/scripts/lib/deploy_gate.py"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A pull request's newer push cancels its older run; every commit on main keeps its own run (the deploy gate reads it).
+  group: mold-v0-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static:
+    name: static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mold-v0-setup
+      - name: Leak check (no local denylist in CI; the generic rules only)
+        run: python3 .claude/scripts/leakcheck.py scan
+      - name: Every test suite is run or skipped with a reason
+        run: python3 .github/mold-v0/suites.py check
+      - name: Deploy gate self-test (reads this workflow's job names)
+        run: python3 .claude/scripts/lib/deploy_gate.py --self-test
+      - name: Vocabulary (no product words in the shell)
+        working-directory: molds/mold_v0/codebase
+        run: npm run --silent check:vocabulary
+      - name: Tenant SQL
+        working-directory: molds/mold_v0/codebase
+        run: npm run --silent check:tenant-sql
+      - name: Generated files are current (packs, MCP tools, docs corpus, data map)
+        working-directory: molds/mold_v0/codebase
+        run: |
+          node scripts/gen-packs.mjs --check
+          node_modules/.bin/tsx scripts/export-mcp-tools.ts --check
+          node_modules/.bin/tsx scripts/sync-docs-corpus.ts --check
+          node_modules/.bin/tsx scripts/data-map.ts --check
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mold-v0-setup
+      - name: tsc (server, orchestrator, web)
+        working-directory: molds/mold_v0/codebase
+        run: npm run typecheck
+
+  tests:
+    name: tests ${{ matrix.shard }}/6
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mold-v0-setup
+      - name: Git for the suites run as root (some make repositories of their own and commit in them)
+        run: |
+          sudo git config --system --add safe.directory '*'
+          sudo git config --system user.name "mold_v0 CI"
+          sudo git config --system user.email "ci@example.com"
+      - name: Suites of shard ${{ matrix.shard }} (as root, as on the factory machine)
+        # Root lets the suites that need it run their root halves (a user per run, the evaluator's own user, the
+        # firewall); the runner is a throwaway machine. The shard list: python3 .github/mold-v0/suites.py list --shards 6
+        run: >-
+          sudo --preserve-env env "PATH=$PATH"
+          python3 .github/mold-v0/suites.py run --shard ${{ matrix.shard }}/${{ strategy.job-total }} --out "$RUNNER_TEMP/suites"
+      - name: Keep the logs and times
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mold-v0-tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/suites
+          retention-days: 7
+          if-no-files-found: ignore
+
+  checks:
+    # The one name to watch: passes only when every job above passed. (Branch protection could require it only once the
+    # pull_request paths filter is gone: a required check that never runs holds a pull request forever.)
+    name: mold_v0 checks
+    needs: [static, typecheck, tests]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c 'import json,sys; n=json.load(sys.stdin); bad={k:v["result"] for k,v in n.items() if v["result"]!="success"}; print(bad or "all passed"); sys.exit(1 if bad else 0)'

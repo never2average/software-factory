@@ -81,7 +81,8 @@ may not handle secret values). Missing secrets are the user's to set; report nam
 
 - **Mold CI gate** (`lib/deploy_gate.py`), before `--deploy` and `--deploy-remote`: the mold commit the build is made
   from (`state/factory.json` `molds[].source.commit`) must have passed every job of the mold source's `ci.yml` for
-  exactly that commit. Red, still running, missing or unknown refuses with one sentence naming the check. To deploy
+  exactly that commit; for mold_v0 (in-tree) every job of this repository's `.github/workflows/mold-v0.yml` for the
+  commit being deployed (HEAD). Red, still running, missing or unknown refuses with one sentence naming the check. To deploy
   anyway, the operator gives a reason: `--allow-unverified-mold "<reason>"`; it is kept in `infrastructure.json`
   `deploy_gate.override`. Every verdict is recorded in `deploy_gate`.
 - **Rollback on Vercel**: before the three deploys, the deployment serving each project is recorded

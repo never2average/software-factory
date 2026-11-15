@@ -2,7 +2,7 @@
   "$comment": "What the factory reads to run mold_v0 (.claude/scripts/lib/single_service.py). The codebase next to it is AUTHORED IN THIS REPOSITORY since the fork point below (operator decision D1, 2026-10-20; mold_v0-040), a recorded exception to 'never edit a mold in place' (MOLD.md). Every product-specific value the factory needs (env names, the service, its port) is still READ from the codebase's own files at plan time, so this file names paths and rules only.",
   "mold_id": "mold_v0",
   "source": {
-    "$comment": "in_tree: the codebase is edited here and never fetched, refreshed or rewritten by mold.py (lib/intree.py). since: the factory commit whose snapshot is the fork point. forked_from: the source commit that snapshot was taken at (the operator's product with mold_v0-031's hardening merged); nothing is ever fetched from it again. ci.workflow: the factory workflow whose run the deploy gate requires for the commit being deployed (lib/deploy_gate.py). null until mold_v0-001 adds it: until then the gate requires at least one GitHub Actions check of this repository to have succeeded for that commit and nothing (from any app) to have failed or be running.",
+    "$comment": "in_tree: the codebase is edited here and never fetched, refreshed or rewritten by mold.py (lib/intree.py). since: the factory commit whose snapshot is the fork point. forked_from: the source commit that snapshot was taken at (the operator's product with mold_v0-031's hardening merged); nothing is ever fetched from it again. ci.workflow: the factory workflow whose run the deploy gate requires for the commit being deployed (lib/deploy_gate.py): .github/workflows/mold-v0.yml (mold_v0-001; MOLD.md \"CI\"), which runs on every push to main and on every pull request that touches the shell; every job it defines must have passed for that commit. Set to null, the gate falls back to: at least one GitHub Actions check of this repository succeeded for that commit and nothing (from any app) failed or is running.",
     "in_tree": true,
     "since": "e8d836532cb737ea3b2809f674a216591e7314fc",
     "forked_from": {
@@ -10,7 +10,7 @@
       "snapshot_date": "2026-10-21"
     },
     "ci": {
-      "workflow": null
+      "workflow": ".github/workflows/mold-v0.yml"
     }
   },
   "shape": "single_service",

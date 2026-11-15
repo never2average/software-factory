@@ -33,9 +33,11 @@ source of its own to ask. Its gate reads THIS repository instead, for the commit
      not in mold.json's source_excludes; build caches such as tsconfig.tsbuildinfo never count, intree.BUILD_CACHES).
      Otherwise: unverifiable, naming the paths. No git, no HEAD: unverifiable;
   1. the repository is this checkout's `origin` (a GitHub address), never a tracked value;
-  2. with mold.json "source": {"ci": {"workflow": ".github/workflows/<file>.yml"}} (ticket mold_v0-001 adds it): the
-     same three rules as above, for that workflow of this repository at that commit;
-  3. until a workflow is named: at least one GitHub Actions check run of this repository succeeded for that commit,
+  2. with mold.json "source": {"ci": {"workflow": ".github/workflows/<file>.yml"}} (mold_v0's names
+     .github/workflows/mold-v0.yml since mold_v0-001: static checks, typecheck, the test shards, "mold_v0 checks"): the
+     same three rules as above, for that workflow of this repository at that commit (a push run first, else a pull
+     request's run of the same commit);
+  3. with no workflow named (null): at least one GitHub Actions check run of this repository succeeded for that commit,
      and NO check run or commit status from any app failed or is still running. An outside app's check or status
      (a git-connected deploy service, a bot) can refuse, never pass; skipped never counts (none of our own: missing).
      None of those runs is the shell's own test yet, so a green here says "this repository's own checks passed for
@@ -381,6 +383,21 @@ def self_test():
     if os.path.isfile(real):
         names = [x for _, ns in required_checks(open(real).read()) for x in ns]
         ok(len(names) >= 2 and len(set(names)) == len(names), "the mold's own ci.yml parses into distinct check names", names)
+    # mold_v0-001: the in-tree shell's workflow, named in its mold.json, parses into the jobs GitHub reports
+    try: v0 = intree.info("mold_v0", ROOT)
+    except intree.Unreadable: v0 = None
+    wf = ((v0 or {}).get("ci") or {}).get("workflow")
+    if v0 is not None:
+        ok(bool(wf) and os.path.isfile(os.path.join(ROOT, wf)), "mold_v0's mold.json names its workflow, and the file is there", wf)
+    if wf and os.path.isfile(os.path.join(ROOT, wf)):
+        text = open(os.path.join(ROOT, wf)).read()
+        names = [x for _, ns in required_checks(text) for x in ns]
+        shards = re.search(r"^\s+shard:\s*\[(.*)\]\s*$", text, re.M)
+        n_sh = len([x for x in (shards.group(1).split(",") if shards else []) if x.strip()])
+        ok("mold_v0 checks" in names and "static checks" in names and "typecheck" in names and n_sh >= 2
+           and [x for x in names if x.startswith("tests ")] == [f"tests {i}/{n_sh}" for i in range(1, n_sh + 1)]
+           and len(set(names)) == len(names) and not any("${{" in x for x in names),
+           f"  ...{wf} requires every job by the name GitHub gives it (one per shard)", names)
     sha = "a" * 40; other = "b" * 40
     with tempfile.TemporaryDirectory() as d:
         st = os.path.join(d, "state"); os.makedirs(st)
