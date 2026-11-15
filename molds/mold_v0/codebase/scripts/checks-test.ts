@@ -518,8 +518,13 @@ try {
       assert.deepEqual(got.map((e) => e.path), ["/checks/may_process allowed", "/checks/may_process denied", "/checks/may_email allowed"]);
       assert.ok(got.every((e) => e.org_id === A.org.orgId));
       assert.deepEqual(got.slice(0, 2).map((e) => e.actor_kind), ["user", "key"]);
-      const all = JSON.stringify(await db.query("SELECT * FROM audit_platform_events"));
-      assert.ok(!all.includes("s1") && !all.includes("marketing"), "no input and no value in the trail");
+      // The entries' own columns never hold an input. Since mold_v0-286 every entry's `request` keeps the request that
+      // caused it (headers and JSON body, masked: src/audit-request.ts), read only by the Access log's panel: that is
+      // the request's, not the check's, and is left out here.
+      const rows = await db.query<Record<string, unknown>>("SELECT * FROM audit_platform_events");
+      const all = JSON.stringify(rows.map(({ request: _request, ...own }) => own));
+      const holds = (v: string) => new RegExp(`(^|[^A-Za-z0-9_-])${v}([^A-Za-z0-9_-]|$)`).test(all);
+      assert.ok(!holds("s1") && !holds("s2") && !holds("s6") && !all.includes("marketing"), `no input and no value in the trail's own columns: ${all.slice(0, 600)}`);
       audit.setAuditForTest(null);
       console.log("✓ audit: each answer one platform-trail entry (the check and its outcome, by the asker, never an input) with audit.platform on; none off");
     }
