@@ -228,7 +228,7 @@ try {
     assert.deepEqual(edit.title, { before: "Build 02", after: "Build 02 (renamed)" }, "its title before and after");
     assert.deepEqual(edit.changes.find((c: any) => c.field === "summary"), { field: "summary", before: null, after: "Rebuilt after the cache fix" }, "a field before and after");
     assert.deepEqual(hb.changes[1].changes, [{ field: "status", before: "running", after: "passed" }], "a move: the state before and after");
-    assert.equal(hb.changes[3].by, "The app's own automation", "the seed's run");
+    assert.equal(hb.changes[3].by, "An automatic run", "the seed's run");
     assert.notEqual((await hist(owner, "builds", "build-02", "4-0")).changes[0].by, "You", "someone else sees who changed it");
     assert.equal((await hist(viewer, "builds", "build-02", "4-0")).changes.length, 4, "a viewer reads it (the area's read)");
     assert.equal((await page(ownerB, "builds", "build-02", "history")).status, 404, "another workspace: not found");

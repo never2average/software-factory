@@ -90,16 +90,16 @@ export async function recordHistory(orgId: number, area: RecordArea, key: string
   return { lines, more };
 }
 
-/** Who made a change, in words: a person (by the caller's lookup), staff, a run, the intake, a data source, the shell. */
+/** Who made a change, in words: a person (by the caller's lookup), staff, a run, the intake, an import, the shell (the same words as "Added by", web/src/features/records/detail-layout.ts addedByWords). */
 export function changedByWords(by: string | null, person: (id: string) => string): string {
   if (!by) return "Someone (not recorded)";
   const i = by.indexOf(":"), kind = i < 0 ? by : by.slice(0, i), who = i < 0 ? "" : by.slice(i + 1);
   switch (kind) {
     case "people": return who ? person(who) : "A person of this workspace";
     case "staff": return "Platform staff";
-    case "run": return /^run_[A-Za-z0-9_-]+$/.test(who) ? `Run ${who}` : "The app's own automation";
+    case "run": return /^run_[A-Za-z0-9_-]+$/.test(who) ? `Run ${who}` : "An automatic run"; // mold_v0-306: the same words as "Added by"
     case "intake": return "The email intake";
-    case "repository": return "Its data source";
+    case "repository": return "An import"; // mold_v0-306: never "Its data source"
     case "shell": return who.startsWith("clock") ? "A deadline clock" : "The app itself";
     default: return "The app itself";
   }
