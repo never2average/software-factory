@@ -14,7 +14,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useConsolePathname } from '@/lib/console-path';
-import { useMarkNotFound } from '@/lib/page-not-found';
+import { NotFoundFrameStyle, useMarkNotFound } from '@/lib/page-not-found';
 import { useId, type ReactNode } from 'react';
 import { BrandLogo, BrandMark } from '@/components/brand';
 import { Icons } from '@/components/icons';
@@ -49,7 +49,8 @@ export function StatusPage({ kind, area: areaProp, frame = 'inline', level, role
   const pathname = useConsolePathname();
   // mold_v0-298: while a page's 404 is shown (a page of its own: the areas' not-found pages, level 1, or a full frame),
   // the frame around it has no trail and no lit sidebar entry. A data hook's 404 inside a page or a panel is not marked.
-  useMarkNotFound(kind === 'not_found' && (level === 1 || frame === 'full'));
+  const ownNotFound = kind === 'not_found' && (level === 1 || frame === 'full');
+  useMarkNotFound(ownNotFound);
   const area = areaProp ?? areaOf(pathname);
   const t = statusText(kind, { role, email, area });
   const id = useId();
@@ -88,13 +89,14 @@ export function StatusPage({ kind, area: areaProp, frame = 'inline', level, role
       </div>
     </section>
   );
-  if (frame === 'inline') return <div className='flex w-full flex-1 items-center justify-center'>{body}</div>;
+  // mold_v0-308: a page's own 404 unlights its frame from the first paint (lib/page-not-found.tsx NotFoundFrameStyle).
+  if (frame === 'inline') return <div className='flex w-full flex-1 items-center justify-center'>{ownNotFound ? <NotFoundFrameStyle /> : null}{body}</div>;
   return (
     <div className='flex min-h-svh flex-col'>
       <header className='border-b'>
         <div className='mx-auto flex min-h-16 w-full max-w-5xl items-center px-4 py-3 sm:px-6'><BrandLogo className='min-w-0' /></div>
       </header>
-      <main id='main' className='flex flex-1 items-center justify-center'>{body}</main>
+      <main id='main' className='flex flex-1 items-center justify-center'>{ownNotFound ? <NotFoundFrameStyle /> : null}{body}</main>
     </div>
   );
 }

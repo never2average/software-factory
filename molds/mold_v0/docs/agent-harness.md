@@ -360,10 +360,12 @@ or page exists.
   and `cancel_child`; a child also has `submit_outputs(answer, outputs)`. They are listed only to a session's own workspace
   token (`src/harness-reach.ts`): never to a person or an account key. The session is the token's, never an input.
 - **The tree.** `harness_sessions` gains `parent_id`, `root_id`, `depth`, a number (`AGI-001`, its first child `AGI-001.1`),
-  `carved_usd` and `children_spent_usd`. A depth of 2, 8 children to a root's tree and 4 at once are the shell's ceilings;
-  an app's `nested_runs` block in `profile.json` (`max_depth`, `max_children`, `max_concurrent`) can only lower them. What
-  waits says why. Every session in the tree counts against the 8, a machine's steps included; a machine also has its own bound
-  (`max_children`, default `max_transitions + 1`), and every step counts against the 4.
+  `carved_usd` and `children_spent_usd`. **Sub-run limits** (mold_v0-303, `src/nested-runs.ts` nestedLimits): by default a
+  depth of 2, 32 children to a root's tree and 4 at once; an app's `nested_runs` block in `profile.json` (`max_depth`,
+  `max_children`, `max_concurrent`) sets them, never past the hard maximum (depth 3, 256 children, 16 at once; at least 1
+  at once). The children are generous on purpose: a tree's budget, carved child by child, is the real limit. What waits
+  says why. Every session in the tree counts against the children, a machine's steps included; a machine also has its own
+  bound (`max_children`, 1 to 256, default `max_transitions + 1`), and every step counts against the ones at once.
 - **Budgets.** A child's budget is carved under the parent's row lock from what it has left (`spawnable = budget − spent −
   reserve − carved − children_spent`, its in-flight requests held out too), taken off the parent's running wake at once, and
   what it did not use is returned when it settles. A child cannot be raised; a person raises the root, and a root's floor includes what it carved. The gateway
@@ -391,10 +393,77 @@ test in a clean sandbox with trusted code (`src/program-evaluator.ts`: its own r
 credentials; the candidate, the current best and the scorer each a run user of its own reading root-owned, read-only trees, each with a fresh HOME and environment built by the runner; the test's and the current best's files hashed before and after). It
 needs at least 5 cases, must beat the current best by `min_lift` (default 5%), with the 95% confidence interval's lower bound
 above zero, on every floor. Tampering, changes outside the declared `surface`, a missing metric or an evaluation that does
-not finish are refusals. With no test, or no current best yet, the outcome is `needs_review` and a person decides. An accepted
-candidate becomes the next version of its target (`harness_champions`, per workspace, with rollback); a person applies it:
-for a recipe, a proposal staff accept in Recipes; a harness policy or a mold ref only records who applied what, this shell
-pushes to no app and no default branch. Limits today: the worst-case hold assumes two bytes per token (a request far below that is not bounded).
+not finish are refusals; a candidate that changes nothing of its target is refused; one that changes wording only
+(Markdown, `.mdx`, `.txt`, `.rst`: instructions, a `SKILL.md`) goes to a person with nothing run. With no test, or no current best and no
+current version of the target, the outcome is `needs_review` and a person decides. An accepted candidate becomes the next
+version of its target (`harness_champions`, per workspace, with rollback). Limits today: the worst-case hold assumes two bytes
+per token (a request far below that is not bounded).
+
+## What an improvement improves (mold_v0-303, mold_v0-308; `src/program-target.ts`)
+
+- **Targets.** An acceptance rule's `target` names its kind, `recipe` (a workspace recipe's files), `harness_policy` (an agent
+  profile's governance policy, as one file `policy.json`) or `mold` (`mold_ref` is read as `mold`), either fixed (`kind`) or
+  read from the run's inputs (`kind_from_input`, one of `kinds`; another kind is refused in words), and the target's id
+  (`id`, or `from_input`).
+- **The base and first-run baselines.** What a candidate changes and is measured against: the current best's whole files; with
+  none yet, the target's current version (a recipe's files at its version, the profile's governance as `policy.json`), so the
+  guardian decides the very first run against what is there today. A mold has no files in an app: its first candidate has no
+  base, so a person decides. A base whose files cannot be read fails closed to a person.
+- **Overlays.** The candidate's step gets the base read-only in `.target/` (root's, when the run has a user of its own) and is
+  told (`targetBrief`) to write only what it changes under `.candidate/`: every file it does not write is the base's. The
+  overlay laid over the base is the whole candidate (what the evaluator scores, `full.wse`), what differs from the base is
+  what it changed (what the surface and the wording rule judge), and the base itself is sealed beside it (`base.wse`, what the
+  evaluator scores as the baseline).
+- **Deletions** (mold_v0-308). A candidate removes a file of its base by listing its path on a line of `.candidate/.deleted`
+  (blank lines and `#` comments skipped). The list is never a file of the candidate: the merge leaves those files out, so the
+  evaluator's candidate bundle has none of them; a removal is a change (judged against the surface like any other, so
+  removing a file outside it is refused); a recipe proposal names them as removed; the patch deletes them as git does. A path
+  it lists and also writes is written; a path the base does not have is nothing to delete.
+- **Built-in scorers and candidate** (`src/program-scorers.ts`), so a pack declares a test with no code of its own:
+  `builtin:exact` (the output is the expected answer, as JSON when both parse, else as trimmed text), `builtin:json-schema`
+  (the output meets `expected.schema`; or, with `expected.valid`, the output is a schema the case's input meets exactly when
+  `valid` says so), `builtin:governance-sim` (the output is a governance policy; the case one tool call, the expected decision;
+  also `false_allow` and `valid`), and the candidate command `["builtin:file", "<path>"]` (the candidate's file is the output).
+- **A test from a recipe.** `test: {recipe: {id, version?}, cases_path, candidate_command, scorer_command}` is frozen when the
+  program is saved (`src/programs.ts` freezeTest): the recipe's version (its latest when none is named) and its files, each
+  with its sha256, so the contract stays what was frozen whatever the recipe becomes.
+- **Applying a version** (staff, `POST /api/admin/onboarding/program-champions/:id/apply`): a recipe's is a proposal of what differs
+  from the recipe now (its changed files, and mold_v0-308 the files it removed that the recipe still has), which staff accept
+  in Recipes; a harness_policy's is a proposal of the profile's next version (checked now) that staff accept or decline
+  (`POST .../proposal`); a mold's is recorded as proposed, and its patch (`GET .../patch`: a unified diff a person applies
+  with `git apply`, added, modified and deleted files) is how it leaves the app. No agent and no part of this app holds a
+  token that writes to a mold or a default branch.
+
+## Programs' records, roles and starts (mold_v0-303, mold_v0-308)
+
+- **Records** (`config.record`, `src/program-records.ts`). A program may keep its results as workspace records: `{area, items?,
+  key?, title?, fields: {<field>: <output path>}}`. Once its outputs have passed their schema and it settled done, the server
+  (never the agent) writes them through the record store as one batch, provenance `run`, written by
+  `run:program:<program>:<handle>`; a key written again replaces its record. An area or a field the build does not have is
+  refused when the program is saved (and a pack's at load). A spawned program and a machine write theirs; mold_v0-308: so
+  does a machine's step whose state runs another program (`states[].program`): that program's records, at the version the
+  step started with (`machine.step_program`), provenance the step. A write refused later is said on the parent's trace and
+  never changes how the child settled.
+- **Roles** (`config.roles`): the account roles that may start it, each once; absent, every role that may start agent
+  sessions. A person always needs that role too.
+- **Who may start it** (`src/program-start.ts`). `spawned_by: []` is people only, `["*"]` every agent and people too, a list
+  of profiles those agents (a person starts it through one of them). A person starts one from the Agents page ("Run a
+  program", `POST /api/agent/programs/:id/start`) or a record page's `start_program` action; a program with no machine runs as a
+  session of its own, any other in a session of a profile that may spawn it, told to spawn exactly those inputs.
+- **The people-start permit.** A machine program only people may start (`[]`) runs in a root session of its own agent
+  profile whose frozen policy carries `nested.permit_program`: that root may spawn exactly that program and no other
+  people-only one; no other session may spawn it at all.
+- **start_program actions** (pack.json record page `actions`, flag `nested_runs`): `{kind: "start_program", program, input?:
+  {<program input>: <field> | "$key" | "$title"}}`, its inputs filled from the record on the server; offered only to a role
+  that may start the program (never a viewer's, never on a shared area's page) and only while it is active.
+- **Schedules** (`src/schedules.ts`): a pack's schedule may say `start_agent: {profile, first_message}` (a workspace agent
+  session) or `start_program: {program, inputs?}` in place of a job kind's runs; it acts for the workspace's account and is
+  kept under the job kind `@agent` or `@program`.
+- **Pack-declared recipes** (`src/recipes.ts`, pack.json `recipes`): files inline as text, scripts flagged executable, brought
+  in as version 1 and a next version only when the pack's files or words change; once staff change one it is theirs. With no
+  object store at all, their files (each under one upload part) are kept in the database
+  (`agent_profile_uploads.inline_data`), so declared recipes, the tests frozen from them and the files a session receives
+  need no bucket.
 
 ## The agent's dock (mold_v0-292, flag `nested_runs`)
 

@@ -29,7 +29,9 @@ import { ENV } from "./env-names.js";
  * to that workspace's own bucket when its owners set one up in the customer console (a record of the pack's declared
  * object_storage area, marked for use); every other key, and a workspace without one, to the bucket below. A read of a
  * key the workspace's bucket does not hold falls back to the bucket below (what was stored before the workspace had its
- * own stays readable); nothing is moved between buckets.
+ * own stays readable); nothing is moved between buckets. mold_v0-308: so whatever lists or removes all of a workspace's
+ * objects (the transcript archive's restore, a workspace's deletion) asks both: listKeysEverywhere and
+ * deleteKeysEverywhere look in its own bucket and in the platform's.
  */
 
 const env = ENV;
@@ -141,6 +143,20 @@ export function forgetStorageSettings() { vaultTarget = null; }
 /** Whether a bucket is configured, in the environment or in the key vault (APP_STORAGE_DIR does not count). */
 export const s3Ready = async () => (await target()) !== null;
 /**
+ * mold_v0-308: whether `key` (or an org prefix) has a bucket to go to: its workspace's own, else the platform's.
+ * Throws, in words, when the workspace's own is marked for use but cannot be used (src/workspace-storage.ts).
+ */
+export const bucketReadyFor = async (key: string) => (await targetFor(key)) !== null;
+/**
+ * mold_v0-308: every bucket a key stored for a workspace may be in: its own (when it has one), then the platform's
+ * (what was stored before it had its own). A platform key: the platform's only.
+ */
+async function bucketsFor(key: string): Promise<Target[]> {
+  const out: Target[] = [];
+  for (const t of [await workspaceTarget(key), await platformTarget()]) if (t && !out.some((o) => o.bucket === t.bucket && o.endpoint === t.endpoint)) out.push(t);
+  return out;
+}
+/**
  * mold_v0-305: whether the platform has an object store at all (a bucket in the environment or the key vault, or
  * APP_STORAGE_DIR): with none, files the build itself carries (a pack's declared recipes) are kept in the database.
  */
@@ -218,7 +234,37 @@ export async function listKeys(prefix: string, max = 100_000): Promise<{ key: st
   return out;
 }
 
-/** Delete objects by key, 1000 per request (organization deletion, src/tenancy.ts); each from the bucket its key goes to. */
+/**
+ * mold_v0-308: the objects under `prefix` in every bucket they may be in (bucketsFor: a workspace's own, then the
+ * platform's), each key once, with where it was found first. No bucket at all: none.
+ */
+export async function listKeysEverywhere(prefix: string, max = 100_000): Promise<{ key: string; size: number; modified: Date | null; source: Target["source"] }[]> {
+  const seen = new Map<string, { key: string; size: number; modified: Date | null; source: Target["source"] }>();
+  for (const t of await bucketsFor(prefix)) {
+    let token: string | undefined;
+    do {
+      const r = await t.client.send(new ListObjectsV2Command({ Bucket: t.bucket, Prefix: prefix, ContinuationToken: token }));
+      for (const o of r.Contents ?? []) if (!seen.has(o.Key!)) seen.set(o.Key!, { key: o.Key!, size: Number(o.Size ?? 0), modified: o.LastModified ?? null, source: t.source });
+      token = r.IsTruncated ? r.NextContinuationToken : undefined;
+    } while (token && seen.size < max);
+  }
+  return [...seen.values()];
+}
+/**
+ * mold_v0-308: delete objects by key from every bucket each may be in (a workspace's own and the platform's: a
+ * workspace's deletion leaves nothing of it in either), 1000 per request. A key a bucket does not hold is no error.
+ */
+export async function deleteKeysEverywhere(list: string[]): Promise<void> {
+  const groups = new Map<Target, string[]>();
+  for (const k of list) for (const t of await bucketsFor(k)) groups.set(t, [...(groups.get(t) ?? []), k]);
+  if (list.length && !groups.size) throw new Error(NOT_CONFIGURED);
+  for (const [t, keys] of groups) for (let i = 0; i < keys.length; i += 1000) {
+    const r = await t.client.send(new DeleteObjectsCommand({ Bucket: t.bucket, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));
+    if (r.Errors?.length) throw new Error(`object store delete failed for ${r.Errors.length} object(s), e.g. ${r.Errors[0]!.Key}: ${r.Errors[0]!.Message}`);
+  }
+}
+
+/** Delete objects by key, 1000 per request; each from the bucket its key goes to (deleteKeysEverywhere: from every one). */
 export async function deleteKeys(list: string[]): Promise<void> {
   const groups = new Map<Target, string[]>();
   for (const k of list) {
@@ -382,6 +428,8 @@ export async function objectStore(forKey?: string): Promise<ObjectStore> {
     },
   };
 }
+/** mold_v0-308: the local directory's own store (APP_STORAGE_DIR), whatever bucket a key would go to; null without one. */
+export const localObjectStore = (): ObjectStore | null => { const root = localDir(); return root ? localStore(root) : null; };
 /** A bucket's store: every key to the bucket it goes to (putObject and the rest choose it per key). */
 const bucketStore = (source: ObjectStore["source"]): ObjectStore => ({
   kind: "r2", source,

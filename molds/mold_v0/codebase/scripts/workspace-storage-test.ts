@@ -16,6 +16,10 @@
 //   5. the record page's Test: offered to an owner only (a member neither sees nor takes it); writes, reads and deletes
 //      one object (nothing left behind), writes status working and the date; a wrong secret, an unknown bucket and an
 //      unreachable endpoint each in words, status failing; an edit with the keys left empty keeps them
+//   7. the transcript archive (mold_v0-308): a workspace's archive goes to its own bucket; with no platform bucket the
+//      sweeper still archives the workspaces that have their own (and only those); a restore lists both buckets
+//   8. a workspace's deletion (mold_v0-308): its objects go from its own bucket and from the platform's (older ones);
+//      another workspace's stay; with no platform bucket, its own bucket alone is enough to purge
 //   6. no key in anything: every HTTP answer, every line the process printed
 import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
 import assert from "node:assert/strict";
@@ -238,6 +242,71 @@ try {
     assert.equal(list.status, 200); assert.ok(list.body.records.every((r: any) => r.data.secret_access_key === "[encrypted]"), "a list: masked");
     await http.close();
     ok("Test: an owner's only; write, read and delete one object (nothing left), status working and the date; a wrong secret, a missing bucket, an unreachable endpoint each in words, status failing; an edit with empty keys keeps them");
+  }
+
+  // ---------- 7. the transcript archive ----------
+  const platformClient = () => storage.s3Client({ bucket: "platform-files", endpoint: s3.url, access_key_id: PL_ID, secret_access_key: PL_SECRET });
+  const intoPlatform = async (key: string, body: string) => {
+    const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+    const pc = platformClient(); await pc.send(new PutObjectCommand({ Bucket: "platform-files", Key: key, Body: body })); pc.destroy();
+  };
+  {
+    const archive = await import("../src/archive.js");
+    W.forgetWorkspaceStorage();
+    assert.deepEqual(await W.workspacesWithStorage(), [A.orgId], "only A has a storage marked for use");
+    assert.deepEqual(await archive.archiveOrgs(), [A.orgId], "no platform bucket: the sweeper archives A (its own bucket) and no other workspace");
+    assert.equal(await storage.bucketReadyFor(storage.keys.orgPrefix("transcripts", A.orgId)), true, "A's archive has a bucket");
+    assert.equal(await storage.bucketReadyFor(storage.keys.orgPrefix("transcripts", B.orgId)), false, "B's has none");
+    const t1 = storage.keys.transcript(A.orgId, "sess-new", new Date());
+    await storage.putObject(t1, "new", "application/gzip"); // what archiveSession writes
+    assert.ok(s3.list("ws-a-files").includes(t1), "A's archive written to A's own bucket");
+    Object.assign(process.env, { R2_BUCKET: "platform-files", R2_ENDPOINT: s3.url, R2_ACCESS_KEY_ID: PL_ID, R2_SECRET_ACCESS_KEY: PL_SECRET });
+    assert.equal(await archive.archiveOrgs(), null, "a platform bucket: every workspace is archived");
+    const t0 = storage.keys.transcript(A.orgId, "sess-old", new Date("2026-01-15T00:00:00Z"));
+    await intoPlatform(t0, "old");
+    const tb = storage.keys.transcript(B.orgId, "sess-b", new Date());
+    await storage.putObject(tb, "b", "application/gzip");
+    assert.ok(s3.list("platform-files").includes(tb) && !s3.list("ws-a-files").includes(tb), "B's archive: the platform's bucket");
+    assert.deepEqual((await archive.archivedKeys(A.orgId)).map((o) => o.key).sort(), [t0, t1].sort(), "A's restore lists its own bucket and the platform's older archive");
+    assert.deepEqual((await archive.archivedKeys()).map((o) => o.key).filter((k) => [t0, t1, tb].includes(k)).sort(), [t0, t1, tb].sort(), "a restore of all: every bucket");
+    assert.equal((await storage.getObject(t0))?.toString(), "old", "a read-through of the older archive still finds it");
+    ok("transcript archive: a workspace's archives go to its own bucket; no platform bucket: only workspaces with their own are archived; a restore lists both buckets");
+  }
+
+  // ---------- 8. a workspace's deletion ----------
+  {
+    const { deleteOrg } = await import("../src/tenancy.js");
+    const mineOwn = [storage.keys.workspace(A.orgId, "fx", 7), storage.keys.research(A.orgId, "r1")];
+    for (const k of mineOwn) await storage.putObject(k, "x", "application/octet-stream");
+    const mineOld = storage.keys.workspace(A.orgId, "fx", 98);
+    await intoPlatform(mineOld, "old");
+    const ofA = (bucket: string) => s3.list(bucket).filter((k) => storage.orgOfKey(k) === A.orgId);
+    assert.ok(ofA("ws-a-files").length >= 3 && ofA("platform-files").length >= 2, "A has objects in both buckets");
+    const dry = await deleteOrg(A.orgId, { dryRun: true });
+    assert.equal(dry.counts.objects, new Set([...ofA("ws-a-files"), ...ofA("platform-files")]).size, "the dry run counts both buckets' objects");
+    // No platform bucket: the workspace's own bucket alone is enough to purge it, and the platform's older ones wait.
+    for (const k of R2) delete process.env[k];
+    const out = await deleteOrg(A.orgId);
+    assert.equal(out.found, true);
+    assert.deepEqual(ofA("ws-a-files"), [], "nothing of A left in its own bucket");
+    Object.assign(process.env, { R2_BUCKET: "platform-files", R2_ENDPOINT: s3.url, R2_ACCESS_KEY_ID: PL_ID, R2_SECRET_ACCESS_KEY: PL_SECRET });
+    // With both: the deletion takes both (B's own case: its objects are only the platform's).
+    const bOwn = storage.keys.workspace(B.orgId, "fx", 9);
+    await storage.putObject(bOwn, "b9", "application/octet-stream");
+    // Give B a bucket of its own (A's was the only one): its earlier objects stay in the platform's.
+    const recB = ra.workspaceRecords("fixture_storage", B.orgId, owner);
+    await ra.asWriter({ by: "people", id: "owner" }, () => recB.create("fx_storage", "b-files", { title: "B files", data: { ...good, bucket: "ws-a-files" } }));
+    W.forgetWorkspaceStorage();
+    const bNew = storage.keys.workspace(B.orgId, "fx", 10);
+    await storage.putObject(bNew, "b10", "application/octet-stream");
+    const ofB = (bucket: string) => s3.list(bucket).filter((k) => storage.orgOfKey(k) === B.orgId);
+    assert.ok(ofB("ws-a-files").includes(bNew) && ofB("platform-files").includes(bOwn), "B's new object in its own bucket, its older one in the platform's");
+    await deleteOrg(B.orgId);
+    assert.deepEqual(ofB("ws-a-files"), [], "nothing of B in its own bucket");
+    assert.deepEqual(ofB("platform-files"), [], "nor in the platform's (its older objects too)");
+    assert.ok(s3.list("platform-files").includes("agent-profiles/uploads/upl_x/0.part"), "the platform's own objects stay");
+    for (const k of R2) delete process.env[k];
+    ok("deletion: a workspace's objects go from its own bucket and the platform's; its own bucket alone is enough with no platform bucket; the platform's own objects stay");
   }
 
   // ---------- 6. no key anywhere ----------

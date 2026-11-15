@@ -20,7 +20,15 @@ In this order (mold_v0-181):
    Any S3-compatible service works (path-style requests; the region is taken from an AWS address, else `auto`).
 3. **`APP_STORAGE_DIR`**: a directory on one machine (tests, a single server). Only the workspace store uses it.
 
-None of them: a feature that needs the store refuses with the message naming all three ways. `npm run
+None of them: a feature that needs the store refuses with the message naming all three ways.
+
+**A workspace's own bucket** (mold_v0-305, flag `workspace_storage`; `src/workspace-storage.ts`): its owners add one in the
+customer console (a record of the pack's `object_storage` area, marked for use, tested with the record page's Test,
+`test_storage`). Every key under that workspace's prefix (`<kind>/org-<id>/...`) then goes to it, over all three above;
+the platform's own keys (`postgres/`, `agent-profiles/uploads/`, `ops/`) never do. A read its bucket lacks falls back to
+the platform's (what was stored before); nothing is moved. mold_v0-308: the trace archive writes a workspace's archives
+to its own bucket (and runs for those workspaces even with no platform bucket); a restore and a read-through look in both;
+a workspace's deletion removes its objects from its own bucket and from the platform's. `npm run
 operator:vault-status` reports "needs Object storage" for a build whose runs keep their workspace between runs.
 
 | Prefix | What | Written by | Kept |
@@ -51,7 +59,8 @@ following line is one stored event, exactly as the transcript store returns it (
 - **Tracking:** `agent_sessions.archive_key`, `archived_at`, `archive_events`; `product_research.archive_key`,
   `archived_at`. An infrastructure retry that wipes a transcript also clears its archive key, so the retry is
   archived afresh.
-- **Off switch:** `APP_ARCHIVE=off`, or configure no bucket (neither `R2_*` nor Key vault › Object storage).
+- **Off switch:** `APP_ARCHIVE=off`, or configure no bucket (neither `R2_*` nor Key vault › Object storage, nor a
+  workspace's own: then only those workspaces' sessions are archived, to their own buckets).
 
 ## If ClickHouse goes away
 

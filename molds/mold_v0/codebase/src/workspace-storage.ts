@@ -17,6 +17,11 @@
  *                quietly to a bucket its owners did not choose.
  *   the cache    one answer per workspace for VAULT_TTL_MS (a minute), dropped at once when a record of the area changes
  *                in this process (src/record-areas.ts onRecordChange).
+ *   everywhere   mold_v0-308: what lists or removes all of a workspace's objects asks its own bucket and the platform's
+ *                (src/storage.ts listKeysEverywhere, deleteKeysEverywhere): a workspace's deletion (src/tenancy.ts)
+ *                removes its objects from both; the transcript archive (src/archive.ts) writes a workspace's archives to
+ *                its own bucket, runs for the workspaces that have one when the platform has none
+ *                (workspacesWithStorage), and restores from both.
  *   Test         the record page's `test_storage` action (src/record-page-routes.ts): writes, reads and deletes one small
  *                object with the record's own settings (src/storage.ts testBucket, the Key vault's Test), says what went
  *                wrong in plain words (never a key), and writes the declared status (working, failing) and tested date.
@@ -106,6 +111,23 @@ async function inUse(orgId: number): Promise<{ key: string; title: string | null
   if (!keys.length) return [];
   const stored = await withViewer(null, () => workspaceStored(orgId, area, keys));
   return keys.flatMap((k) => { const r = stored.get(k); return r && r.data[d.fields.use] === true && matches(d.where, r.data) ? [{ key: k, title: r.title, data: r.data }] : []; });
+}
+
+/**
+ * mold_v0-308: the workspaces with a record of the area marked for use (the platform's own read, across workspaces, of
+ * no key: only which workspaces have one). Empty when workspace storage is off.
+ */
+export async function workspacesWithStorage(): Promise<number[]> {
+  if (!workspaceStorageOn()) return [];
+  const d = storageDecl()!;
+  const { findArea } = await import("./record-areas.js");
+  const area = findArea(d.area);
+  if (!area || area.scope !== "workspace") return [];
+  const { getDb } = await import("./db.js");
+  const { asPlatform } = await import("./tenant-scope.js");
+  return asPlatform(async () => (await (await getDb()).query<{ org_id: number }>(
+    "/* tenant: the platform's own read across workspaces (which have their own storage; no data) */ SELECT DISTINCT org_id FROM workspace_records WHERE pack = $1 AND area = $2 AND data -> $3 = 'true'::jsonb ORDER BY org_id",
+    [area.pack, area.name, d.fields.use])).map((r) => Number(r.org_id)));
 }
 
 /**

@@ -3981,6 +3981,12 @@ console's Key vault (`src/workspace-storage.ts`, `src/storage.ts`).
   read its bucket lacks falls back to the platform's (what was stored before); nothing is moved. A record marked `use`
   whose keys cannot be opened is refused in words, never quietly replaced. Cached a minute per workspace, dropped at
   once on a change of the area. A save names a bucket and an endpoint a service takes (the Key vault's own checks).
+- **Both buckets where it matters** (mold_v0-308; `src/storage.ts` listKeysEverywhere, deleteKeysEverywhere): the
+  transcript archive (`src/archive.ts`) writes a workspace's archives to its own bucket, and with no platform bucket
+  still archives the workspaces that have their own (only those: archiveOrgs); its read-through and restore look in the
+  workspace's bucket and then the platform's. A workspace's deletion (`src/tenancy.ts` deleteOrg) lists and removes its
+  objects from its own bucket and from the platform's (what was stored before it had one), before the cascade takes its
+  storage record; its own bucket alone is enough when the platform has none.
 - **Test**: the record page's `test_storage` action (owners, or the roles that may update the area) writes, reads and
   deletes one object under `ops/key-vault-test/` with the record's own settings (the Key vault's Test), says in plain
   words what it found and writes `status` and `tested`. An edit leaves an encrypted field's hidden input empty to keep it
@@ -3990,7 +3996,40 @@ console's Key vault (`src/workspace-storage.ts`, `src/storage.ts`).
 - **No object store at all**: a pack's declared recipe files (and an agent's proposed ones) of one part are kept in the
   database (`agent_profile_uploads.inline_data`, `sql/migrations/0070_upload_bytes_inline.sql`), so declared recipes, the
   acceptance tests frozen from them and the files a session receives need no bucket. Staff uploads still go to the store.
-- Tests: `npm run test:workspace-storage`, `npm run test:declared-recipes-no-store`.
+- Tests: `npm run test:workspace-storage` (sections 7 and 8: the archive and a deletion, mold_v0-308),
+  `npm run test:declared-recipes-no-store`.
+
+## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
+
+Flag `nested_runs` (with `agent_harness`). The full contract is `molds/mold_v0/docs/agent-harness.md` ("Nested runs and
+Programs", "What an improvement improves", "Programs' records, roles and starts"); in short:
+
+- **Targets** `recipe | harness_policy | mold` (`mold_ref` read as `mold`), fixed by the rule or read from the run's input
+  (`kind_from_input`, `kinds`). The candidate's step gets its base read-only in `.target/` and writes an **overlay** in
+  `.candidate/` (only what it changes); with no champion yet the **first-run baseline** is the target's current version (a
+  recipe's files, a profile's governance as `policy.json`), so the guardian decides the first run. mold_v0-308: a candidate
+  removes base files by listing them in `.candidate/.deleted`, honoured by the merge, the evaluator's bundle, the recipe
+  proposal (`removed`) and the patch (git deletions). A wording-only change goes to a person; one that changes nothing is
+  refused.
+- **Built-in scorers** `builtin:exact`, `builtin:json-schema`, `builtin:governance-sim` and the candidate
+  `builtin:file`; a test may be declared from a recipe and is frozen (version and file hashes) when the program is saved.
+- **Applying**: a recipe version is a recipe proposal of its changed and removed files; a harness_policy version a profile
+  proposal staff accept or decline; a mold version only a patch for a person's pull request.
+- **`config.record`**: results kept as workspace records by the server (provenance `run`); mold_v0-308: a machine's step
+  whose state runs another program writes that program's records too.
+- **`config.roles`**: the account roles that may start it. **People start** programs from the Agents page, a record page's
+  `start_program` action, or a schedule (`start_agent` / `start_program`); a machine program only people start runs in a root
+  carrying the **people-start permit** (`nested.permit_program`) for exactly it.
+- **Sub-run limits**: depth 2, 32 children a tree and 4 at once by default; `profile.json` `nested_runs` sets them up to
+  depth 3, 256 and 16.
+- **Pack-declared recipes** (pack.json `recipes`): files inline, versioned by the pack until staff change one; with no object
+  store their small files are kept in the database.
+- **Log-drain receivers** (`src/log-drain.ts`; pack.json `developer_surface.webhooks_in[]` with `log_drain`, `signature`
+  `standard` or `vercel`): a hosting provider's request logs reduced to per-deployment, per-window report records
+  (requests, errors, error rate, p95 and mean latency); no log line, path, address or user agent kept. Its secret and the
+  provider's verify token are named by environment variable only (`secret_env`, `verify_env`), else the source's own sealed
+  secret. Tests: `scripts/log-drain-test.ts`.
+- Tests: `scripts/self-improvement-test.ts`, `scripts/nested-runs-test.ts`, `scripts/nested-runs-review-test.ts` (as root).
 
 ## Early access form (mold_v0-266, mold_v0-289)
 

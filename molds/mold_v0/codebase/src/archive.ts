@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
-import { getObject, keys, putObject, s3Ready } from "./storage.js";
+import { bucketReadyFor, getObject, keys, putObject, s3Ready } from "./storage.js";
 import { baseTranscripts, type StoredEvent } from "./transcripts.js";
 import { ENV } from "./env-names.js";
 
@@ -18,6 +18,10 @@ import { ENV } from "./env-names.js";
  *  - Read-through: when the live store has no events for an archived session (ClickHouse gone and the server moved to
  *    the Postgres store, or a fresh store), transcripts are served from the archive, so reports and evidence links keep
  *    working. scripts/restore-transcripts.ts loads archives back into whichever store is configured.
+ *  - A workspace's own bucket (mold_v0-305/308, flag workspace_storage): its archives are written there (putObject
+ *    routes a key stored for a workspace to its own bucket); with no platform bucket the sweeper still archives the
+ *    workspaces that have their own (archiveOrgs); a read-through and a restore look in its own bucket and then the
+ *    platform's (archives written before it had its own).
  */
 
 const BATCH = () => Math.max(1, Number(ENV.APP_ARCHIVE_BATCH ?? 25));
@@ -66,25 +70,39 @@ export async function archiveResearch(researchId: string): Promise<string | null
   return key;
 }
 
+/**
+ * mold_v0-308: the workspaces whose work can be archived now: null, every one (the platform has a bucket, and a workspace
+ * with its own bucket goes there); else only those with their own bucket (src/workspace-storage.ts); empty: none.
+ */
+export async function archiveOrgs(): Promise<number[] | null> {
+  if (await s3Ready()) return null;
+  const { workspacesWithStorage } = await import("./workspace-storage.js");
+  return workspacesWithStorage();
+}
+
 /** One sweep: claim and archive up to BATCH sessions and research jobs. Returns what it archived. */
 export async function archiveSweep(): Promise<{ sessions: number; research: number; failed: number }> {
   // The session engine's tables are a host pack's (mold_v0-049): with none, nothing of it to archive.
-  if (!sessionEngine() || !(await s3Ready())) return { sessions: 0, research: 0, failed: 0 };
+  if (!sessionEngine()) return { sessions: 0, research: 0, failed: 0 };
+  const orgs = await archiveOrgs();
+  if (orgs && !orgs.length) return { sessions: 0, research: 0, failed: 0 };
   const db = await getDb();
   const sessions = await db.query<{ id: string }>(
     `/* tenant: internal archive sweep across all orgs (rows keep their org_id) */ UPDATE agent_sessions SET archive_claimed_at = now()
       WHERE id IN (SELECT id FROM agent_sessions
                     WHERE archive_key IS NULL AND status = ANY($2) AND coalesce(ended_at, queued_at) < now() - interval '2 minutes'
                       AND (archive_claimed_at IS NULL OR archive_claimed_at < now() - interval '15 minutes')
+                      AND ($3::int[] IS NULL OR org_id = ANY($3::int[]))
                     ORDER BY coalesce(ended_at, queued_at) LIMIT $1 FOR UPDATE SKIP LOCKED)
-      RETURNING id`, [BATCH(), FINAL]);
+      RETURNING id`, [BATCH(), FINAL, orgs]);
   const research = !researchJobs() ? [] : await db.query<{ id: string }>(
     `/* tenant: internal archive sweep across all orgs (rows keep their org_id) */ UPDATE product_research SET archive_claimed_at = now()
       WHERE id IN (SELECT id FROM product_research
                     WHERE archive_key IS NULL AND status IN ('completed', 'failed')
                       AND (archive_claimed_at IS NULL OR archive_claimed_at < now() - interval '15 minutes')
+                      AND ($2::int[] IS NULL OR org_id = ANY($2::int[]))
                     ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-      RETURNING id`, [BATCH()]);
+      RETURNING id`, [BATCH(), orgs]);
   let ok = 0, rok = 0, failed = 0;
   for (const { id } of sessions) {
     try { await archiveSession(id); ok++; }
@@ -101,7 +119,7 @@ let timer: NodeJS.Timeout | null = null;
 /**
  * Background sweeper (every APP_ARCHIVE_INTERVAL_SECONDS, 300), in a build with the session engine unless APP_ARCHIVE=off.
  * Each sweep archives only while a bucket is configured (the environment's R2_* or the key vault's Object storage,
- * src/storage.ts), so one added on Key vault later is picked up without a restart. Returns whether it runs.
+ * src/storage.ts, or a workspace's own: mold_v0-308), so one added later is picked up without a restart. Returns whether it runs.
  */
 export function startArchiver(log: (m: string) => void = (m) => console.error(m)): boolean {
   if (timer) return true;
@@ -146,7 +164,8 @@ export function forgetArchivedOrg(orgId: number): void {
 }
 /** The archived events of a session (org-checked), or null when it has no archive. Small LRU of 20 sessions. */
 export async function archivedEvents(orgId: number, sessionId: string): Promise<StoredEvent[] | null> {
-  if (!sessionEngine() || !(await s3Ready())) return null;
+  // mold_v0-308: its workspace's own bucket counts (getObject looks there, then in the platform's).
+  if (!sessionEngine() || !((await s3Ready()) || (await bucketReadyFor(keys.orgPrefix("transcripts", orgId)).catch(() => false)))) return null;
   const ck = `${orgId}:${sessionId}`; // org in the key: the cache must never answer another org
   const hit = cache.get(ck);
   if (hit) { cache.delete(ck); cache.set(ck, hit); return hit; }
@@ -164,16 +183,28 @@ export async function archivedEvents(orgId: number, sessionId: string): Promise<
 // ---------- restore ----------
 
 /**
+ * mold_v0-308: every archived transcript's key, of one workspace or all: in the platform's bucket and in each workspace's
+ * own (src/storage.ts listKeysEverywhere), each key once.
+ */
+export async function archivedKeys(orgId?: number): Promise<{ key: string }[]> {
+  const { listKeysEverywhere } = await import("./storage.js");
+  if (orgId != null) return listKeysEverywhere(keys.orgPrefix("transcripts", orgId));
+  const seen = new Map<string, { key: string }>();
+  if (await s3Ready()) for (const o of await listKeysEverywhere("transcripts/")) seen.set(o.key, o);
+  const { workspacesWithStorage } = await import("./workspace-storage.js");
+  for (const org of await workspacesWithStorage()) for (const o of await listKeysEverywhere(keys.orgPrefix("transcripts", org))) seen.set(o.key, o);
+  return [...seen.values()];
+}
+
+/**
  * Load archived sessions back into the live store (a new ClickHouse service, or Postgres after ClickHouse lapsed).
  * Sessions the store already has events for are skipped, so it is safe to re-run. `orgId` limits it to one org.
  */
 export async function restoreArchives(opts: { orgId?: number; dryRun?: boolean; log?: (m: string) => void } = {}) {
-  const { listKeys } = await import("./storage.js");
   const log = opts.log ?? ((m: string) => console.error(m));
-  const prefix = opts.orgId != null ? keys.orgPrefix("transcripts", opts.orgId) : "transcripts/";
   const base = baseTranscripts();
   let restored = 0, skipped = 0, events = 0, failed = 0;
-  for (const o of await listKeys(prefix)) {
+  for (const o of await archivedKeys(opts.orgId)) {
     try {
       const gz = await getObject(o.key);
       if (!gz) continue;
