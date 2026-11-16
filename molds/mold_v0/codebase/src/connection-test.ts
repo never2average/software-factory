@@ -19,6 +19,9 @@
  *                (src/record-areas.ts asAction: fields set_by "action"), through the record store (its history and data
  *                trail say what changed: never a secret). The record's read is the person's (its own trail line).
  *
+ * mold_v0-313: a probe with a `kind` other than "http" (aws_sigv4, gcp_service_account, azure_client_credentials,
+ * postgres) is made by src/connection-test-signed.ts, through this file's host check, wire and words.
+ *
  * Tests and the lane world only (never in production): APP_CONNECTION_TEST_STANDIN=http://127.0.0.1:<port> sends every
  * call that passed the checks to that address instead (`/<host><path>`), so a fixture stands in for the real service.
  */
@@ -26,7 +29,7 @@ import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { ANY_PROBE, hostListed, localName, placeholders, PLACEHOLDER, PROBE_TIMEOUT_DEFAULT, probeHosts, type ConnectionProbe, type ConnectionTest } from "./connection-test-config.js";
+import { ANY_PROBE, hostListed, isHttpProbe, localName, placeholders, PLACEHOLDER, PROBE_TIMEOUT_DEFAULT, probeHosts, type ConnectionProbe, type ConnectionTest } from "./connection-test-config.js";
 import { privateAddress } from "./egress-hosts.js";
 import { ENV } from "./env-names.js";
 import { PackError } from "./pack-api.js";
@@ -39,7 +42,8 @@ export type ConnectionOutcome = "working" | "refused" | "unexpected" | "timeout"
 /** What the Test answers: whether it works, in one sentence, and what can be said safely (never a secret or a path). */
 export interface ConnectionTestAnswer { ok: boolean; outcome: ConnectionOutcome; words: string; host: string | null; status: number | null; ms: number; probe: string | null }
 
-class ProbeError extends Error { constructor(readonly outcome: ConnectionOutcome, message: string) { super(message); } }
+/** A probe's failure in words (exported for src/connection-test-signed.ts). */
+export class ProbeError extends Error { constructor(readonly outcome: ConnectionOutcome, message: string) { super(message); } }
 
 // ---------------------------------------------------------------- the host check
 
@@ -53,7 +57,7 @@ export function setResolverForTest(r: Resolver | null) { resolver = r ?? systemR
  * The stand-in address (tests): honoured only in a test world (APP_TEST_WORLD=1, set by scripts/lib/test-world.ts),
  * never in production, and only on 127.0.0.1.
  */
-function standin(): string | null {
+export function standin(): string | null {
   const v = ENV.APP_CONNECTION_TEST_STANDIN;
   if (!v || process.env.NODE_ENV === "production" || ENV.APP_TEST_WORLD !== "1") return null;
   try { const u = new URL(v); return u.protocol === "http:" && u.hostname === "127.0.0.1" ? v.replace(/\/$/, "") : null; } catch { return null; }
@@ -86,11 +90,14 @@ export async function checkAddress(u: URL, allowed?: readonly string[]): Promise
 }
 
 /** One message for every network failure (a refused port, a missing name, a bad certificate look the same). */
-const unreachable = (host: string) => `${host} could not be reached over https`;
+export const unreachable = (host: string) => `${host} could not be reached over https`;
 /** This app's own hosts (its public address, the gateway's, the run API's): never a test's to call. */
-const ownHosts = () => [process.env.PUBLIC_URL, ENV.APP_GATEWAY_URL, ENV.APP_RUN_API_URL].flatMap((x) => {
+export const ownHosts = () => [process.env.PUBLIC_URL, ENV.APP_GATEWAY_URL, ENV.APP_RUN_API_URL].flatMap((x) => {
   try { return x ? [new URL(x).hostname.toLowerCase().replace(/\.+$/, "")] : []; } catch { return []; }
 });
+
+/** Every address `host` resolves to (the resolver tests set; exported for src/connection-test-signed.ts). */
+export const resolveHost = (host: string) => resolver(host);
 
 /** A lookup that answers only public addresses (the connection uses the address checked here: no rebinding). */
 const publicLookup: net.LookupFunction = (hostname, options, cb) => {
@@ -107,8 +114,8 @@ const publicLookup: net.LookupFunction = (hostname, options, cb) => {
 /** The record's values a probe reads: plain fields as stored; `open(field)` opens an encrypted one (headers only). */
 export interface ProbeValues { plain: Record<string, unknown>; sealed: Set<string>; open: (field: string) => Promise<string>; label: (field: string) => string }
 
-const asText = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" || typeof v === "boolean" ? String(v) : "");
-const noBreaks = /[\u0000-\u001f\u007f]/;
+export const asText = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" || typeof v === "boolean" ? String(v) : "");
+export const noBreaks = /[\u0000-\u001f\u007f]/;
 
 /** A secret shorter than this is refused: redaction could not tell it from ordinary words. */
 export const SECRET_MIN = 8;
@@ -180,7 +187,7 @@ export function safeSummary(body: Buffer, secrets: readonly string[]): string | 
   const s = pick(j);
   return typeof s === "string" ? cleanWords(s, secrets) : null;
 }
-function cleanWords(s: string, secrets: readonly string[]): string | null {
+export function cleanWords(s: string, secrets: readonly string[]): string | null {
   let t = s;
   for (const x of secrets) if (x.length >= 4) t = t.split(x).join("…");
   t = t.replace(/[A-Za-z0-9_\-+/=.]{24,}/g, "…").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").replace(/[{}<>]/g, "").trim();
@@ -194,7 +201,7 @@ const STATUS_WORDS: Record<number, string> = {
   422: "the service could not use what was sent", 429: "too many requests: try again in a minute", 502: "the service's gateway had a problem",
   503: "the service is unavailable just now", 504: "the service's gateway took too long",
 };
-const statusWords = (s: number) => STATUS_WORDS[s] ?? (s >= 500 ? "the service had a problem on its side" : s >= 300 && s < 400 ? "it sent the test elsewhere" : "that is not the answer this test expects");
+export const statusWords = (s: number) => STATUS_WORDS[s] ?? (s >= 500 ? "the service had a problem on its side" : s >= 300 && s < 400 ? "it sent the test elsewhere" : "that is not the answer this test expects");
 
 /** The value at a dotted path of a JSON value (a list's position by its number); undefined when there is none. */
 export function atPath(v: unknown, path: string): unknown {
@@ -209,8 +216,8 @@ export function atPath(v: unknown, path: string): unknown {
 
 // ---------------------------------------------------------------- the call
 
-interface Wire { status: number; location: string | null; body: Buffer }
-function send(u: URL, method: string, headers: Record<string, string>, body: string | null, deadline: number, timeoutWords: string): Promise<Wire> {
+export interface Wire { status: number; location: string | null; body: Buffer }
+export function send(u: URL, method: string, headers: Record<string, string>, body: string | null, deadline: number, timeoutWords: string): Promise<Wire> {
   const sub = standin();
   return new Promise((resolve, reject) => {
     const left = deadline - Date.now();
@@ -257,6 +264,8 @@ function send(u: URL, method: string, headers: Record<string, string>, body: str
  * scripts/connection-test-test.ts; the page action calls testConnectionRecord.
  */
 export async function runProbe(key: string, p: ConnectionProbe, vals: ProbeValues): Promise<ConnectionTestAnswer> {
+  // mold_v0-313: a signed kind (AWS, Google Cloud, Azure, Postgres) is its own call: src/connection-test-signed.ts.
+  if (!isHttpProbe(p)) return (await import("./connection-test-signed.js")).runSignedProbe(key, p, vals);
   const label = p.label ?? "the service";
   const secrets: string[] = [];
   const started = Date.now();
@@ -325,7 +334,7 @@ const shortValue = (v: unknown, secrets: readonly string[]) => {
   return typeof v === "number" || typeof v === "boolean" ? String(v) : "another value";
 };
 /** The last guard: no secret in the words, whatever built them. */
-const cleanAnswer = (words: string, secrets: readonly string[]) => secrets.reduce((t, x) => (x.length >= 4 ? t.split(x).join("…") : t), words);
+export const cleanAnswer = (words: string, secrets: readonly string[]) => secrets.reduce((t, x) => (x.length >= 4 ? t.split(x).join("…") : t), words);
 
 // ---------------------------------------------------------------- the record
 

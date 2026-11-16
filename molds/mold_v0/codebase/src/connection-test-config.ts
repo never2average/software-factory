@@ -22,6 +22,25 @@
  *     "status": "status",                       an enum (options working and failing) or text field, set_by "action"
  *     "tested": "last_tested" }}]               a date field, set_by "action"
  *
+ * mold_v0-313: a probe that needs more than a header names its `kind` (the HTTP probe above is the default, "http").
+ * Each kind's call, hosts and signing are the kind's own (src/connection-test.ts); the pack names only which of the
+ * record's fields fill its roles (`fields`), and the build checks which roles must be, may be or never are encrypted:
+ *
+ *   aws_sigv4                  STS GetCallerIdentity at sts.amazonaws.com (or sts.<region>.amazonaws.com), SigV4-signed
+ *     fields: access_key_id (plain or sealed), secret_access_key (sealed), session_token? (sealed), region? (plain;
+ *     decides the host); region?: a fixed region instead of a field
+ *   gcp_service_account        a service account's key file (sealed JSON): an RS256 assertion to oauth2.googleapis.com/token
+ *     only (its token_uri must be exactly that), a read-only token, then (check "project", the default) its project read
+ *     at cloudresourcemanager.googleapis.com; check "token" stops at the token
+ *     fields: service_account_json (sealed)
+ *   azure_client_credentials   login.microsoftonline.com/<tenant>/oauth2/v2.0/token (client credentials, the management
+ *     scope), then a read-only GET of the subscription (or the list) at management.azure.com
+ *     fields: tenant_id (plain; decides where the secret goes), client_id (plain), client_secret (sealed), subscription_id? (plain)
+ *   postgres                   TLS only (the certificate checked against the host's name), SELECT 1 in a read-only
+ *     transaction with a 10 s statement timeout; hosts (required) and ports (default [5432]) bound where it connects
+ *     fields: url (sealed: postgres://user:password@host:port/db) or host + port? + database? (plain; host and port
+ *     decide where the password goes) + user (plain or sealed) + password (sealed)
+ *
  * The area is a workspace area written by hand (not a repository's), its contract reveals nothing (`reveal: {none}`):
  * a secret is typed once and never shown again, opened only by the test on the server, never returned or logged.
  */
@@ -43,8 +62,14 @@ const template = (max: number) => z.string().min(1).max(max).regex(/^[^\u0000-\u
 const fieldName = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a field's name");
 const statusCode = z.number().int().min(200, "a status the test counts as working is 200 to 299").max(299, "a status the test counts as working is 200 to 299");
 
-export const ConnectionProbeSchema = z.object({
-  label: z.string().trim().min(1).max(60).regex(/^[^\n\r{}<>]*$/, "plain text on one line").optional(),
+const probeLabel = z.string().trim().min(1).max(60).regex(/^[^\n\r{}<>]*$/, "plain text on one line").optional();
+const probeTimeout = z.number().int().min(1).max(PROBE_TIMEOUT_MAX, `a test waits at most ${PROBE_TIMEOUT_MAX} seconds`).optional();
+const hostList = z.array(z.string().regex(/^(\*\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "a host's name (api.example.com, or *.example.com)")).min(1).max(10);
+
+/** The probe of mold_v0-312: one HTTPS call, a secret only in a header (kind "http", the default). */
+export const HttpProbeSchema = z.object({
+  kind: z.literal("http").optional(),
+  label: probeLabel,
   method: z.enum(PROBE_METHODS, { error: () => `a probe's method is ${PROBE_METHODS.join(", ")}` }),
   url: template(2000),
   headers: z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,63}$/, "a header's name: letters, digits and -"), template(2000))
@@ -55,15 +80,86 @@ export const ConnectionProbeSchema = z.object({
     json_path: z.string().regex(/^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64}){0,9}$/, "a path into the JSON answer: names and list positions joined by dots (data.items.0.id)").optional(),
     equals: z.union([z.string().max(200), z.number().finite(), z.boolean(), z.null()]).optional(),
   }).strict().optional(),
-  timeout_seconds: z.number().int().min(1).max(PROBE_TIMEOUT_MAX, `a test waits at most ${PROBE_TIMEOUT_MAX} seconds`).optional(),
+  timeout_seconds: probeTimeout,
   /**
-   * mold_v0-312: the hosts the call may reach (a name allows itself and its subdomains; "*.x" is x and its subdomains),
+   * mold_v0-312: the hosts the call may reach (a name allows itself only; "*.x" is x and its subdomains),
    * on every hop, redirects included. Required when the record decides the host (the address starts with a url field,
    * or a {field} is its first label); otherwise the address's own host is the list, with these besides.
    */
-  hosts: z.array(z.string().regex(/^(\*\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "a host's name (api.example.com, or *.example.com)")).min(1).max(10).optional(),
+  hosts: hostList.optional(),
 }).strict();
+export type HttpProbe = z.output<typeof HttpProbeSchema>;
+
+// ---------------------------------------------------------------- mold_v0-313: the signed kinds
+
+/** An AWS region's name (eu-west-1, us-gov-west-1, ap-southeast-4): it is a label of STS's host. */
+export const AWS_REGION = /^[a-z]{2}(-[a-z]+){1,2}-\d{1,2}$/;
+export const AwsSigv4ProbeSchema = z.object({
+  kind: z.literal("aws_sigv4"),
+  label: probeLabel,
+  fields: z.object({ access_key_id: fieldName.optional(), secret_access_key: fieldName.optional(), session_token: fieldName.optional(), region: fieldName.optional() }).strict(),
+  /** A fixed region (its regional STS host) when no field names one; neither: the global sts.amazonaws.com. */
+  region: z.string().regex(AWS_REGION, "an AWS region's name (eu-west-1)").optional(),
+  timeout_seconds: probeTimeout,
+}).strict();
+export const GcpServiceAccountProbeSchema = z.object({
+  kind: z.literal("gcp_service_account"),
+  label: probeLabel,
+  fields: z.object({ service_account_json: fieldName.optional() }).strict(),
+  /** "project" (default): the token, then the key file's project read; "token": the read-only token alone. */
+  check: z.enum(["project", "token"]).optional(),
+  timeout_seconds: probeTimeout,
+}).strict();
+export const AzureClientCredentialsProbeSchema = z.object({
+  kind: z.literal("azure_client_credentials"),
+  label: probeLabel,
+  fields: z.object({ tenant_id: fieldName.optional(), client_id: fieldName.optional(), client_secret: fieldName.optional(), subscription_id: fieldName.optional() }).strict(),
+  timeout_seconds: probeTimeout,
+}).strict();
+export const POSTGRES_DEFAULT_PORT = 5432;
+export const PostgresProbeSchema = z.object({
+  kind: z.literal("postgres"),
+  label: probeLabel,
+  fields: z.object({ url: fieldName.optional(), host: fieldName.optional(), port: fieldName.optional(), database: fieldName.optional(), user: fieldName.optional(), password: fieldName.optional() }).strict(),
+  /** The hosts the database may be at (required: the record decides the host). */
+  hosts: hostList,
+  /** The ports it may listen on (default [5432]). */
+  ports: z.array(z.number().int().min(1024, "a database's port is 1024 to 65535").max(65535, "a database's port is 1024 to 65535")).min(1).max(5).optional(),
+  timeout_seconds: probeTimeout,
+}).strict();
+
+export const PROBE_KINDS = ["http", "aws_sigv4", "gcp_service_account", "azure_client_credentials", "postgres"] as const;
+export const ConnectionProbeSchema = z.discriminatedUnion("kind", [HttpProbeSchema, AwsSigv4ProbeSchema, GcpServiceAccountProbeSchema, AzureClientCredentialsProbeSchema, PostgresProbeSchema],
+  { error: (i) => (i.code === "invalid_union" ? `a probe's kind is ${PROBE_KINDS.join(", ")} (none: http)` : undefined) });
 export type ConnectionProbe = z.output<typeof ConnectionProbeSchema>;
+export type SignedProbe = Exclude<ConnectionProbe, HttpProbe>;
+export const isHttpProbe = (p: ConnectionProbe): p is HttpProbe => p.kind === undefined || p.kind === "http";
+
+/**
+ * Each signed kind's roles: whether the field filling it must be encrypted ("sealed"), may be ("either") or never is
+ * ("plain"), whether a record must fill it, and whether it decides where the secrets go (bound to them:
+ * src/secret-binding.ts).
+ */
+type Role = { seal: "sealed" | "either" | "plain"; required?: boolean; decides?: boolean; types?: readonly string[] };
+const PLAIN_TEXT = ["text", "enum"];
+export const KIND_ROLES: Record<SignedProbe["kind"], Record<string, Role>> = {
+  aws_sigv4: { access_key_id: { seal: "either", required: true, decides: true }, secret_access_key: { seal: "sealed", required: true }, session_token: { seal: "sealed" },
+    region: { seal: "plain", decides: true, types: PLAIN_TEXT } },
+  gcp_service_account: { service_account_json: { seal: "sealed", required: true } },
+  azure_client_credentials: { tenant_id: { seal: "plain", required: true, decides: true, types: PLAIN_TEXT }, client_id: { seal: "plain", required: true, decides: true, types: PLAIN_TEXT },
+    client_secret: { seal: "sealed", required: true }, subscription_id: { seal: "plain", types: PLAIN_TEXT } },
+  postgres: { url: { seal: "sealed" }, host: { seal: "plain", decides: true, types: ["text", "url"] }, port: { seal: "plain", decides: true, types: ["number", "text", "enum"] },
+    database: { seal: "plain", types: PLAIN_TEXT }, user: { seal: "either" }, password: { seal: "sealed" } },
+};
+/** The fixed hosts of the kinds whose host is the kind's (postgres's are its `hosts`). */
+export const KIND_HOSTS = {
+  aws_sigv4: (region: string | null) => [region ? `sts.${region}.amazonaws.com` : "sts.amazonaws.com"],
+  gcp_service_account: () => ["oauth2.googleapis.com", "cloudresourcemanager.googleapis.com"],
+  azure_client_credentials: () => ["login.microsoftonline.com", "management.azure.com"],
+} as const;
+/** The one address a service account's key file may name as its token_uri: its signed assertion goes there only. */
+export const GCP_TOKEN_URI = "https://oauth2.googleapis.com/token";
+const roleFields = (p: SignedProbe) => Object.entries(p.fields as Record<string, string | undefined>).filter((e): e is [string, string] => typeof e[1] === "string");
 
 export const ConnectionTestSchema = z.object({
   by: fieldName.optional(),
@@ -87,25 +183,37 @@ export function bodyStrings(v: unknown, out: string[] = []): string[] {
 export const startsWithField = (url: string) => /^\{[a-z][a-z0-9_]{1,62}\}/.test(url);
 /** The host part of a template (between "https://" and the next / ? #), or null when a field starts the address. */
 const hostPart = (url: string) => (startsWithField(url) ? null : (/^https:\/\/([^/?#]*)/i.exec(url)?.[1] ?? null));
-/** The fields that decide where a probe's call goes: one that starts its address, or one in its host. */
+/**
+ * The fields that decide where a probe's call goes: one that starts its address, or one in its host; a signed kind's
+ * roles that decide (an AWS region, an Azure tenant, a database's host and port).
+ */
 export function destinationFields(p: ConnectionProbe): string[] {
+  if (!isHttpProbe(p)) return roleFields(p).filter(([r]) => KIND_ROLES[p.kind][r]?.decides).map(([, f]) => f);
   if (startsWithField(p.url)) return [placeholders(p.url)[0]!];
   return placeholders(hostPart(p.url) ?? "");
 }
-/** The hosts a probe may reach: its declared ones, and its address's own host when the pack wrote it. */
-export function probeHosts(p: ConnectionProbe): string[] {
+/** The hosts an HTTP probe may reach: its declared ones, and its address's own host when the pack wrote it. */
+export function probeHosts(p: HttpProbe): string[] {
   const h = hostPart(p.url);
   const own = h && !h.includes("{") ? [h.toLowerCase().replace(/:443$/, "")] : [];
   return [...own, ...(p.hosts ?? [])];
 }
-/** Whether `host` is on a list: a listed name allows itself and its subdomains ("*.x" is x and its subdomains). */
+/**
+ * Whether `host` is on a list: a listed name allows itself only; "*.x" allows x and its subdomains (mold_v0-313: a
+ * bare name once allowed its subdomains too, so "rds.amazonaws.com" matched anyone's database).
+ */
 export function hostListed(host: string, list: readonly string[]): boolean {
   const h = host.toLowerCase().replace(/\.$/, "");
-  return list.some((raw) => { const l = raw.toLowerCase().replace(/^\*\./, ""); return h === l || h.endsWith(`.${l}`); });
+  return list.some((raw) => {
+    const r = raw.toLowerCase().replace(/\.$/, "");
+    if (!r.startsWith("*.")) return h === r;
+    const l = r.slice(2);
+    return h === l || h.endsWith(`.${l}`);
+  });
 }
-/** The fields whose secret a probe's headers carry (encrypted fields named in a header). */
-export const headerSecrets = (p: ConnectionProbe, sealed: (n: string) => boolean): string[] =>
-  [...new Set(Object.values(p.headers ?? {}).flatMap(placeholders).filter(sealed))];
+/** The fields whose secret a probe sends: encrypted fields named in an HTTP probe's headers, or in a signed kind's roles. */
+export const probeSecrets = (p: ConnectionProbe, sealed: (n: string) => boolean): string[] =>
+  isHttpProbe(p) ? [...new Set(Object.values(p.headers ?? {}).flatMap(placeholders).filter(sealed))] : [...new Set(roleFields(p).map(([, f]) => f).filter(sealed))];
 
 /** A private, loopback or internal name a test never calls (src/connection-test.ts checks the addresses too). */
 export const LOCAL_NAMES = ["localhost", "local", "internal", "localdomain", "home.arpa", "lan", "intranet", "corp"];
@@ -126,10 +234,14 @@ export const SHARED_SUFFIXES = ["amazonaws.com", "on.aws", "vercel.app", "worker
   "appspot.com", "netlify.app", "pages.dev", "fly.dev", "onrender.com", "web.app", "firebaseapp.com", "run.app", "azurestaticapps.net", "blob.core.windows.net",
   "trycloudflare.com", "ngrok.io", "ngrok.app", "ngrok-free.app", "glitch.me", "repl.co", "surge.sh", "vercel.sh", "deno.dev", "railway.app", "up.railway.app",
   "co.uk", "com.au", "co.jp", "com.br", "co.in", "co.za", "com.cn", "org.uk", "gov.uk", "ac.uk"];
-/** Whether a probe's `hosts` entry is a wildcard over a shared suffix (or a bare top-level name). */
+/**
+ * Whether a probe's `hosts` entry is a wildcard over a shared suffix (or a bare top-level name), or (mold_v0-313) a
+ * shared suffix itself or a name above one, listed bare ("amazonaws.com", "fly.dev", "co.uk").
+ */
 export const sharedWildcard = (h: string) => {
-  if (!h.startsWith("*.")) return false;
-  const base = h.slice(2).toLowerCase();
+  const wild = h.startsWith("*.");
+  const base = (wild ? h.slice(2) : h).toLowerCase();
+  if (!wild) return SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
   return !base.includes(".") || SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
 };
 const values = (f: Field) => (f.options ?? []).map((o) => (typeof o === "string" ? o : o.value));
@@ -179,6 +291,7 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
   if (lc && t.by === lc) bad(`${lc} is the lifecycle's field: a move would change which probe runs without the secret's binding; by names another field`, "by");
   for (const [k, p] of Object.entries(t.probes)) if (lc && destinationFields(p).includes(lc)) bad(`{${lc}} is the lifecycle's field: it never decides where a secret goes`, "probes", k, "url");
   for (const [k, p] of Object.entries(t.probes)) {
+    if (!isHttpProbe(p)) { signedProblems(p, field, (m, ...path) => bad(m, "probes", k, ...path)); continue; }
     // The address: https, a host that is not an address or an internal name; {field} only for plain fields.
     const names = placeholders(p.url);
     for (const n of names) plainUse(n, "the address", "probes", k, "url");
@@ -201,7 +314,7 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
       }
     }
     for (const h of p.hosts ?? []) if (localName(h.replace(/^\*\./, ""))) bad(`${h} is an internal name: a test calls public hosts only`, "probes", k, "hosts");
-    for (const h of p.hosts ?? []) if (sharedWildcard(h)) bad(`${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})`, "probes", k, "hosts");
+    for (const h of p.hosts ?? []) if (sharedWildcard(h)) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "probes", k, "hosts");
     for (const [h, v] of Object.entries(p.headers ?? {})) {
       if (RESERVED_HEADERS.includes(h.toLowerCase())) bad(`${h} is set by the connection itself: a probe never sets it`, "probes", k, "headers", h);
       for (const n of placeholders(v)) {
@@ -222,4 +335,37 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
     if (p.expect?.json_path && p.method === "HEAD") bad("a HEAD's answer has no body: json_path is for a GET or a POST", "probes", k, "expect", "json_path");
   }
   return out;
+}
+
+/**
+ * mold_v0-313: a signed kind's roles: each names one of the area's fields holding one value, encrypted where the role
+ * holds a secret and never where it decides where they go; the kind's required roles named; postgres a url or a host
+ * with a user and password (never both ways), its hosts public names.
+ */
+function signedProblems(p: SignedProbe, field: (n: string) => Field | undefined, bad: (m: string, ...path: (string | number)[]) => void) {
+  const roles = KIND_ROLES[p.kind];
+  const named = p.fields as Record<string, string | undefined>;
+  for (const [role, r] of Object.entries(roles)) {
+    const n = named[role];
+    if (n === undefined) { if (r.required) bad(`a ${p.kind} probe names the field holding its ${role.replace(/_/g, " ")} (fields.${role})`, "fields", role); continue; }
+    const f = field(n);
+    if (!f) { bad(`${n} is not one of the area's fields`, "fields", role); continue; }
+    if (["file", "json", "person", "reference", "repository", "database", "link"].includes(f.type ?? "text") || f.multiple) bad(`${n} is a ${f.multiple ? "list" : `${f.type} field`}: a ${role.replace(/_/g, " ")} is one plain value`, "fields", role);
+    else if (r.types && !f.encrypted && !r.types.includes(f.type ?? "text")) bad(`${n} is a ${f.type ?? "text"} field: a ${role.replace(/_/g, " ")} is a ${r.types.join(" or ")} field`, "fields", role);
+    if (r.seal === "sealed" && !f.encrypted) bad(`${n} holds a secret: declare it encrypted (a ${p.kind} probe's ${role.replace(/_/g, " ")} is typed once and never shown again)`, "fields", role);
+    if (r.seal === "plain" && f.encrypted) bad(`${n} is encrypted: a ${role.replace(/_/g, " ")} decides or names where the secrets go, so it is a plain field`, "fields", role);
+  }
+  const seen = new Map<string, string>();
+  for (const [role, n] of Object.entries(named)) if (n !== undefined) {
+    if (seen.has(n)) bad(`${n} fills both ${seen.get(n)} and ${role}: each role is its own field`, "fields", role);
+    seen.set(n, role);
+  }
+  if (p.kind === "aws_sigv4" && p.region && named.region) bad("a fixed region or a region field, not both", "region");
+  if (p.kind === "postgres") {
+    const pg = named;
+    if (pg.url && (pg.host || pg.port || pg.database || pg.user || pg.password)) bad("a postgres probe takes its connection from a sealed url, or from host, user and password: not both", "fields");
+    if (!pg.url && !(pg.host && pg.user && pg.password)) bad("a postgres probe names a sealed url field, or host, user and password fields", "fields");
+    for (const h of p.hosts) if (localName(h.replace(/^\*\./, ""))) bad(`${h} is an internal name: a test calls public hosts only`, "hosts");
+    for (const h of p.hosts) if (sharedWildcard(h)) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "hosts");
+  }
 }
