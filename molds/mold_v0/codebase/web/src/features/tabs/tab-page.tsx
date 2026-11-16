@@ -22,7 +22,7 @@
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
 // the server refuses the rest whatever the page asks.
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
@@ -35,7 +35,7 @@ import { SchedulesBody } from '@/features/schedules/schedules-page';
 import { Icons } from '@/components/icons';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { RecordTableView } from '@/features/records/record-pages';
-import { InPageTabs } from './in-page-tabs';
+import { InPageTabs, NoTabStrip } from './in-page-tabs';
 import { BoardColumns, TimelineList, type Page } from './board';
 import { ChartBody, ChartCell, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
@@ -234,7 +234,8 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
     // mold_v0-208: a list tab is its cards, its search row and its table (no charts). mold_v0-217: the tab's primary
     // action is the table's search row's last control; a board or a timeline has it in the views' row, after Actions ▾.
     // mold_v0-256: an Add form in a panel beside the list (flag side_panel_forms), else the card in the list's place.
-    <FormHost card={card} panel={panel && !imp.card}><div className='flex flex-col gap-6'>
+    // mold_v0-315: a views row above the table keeps a sections tab's strip above it (the table takes it only when first).
+    <StripHandOff off={views.length > 1 || !table}><FormHost card={card} panel={panel && !imp.card}><div className='flex flex-col gap-6'>
       {/* The views' switch, and Actions ▾ (Import, Export) and the action for the board and the timeline (the table has its own toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
@@ -276,9 +277,12 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
-    </div></FormHost>
+    </div></FormHost></StripHandOff>
   );
 }
+
+/** mold_v0-315: `off`: nothing inside takes a sections tab's strip (./in-page-tabs.tsx useTabStrip). */
+const StripHandOff = ({ off, children }: { off: boolean; children: ReactNode }) => (off ? <NoTabStrip>{children}</NoTabStrip> : <>{children}</>);
 
 /**
  * A sections tab (mold_v0-175): its in-page tabs, each one of the pack's tabs (area, runs, reports, schedules) under its
@@ -291,7 +295,8 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
   // The console's one in-page tab strip (./in-page-tabs.tsx; the staff Records entries of in-page tabs draw it too).
   // mold_v0-300: a tab spec's `icon` is an icon NAME: the strip resolves it (tabIcon), never prints it before the label.
   return (
-    <InPageTabs tabs={subs}>
+    // mold_v0-315: the list at the top of the selected tab draws the strip in its own column (a panel beside the list starts level with it).
+    <InPageTabs tabs={subs} handOff>
       {(current) => current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
         : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
         : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}

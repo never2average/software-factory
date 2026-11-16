@@ -103,6 +103,8 @@ const SUGGESTIONS = ['Summarise this view', 'What stands out?', 'Which rows need
 /**
  * Ask AI about a list: suggestions, a question box, and the answer as it streams in. `context` is read when the
  * question is sent (the view as it is then). Used docked beside a list (RecordView's panel) and in ListAskSheet.
+ * mold_v0-315: it fills its parent's height (a flex column): the conversation scrolls, and the suggestions and the
+ * question box stay at the bottom, as a chat's input does.
  */
 export function ListAskPanel({ context }: { context: () => ListAskContext }) {
   const { area } = useNav();
@@ -148,22 +150,24 @@ export function ListAskPanel({ context }: { context: () => ListAskContext }) {
   const streaming = !!asked && !done && !error;
   const ctx = context();
   return (
-    <div className='flex min-h-full flex-col gap-3' data-testid='list-ask-panel'>
-      <p className='text-muted-foreground text-xs'>
-        About {ctx.list}: {Math.min(ctx.rows.length, ctx.total)} of {ctx.total} {ctx.total === 1 ? 'row' : 'rows'} in view{ctx.search ? `, search “${ctx.search}”` : ''}{ctx.filters.length ? `, ${ctx.filters.length} ${ctx.filters.length === 1 ? 'filter' : 'filters'}` : ''}. Read-only.
-      </p>
-      {asked && <div className='bg-muted self-end rounded-lg px-3 py-2 text-sm'>{asked}</div>}
-      <div className='flex-1' aria-live='polite' aria-busy={streaming}>
-        {error ? <p className='text-destructive text-sm'>{error}</p>
-          : text ? <Markdown className='max-w-none text-sm [&_p]:my-2 [&_p]:leading-6 [&_ul]:my-2'>{text}</Markdown>
-          : streaming ? <div className='text-muted-foreground flex items-center gap-2 text-sm' role='status'><Spinner className='size-4' /> Reading the list…</div>
-          : done ? <p className='text-muted-foreground text-sm'>{NO_ANSWER[done.reason ?? 'unavailable']}</p> : null}
-        {done?.answer && <p className='text-muted-foreground mt-2 text-xs'>AI answer from the rows shown — may be imperfect{done.model ? ` (${done.model})` : ''}.</p>}
+    <div className='flex min-h-0 flex-1 flex-col gap-3' data-testid='list-ask-panel'>
+      <div className='-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-1' data-slot='list-ask-conversation'>
+        <p className='text-muted-foreground text-xs'>
+          About {ctx.list}: {Math.min(ctx.rows.length, ctx.total)} of {ctx.total} {ctx.total === 1 ? 'row' : 'rows'} in view{ctx.search ? `, search “${ctx.search}”` : ''}{ctx.filters.length ? `, ${ctx.filters.length} ${ctx.filters.length === 1 ? 'filter' : 'filters'}` : ''}. Read-only.
+        </p>
+        {asked && <div className='bg-muted self-end rounded-lg px-3 py-2 text-sm'>{asked}</div>}
+        <div className='flex-1' aria-live='polite' aria-busy={streaming}>
+          {error ? <p className='text-destructive text-sm'>{error}</p>
+            : text ? <Markdown className='max-w-none text-sm [&_p]:my-2 [&_p]:leading-6 [&_ul]:my-2'>{text}</Markdown>
+            : streaming ? <div className='text-muted-foreground flex items-center gap-2 text-sm' role='status'><Spinner className='size-4' /> Reading the list…</div>
+            : done ? <p className='text-muted-foreground text-sm'>{NO_ANSWER[done.reason ?? 'unavailable']}</p> : null}
+          {done?.answer && <p className='text-muted-foreground mt-2 text-xs'>AI answer from the rows shown — may be imperfect{done.model ? ` (${done.model})` : ''}.</p>}
+        </div>
       </div>
-      <div className='flex flex-wrap gap-1.5'>
+      <div className='flex shrink-0 flex-wrap gap-1.5'>
         {SUGGESTIONS.map((s) => <Button key={s} type='button' variant='outline' size='xs' disabled={streaming} onClick={() => ask(s)}>{s}</Button>)}
       </div>
-      <form className='relative' onSubmit={(e) => { e.preventDefault(); ask(q); }}>
+      <form className='relative shrink-0' data-panel-unguarded='' onSubmit={(e) => { e.preventDefault(); ask(q); }}>
         <Textarea value={q} onChange={(e) => setQ(e.target.value)} maxLength={400} rows={3} aria-label='Your question' placeholder={`Ask about ${ctx.list}…`} className='pr-12'
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(q); } }} data-testid='list-ask-input' />
         <Button type='submit' size='icon-sm' aria-label='Ask' disabled={streaming || q.trim().length < 3} className='absolute right-2 bottom-2'><Icons.arrowUp /></Button>
@@ -184,7 +188,7 @@ export function useListAsk(context: () => ListAskContext): { open: () => void; s
             <SheetTitle className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Ask AI</SheetTitle>
             <SheetDescription className='sr-only'>Questions about this list, answered from the rows shown.</SheetDescription>
           </SheetHeader>
-          <div className='flex-1 overflow-y-auto p-4'>{open && <ListAskPanel context={context} />}</div>
+          <div className='flex min-h-0 flex-1 flex-col p-4'>{open && <ListAskPanel context={context} />}</div>
         </SheetContent>
       </Sheet>
     ),

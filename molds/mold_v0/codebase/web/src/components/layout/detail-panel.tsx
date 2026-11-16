@@ -264,10 +264,12 @@ export interface RecordPanelProps {
   onClose: () => void;
   /** Gives the list the guarded close (its own Esc, a row's action). */
   closeRef?: (close: () => void) => void;
+  /** mold_v0-315: the body is a full-height column that does not scroll itself (its content scrolls: Ask AI's conversation). */
+  fill?: boolean;
   children: ReactNode;
 }
 
-export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, menu, expanded, onExpandedChange, onClose, closeRef, children }: RecordPanelProps) {
+export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, menu, expanded, onExpandedChange, onClose, closeRef, fill = false, children }: RecordPanelProps) {
   const [token] = useState(() => ({}));
   const panelRef = useRef<HTMLElement | null>(null);
   const [resizing, setResizing] = useState(false);
@@ -302,6 +304,8 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
     const el = e.target as HTMLElement;
     if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return;
     if (el instanceof HTMLInputElement && el.type === 'search') return;
+    // mold_v0-315: a form that saves nothing (Ask AI's question box) is never unsaved work.
+    if (el.closest('[data-panel-unguarded]')) return;
     const f = el.closest('form');
     if (f) edited.current = f;
   };
@@ -359,7 +363,7 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
               {menu ?? <PanelMenu items={items} name={name} />}
             </div>
           </div>
-          <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 md:px-6' data-slot='detail-panel-body'
+          <div className={cn('min-h-0 flex-1 px-4 md:px-6', fill ? 'flex flex-col overflow-hidden pt-5 pb-4' : 'overflow-y-auto overscroll-contain py-5')} data-slot='detail-panel-body'
             onInput={onEdit} onChange={onEdit} onSubmit={() => { edited.current = null; }}>
             <InPanel.Provider value><PanelFull.Provider value={full && split.space >= ROOMY}>{children}</PanelFull.Provider></InPanel.Provider>
           </div>

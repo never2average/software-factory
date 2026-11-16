@@ -28,6 +28,7 @@ import { listAskContext, type ListAskContext } from '@/lib/toolbar-actions';
 import { ActionsMenu, ListAskPanel } from '@/components/layout/actions-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyNotice, emptyNoteOf, isEmptyNote, type EmptyNote } from '@/features/status/empty-state';
+import { NoTabStrip, useTabStrip } from '@/features/tabs/in-page-tabs';
 import { cn } from '@/lib/utils';
 
 export type { FilterRule, Op, PropType, RecordCol, RecordViewDef, RowAction, SortRule } from '@/components/layout/record-filters';
@@ -53,8 +54,11 @@ export function useStored<V>(key: string | null, init: V): [V, (v: V | ((prev: V
 interface Item<T> { row?: T; g?: Group<T> }
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 
-/** A panel of the page's own beside a list (mold_v0-289), the shared side panel. */
-export interface RecordSidePanel { key: string; title: string; onClose: () => void; body: ReactNode; items?: RowAction[] }
+/**
+ * A panel of the page's own beside a list (mold_v0-289), the shared side panel. mold_v0-315: `fill`, the body is given the
+ * panel's whole height as a column and scrolls itself (Ask AI: the conversation scrolls, the question box stays at the bottom).
+ */
+export interface RecordSidePanel { key: string; title: string; onClose: () => void; body: ReactNode; items?: RowAction[]; fill?: boolean }
 
 /** mold_v0-260: a wide list's table: its natural width (at least the frame's), the first column sticky with its own background and a line. */
 const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_td:first-child]:bg-background [&_tr[data-state=selected]>td:first-child]:bg-muted [&_th:first-child]:bg-background [&_tr>*:first-child]:shadow-[1px_0_0_var(--border)]';
@@ -173,7 +177,10 @@ export function RecordView<T>({
   // mold_v0-294: Ask AI about the list, docked beside it as a row's record is (one panel at a time).
   const [asking, setAsking] = useState(false);
   const askContextRef = useRef<() => ListAskContext>(() => listAskContext({ list: noun, columns: [], rows: [] }));
-  const askPanel: RecordSidePanel | null = asking ? { key: 'ask-ai', title: 'Ask AI', onClose: () => setAsking(false), body: <ListAskPanel context={() => askContextRef.current()} /> } : null;
+  const askPanel: RecordSidePanel | null = asking ? { key: 'ask-ai', title: 'Ask AI', onClose: () => setAsking(false), body: <ListAskPanel context={() => askContextRef.current()} />, fill: true } : null;
+  // mold_v0-315: under a sections tab's in-page tabs, the strip is drawn at the top of this list's column, so a panel
+  // beside the list starts level with it (features/tabs/in-page-tabs.tsx); null anywhere else.
+  const tabStrip = useTabStrip();
 
   // No view tabs: every table shows its first (whole) view; search and filters do the narrowing.
   const view = views?.[0];
@@ -370,12 +377,14 @@ export function RecordView<T>({
     return () => { window.removeEventListener('resize', fit); io.disconnect(); };
   }, [compact, showRecord]);
 
-  return (
-    // Fills the page below the header (header 3.5–4rem plus the page's padding): the table frame never scrolls or shrinks.
-    // mold_v0-278: the list and, when a row is open, the record panel at its right (the list's column narrows).
+  return (<NoTabStrip>
+    {/* Fills the page below the header (header 3.5–4rem plus the page's padding): the table frame never scrolls or shrinks. */}
+    {/* mold_v0-278: the list and, when a row is open, the record panel at its right (the list's column narrows). */}
     <div ref={hostRef} style={compact && fitH ? { height: fitH } : undefined} data-slot='list-split' data-panel-open={showRecord || undefined}
       className={cn('flex min-w-0 items-stretch', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
     <div ref={fitRef} data-slot='list-main' className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-3 [overflow-x:clip] [overflow-clip-margin:4px]', split.layout?.full && 'lg:hidden')}>
+      {/* mold_v0-315: a sections tab's strip, as far above the cards as the tabs drew it (gap-3 + mb-3: their gap-6). */}
+      {tabStrip && <div className='mb-3 shrink-0'>{tabStrip}</div>}
       {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
       <div className='flex flex-wrap items-center gap-2'>
         <div className='relative min-w-48 flex-1'>
@@ -512,12 +521,12 @@ export function RecordView<T>({
       )}
       {side && (
         <RecordPanel hostRef={hostRef} split={split} type={`${id ?? noun}-${side.key}`} rowKey={side.key} title={side.title} name={side.title} items={side.items ?? []}
-          expanded={expanded} onExpandedChange={setExpanded} onClose={side.onClose} closeRef={(c) => { panelClose.current = c; }}>
-          <div key={side.key} className='pb-4' data-record-body=''>{side.body}</div>
+          expanded={expanded} onExpandedChange={setExpanded} onClose={side.onClose} closeRef={(c) => { panelClose.current = c; }} fill={side.fill}>
+          <div key={side.key} className={side.fill ? 'flex min-h-0 flex-1 flex-col' : 'pb-4'} data-record-body=''>{side.body}</div>
         </RecordPanel>
       )}
     </div>
-  );
+  </NoTabStrip>);
 }
 
 /** mold_v0-298: a list loading: a few skeleton rows in the table's place (as the pages' LoadingCards), read as "Loading". */
