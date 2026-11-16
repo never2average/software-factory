@@ -52,7 +52,7 @@ import { governanceWords, uploadParts } from "./agent-profiles.js";
 import { settingNumber } from "./settings.js";
 import { maskSecrets } from "./run-events.js";
 import { PROFILE } from "./profile.js";
-import { attachmentMaxBytes, attachmentNote, bindFiles, COMPOSER_LIMITS, fileIds, filesAvailable, isSessionFile, repositoryNames, sessionFileBytes, sessionRepositories, sessionUploads, sweepAttachments, type MessageAttachments } from "./agent-composer.js";
+import { attachmentMaxBytes, attachmentNote, bindFiles, COMPOSER_LIMITS, fileIds, filesAvailable, isSessionFile, openedFromOf, repositoryNames, sessionFileBytes, sessionRepositories, sessionUploads, sweepAttachments, type MessageAttachments } from "./agent-composer.js";
 import { domainAllowed, fetchRules } from "./agent-governance.js";
 import { programPurpose, purposeFromWords, type AgentLabel } from "./agent-purpose.js";
 import { messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
@@ -122,6 +122,8 @@ export interface SessionDetail extends SessionView {
     credentials: string[] };
   /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
   reach: ReachView | null;
+  /** mold_v0-316: the console page it was opened from (null: the Agents page, or a session from before). */
+  opened_from: { tab: string | null; record: { area: string; key: string } | null } | null;
 }
 export interface ReachView {
   acts_as: { kind: "person" | "key"; name: string | null; role: string | null };
@@ -304,7 +306,7 @@ export async function recomputeSpend(q: Queryable, sessionId: string, orgId: num
 
 // ---------------------------------------------------------------- the workspace's side
 
-export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown; /** mold_v0-290: drafts of this person and repositories of the workspace's GitHub connection. */ files?: unknown; repositories?: unknown }
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown; /** mold_v0-290: drafts of this person and repositories of the workspace's GitHub connection. */ files?: unknown; repositories?: unknown; /** mold_v0-316: the console page it was opened from (src/agent-composer.ts openedFromOf). */ opened_from?: unknown }
 
 /**
  * The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a
@@ -329,6 +331,7 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
   const message = text(input.message, "message");
+  const openedFrom = openedFromOf(input.opened_from);
   const mode = input.mode === "task" ? "task" : "conversation";
   const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
   // Its agent profile, for this workspace (its override): refused when unknown, archived, not this role's, or unpriced.
@@ -357,6 +360,8 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     ...(vaultKeys.length ? { vault_keys: vaultKeys } : {}),
     ...(connectionEnv.length ? { connection_env: connectionEnv } : {}),
     ...(opts.followOn ? { follow_on: opts.followOn } : {}),
+    // mold_v0-316: the page it was opened from (the agent page's examples and quick commands read it back).
+    ...(openedFrom ? { opened_from: openedFrom } : {}),
   });
   if (eff.governance) {
     // Its governance policy, frozen as the reference freezes a run's (later edits apply to new sessions only); the web
@@ -567,6 +572,8 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
         credentials: [...(p?.credentials ?? []), ...(p?.vault_keys ?? []).map((k) => `${k.provider}/${k.label}`)],
         executables: (p?.uploads ?? []).filter((u) => u.executable).map((u) => u.path), recipes: p?.recipes ?? [], governance: p?.governance ? governanceWords(p.governance) : null },
       reach: reachView(p),
+      // mold_v0-316: the console page it was opened from, for its examples and quick commands (null: the Agents page).
+      opened_from: p?.opened_from ?? null,
     };
   });
 }

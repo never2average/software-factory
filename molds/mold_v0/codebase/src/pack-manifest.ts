@@ -34,7 +34,7 @@ import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
 import { PackAgentProfileSchema, PackRecipeSchema } from "./agent-profile-spec.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
-import { AgentJobKindSchema, ChartSchema, ObjectStorageDeclSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
+import { AgentDefaultsSchema, AgentJobKindSchema, ChartSchema, ObjectStorageDeclSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, TeamRolesSchema, UpstreamSchema, UPSTREAM_CATALOG_GONE, upstreamCatalogNames, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -461,6 +461,12 @@ export const PackJsonSchema = z.object({
    * written once into the platform's profiles, then staff's to edit. Used only while the app's `agent_harness` is on.
    */
   agent_profiles: z.array(PackAgentProfileSchema).max(20).optional(),
+  /**
+   * mold_v0-316 (flag agent_quick_commands; src/pack-api.ts AgentDefaultsSchema): the workspace agent's blank screen and
+   * "/" menu for the whole app: its greeting and the line under it, the example prompts shown where a tab has none of its
+   * own, and the global quick commands (a tab's own come first: tabs[].agent). One pack of a build declares it.
+   */
+  agent_defaults: AgentDefaultsSchema.optional(),
   /**
    * mold_v0-303: workspace recipes the app declares (src/agent-profile-spec.ts PackRecipeSchema; src/recipes.ts
    * syncDeclaredRecipes brings them in): each an id, a name, a description and its files inline as text (a SKILL.md, a

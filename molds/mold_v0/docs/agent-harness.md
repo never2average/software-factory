@@ -198,6 +198,17 @@ its glow is not (it needs a package of its own).
   again. The prefix is `profile.json` `agent_session_prefix` (default `AGI`). It is the top bar's last crumb on an open
   session (Account / Agents / AGI-001), which replaces Back to sessions, and a column of the sessions list; staff see the same.
 
+## The blank screen and quick commands (mold_v0-316, flag `agent_quick_commands`)
+
+The top bar's agent button opens a new chat from the page it is pressed on (`/app/agent?new=1&from=<tab>`, with
+`&record=<area>/<key>` on a record's page): a greeting in the app's words, where it was opened from, and 4 to 6 example
+prompts (`agent-welcome.tsx`). The composer gets a "/" button beside the paperclip, and "/" typed first opens the same
+menu: the tab's commands, then the app's, one per name; filter, ↑ ↓, Enter, Esc (`composer/agent-composer.tsx`,
+`composer/quick-commands.ts`). Choosing an example or a command fills the box with `{tab}`, `{area}`, `{record_key}` and
+`{record_title}` filled, the cursor on the first blank left; it is never sent on its own. The session keeps the page in
+its policy (`opened_from`), so its "/" menu stays that page's. The app declares them in `pack.json` `agent_defaults`
+and `tabs[].agent` (MOLD.md "Agent examples and quick commands"); the shell has generic ones.
+
 ## Governance policy (mold_v0-267): what the reference product calls it, and where it went
 
 The reference has no single object named "governance policy": its governance of an agent run is the set of rules its

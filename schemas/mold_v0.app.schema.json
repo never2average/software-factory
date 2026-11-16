@@ -9794,6 +9794,96 @@
                   "settings"
                 ]
               },
+              "agent": {
+                "type": "object",
+                "properties": {
+                  "examples": {
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "prompt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "$comment": {
+                          "type": "string",
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "prompt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "commands": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "prompt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "send": {
+                          "type": "boolean",
+                          "const": false
+                        },
+                        "$comment": {
+                          "type": "string",
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "label",
+                        "prompt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false
+              },
               "$comment": {
                 "type": "string",
                 "maxLength": 2000
@@ -11474,6 +11564,106 @@
             ],
             "additionalProperties": false
           }
+        },
+        "agent_defaults": {
+          "type": "object",
+          "properties": {
+            "greeting": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "intro": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "examples": {
+              "minItems": 1,
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[^\\n\\r{}<>]*$"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "title",
+                  "prompt"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "commands": {
+              "minItems": 1,
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,31}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[^\\n\\r{}<>]*$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[^\\n\\r{}<>]*$"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "send": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "name",
+                  "label",
+                  "prompt"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "additionalProperties": false
         },
         "recipes": {
           "maxItems": 50,
@@ -19670,6 +19860,13 @@
           "title": "Workspace object storage (mold_v0-305)",
           "description": "A workspace keeps its files in its own bucket (Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console: a record of the pack's declared area (object_storage: area, where, fields bucket, endpoint, access_key_id, secret_access_key, use; both keys encrypted fields, never revealed). Everything stored for that workspace (uploads, record files, agent attachments and checkpoints, evaluation bundles, workspace snapshots) goes to the record marked for use; else the environment's R2_*, else the Key vault's Object storage. The record page's Test action writes, reads and deletes one small object and says what went wrong in plain words. Asked for when a pack declares object_storage (the workspace area that holds its storage connections). Default true. Off: The declaration is ignored: every workspace uses the environment's or the Key vault's bucket as before; the Test action is not offered; the generated files leave the flag out. Needs encrypted_fields on.",
           "markdownDescription": "**Workspace object storage** (mold_v0-305; board name `storage`). A workspace keeps its files in its own bucket (Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console: a record of the pack's declared area (object_storage: area, where, fields bucket, endpoint, access_key_id, secret_access_key, use; both keys encrypted fields, never revealed). Everything stored for that workspace (uploads, record files, agent attachments and checkpoints, evaluation bundles, workspace snapshots) goes to the record marked for use; else the environment's R2_*, else the Key vault's Object storage. The record page's Test action writes, reads and deletes one small object and says what went wrong in plain words.\n\n- **Asked for** when a pack declares object_storage (the workspace area that holds its storage connections).\n- **Default** `true`.\n- **Off**: The declaration is ignored: every workspace uses the environment's or the Key vault's bucket as before; the Test action is not offered; the generated files leave the flag out.\n- **Needs** Needs encrypted_fields on.\n\nBrief line: `features.workspace_storage = false` in `## Profile`."
+        },
+        "agent_quick_commands": {
+          "type": "boolean",
+          "default": true,
+          "title": "Agent examples and quick commands (mold_v0-316)",
+          "description": "The workspace agent's blank screen and quick commands: a new chat opened from a console page (the top bar's agent button passes the page's tab, and on a record's page the record) shows a greeting and 4 to 6 example prompts, and the composer has a / button beside the paperclip (or / typed first) listing quick commands; choosing either fills the composer, with {tab}, {area}, {record_key} and {record_title} filled from that page, and nothing is sent on its own. The app's own come from pack.json agent_defaults (greeting, intro, examples, commands) and tabs[].agent (examples, commands; a tab's commands first, one per name); otherwise the shell's generic ones. The session keeps the page it was opened from. Asked for when the workspace agent is on (agent_harness). Default true. Off: No example prompts and no / button or menu: the agent page and its composer are as before; agent_defaults and tabs[].agent are accepted and shown nowhere; the generated files leave the flag out. Needs agent_harness on.",
+          "markdownDescription": "**Agent examples and quick commands** (mold_v0-316; board name `quick`). The workspace agent's blank screen and quick commands: a new chat opened from a console page (the top bar's agent button passes the page's tab, and on a record's page the record) shows a greeting and 4 to 6 example prompts, and the composer has a / button beside the paperclip (or / typed first) listing quick commands; choosing either fills the composer, with {tab}, {area}, {record_key} and {record_title} filled from that page, and nothing is sent on its own. The app's own come from pack.json agent_defaults (greeting, intro, examples, commands) and tabs[].agent (examples, commands; a tab's commands first, one per name); otherwise the shell's generic ones. The session keeps the page it was opened from.\n\n- **Asked for** when the workspace agent is on (agent_harness).\n- **Default** `true`.\n- **Off**: No example prompts and no / button or menu: the agent page and its composer are as before; agent_defaults and tabs[].agent are accepted and shown nowhere; the generated files leave the flag out.\n- **Needs** Needs agent_harness on.\n\nBrief line: `features.agent_quick_commands = false` in `## Profile`."
         }
       }
     }

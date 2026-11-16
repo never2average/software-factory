@@ -66,6 +66,8 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "resources": return any(a.get("scope") == "platform" and any(isinstance(f, dict) and f.get("type") in ("repository", "database") for f in a.get("fields") or []) for a in _areas(docs))
     # mold_v0-305: a pack declares object_storage (the shell's src/features.ts and gen-packs say the same)
     if by == "workspace_storage": return any(d.get("object_storage") is not None for d in docs)
+    # mold_v0-316: wherever the workspace agent is on (the shell's src/features.ts and gen-packs say the same)
+    if by == "agent": return bool((settings_on or {}).get("agent_harness"))
     if by == "credentials": return any(d.get("credentials") for d in docs)
     if by == "email": return any(isinstance(d.get("email"), dict) and ((d["email"].get("sender") or {}).get("allow") is True or d["email"].get("intake")) for d in docs)
     if by == "clocks": return any(a.get("scope") == "workspace" and a.get("clocks") for a in _areas(docs))
@@ -165,7 +167,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 29 and len(set(ids(root))) == 29, "the registry names 29 flags, each once")
+    ok(len(flags) == 30 and len(set(ids(root))) == 30, "the registry names 30 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -214,6 +216,10 @@ def self_test(root):
        and "recipes" in words(effective({"features": {"agent_harness": True}, "console": {"admin_records": {"show": ["recipes"]}}}, [], root)),
        "workspace recipes: on when the staff Records group lists them, a pack's or the profile's (mold_v0-271)")
     ok(any("needs agent_harness" in e for e in problems({}, listed, root)) and not problems({"features": {"agent_harness": True}}, listed, root), "workspace recipes need the workspace agent")
+    # mold_v0-316: the agent's examples and quick commands come with the agent, on unless the profile turns them off
+    q = lambda prof: next(x for x in effective(prof, [], root) if x["id"] == "agent_quick_commands")["on"]
+    ok(not q({}) and q({"features": {"agent_harness": True}}) and not q({"features": {"agent_harness": True, "agent_quick_commands": False}}) and not problems({"features": {"agent_quick_commands": True}}, [], root),
+       "the agent's examples and quick commands: on wherever the agent is, unless turned off (mold_v0-316)")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
     # mold_v0-282: record resources, asked for by a shared area's repository or database field; off by default, refused off
     owning = [{"id": "m", "record_areas": [{"name": "molds", "scope": "platform", "fields": [{"name": "repo", "type": "repository"}, {"name": "db", "type": "database", "provider": "core"}]}]}]

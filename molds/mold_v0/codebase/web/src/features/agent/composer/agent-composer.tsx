@@ -4,7 +4,11 @@
 // Enter sends and Shift+Enter is a new line; attach files by button, drop or paste; choose repositories of the workspace's
 // own GitHub connection; dictate with the browser's speech service; a round send button, filled when there is something to
 // send. Nothing it does ever sends a message on its own.
-import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react';
+// mold_v0-316 (flag agent_quick_commands): quick commands. A "/" button beside the paperclip, or "/" typed as the box's first
+// character, opens one menu of the page's commands (the active tab's, then the app's; quick-commands.ts): typing filters
+// it, the arrows move, Enter or Tab uses one, Esc closes it. The command's prompt goes into the box with the page's
+// placeholders filled, the cursor on the first blank left (else at the end); it is never sent on its own.
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +22,7 @@ import { limitWords, sizeWords, useAttachments, type AttachmentItem, type FilesO
 import { useAutosizeTextarea } from './use-autosize-textarea';
 import { useVoiceInput } from './use-voice-input';
 import { composeVoiceInput, spokenSince } from './voice-transcript';
+import { fillPrompt, filterCommands, slashQuery, type AgentCommand, type PromptContext } from './quick-commands';
 
 export interface RepositoriesOffer { state: 'ready' | 'no_app' | 'not_connected' | 'suspended' | 'no_repositories'; account: string | null; repositories: string[]; granted: string[]; max_per_message: number; refused: string | null; can_connect: boolean }
 export interface ComposerOffer { files: FilesOffer; repositories: RepositoriesOffer }
@@ -111,7 +116,47 @@ function RepoPicker({ offer, chosen, onChange, disabled }: { offer: Repositories
   );
 }
 
-export function AgentComposer({ id, label, value, onChange, placeholder, sendLabel, disabledReason, busy, session, autoFocus, onSend, above }: {
+/** The quick commands menu (mold_v0-316): a listbox above the composer card, the box (or its own search field) driving it. */
+function CommandMenu({ id, items, active, onActive, onChoose, search, tab, inline }: {
+  id: string; items: (AgentCommand & { scope?: 'tab' | 'global' })[]; active: number; onActive: (i: number) => void; onChoose: (c: AgentCommand) => void;
+  /** The menu's own search field (opened by the button); absent when the box itself is typing the filter after its "/". */
+  search?: ReactNode; tab: string | null;
+  /** In the flow above the card (a dialog, whose scrolling would cut a floating menu), not floating over what is above. */
+  inline?: boolean;
+}) {
+  const list = useRef<HTMLUListElement | null>(null);
+  useEffect(() => { list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' }); }, [active]);
+  const firstGlobal = items.findIndex((c) => c.scope !== 'tab');
+  const hasTab = items.some((c) => c.scope === 'tab');
+  const heading = 'text-muted-foreground px-2.5 pt-2 pb-1 text-[11px] font-medium tracking-wide uppercase';
+  return (
+    <div className={cn('bg-popover text-popover-foreground flex flex-col overflow-hidden rounded-xl border', inline ? 'max-h-64 shadow-sm' : 'absolute inset-x-0 bottom-full z-30 mb-2 max-h-[min(22rem,55dvh)] shadow-lg')} data-composer-commands={inline ? 'inline' : 'floating'}>
+      {search}
+      <ul ref={list} id={id} role='listbox' aria-label='Quick commands' className='flex-1 overflow-y-auto p-1' data-composer-command-list=''>
+        {items.length === 0 && <li className='text-muted-foreground px-2.5 py-3 text-sm' role='presentation'>No command matches that.</li>}
+        {items.map((c, i) => (
+          <li key={c.name} role='presentation'>
+            {hasTab && i === 0 && <div className={heading} role='presentation'>{tab ? `For ${tab}` : 'For this page'}</div>}
+            {hasTab && i === firstGlobal && <div className={cn(heading, 'border-t mt-1')} role='presentation'>Everywhere</div>}
+            <div id={`${id}-${i}`} role='option' aria-selected={i === active} data-index={i} data-composer-command={c.name}
+              onMouseDown={(e) => e.preventDefault()} onMouseMove={() => { if (i !== active) onActive(i); }} onClick={() => onChoose(c)}
+              className={cn('flex cursor-pointer items-start gap-3 rounded-lg px-2.5 py-2 text-sm max-sm:py-2.5', i === active && 'bg-primary/10 ring-primary/25 ring-1 ring-inset')}>
+              <span className={cn('mt-px w-24 shrink-0 truncate font-mono text-xs max-sm:w-20', i === active ? 'text-primary' : 'text-muted-foreground')}>/{c.name}</span>
+              <span className='min-w-0 flex-1'>
+                <span className='block truncate font-medium'>{c.label}</span>
+                {c.description && <span className='text-muted-foreground block truncate text-xs'>{c.description}</span>}
+              </span>
+              {i === active && <Icons.cornerDownLeft className='text-muted-foreground mt-0.5 size-3.5 shrink-0 max-sm:hidden' aria-hidden />}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className='text-muted-foreground border-t px-3 py-1.5 text-[11px] whitespace-pre max-sm:hidden' aria-hidden>↑ ↓ to move  ·  Enter to use  ·  Esc to close</p>
+    </div>
+  );
+}
+
+export function AgentComposer({ id, label, value, onChange, placeholder, sendLabel, disabledReason, busy, session, autoFocus, onSend, above, commands, context, cursor, menuInline }: {
   id: string; label: string; value: string; onChange: (v: string) => void; placeholder: string; sendLabel: string;
   /** Someone who may not send: the box stays visible and disabled, this as its placeholder. */
   disabledReason: string | null;
@@ -119,6 +164,12 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
   /** Sends the message; true when it was taken (the composer then empties). */
   onSend: (c: ComposerSend) => Promise<boolean>;
   above?: ReactNode;
+  /** mold_v0-316: the "/" menu's commands (null or absent: no "/" button and no menu), and the words their placeholders take. */
+  commands?: (AgentCommand & { scope?: 'tab' | 'global' })[] | null; context?: PromptContext;
+  /** mold_v0-316: put the cursor here after the parent filled the box (an example prompt): a new `at` each time. */
+  cursor?: { at: number; select: [number, number] | null } | null;
+  /** mold_v0-316: the menu in the flow above the card (inside a dialog). */
+  menuInline?: boolean;
 }) {
   const box = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -130,6 +181,46 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
   useEffect(refresh, [refresh]);
   const files = useAttachments(session, offer?.files ?? null);
   useAutosizeTextarea(box, value, MAX_HEIGHT);
+
+  // mold_v0-316: the quick commands menu. Typed: open while the box is "/" and a filter (Esc closes it until the box
+  // changes); the button: its own search field. One active row either way.
+  const menuId = useId();
+  const [byButton, setByButton] = useState(false);
+  const [buttonQuery, setButtonQuery] = useState('');
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [active, setActive] = useState(0);
+  const typed = commands?.length && !disabled ? slashQuery(value) : null;
+  const menuOpen = !!commands?.length && !disabled && (byButton || (typed !== null && dismissed !== value));
+  const query = byButton ? buttonQuery : typed ?? '';
+  const shown = useMemo(() => (menuOpen ? filterCommands(commands ?? [], query) : []), [menuOpen, commands, query]);
+  useEffect(() => setActive(0), [query, menuOpen]);
+  const pendingSelect = useRef<[number, number] | null>(null);
+  const placeCursor = (sel: [number, number] | null) => {
+    pendingSelect.current = sel;
+    requestAnimationFrame(() => {
+      const el = box.current; if (!el) return;
+      el.focus();
+      const s = pendingSelect.current ?? [el.value.length, el.value.length];
+      el.setSelectionRange(s[0], s[1]);
+    });
+  };
+  useEffect(() => { if (cursor) placeCursor(cursor.select); }, [cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeMenu = () => { setByButton(false); setButtonQuery(''); if (typed !== null) setDismissed(value); };
+  const choose = (c: AgentCommand) => {
+    const f = fillPrompt(c.prompt, context ?? {});
+    // Typed: the "/" and its filter give way to the prompt. The button: into an empty box, else after what is there.
+    const base = byButton && value.trim() ? `${value.replace(/\s+$/, '')}${value.includes('\n') ? '\n' : ' '}` : '';
+    onChange(base + f.text);
+    setByButton(false); setButtonQuery(''); setDismissed(null);
+    placeCursor(f.select ? [base.length + f.select[0], base.length + f.select[1]] : null);
+  };
+  const menuKeys = (e: KeyboardEvent<HTMLElement>): boolean => {
+    if (!menuOpen) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (shown.length) setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length); return true; }
+    if ((e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) || (e.key === 'Tab' && !e.shiftKey && shown.length)) { e.preventDefault(); if (shown[active]) choose(shown[active]!); return true; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); if (byButton) box.current?.focus(); return true; }
+    return false;
+  };
 
   // Speaking: what was typed before (or while) listening is kept aside, so the words are appended to it, never written over it.
   const baseRef = useRef('');
@@ -177,10 +268,22 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
   const onDrop = (e: DragEvent) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDragging(false); takeFiles([...e.dataTransfer.files]); };
   const onDragOver = (e: DragEvent) => { if (e.dataTransfer.types.includes('Files') && offer?.files.available && !disabled) { e.preventDefault(); setDragging(true); } };
   const onPaste = (e: ClipboardEvent) => { const list = [...e.clipboardData.files]; if (list.length) { e.preventDefault(); takeFiles(list); } };
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => { if (!byButton && menuKeys(e)) return; if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } };
   // Dictation ends when the focus leaves the composer (a click on its own buttons stays inside).
-  const onBlur = (e: FocusEvent<HTMLFormElement>) => { if (voice.listening && !e.currentTarget.contains(e.relatedTarget as Node | null)) stopListening(); };
+  const onBlur = (e: FocusEvent<HTMLFormElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    if (voice.listening) stopListening();
+    if (byButton) { setByButton(false); setButtonQuery(''); }
+  };
 
+  const menu = menuOpen && <CommandMenu id={menuId} items={shown} active={active} onActive={setActive} onChoose={choose} tab={context?.tab ?? null} inline={menuInline}
+            search={byButton ? (
+              <div className='relative border-b p-1.5'>
+                <Icons.search className='text-muted-foreground/60 pointer-events-none absolute top-1/2 left-3.5 size-3.5 -translate-y-1/2' aria-hidden />
+                <Input autoFocus value={buttonQuery} onChange={(e) => setButtonQuery(e.target.value)} onKeyDown={(e) => { menuKeys(e); }} placeholder='Search quick commands' aria-label='Search quick commands'
+                  aria-controls={menuId} aria-activedescendant={shown[active] ? `${menuId}-${active}` : undefined} className='h-8 border-0 pl-7 text-sm shadow-none focus-visible:ring-0' data-composer-command-search='' />
+              </div>
+            ) : undefined} />;
   const filesOffer = offer?.files;
   const attachHint = filesOffer ? limitWords(filesOffer) : 'Attach files';
   // No line under the box: the button itself says it is listening, and its tip says why it could not.
@@ -191,7 +294,9 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
       <form className='flex flex-col gap-1.5' onSubmit={(e) => { e.preventDefault(); void send(); }} onBlur={onBlur} aria-label={label} data-agent-composer=''>
         <label htmlFor={id} className='sr-only'>{label}</label>
         {above}
+        {menuInline && menu}
         <div className={cn('bg-background focus-within:ring-ring/40 relative flex flex-col rounded-2xl border shadow-sm focus-within:ring-2', dragging && 'ring-ring ring-2')} onDrop={onDrop} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }} data-composer-card='' data-slot='input-group'>
+          {!menuInline && menu}
           {(files.items.length > 0 || repos.length > 0) && (
             <div className='flex flex-wrap gap-1.5 px-2 pt-2' data-composer-chips=''>
               {files.items.map((item) => <FileChip key={item.key} item={item} onRemove={() => files.remove(item.key)} />)}
@@ -207,12 +312,20 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
           <textarea ref={box} id={id} rows={1} value={value} disabled={disabled || busy} autoFocus={autoFocus} placeholder={disabledReason ?? placeholder}
             onChange={(e) => { if (voice.listening) { baseRef.current = e.target.value; fromRef.current = finalRef.current.length; interimRef.current = ''; } onChange(e.target.value); }}
             onKeyDown={onKeyDown} onPaste={onPaste}
+            aria-controls={menuOpen && !byButton ? menuId : undefined} aria-activedescendant={menuOpen && !byButton && shown[active] ? `${menuId}-${active}` : undefined}
             className='placeholder:text-muted-foreground block w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60' data-agent-composer-text='' />
           <div className='flex items-center gap-1.5 p-2' data-composer-toolbar=''>
             {(!filesOffer || filesOffer.available) ? (<>
               <Hint text={disabledReason ?? attachHint}><Button type='button' variant='outline' size='icon' className={round} disabled={disabled || !filesOffer} aria-label='Attach files' onClick={() => fileInput.current?.click()} data-composer-attach=''><Icons.paperclip className='size-4' aria-hidden /></Button></Hint>
               <input ref={fileInput} type='file' multiple hidden aria-hidden tabIndex={-1} onChange={(e) => { takeFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
             </>) : <span className='sr-only' data-composer-no-files=''>{filesOffer.why}</span>}
+            {!!commands?.length && <Hint text={disabledReason ?? 'Quick commands (type / to open)'}>
+              <Button type='button' variant='outline' size='icon' className={round} disabled={disabled || busy} aria-label='Quick commands' aria-haspopup='listbox' aria-expanded={menuOpen}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (menuOpen) closeMenu(); else { setDismissed(null); setByButton(true); } }} data-composer-commands-button=''>
+                <Icons.slash className='size-4' aria-hidden />
+              </Button>
+            </Hint>}
             <RepoPicker offer={offer?.repositories ?? null} chosen={repos} onChange={setRepos} disabled={disabled} />
             <span className='flex-1' />
             {voice.supported && <Hint text={voiceTip}>
@@ -229,6 +342,7 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
           </div>
           {dragging && <div className='bg-background/90 pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm' data-composer-drop=''>{filesOffer ? `Drop to attach. ${limitWords(filesOffer)}` : 'Drop to attach'}</div>}
         </div>
+        {menuOpen && <span className='sr-only' role='status' data-composer-commands-status=''>{shown.length === 1 ? '1 quick command' : `${shown.length} quick commands`}. Up and down to choose, Enter to use, Escape to close.</span>}
         <span className='sr-only' role='status' data-composer-voice=''>{voice.error ?? (voice.listening ? 'Listening' : '')}</span>
       </form>
     </TooltipProvider>

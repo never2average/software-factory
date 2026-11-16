@@ -1,5 +1,8 @@
 import {
   IconArrowsMaximize,
+  IconArrowUpRight,
+  IconCornerDownLeft,
+  IconMapPin,
   IconArrowBarToDown,
   IconTextWrap,
   IconFolderOpen,
@@ -320,5 +323,9 @@ export const Icons = {
   history: IconHistory,
   terminal: IconTerminal2,
   table: IconTable,
-  cpu: IconCpu
+  cpu: IconCpu,
+  // mold_v0-316: the agent's example prompts, its quick commands' Enter hint, the page a chat was opened from.
+  arrowUpRight: IconArrowUpRight,
+  cornerDownLeft: IconCornerDownLeft,
+  mapPin: IconMapPin
 };

@@ -14,7 +14,8 @@ export type FeatureId =
   | "workspace_recipes"
   | "nested_runs"
   | "record_resources"
-  | "workspace_storage";
+  | "workspace_storage"
+  | "agent_quick_commands";
 
 export interface FeatureSpec {
   id: FeatureId;
@@ -23,7 +24,7 @@ export interface FeatureSpec {
   default: boolean;
   legacy?: string;
   requested_by: "credentials" | "email" | "alerts" | "clocks" | "always" | "private_network" | "developer_surface" | "checks" | "encrypted" | "no_engine" | "documents" | "layouts"
-    | "recipes" | "resources" | "workspace_storage"
+    | "recipes" | "resources" | "workspace_storage" | "agent"
     | "record_inputs" | "wide_lists" | "record_rules" | "credential_sets" | "home_cards";
   requested_words: string;
   requires?: FeatureId[];

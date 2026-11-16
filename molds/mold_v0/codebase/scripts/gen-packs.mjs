@@ -20,6 +20,7 @@
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
 //   web/src/config/features.generated.ts which capabilities are on (mold_v0-219, src/features.json)
+//   web/src/config/agent-prompts.generated.ts  the workspace agent's greeting, examples and quick commands (mold_v0-316)
 //   web/src/lib/shell-texts.generated.ts a copy of src/shell-texts.ts, the shell's texts a pack may write (mold_v0-141)
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
 //                                        their pack.json engine.config (mold_v0-137) when one declares it, and every pack's
@@ -206,7 +207,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the workspace agent's profiles the pack brings (mold_v0-261, src/agent-profile-spec.ts; src/pack-manifest.ts compiles them)
   "agent_profiles",
   // a workspace's team roles in the pack's words (mold_v0-262, src/teams.ts); the app's profile.json team_roles wins
-  "team_roles"]);
+  "team_roles",
+  // the workspace agent's greeting, example prompts and global quick commands (mold_v0-316, src/pack-api.ts AgentDefaultsSchema)
+  "agent_defaults"]);
 /**
  * mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's pack.json `team_roles`; src/teams.ts):
  * 2 to 6 roles, each an id, a label and the level it stands for (lead: also changes who sees the team's records;
@@ -1610,6 +1613,8 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     resources: () => areas.some((a) => a.scope === "platform" && (a.fields ?? []).some((x) => x.type === "repository" || x.type === "database")),
     // mold_v0-305: a pack declares object_storage (src/features.ts and lib/features.py say the same).
     workspace_storage: () => jsons.some((j) => j.object_storage !== undefined),
+    // mold_v0-316: asked for wherever the workspace agent is on (src/features.ts and lib/features.py say the same).
+    agent: () => FEATURE_ON.agent_harness === true,
     credentials: () => creds.length > 0,
     email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
     clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),
@@ -2934,6 +2939,35 @@ files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
   "import type { Legal } from '@/features/site/legal-types';\n\n" +
   "/** profile.json `legal` (mold_v0-109, src/legal.ts): /terms, /privacy, their links and the sitemap; null: no legal pages. */\n" +
   `export const legal: Legal | null = ${json(profileLegal)};\n`);
+// mold_v0-316 (flag agent_quick_commands): the workspace agent's blank screen and "/" menu, as the packs declare them
+// (pack.json agent_defaults, tabs[].agent; src/pack-api.ts AgentDefaultsSchema, TabAgentSchema): the app's defaults and
+// each shown tab's own, by tab id. Always written (the console imports it); empty while the flag is off.
+{
+  const declaring = packs.filter((p) => p.json?.agent_defaults !== undefined);
+  if (declaring.length > 1) fail("packs", `agent_defaults: ${declaring.map((p) => p.id).join(" and ")} both declare them: declare them once (one pack's pack.json)`);
+  const on = FEATURE_ON.agent_quick_commands === true;
+  const strip = (v) => JSON.parse(JSON.stringify(v, (k, x) => (k === "$comment" ? undefined : x)));
+  const tabs = {};
+  if (on) for (const t of shownTabs()) if (t.agent) {
+    if (tabs[t.id]) fail("packs", `tabs ${t.id}: two packs' tabs of that id both declare agent: give one of them its own id`);
+    tabs[t.id] = strip(t.agent);
+  }
+  // An in-page tab of a sections tab (mold_v0-175) takes its page's: its own examples, else the page's; its own commands,
+  // then the page's, one per name. A record opened from it (its area's tab) gets the same.
+  if (on) for (const t of shownTabs()) {
+    const parent = sectionParent(t), up = parent ? tabs[parent.id] : null;
+    if (!up || parent.pack !== t.pack) continue;
+    const own = tabs[t.id] ?? {}, names = new Set((own.commands ?? []).map((c) => c.name));
+    const commands = [...(own.commands ?? []), ...(up.commands ?? []).filter((c) => !names.has(c.name))];
+    const examples = own.examples ?? up.examples;
+    tabs[t.id] = { ...(examples ? { examples } : {}), ...(commands.length ? { commands } : {}) };
+  }
+  if (!on && (declaring.length || packViews.tabs.some((t) => t.agent))) console.warn("gen-packs: agent_defaults and tabs[].agent are declared but features.agent_quick_commands is off (or agent_harness is): the console shows none of them");
+  files.set(path.join(OUT, "web", "src", "config", "agent-prompts.generated.ts"), HEADER +
+    "import type { AgentPromptsRegistry } from '@/features/agent/composer/quick-commands';\n\n" +
+    "/** The workspace agent's greeting, example prompts and quick commands (mold_v0-316): the app's defaults and each tab's own. */\n" +
+    `export const agentPrompts: AgentPromptsRegistry = ${json({ defaults: on && declaring[0] ? strip(declaring[0].json.agent_defaults) : null, tabs })};\n`);
+}
 // The features registry (mold_v0-219, src/features.json): which capabilities are on in this build, for the console's
 // pages, sidebar and Settings tabs (web/src/config/features.ts).
 files.set(path.join(OUT, "web", "src", "config", "features.generated.ts"), HEADER +

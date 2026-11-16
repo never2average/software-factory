@@ -77,6 +77,8 @@ export function featureRequested(id: FeatureId): boolean {
     case "resources": return defs().some((d) => areasOf(d).some((a) => a.scope === "platform" && (a.fields ?? []).some((f) => f.type === "repository" || f.type === "database")));
     // mold_v0-305: a pack declares object_storage (the workspace area its storage connections are kept in).
     case "workspace_storage": return defs().some((d) => !!(d as { objectStorage?: unknown }).objectStorage);
+    // mold_v0-316: wherever the workspace agent is on (its blank screen and quick commands).
+    case "agent": return featureOn("agent_harness");
     case "record_inputs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];
       return defs().some((d) => ask(d));
