@@ -6,12 +6,14 @@
  * (src/record-areas.ts putWorkspaceNow).
  *
  *   test_connection   a page action's probe (src/connection-test-config.ts): its `by` field, and each probe's field
- *                     that starts its address or sits in its host, bind the encrypted fields its headers carry
+ *                     that starts its address or sits in its host, bind the encrypted fields its headers carry;
+ *                     mold_v0-313: a signed kind's deciding roles (an AWS region, an Azure tenant, a database's host
+ *                     and port) bind the encrypted fields its roles name (keys, a client secret, a password)
  *   connection_env    a pack profile's entry (src/connection-env-config.ts): every plain field it delivers binds the
  *                     encrypted fields it delivers (the session decides where they go, with all of them)
  *   object_storage    the declared storage area (mold_v0-305): its endpoint binds both keys
  */
-import { ConnectionTestSchema, destinationFields, headerSecrets } from "./connection-test-config.js";
+import { ConnectionTestSchema, destinationFields, probeSecrets } from "./connection-test-config.js";
 import { ConnectionEnvSchema, envVars } from "./connection-env-config.js";
 import { ObjectStorageDeclSchema } from "./pack-api.js";
 import { packs } from "./packs.js";
@@ -37,7 +39,7 @@ export function bindingsOf(area: AreaLike): Binding[] {
     const t = ConnectionTestSchema.safeParse(a.probe);
     if (!t.success) continue;
     const probes = Object.values(t.data.probes);
-    const secrets = [...new Set(probes.flatMap((p) => headerSecrets(p, sealed)))];
+    const secrets = [...new Set(probes.flatMap((p) => probeSecrets(p, sealed)))];
     const decide = [...new Set([...(t.data.by ? [t.data.by] : []), ...probes.flatMap(destinationFields)])].filter((n) => !sealed(n));
     if (secrets.length && decide.length) out.push({ decide, secrets });
   }

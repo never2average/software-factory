@@ -4048,13 +4048,13 @@ says `reveal: {"none": ...}`. At run time the secret is opened on the server onl
 each checked, one to another host dropping the secret's headers. The answer is one sentence ("It works: ... answered 200
 in 340 ms", "It does not work yet: ... answered 401: the token was refused"), never a secret, a path or the body beyond
 a cleaned line of the service's own error message. The console never receives the probe. A probe whose address starts with a url field, or whose host has a `{field}`,
-declares `hosts` (names, `*.x` for subdomains); every hop must be on the probe's hosts (its own host and `hosts`), port
+declares `hosts` (a name matches itself exactly, `*.x` x and its subdomains; mold_v0-313); every hop must be on the probe's hosts (its own host and `hosts`), port
 443 only, never this app's own host; a network failure reads the same whatever its cause, a failure carries no timing,
 and a workspace runs at most 10 tests a minute. A value never climbs the address (`.`, `..`, a host label of anything
 but letters, digits and -), a header carries printable ASCII only, and a secret shorter than 8 characters is refused.
 The action is offered and taken only on a record the person sees and may update. A wildcard
 `hosts` entry over a name anyone can host under (`*.vercel.app`, `*.amazonaws.com`, `*.github.io`, `*.co.uk`, ...) is
-refused (an exact host under one is fine), and neither `by` nor a field that decides a probe's host (nor a field a
+refused, and so is one listed bare (`amazonaws.com`, `fly.dev`; an exact host under one is fine), and neither `by` nor a field that decides a probe's host (nor a field a
 `connection_env` entry delivers) may be the area's lifecycle field (a move changes it without the binding below).
 **Secrets bound to where they go** (`src/secret-binding.ts`, the record store's write): a write that changes a field
 deciding where a kept secret goes, without typing the secret again, clears it: a probe's `by` and the field that starts
@@ -4062,6 +4062,57 @@ its address or sits in its host (for the encrypted fields its headers carry), ev
 delivers (for the encrypted ones it delivers), and the object storage area's endpoint (for both keys). Test:
 `npx tsx scripts/connection-test-test.ts` (a stand-in service on 127.0.0.1, `APP_CONNECTION_TEST_STANDIN`, never in
 production).
+
+**Signed kinds (mold_v0-313)** (`src/connection-test-signed.ts`): a probe may name a `kind` other than the default
+`"http"`, for a building block a bearer header cannot test. The kind fixes its hosts and its call; the pack names only
+which of the record's fields fill its roles (`fields`), and the build checks each role: encrypted where it holds a
+secret, plain where it decides where the secrets go (bound to them like a probe's address field), one value, a field
+the area has, never two roles in one field. No redirect is followed; every call goes through the HTTP probe's checks
+(https, 443, the kind's hosts only, every address public, pinned).
+
+- `{"kind": "aws_sigv4", "fields": {"access_key_id", "secret_access_key", "session_token"?, "region"?}, "region"?}`:
+  STS GetCallerIdentity (POST `https://sts.amazonaws.com/`, or `sts.<region>.amazonaws.com` for a region field or a
+  fixed `region`), signed with Signature Version 4 in `node:crypto`. The key id may be plain or encrypted, the secret key
+  and session token encrypted, the region plain (it decides the host; `^[a-z]{2}(-[a-z]+){1,2}-\d{1,2}$`); a plain key id binds the secret key too
+  (changed without it, the secret is cleared). "It works:
+  AWS account ending …9012 (Alice), answered by sts.amazonaws.com in 340 ms": the account's last 4 digits and the ARN's
+  last segment only; a refusal "the keys were refused" with STS's own message, cleaned.
+- `{"kind": "gcp_service_account", "fields": {"service_account_json"}, "check"?: "project" | "token"}`: the key file
+  (encrypted) must say `"type": "service_account"` and `"token_uri": "https://oauth2.googleapis.com/token"` exactly, else
+  nothing is signed or sent (a crafted token_uri never receives the assertion). An RS256 assertion for
+  `cloud-platform.read-only` is exchanged there for a token; `project` (the default) then reads the file's project at
+  `cloudresourcemanager.googleapis.com/v1/projects/<project_id>` with it ("can read project my-project (ACTIVE)").
+- `{"kind": "azure_client_credentials", "fields": {"tenant_id", "client_id", "client_secret", "subscription_id"?}}`:
+  POST `login.microsoftonline.com/<tenant>/oauth2/v2.0/token` (client credentials, scope
+  `https://management.azure.com/.default`), then GET `management.azure.com/subscriptions/<id>?api-version=2022-12-01` (or
+  the list). The tenant (a GUID or a domain; it decides which directory receives the secret) and client and
+  subscription ids (GUIDs) are plain, checked before any call; the client secret encrypted. The tenant and client id
+  bind the secret.
+- `{"kind": "postgres", "fields": {"url"} | {"host", "port"?, "database"?, "user", "password"}, "hosts": [...],
+  "ports"?: [5432]}`: TLS only (sslmode require with the server's certificate checked against the host's name, Node's
+  bundled and the system's CAs; a server answering without TLS is refused before anything is sent), the host a name on
+  `hosts` (required; the same wildcard rules) whose every address is public, the connection made to the address
+  checked; never this app's own database, by name or by address (the addresses of
+  `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_URL`, `POSTGRES_URL_NON_POOLING`, `POSTGRES_PRISMA_URL`: a provider
+  whose proxy serves many databases on one address is refused when it is the app's own); a port of `ports` (1024 to
+  65535). `BEGIN READ ONLY`, `SET LOCAL statement_timeout = '10s'` (inside the transaction: a transaction-mode pooler
+  refuses it as a startup parameter), `SELECT 1`, `ROLLBACK`; the close never waits on the server (`end()` at most
+  0.5 s, then the socket destroyed), all within the probe's timeout. A sealed url
+  (`postgres://user:password@host:port/db`) is parsed by the mold, never by the client library (its query, `sslmode` and `sslrootcert` included, is ignored). The server's error
+  text is never read: its SQLSTATE in words ("refused the user name or password"). The host and port bind the password.
+  A database whose certificate comes from a provider's private CA (not in the bundled or system store) reads as
+  unreachable.
+
+Every value opened and everything made from one (a signature, the Authorization header, an assertion, an access token,
+a url's password, the AWS key id) is cut from the answer. "It works" names identifiers, never secrets: the host called,
+an AWS account's last 4 digits and its ARN's last segment (a user, role session or role name), a service account's
+client_email and project_id, an Azure subscription's display name and state, a database's host; whoever may test a
+record sees them. A service account's RSA key over 4096 bits is refused before anything is signed. Example (one `by` enum choosing among them):
+`{"by": "kind", "probes": {"aws": {"kind": "aws_sigv4", "fields": {"access_key_id": "key_id", "secret_access_key": "secret",
+"region": "region"}}, "pg": {"kind": "postgres", "fields": {"host": "host", "user": "user", "password": "secret"},
+"hosts": ["*.db.example.com"]}}, "status": "status", "tested": "last_tested"}`. Test: `npx tsx
+scripts/signed-probes-test.ts` (an HTTPS stand-in that checks the SigV4 signature and the JWT assertion with its own
+code; a TLS Postgres stand-in speaking the wire protocol, `setPostgresStandinForTest`; both in a test world only).
 
 **Connections as a session's environment** (`src/connection-env-config.ts`, `src/connection-env.ts`): a pack agent
 profile's `connection_env: [{area, where?, use?, prefix, roles?, fields: {"VAR": "<field>"}}]` gives its sessions a workspace's

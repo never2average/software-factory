@@ -6103,107 +6103,330 @@
                                 "maxLength": 80
                               },
                               "additionalProperties": {
-                                "type": "object",
-                                "properties": {
-                                  "label": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 60,
-                                    "pattern": "^[^\\n\\r{}<>]*$"
-                                  },
-                                  "method": {
-                                    "type": "string",
-                                    "enum": [
-                                      "GET",
-                                      "HEAD",
-                                      "POST"
-                                    ]
-                                  },
-                                  "url": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 2000,
-                                    "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
-                                  },
-                                  "headers": {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string",
-                                      "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 2000,
-                                      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
-                                    }
-                                  },
-                                  "body": {},
-                                  "expect": {
+                                "oneOf": [
+                                  {
                                     "type": "object",
                                     "properties": {
-                                      "status": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string",
-                                            "const": "2xx"
-                                          },
-                                          {
-                                            "minItems": 1,
-                                            "maxItems": 10,
-                                            "type": "array",
-                                            "items": {
-                                              "type": "integer",
-                                              "minimum": 200,
-                                              "maximum": 299
-                                            }
-                                          }
-                                        ]
-                                      },
-                                      "json_path": {
+                                      "kind": {
                                         "type": "string",
-                                        "pattern": "^[A-Za-z0-9_$-]{1,64}(\\.[A-Za-z0-9_$-]{1,64}){0,9}$"
+                                        "const": "http"
                                       },
-                                      "equals": {
-                                        "anyOf": [
-                                          {
-                                            "type": "string",
-                                            "maxLength": 200
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "null"
-                                          }
+                                      "label": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 60,
+                                        "pattern": "^[^\\n\\r{}<>]*$"
+                                      },
+                                      "method": {
+                                        "type": "string",
+                                        "enum": [
+                                          "GET",
+                                          "HEAD",
+                                          "POST"
                                         ]
+                                      },
+                                      "url": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 2000,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                      },
+                                      "headers": {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string",
+                                          "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$"
+                                        },
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 2000,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                        }
+                                      },
+                                      "body": {},
+                                      "expect": {
+                                        "type": "object",
+                                        "properties": {
+                                          "status": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "const": "2xx"
+                                              },
+                                              {
+                                                "minItems": 1,
+                                                "maxItems": 10,
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "integer",
+                                                  "minimum": 200,
+                                                  "maximum": 299
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          "json_path": {
+                                            "type": "string",
+                                            "pattern": "^[A-Za-z0-9_$-]{1,64}(\\.[A-Za-z0-9_$-]{1,64}){0,9}$"
+                                          },
+                                          "equals": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      "timeout_seconds": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 15
+                                      },
+                                      "hosts": {
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^(\\*\\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+                                        }
                                       }
                                     },
+                                    "required": [
+                                      "method",
+                                      "url"
+                                    ],
                                     "additionalProperties": false
                                   },
-                                  "timeout_seconds": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "maximum": 15
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "aws_sigv4"
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 60,
+                                        "pattern": "^[^\\n\\r{}<>]*$"
+                                      },
+                                      "fields": {
+                                        "type": "object",
+                                        "properties": {
+                                          "access_key_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "secret_access_key": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "session_token": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "region": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      "region": {
+                                        "type": "string",
+                                        "pattern": "^[a-z]{2}(-[a-z]+){1,2}-\\d{1,2}$"
+                                      },
+                                      "timeout_seconds": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 15
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "fields"
+                                    ],
+                                    "additionalProperties": false
                                   },
-                                  "hosts": {
-                                    "minItems": 1,
-                                    "maxItems": 10,
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string",
-                                      "pattern": "^(\\*\\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
-                                    }
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "gcp_service_account"
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 60,
+                                        "pattern": "^[^\\n\\r{}<>]*$"
+                                      },
+                                      "fields": {
+                                        "type": "object",
+                                        "properties": {
+                                          "service_account_json": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      "check": {
+                                        "type": "string",
+                                        "enum": [
+                                          "project",
+                                          "token"
+                                        ]
+                                      },
+                                      "timeout_seconds": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 15
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "fields"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "azure_client_credentials"
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 60,
+                                        "pattern": "^[^\\n\\r{}<>]*$"
+                                      },
+                                      "fields": {
+                                        "type": "object",
+                                        "properties": {
+                                          "tenant_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "client_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "client_secret": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "subscription_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      "timeout_seconds": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 15
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "fields"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "postgres"
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 60,
+                                        "pattern": "^[^\\n\\r{}<>]*$"
+                                      },
+                                      "fields": {
+                                        "type": "object",
+                                        "properties": {
+                                          "url": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "host": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "port": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "database": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "user": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "password": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      "hosts": {
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^(\\*\\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+                                        }
+                                      },
+                                      "ports": {
+                                        "minItems": 1,
+                                        "maxItems": 5,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "integer",
+                                          "minimum": 1024,
+                                          "maximum": 65535
+                                        }
+                                      },
+                                      "timeout_seconds": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 15
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "fields",
+                                      "hosts"
+                                    ],
+                                    "additionalProperties": false
                                   }
-                                },
-                                "required": [
-                                  "method",
-                                  "url"
-                                ],
-                                "additionalProperties": false
+                                ]
                               }
                             },
                             "status": {
