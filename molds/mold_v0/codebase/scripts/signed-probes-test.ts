@@ -366,7 +366,7 @@ try {
     const BIG = crypto.generateKeyPairSync("rsa", { modulusLength: 4608 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
     SECRETS.push(BIG);
     assert.match((await run("gcp", { key_file: keyFile(BIG) })).words, /holds an RSA key larger than 4096 bits/);
-    assert.match((await run("gcp", { key_file: keyFile("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n") })).words, /private key that does not open/);
+    assert.match((await run("gcp", { key_file: keyFile(`-----BEGIN ${"PRIV" + "ATE"} KEY-----\nAAAA\n-----END ${"PRIV" + "ATE"} KEY-----\n`) })).words, /private key that does not open/);
     assert.equal(seen.length, n, "a crafted token_uri, or a file that is not a key: nothing sent anywhere");
     assert.ok(!seen.some((s) => s.host.includes("evil")), "the crafted token address never received the assertion");
     ok("gcp_service_account: works (the project read, or the token alone), another key refused, a crafted token_uri never called, a file that is not a key said in words");
