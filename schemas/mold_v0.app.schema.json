@@ -8979,7 +8979,7 @@
           }
         },
         "metrics": {
-          "maxItems": 100,
+          "maxItems": 200,
           "type": "array",
           "items": {
             "type": "object",
@@ -11391,7 +11391,7 @@
               },
               "connection_env": {
                 "minItems": 1,
-                "maxItems": 8,
+                "maxItems": 16,
                 "type": "array",
                 "items": {
                   "type": "object",
