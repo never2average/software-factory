@@ -439,7 +439,7 @@ export const PackJsonSchema = z.object({
   operator_credentials: z.array(OperatorCredentialSchema).max(20).optional(),
   schedules: z.array(ScheduleSchema).max(50).optional(),
   onboarding: z.array(OnboardingStepSchema).max(30).optional(),
-  metrics: z.array(MetricSchema).max(100).optional(),
+  metrics: z.array(MetricSchema).max(200).optional(), // mold_v0-317: was 100
   charts: z.array(ChartSchema).max(100).optional(),
   tabs: z.array(TabSchema).max(80).optional(), // in-page tabs of sections tabs count too (a catalog app has 40+)
   repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),

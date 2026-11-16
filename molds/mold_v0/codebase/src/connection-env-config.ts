@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX } from "../orchestrator/core/env-names.js";
 
-export const CONNECTION_ENV_MAX = 8;
+export const CONNECTION_ENV_MAX = 16; // mold_v0-317: was 8 (an app with a connection per building block needs more)
 export const CONNECTION_VARS_MAX = 20;
 export const ENV_VAR = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** What a session's sandbox sets itself (src/agent-harness.ts), or a runner reads: never a connection's variable. */
