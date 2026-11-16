@@ -685,7 +685,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, features, lit: Objec
     const strip = read("features/tabs/in-page-tabs.tsx"), sections = read("features/tabs/tab-page.tsx"), staff = read("features/records/staff-record-group.tsx");
     assert.match(strip, /useQueryState\('tab'/, "the strip keeps the selection in ?tab=");
     for (const [name, src] of [["the customer sections tab", sections], ["the staff entry", staff]] as const) {
-      assert.match(src, /import \{ InPageTabs \} from '(\.\/|@\/features\/tabs\/)in-page-tabs'/, `${name} draws the shared strip`);
+      assert.match(src, /import \{[^}]*\bInPageTabs\b[^}]*\} from '(\.\/|@\/features\/tabs\/)in-page-tabs'/, `${name} draws the shared strip`);
       assert.doesNotMatch(src, /<TabsList|<TabsTrigger/, `${name} draws no strip of its own`);
     }
     for (const c of ["<StaffRecordListPage key={tab.id} area={area} bare />", "<AdminJourneys key={tab.id} bare />", "<RecipesPage key={tab.id} bare />", "<AgentProfilesPage key={tab.id} bare />", "<AdminRepositories key={tab.id} bare />"])
