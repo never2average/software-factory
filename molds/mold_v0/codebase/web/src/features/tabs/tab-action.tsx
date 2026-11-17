@@ -83,7 +83,10 @@ export const actionLabel = (a: NonNullable<PackTabSpec['action']>) =>
   a.label ?? (a.kind === 'start_run' ? fill('Start {run}') : a.kind === 'new_schedule' ? 'New schedule' : a.kind === 'link' ? 'Open' : 'New record');
 
 // The toolbar's own button size (as Export beside it); a phone: the icon alone, square.
-const ACTION_CLASS = 'ml-auto shrink-0';
+// mold_v0-318: in a list's search row narrowed by a side panel (RecordView's toolbar container below 48rem, from sm up):
+// the icon alone, square; its label stays the accessible name and the tooltip.
+const ACTION_CLASS = 'ml-auto shrink-0 sm:@max-[48rem]/toolbar:w-8 sm:@max-[48rem]/toolbar:px-0';
+const LABEL_CLASS = 'hidden sm:inline sm:@max-[48rem]/toolbar:hidden';
 /** mold_v0-309: a toolbar action's word on a phone: its label's first word ("Add", "New", "Start"), never the icon alone. */
 export const shortLabel = (label: string) => label.trim().split(/\s+/)[0] ?? label;
 
@@ -96,12 +99,12 @@ export function ToolbarAction({ label, icon, onClick, href }: { label: string; i
   if (href) return (
     <Button aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS} nativeButton={false}
       render={href.startsWith('/') ? <Link href={href} /> : <a href={href} target='_blank' rel='noopener noreferrer' />}>
-      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className='hidden sm:inline'>{label}</span>
+      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
     </Button>
   );
   return (
     <Button type='button' onClick={onClick} aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS}>
-      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className='hidden sm:inline'>{label}</span>
+      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
     </Button>
   );
 }

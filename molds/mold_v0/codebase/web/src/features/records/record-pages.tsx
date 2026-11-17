@@ -38,7 +38,7 @@ import { LINKED_PARAM, addedByWords, badgeColor, columnUnit, layoutOf, numberWor
 import { LaidOutRecord, ToneBadge } from './detail-page';
 import { EntriesTable } from './record-detail-entries';
 import { entriesLine, entriesText, entriesView, entryObjects } from '@/lib/record-entries';
-import { useBreadcrumbTitle } from '@/lib/breadcrumb-leaf';
+import { useBreadcrumbParents, useBreadcrumbTitle, type CrumbParent } from '@/lib/breadcrumb-leaf';
 import { RowCreateMenu } from './row-create';
 import { PANEL_TAB_PARAM } from '@/lib/split-panel';
 import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilityRule, type RecordVisibility } from '@/features/teams/visibility';
@@ -57,7 +57,9 @@ type Detail = { record: RecordRow; links: { field: string; area: string; records
   /** A workspace record's writer (mold_v0-236, src/record-areas.ts RowProvenance): where it came from. */
   provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null };
   /** mold_v0-259 (flag teams): whether this person may change who sees it (Share). */
-  can_share?: boolean };
+  can_share?: boolean;
+  /** mold_v0-318: the records its breadcrumb leads through, nearest first (src/record-crumbs.ts), as this person reads them. */
+  parents?: CrumbParent[] };
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -502,6 +504,8 @@ export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { a
   const tv = titleField && data ? data.record.data[titleField] : undefined;
   const named = (tv != null && tv !== '' && !tf?.encrypted ? (refTarget(area, tf) && data?.record.ref_titles?.[titleField!] ? refWords(tv, data.record.ref_titles[titleField!]) : fieldText(tf, tv, data?.record.key)) : '') || data?.record.title;
   useBreadcrumbTitle(!inPanel ? named || null : null);
+  // mold_v0-318: an area without a sidebar entry of its own crumbs through the record it belongs to (the server's parents).
+  useBreadcrumbParents(!inPanel && base === 'app' ? data?.parents ?? null : null);
   // mold_v0-260 (flag credential_sets): a tenant area's records have credentials too (the server says which: 404 otherwise).
   const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), featureOn('record_pages') && !!layoutOf(area));
   if (credentials.card) return <>{credentials.card}</>;

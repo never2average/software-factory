@@ -36,3 +36,32 @@ export function useBreadcrumbTitle(title: string | null | undefined) {
     return () => setBreadcrumbTitle(path, null);
   }, [path, title]);
 }
+
+/**
+ * mold_v0-318: the records a record's page crumbs through (nearest first; the server's `parents`, src/record-crumbs.ts),
+ * kept per address as its title is: <group> › <parent's entry> › <its sub-tab> › <parent record> › <record>.
+ */
+export type CrumbParent = { area: string; key: string; title: string | null };
+const parentsAt = new Map<string, readonly CrumbParent[]>();
+const NONE: readonly CrumbParent[] = [];
+const parentsKey = (p: readonly CrumbParent[] | null | undefined) => (p ?? []).map((x) => `${x.area}\u0000${x.key}\u0000${x.title ?? ''}`).join('\u0001');
+export function setBreadcrumbParents(path: string, parents: readonly CrumbParent[] | null) {
+  if (parentsKey(parentsAt.get(path)) === parentsKey(parents)) return;
+  if (parents?.length) parentsAt.set(path, parents); else parentsAt.delete(path);
+  notify();
+}
+/** The parents a page named for its crumbs at this address (none: an empty list, the same one each time). */
+export function useBreadcrumbParentsAt(path: string): readonly CrumbParent[] {
+  return useSyncExternalStore(subscribe, () => parentsAt.get(path) ?? NONE, () => NONE);
+}
+/** For a record's page: its parents while it is shown (null or empty: it crumbs as its area's). */
+export function useBreadcrumbParents(parents: readonly CrumbParent[] | null | undefined) {
+  const path = useConsolePathname();
+  const key = parentsKey(parents);
+  useEffect(() => {
+    if (!parents?.length) return;
+    setBreadcrumbParents(path, parents);
+    return () => setBreadcrumbParents(path, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, key]);
+}
