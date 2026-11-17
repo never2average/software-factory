@@ -5,6 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
+import { crumbParentProblems } from "./record-crumbs.js";
 import { WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
@@ -423,6 +424,8 @@ export function checkViews(b: BuildViews): string[] {
   }
   // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.
   problems.push(...detailBuildProblems(b.areas, b.kinds ?? []));
+  // mold_v0-318: a record page's breadcrumb parent (detail.parent): a single reference to another workspace area.
+  problems.push(...crumbParentProblems(b.areas));
   // mold_v0-260: a reference's where, an area's checks on save, a kind's arguments from a record: what each names.
   problems.push(...gapBuildProblems(b));
   return problems;

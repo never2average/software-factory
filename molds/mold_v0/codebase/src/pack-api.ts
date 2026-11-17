@@ -1392,6 +1392,12 @@ export const RecordDetailSchema = z.object({
    * fact or in a section is left out of it, being shown there by its title).
    */
   linked: z.boolean().optional(),
+  /**
+   * mold_v0-318: the record the top bar's breadcrumb leads through: a single reference field of the area to another
+   * workspace area (src/record-crumbs.ts, checked across the build). Left out, an area no tab shows crumbs through its
+   * first required single reference to an area a tab shows; one a tab shows crumbs as its own entry.
+   */
+  parent: name.optional(),
 }).strict();
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
 

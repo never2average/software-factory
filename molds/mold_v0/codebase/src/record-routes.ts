@@ -112,7 +112,8 @@ export function recordAppRouter(): Router {
   // A record's files and documents (mold_v0-220, src/record-files.ts): its card's file cards, and each file's bytes.
   mountFileRoutes(r, { base: "/api/records", org, actor, who: (res) => ({ scope: `org-${org(res)}`, person: String(actor(res).userId) }), area: anyArea }, (op) => open(op));
   r.get("/:area/:key", open("get"), answer(async (req, res) => {
-    const d = await detailFor(org(res), String(req.params.area), String(req.params.key), actor(res));
+    // mold_v0-318: with the records its breadcrumb leads through (`parents`, nearest first), as the person reads them.
+    const d = await detailFor(org(res), String(req.params.area), String(req.params.key), actor(res), { parents: true });
     if (!d) throw new PackError("Not found", 404);
     return d;
   }));

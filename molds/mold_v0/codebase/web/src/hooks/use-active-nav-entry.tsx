@@ -14,6 +14,7 @@ import { profile } from '@/config/profile.generated';
 import { hiddenConsoleUrls, settingsTabs } from '@/config/pack-nav.generated';
 import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
 import { usePageNotFound } from '@/lib/page-not-found';
+import { useBreadcrumbParentsAt } from '@/lib/breadcrumb-leaf';
 import type { NavGroup } from '@/types';
 
 /** mold_v0-280: the person's API keys are a tab of Settings (a pack's keys tab declared inside: settings). */
@@ -62,7 +63,11 @@ export function useActiveNavEntry(search: string): ActiveNavEntry {
   const urls = React.useMemo(() => navUrls(filteredGroups, footer), [filteredGroups, footer]);
   // mold_v0-298: a 404 lights nothing (an address that is no page belongs to no entry, even one under the home's).
   const notFound = usePageNotFound();
-  const activeUrl = notFound ? null : activeNavUrl(search ? `${pathname}?${search}` : pathname, urls, navOptions(area === 'admin' ? 'admin' : 'portal'));
+  // mold_v0-318: a record reached through another record (its page's parents) lights the entry of the farthest one's area.
+  const parents = useBreadcrumbParentsAt(pathname);
+  const root = area !== 'admin' && /^\/app\/records\/[^/]+\/[^/]+$/.test(pathname) ? parents.at(-1) : undefined;
+  const page = root ? `/app/records/${encodeURIComponent(root.area)}` : search ? `${pathname}?${search}` : pathname;
+  const activeUrl = notFound ? null : activeNavUrl(page, urls, navOptions(area === 'admin' ? 'admin' : 'portal'));
   return { groups: filteredGroups, urls, footer, activeUrl };
 }
 

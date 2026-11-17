@@ -386,8 +386,12 @@ export function RecordView<T>({
       {/* mold_v0-315: a sections tab's strip, as far above the cards as the tabs drew it (gap-3 + mb-3: their gap-6). */}
       {tabStrip && <div className='mb-3 shrink-0'>{tabStrip}</div>}
       {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
-      <div className='flex flex-wrap items-center gap-2'>
-        <div className='relative min-w-48 flex-1'>
+      {/* mold_v0-318: the search row is a container (toolbar): where a side panel narrows the list's column below 48rem
+          (from sm up; a phone's row wraps as before), it stays one line: the search box shrinks to 10rem and the primary action
+          shows its icon alone (its words the accessible name and the tooltip). Full width: unchanged. */}
+      <div className='@container/toolbar'>
+      <div className='flex flex-wrap items-center gap-2 sm:@max-[48rem]/toolbar:flex-nowrap'>
+        <div className='relative min-w-48 flex-1 sm:@max-[48rem]/toolbar:min-w-40'>
           <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
           <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} aria-label={searchPlaceholder} className='h-9 pl-8' />
         </div>
@@ -399,6 +403,7 @@ export function RecordView<T>({
         )}
         {primaryNode}
         {toolbarAction}
+      </div>
       </div>
 
       {selRows.length > 0 ? (

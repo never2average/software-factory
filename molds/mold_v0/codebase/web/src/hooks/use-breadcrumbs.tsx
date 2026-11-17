@@ -4,9 +4,10 @@ import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAdminNav, recordAreas } from '@/config/pack-nav.generated';
 import { settingsGroups, settingsTabUrl } from '@/config/settings';
-import { useBreadcrumbLeaf, useBreadcrumbTitleAt } from '@/lib/breadcrumb-leaf';
+import { useBreadcrumbLeaf, useBreadcrumbParentsAt, useBreadcrumbTitleAt } from '@/lib/breadcrumb-leaf';
 import { placeOfEntry, useActiveNavEntry } from '@/hooks/use-active-nav-entry';
 import { usePageNotFound } from '@/lib/page-not-found';
+import { parentTrail } from '@/lib/crumb-trail';
 
 type BreadcrumbItem = {
   title: string;
@@ -65,6 +66,11 @@ const IN_PAGE_AREAS = new Map<string, BreadcrumbItem[]>([
     [`/admin/records/${t.area}`, g.title.trim().toLowerCase() === t.label.trim().toLowerCase() ? [{ title: g.title, link: `${g.url}?tab=${t.id}` }] : [{ title: g.title, link: g.url }, { title: t.label, link: `${g.url}?tab=${t.id}` }]] as [string, BreadcrumbItem[]]))
 ].reverse()); // the first tab that shows an area names it (a Map keeps the last of a key)
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
+/** A customer record's own page: /app/records/<area>/<key>. */
+const RECORD_PAGE = /^\/app\/records\/([^/]+)\/([^/]+)$/;
+
+/** mold_v0-318: an area's list as the trail names it (an in-page tab's entry and tab, else its own entry's label). */
+const areaListCrumbs = (list: string, area: string): BreadcrumbItem[] => IN_PAGE_AREAS.get(list) ?? [{ title: PACK_TITLES.get(list) ?? area, link: list }];
 
 const AGENT_PAGE = /^\/(app|admin)\/agent$/;
 
@@ -76,6 +82,7 @@ export function useBreadcrumbs(search = '') {
   const pathname = useConsolePathname();
   const leaf = useBreadcrumbLeaf();
   const ownTitle = useBreadcrumbTitleAt(pathname);
+  const parents = useBreadcrumbParentsAt(pathname);
   const notFound = usePageNotFound();
   const { groups, activeUrl } = useActiveNavEntry(search);
 
@@ -86,6 +93,12 @@ export function useBreadcrumbs(search = '') {
     if (routeMapping[pathname]) {
       return routeMapping[pathname];
     }
+
+    const place = placeOfEntry(groups, activeUrl);
+    const withGroup = (trail: BreadcrumbItem[]) => place?.group && place.group !== trail[0]?.title ? [{ title: place.group }, ...trail] : trail;
+    // mold_v0-318: a record reached through another record (its area has no entry): crumbed through that record.
+    const rec = RECORD_PAGE.exec(pathname);
+    if (rec && parents.length) return withGroup(parentTrail(parents, { title: ownTitle || decode(rec[2]!), link: pathname }, areaListCrumbs));
 
     // If no exact match, fall back to generating breadcrumbs from the path
     const segments = pathname.split('/').filter(Boolean);
@@ -109,7 +122,6 @@ export function useBreadcrumbs(search = '') {
     // mold_v0-298: the trail starts at the page's place in the sidebar, not at the area ("Account", "Admin"): the area's
     // own crumb goes, the group's name leads (a heading, no link; none when the group has no name or is named like the
     // entry), and the area's home is named by its entry ("Overview"). A page outside the sidebar starts at its own name.
-    const place = placeOfEntry(groups, activeUrl);
     let trail = crumbs.slice(1);
     if (!trail.length) trail = place ? [{ title: place.title, link: place.url }] : crumbs.slice(0, 1);
     // A page that names its own crumb (a record's page: the record's title, not the key in the address).
@@ -117,9 +129,8 @@ export function useBreadcrumbs(search = '') {
     // mold_v0-290: an open session is the trail's last level, its short number; the page before it links back to the list.
     if (leaf && AGENT_PAGE.test(pathname) && trail.length) trail = [...trail.slice(0, -1), { ...trail.at(-1)!, keep: true }, { title: leaf, link: `${pathname}#${leaf}` }];
     // The group's name only where the sidebar shows it as a heading (placeOfEntry), and never twice in a row.
-    const group = place?.group;
-    return group && group !== trail[0]?.title ? [{ title: group }, ...trail] : trail;
-  }, [pathname, leaf, ownTitle, notFound, groups, activeUrl]);
+    return withGroup(trail);
+  }, [pathname, leaf, ownTitle, parents, notFound, groups, activeUrl]);
 
   return breadcrumbs;
 }

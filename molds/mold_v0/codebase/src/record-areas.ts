@@ -32,6 +32,7 @@ import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from
 import { conditionHolds, referenceWhereWords, type DetailCondition } from "./pack-api.js";
 import { areaLinks, DECLARABLE_ROLES, isFieldUrl, REPOSITORY_NAME, URL_MAX, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
+import { crumbChain, tabShownAreas, type CrumbHop, type CrumbTab } from "./record-crumbs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
@@ -694,10 +695,10 @@ const clocks = () => import("./record-clocks.js");
  * A record and the records its links and references name (in the same workspace for a workspace area), as one
  * workspace sees them; a linked area the actor may not read is left out.
  */
-export function detailFor(orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) {
-  return asViewerOf(actor, () => detailForNow(orgId, name, key, actor));
+export function detailFor(orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR, opts: { parents?: boolean } = {}) {
+  return asViewerOf(actor, () => detailForNow(orgId, name, key, actor, opts));
 }
-async function detailForNow(orgId: number, name: string, key: string, actor: Actor) {
+async function detailForNow(orgId: number, name: string, key: string, actor: Actor, opts: { parents?: boolean }) {
   const area = areaOrThrow(name);
   const record = await getFor(orgId, name, key, actor);
   if (!record) return null;
@@ -723,7 +724,44 @@ async function detailForNow(orgId: number, name: string, key: string, actor: Act
   const titled = (await import("./features.js")).featureOn("record_pages") && links.length
     ? (() => { const out: Record<string, Record<string, string>> = {}; for (const l of links) for (const r of l.records) if (r.title) (out[l.field] ??= {})[r.key] = r.title; return Object.keys(out).length ? { ...record, ref_titles: out } : record; })()
     : record;
-  return { area: areaSummary(area), record: titled, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}), ...share };
+  // mold_v0-318: the records the breadcrumb leads through (src/record-crumbs.ts), as this person reads them.
+  // The console's record page asks for them (src/record-routes.ts); the MCP tools' detail is as before.
+  const parents = opts.parents ? await crumbParents(orgId, area, record, actor) : [];
+  return { area: areaSummary(area), record: titled, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}), ...share, ...(parents.length ? { parents } : {}) };
+}
+
+let crumbCache: { from: unknown; chains: Map<string, CrumbHop[]> } | null = null;
+/** Each workspace area's breadcrumb chain (mold_v0-318), worked out once per installed set of packs. */
+function crumbChainOf(name: string): CrumbHop[] {
+  const list = packs();
+  if (crumbCache?.from !== list) {
+    const areas = recordAreas();
+    const shown = tabShownAreas(list.flatMap((p) => (p.definition.tabs ?? []) as CrumbTab[]));
+    crumbCache = { from: list, chains: new Map(areas.map((a) => [a.name, crumbChain(a.name, areas, shown)])) };
+  }
+  return crumbCache.chains.get(name) ?? [];
+}
+
+/**
+ * The records a workspace record's page crumbs through (mold_v0-318), nearest first: each hop's record read as the
+ * person (its area's read permission, its visibility, an area whose reads a pack withholds or that is read live from an
+ * API left out). One hop the person cannot read, or a record not there, and there are none: the page crumbs as before.
+ */
+async function crumbParents(orgId: number, area: RecordArea, record: RecordRow, actor: Actor): Promise<{ area: string; key: string; title: string | null }[]> {
+  if (area.scope !== "workspace") return [];
+  const chain = crumbChainOf(area.name);
+  const out: { area: string; key: string; title: string | null }[] = [];
+  let data = record.data;
+  for (const hop of chain) {
+    const target = findArea(hop.area);
+    const key = data?.[hop.field];
+    if (!target || target.scope !== "workspace" || isLive(target) || !may(target, "read", actor) || areaOpWithheld(target.name, "get") || typeof key !== "string" || !KEY.test(key)) return [];
+    const found = await auditQuiet(() => getFor(orgId, target.name, key, actor)).catch(() => null);
+    if (!found) return [];
+    out.push({ area: target.name, key: found.key, title: found.title ?? null });
+    data = found.data;
+  }
+  return out;
 }
 
 /**

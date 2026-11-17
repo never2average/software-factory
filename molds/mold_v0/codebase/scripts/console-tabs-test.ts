@@ -667,9 +667,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     const rp = read("features/records/record-pages.tsx"), sc = read("features/schedules/schedules-page.tsx"), ru = read("features/tabs/runs.tsx");
     assert.match(rv, /\{primaryNode\}\s*\{toolbarAction\}\s*<\/div>/, "RecordView: the action is the search row's last control");
     assert.doesNotMatch(rv + ta + tp, /\bfab\b|FAB_SPACE|data-fab|pb-24|100svh-10rem/, "no floating action and no space kept free for one");
-    assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0'/, "a normal primary button at the row's right end (mold_v0-309: a word on a phone too, never a bare +)");
+    // mold_v0-318: narrowed by a side panel (the toolbar container below 48rem, from sm up), square, the icon alone.
+    assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0 sm:@max-\[48rem\]\/toolbar:w-8 sm:@max-\[48rem\]\/toolbar:px-0'/, "a normal primary button at the row's right end (mold_v0-309: a word on a phone too, never a bare +)");
+    assert.match(ta, /const LABEL_CLASS = 'hidden sm:inline sm:@max-\[48rem\]\/toolbar:hidden';/, "the whole label from sm up (mold_v0-318: not in a narrowed row)");
     assert.doesNotMatch(ta, /fixed|rounded-full|size-14|shadow-lg|<Sheet|Dialog|Popover/, "nothing fixed, round or lifted; no sheet, dialog or popover");
-    assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='sm:hidden' aria-hidden>\{shortLabel\(label\)\}<\/span><span className='hidden sm:inline'>\{label\}<\/span>/, "mold_v0-309: on a phone the label's first word, the whole label wider; the label its accessible name and title");
+    assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='sm:hidden' aria-hidden>\{shortLabel\(label\)\}<\/span><span className=\{LABEL_CLASS\}>\{label\}<\/span>/, "mold_v0-309: on a phone the label's first word, the whole label wider; the label its accessible name and title");
     assert.match(ta, /useQueryState\(name, parseAsFlag[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
     assert.match(ta, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>[\s\S]*Back to the list[\s\S]*<CardTitle[\s\S]*<CardContent[\s\S]*<CardFooter[\s\S]*\{submit\}\s*<Button type='button' variant='outline' onClick=\{cancel\}>Cancel<\/Button>/,
       "the form's card: a way back, the title and what will happen, the fields, then the submit and Cancel");
