@@ -6452,6 +6452,10 @@
                   },
                   "linked": {
                     "type": "boolean"
+                  },
+                  "parent": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
                   }
                 },
                 "required": [
