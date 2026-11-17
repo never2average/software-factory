@@ -113,11 +113,15 @@ try {
     assert.ok((await H.listSessions(org.orgId, owner as never)).every((s) => /^AGI-\d{3}$/.test(s.ref)), "the list carries it");
     const [high] = await asPlatform(() => db.query<{ last_number: number }>("SELECT last_number FROM harness_session_counters WHERE org_id = $1", [org.orgId]));
     await asPlatform(() => db.query("DELETE FROM harness_sessions WHERE org_id = $1 AND id = $2", [org.orgId, b.id]));
-    const d = await H.startSession(org.orgId, owner as never, { message: "third" });
+    // mold_v0-316: the page a session was opened from is kept with it (words for its prompts), checked for its form.
+    const d = await H.startSession(org.orgId, owner as never, { message: "third", opened_from: { tab: "findings", record: { area: "findings", key: "FND-12" } } });
     assert.equal(d.ref, `AGI-${String(high!.last_number + 1).padStart(3, "0")}`, "a number is never given again");
+    assert.deepEqual((await H.readSession(org.orgId, d.id, owner as never)).opened_from, { tab: "findings", record: { area: "findings", key: "FND-12" } }, "it keeps the page it was opened from");
+    assert.equal(a.opened_from, null, "one started on the Agents page: none");
+    await assert.rejects(H.startSession(org.orgId, owner as never, { message: "x", opened_from: { tab: "Not A Tab" } }), /opened_from: tab is a tab's id/, "a malformed one is refused in words");
     for (const s of [a, c, d, ...many]) await asPlatform(() => db.query("UPDATE harness_sessions SET state = 'stopped', current_run_id = NULL WHERE id = $1", [s.id]));
     await asPlatform(() => db.query("UPDATE runs SET status = 'cancelled' WHERE status = 'queued'"));
-    ok("numbers: AGI-001 onward per workspace, stored, distinct when started at once, never given again, the same for staff");
+    ok("numbers: AGI-001 onward per workspace, stored, distinct when started at once, never given again, the same for staff; the page it was opened from kept");
   }
 
   // ---------- 3. files ----------

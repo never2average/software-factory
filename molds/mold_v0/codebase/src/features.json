@@ -346,6 +346,19 @@
       "since": "mold_v0-305",
       "about": "A workspace keeps its files in its own bucket (Cloudflare R2, Amazon S3 or any S3-compatible service), set up by its owners in the customer console: a record of the pack's declared area (object_storage: area, where, fields bucket, endpoint, access_key_id, secret_access_key, use; both keys encrypted fields, never revealed). Everything stored for that workspace (uploads, record files, agent attachments and checkpoints, evaluation bundles, workspace snapshots) goes to the record marked for use; else the environment's R2_*, else the Key vault's Object storage. The record page's Test action writes, reads and deletes one small object and says what went wrong in plain words.",
       "off": "The declaration is ignored: every workspace uses the environment's or the Key vault's bucket as before; the Test action is not offered; the generated files leave the flag out."
+    },
+    {
+      "id": "agent_quick_commands",
+      "short": "quick",
+      "label": "Agent examples and quick commands",
+      "default": true,
+      "quiet_off": true,
+      "requested_by": "agent",
+      "requested_words": "the workspace agent is on (agent_harness)",
+      "requires": ["agent_harness"],
+      "since": "mold_v0-316",
+      "about": "The workspace agent's blank screen and quick commands: a new chat opened from a console page (the top bar's agent button passes the page's tab, and on a record's page the record) shows a greeting and 4 to 6 example prompts, and the composer has a / button beside the paperclip (or / typed first) listing quick commands; choosing either fills the composer, with {tab}, {area}, {record_key} and {record_title} filled from that page, and nothing is sent on its own. The app's own come from pack.json agent_defaults (greeting, intro, examples, commands) and tabs[].agent (examples, commands; a tab's commands first, one per name); otherwise the shell's generic ones. The session keeps the page it was opened from.",
+      "off": "No example prompts and no / button or menu: the agent page and its composer are as before; agent_defaults and tabs[].agent are accepted and shown nowhere; the generated files leave the flag out."
     }
   ]
 }

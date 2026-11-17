@@ -11,5 +11,6 @@ export type FeatureId =
   | 'workspace_recipes'
   | 'nested_runs'
   | 'record_resources'
-  | 'workspace_storage';
+  | 'workspace_storage'
+  | 'agent_quick_commands';
 export const featureOn = (id: FeatureId): boolean => features[id] === true;

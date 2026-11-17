@@ -18,6 +18,8 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tokens, TraceStream, useTrace } from './session-trace';
 import { AgentComposer } from './composer/agent-composer';
+import { AgentWelcome, openedFromWords, quickCommandsOn, useAgentCommands, usePromptContext } from './agent-welcome';
+import { openedFromParams, type OpenedFrom } from './composer/quick-commands';
 import { useAgentDock, type DockCheckpoint } from './dock/right-dock';
 import { setBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
 import { useSearchParams } from 'next/navigation';
@@ -58,6 +60,8 @@ interface Session {
   record?: { area: string; key: string } | null;
 }
 interface Detail extends Session {
+  /** mold_v0-316: the console page it was opened from (its examples and quick commands; null: the Agents page). */
+  opened_from?: OpenedFrom | null;
   messages: { id: number; role: 'person' | 'agent' | 'system'; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }[];
   requests: Request[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null; input_tokens: number; output_tokens: number }[];
@@ -128,6 +132,11 @@ function AgentList({ area }: { area: Area }) {
   // A list's start_agent action (mold_v0-261) opens the dialog with its profile and first message: ?start=<profile>&message=.
   const [starting, setStarting] = useState(!!params.get('start'));
   const [preset] = useState(() => ({ profile: params.get('start'), message: params.get('message') }));
+  // mold_v0-316 (flag agent_quick_commands): ?new=1 is a new chat, its blank screen, opened from the page in ?from= and
+  // ?record= (the top bar's agent button on a tab's page); the session it starts keeps that page.
+  const freshOf = (q: URLSearchParams | { get(n: string): string | null }) => area === 'app' && quickCommandsOn() && q.get('new') === '1' && !q.get('session');
+  const [fresh, setFresh] = useState(() => freshOf(params));
+  const [from, setFrom] = useState<OpenedFrom>(() => openedFromParams(params));
   const load = useCallback(() => call<ListAnswer>('GET').then((d) => { setData(d); setError(null); }, (e: Error) => setError(e)), [call]);
   useEffect(() => { void load(); }, [load]);
   const live = !!data?.sessions.some((s) => LIVE.includes(s.phase));
@@ -137,12 +146,14 @@ function AgentList({ area }: { area: Area }) {
     const u = new URL(window.location.href);
     if (k) u.searchParams.set('session', k); else u.searchParams.delete('session');
     u.searchParams.delete('section'); // mold_v0-296: a dock section open in one session is not opened in another
+    for (const x of ['new', 'from', 'record']) u.searchParams.delete(x); // mold_v0-316: the session keeps where it was opened from
+    setFresh(false);
     window.history.pushState(null, '', u.toString());
   };
   // The Agents crumb and a link keep the address's word (mold_v0-290: the breadcrumb is the way back to the list).
-  useEffect(() => { setOpenState(params.get('session')); }, [params]);
+  useEffect(() => { setOpenState(params.get('session')); setFresh(freshOf(params)); setFrom(openedFromParams(params)); }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const h = () => setOpenState(new URLSearchParams(window.location.search).get('session'));
+    const h = () => { const q = new URLSearchParams(window.location.search); setOpenState(q.get('session')); setFresh(freshOf(q)); setFrom(openedFromParams(q)); };
     window.addEventListener('popstate', h);
     return () => window.removeEventListener('popstate', h);
   }, []);
@@ -157,6 +168,11 @@ function AgentList({ area }: { area: Area }) {
   if (open) return (<PageContainer>
     <SessionFull key={open} area={area} id={open} call={call} onChange={load} onOpenSession={setOpen} budget={budget} />
     {budget.dialogs}
+  </PageContainer>);
+  // mold_v0-316: a new chat, for someone who may start a session (anyone else: the list, as before).
+  if (fresh && data?.can_start) return (<PageContainer>
+    <NewChat key={`${from.tab}/${from.record?.area}/${from.record?.key}`} from={from} profiles={data.profiles ?? []} call={call}
+      onStarted={(sid) => void load().then(() => setOpen(sid))} onLeave={() => setOpen(null)} />
   </PageContainer>);
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
@@ -252,6 +268,8 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
   const profile = profiles.find((p) => p.id === profileId) ?? null;
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  // mold_v0-316: the Agents page has no tab: the app's global quick commands only.
+  const commands = useAgentCommands(null), ctx = usePromptContext(null);
   useEffect(() => { if (open) { setMessage(preset.message ?? ''); setProfileId(first?.id ?? null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const submit = async (c: ComposerSend): Promise<boolean> => {
     setBusy(true);
@@ -291,11 +309,55 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
           )}
           <FormRow label='What should the agent do?' htmlFor='agent-start-message'>
             <AgentComposer id='agent-start-message' label='What should the agent do?' value={message} onChange={setMessage} autoFocus session={null} busy={busy} disabledReason={null} sendLabel='Start'
-              placeholder="Summarise this workspace's records and say what needs attention first." onSend={submit} />
+              placeholder="Summarise this workspace's records and say what needs attention first." onSend={submit} commands={commands} context={ctx} menuInline />
           </FormRow>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * A new chat (mold_v0-316, flag agent_quick_commands): the session page before its session exists. The blank screen
+ * (agent-welcome.tsx: the greeting, the page it was opened from, the example prompts) over the composer with its "/"
+ * menu of that page's quick commands. Sending starts the session with the first message, the chosen task (else the
+ * Default) and the page it was opened from, then opens it.
+ */
+function NewChat({ from, profiles, call, onStarted, onLeave }: { from: OpenedFrom; profiles: StartProfile[]; call: Call; onStarted: (id: string) => void; onLeave: () => void }) {
+  const ctx = usePromptContext(from);
+  const commands = useAgentCommands(from);
+  const [text, setText] = useState('');
+  const [cursor, setCursor] = useState<{ at: number; select: [number, number] | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [profileId, setProfileId] = useState<string | null>(profiles[0]?.id ?? null);
+  useEffect(() => { setBreadcrumbLeaf('New chat'); return () => setBreadcrumbLeaf(null); }, []);
+  const send = async (c: ComposerSend): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const r = await call<{ session: Session }>('POST', '', { message: c.message, mode: 'conversation', files: c.files, repositories: c.repositories,
+        ...(profileId ? { profile: profileId } : {}), ...(from.tab || from.record ? { opened_from: from } : {}) });
+      onStarted(r.session.id);
+      return true;
+    } catch (e) { fail(e); return false; } finally { setBusy(false); }
+  };
+  const where = openedFromWords(ctx);
+  return (
+    <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] flex-col gap-2' data-agent-new-chat='' data-opened-from={from.tab ?? ''}>
+      <div className='flex min-w-0 items-center gap-2 sm:gap-3' data-agent-session-bar=''>
+        <h1 className='min-w-0 flex-1 truncate text-base font-medium'>New chat</h1>
+        {profiles.length > 1 && <NativeSelect aria-label='Task' className='w-44 max-sm:w-36' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} data-agent-start-profile=''>
+          {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
+        </NativeSelect>}
+        <Button type='button' variant='outline' size='sm' onClick={onLeave} data-agent-all-sessions=''><Icons.history /><span className='max-sm:sr-only'>All sessions</span></Button>
+      </div>
+      <div className='flex min-h-0 flex-1 flex-col overflow-y-auto' data-agent-transcript=''>
+        <AgentWelcome className='my-auto' from={from} ctx={ctx} onPick={(t, select) => { setText(t); setCursor({ at: Date.now(), select }); }} />
+      </div>
+      <div className='mx-auto w-full max-w-4xl px-1 pb-1' data-agent-dock=''>
+        <AgentComposer id='agent-new-message' label='Message the agent' value={text} onChange={setText} autoFocus session={null} busy={busy} disabledReason={null} sendLabel='Send'
+          placeholder={where ? `Ask about ${where}, or type / for quick commands` : 'Ask the agent, or type / for quick commands'} onSend={send} commands={commands} context={ctx} cursor={cursor} />
+      </div>
+    </div>
   );
 }
 
@@ -547,7 +609,9 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   const changed = async () => { await load(); await onChange(); };
   // mold_v0-292 (flag nested_runs): the dock, its sections as grouped tabs in this bar (mold_v0-295) and, while one is open, a
   // large modal over the conversation (mold_v0-296; the conversation stays full width behind it).
-  const [prefill, setPrefill] = useState<{ text: string; at: number } | null>(null);
+  const [prefill, setPrefill] = useState<{ text: string; at: number; select?: [number, number] | null } | null>(null);
+  // mold_v0-316: a session nobody has written in yet (none of its messages a person's) shows the blank screen in its trace.
+  const blank = area === 'app' && quickCommandsOn() && !!d && d.can.message && !d.messages.some((m) => m.role === 'person');
   const checkpoints = useMemo<DockCheckpoint[]>(() => (d?.messages ?? []).filter((m) => m.role !== 'system').map((m) => ({ id: m.id, role: m.role as DockCheckpoint['role'], label: m.body.replace(/\s+/g, ' ').slice(0, 120) })).reverse(), [d?.messages]);
   const dock = useAgentDock({ enabled: area === 'app' && featureOn('nested_runs'), call, sessionId: id, checkpoints, onAsk: (text) => setPrefill({ text, at: Date.now() }), onOpenSession });
   // mold_v0-296: the title keeps its room in the bar (its whole width up to half the bar), the groups take what is left and
@@ -583,7 +647,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
             ...(area === 'app' ? [{ label: 'Records it wrote', icon: <Icons.table />, onSelect: () => setRecordsOpen(true) }] : [])]} />
       </div>
       {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['idle', 'paused', 'withdrawn', 'budget', 'continued'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
-      <TraceStream sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
+      <TraceStream empty={blank ? <SessionWelcome from={d.opened_from ?? null} onPick={(t, select) => setPrefill({ text: t, at: Date.now(), select })} /> : undefined}
+        sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
         dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
           <div className='mx-auto flex w-full max-w-4xl flex-col gap-2'>
             {d.pending_request && <RequestBar d={d} r={d.pending_request} call={call} onDone={changed} />}
@@ -604,6 +669,12 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
     {dock.modal}
     </div>
   );
+}
+
+/** mold_v0-316: the blank screen inside a session that has no message of a person's yet. */
+function SessionWelcome({ from, onPick }: { from: OpenedFrom | null; onPick: (text: string, select: [number, number] | null) => void }) {
+  const ctx = usePromptContext(from);
+  return <AgentWelcome from={from} ctx={ctx} onPick={onPick} />;
 }
 
 /** A record a session wrote (GET /api/agent/<id>/records, src/record-runs.ts): only those this person may read. */
@@ -744,10 +815,15 @@ function RaiseBudget({ d, call, onDone, compact }: { d: Detail; call: Call; onDo
  * steers a working session, wakes a parked one, waits for a pending decision, continues an ended one. Someone else's
  * session and staff keep it visible and disabled, the reason as its placeholder: the agent acts as the person who started it.
  */
-function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing, prefill }: { area: Area; d: Detail; call: Call; onSent: () => unknown; onOpenSession: (id: string) => void; waitingOn: string | null; failing: string | null; prefill?: { text: string; at: number } | null }) {
+function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing, prefill }: { area: Area; d: Detail; call: Call; onSent: () => unknown; onOpenSession: (id: string) => void; waitingOn: string | null; failing: string | null; prefill?: { text: string; at: number; select?: [number, number] | null } | null }) {
   const [text, setText] = useState('');
   // mold_v0-292: the dock's Ask about this: it puts words in the chat bar, and the person sends them.
-  useEffect(() => { if (prefill) setText(prefill.text); }, [prefill]);
+  // mold_v0-316: an example prompt does the same, the cursor on its first blank.
+  const [cursor, setCursor] = useState<{ at: number; select: [number, number] | null } | null>(null);
+  useEffect(() => { if (prefill) { setText(prefill.text); setCursor({ at: prefill.at, select: prefill.select ?? null }); } }, [prefill]);
+  // mold_v0-316: the quick commands of the page it was opened from (a staff view: none, it cannot send).
+  const from = area === 'app' ? d.opened_from ?? null : null;
+  const commands = useAgentCommands(from), ctx = usePromptContext(from);
   const [busy, setBusy] = useState(false);
   const ended = ['stopped', 'failed', 'archived'].includes(d.phase);
   const why = d.can.message ? null
@@ -772,6 +848,7 @@ function Composer({ area, d, call, onSent, onOpenSession, waitingOn, failing, pr
         : d.phase === 'parked' || d.phase === 'paused' ? 'Send a message to wake it' : 'Message the agent';
   return (
     <AgentComposer id={`agent-msg-${d.id}`} label='Message the agent' value={text} onChange={setText} placeholder={placeholder} sendLabel='Send' disabledReason={why} busy={busy} session={d.can.message ? d.id : null} onSend={send}
+      commands={area === 'app' ? commands : null} context={ctx} cursor={cursor}
       above={(working || failing) && (
         <p className={cn('flex items-center gap-2 px-1 text-xs', failing ? 'text-destructive' : 'text-muted-foreground')} aria-live='polite' data-agent-working=''>
           {!failing && <span className='size-1.5 rounded-full bg-current motion-safe:animate-pulse' aria-hidden />}

@@ -4214,6 +4214,61 @@ job run, its hook, an agent session's wake and a program's child session; a run'
 person may not read; another workspace), with `npm run test:record-pages`, `npm run test:run-page`,
 `npm run test:nested-runs` and `scripts/agent-dock-test.ts` unchanged.
 
+## Agent examples and quick commands (mold_v0-316)
+
+Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace
+agent's chat gets a blank screen with example prompts, and its composer a "/" menu of quick commands, both in the app's
+words and specific to the console page the agent was opened from. Nothing either does is ever sent on its own.
+
+- **The active tab.** The top bar's agent button, on a tab's page, opens `/app/agent?new=1&from=<tab>` (on a record's
+  page also `&record=<area>/<key>`; `web/src/features/agent/composer/quick-commands.ts` `resolveOpenedFrom`: a record's
+  page belongs to the tab that lists its area, its own before a merged one; an in-page tab is `?tab=<id>` of its page;
+  /app is the home tab). Elsewhere, and in /admin, it opens the Agents page as before. The plain Agents page (its Start
+  a session dialog) has no tab: the app's global commands only. The session started from a new chat keeps where it was
+  opened from (`opened_from` in its start, `src/agent-composer.ts` `openedFromOf`, checked for its form and kept in its
+  frozen policy; `GET /api/agent/<id>` answers it): words for its prompts, never a grant.
+- **The blank screen** (`web/src/features/agent/agent-welcome.tsx`). `?new=1` is a new chat: the session page before
+  its session exists (the bar with New chat, the task picker when there are several, All sessions), the greeting and the
+  line under it, "Opened from <tab> › <record>", and 4 to 6 example prompt cards (a title and one line). A card fills the
+  composer, its placeholders filled, the cursor on the first blank left; Send starts the session (the chosen task, else
+  the Default) and opens it. A session with no message of a person's yet shows the same screen in its trace.
+- **Quick commands** (`composer/agent-composer.tsx`). A "/" button beside the paperclip, or "/" typed as the box's first
+  character, opens one menu: the active tab's commands under "For <tab>", then the app's under "Everywhere", one per
+  name (the tab's wins). Typing after the "/" filters it (a name's start first, then any word of its label or line),
+  ↑ ↓ move, Enter or Tab puts the command's prompt into the box (a typed "/" and its filter give way; from the button,
+  after what is there), Esc closes it. The button's menu has its own search field. In a dialog it sits in the flow above
+  the box. Staff never get it (they cannot send).
+- **Placeholders.** `{tab}` (the tab's label, else "this workspace"), `{area}` (the record area's label), `{record_key}`
+  and `{record_title}` (read from `/api/records/<area>/<key>`, else the key) are filled; any other `{a few words}` is a
+  blank the cursor lands on (selected, so typing replaces it), as is a record's placeholder with no record.
+- **Pack config** (`src/pack-api.ts` `AgentDefaultsSchema`, `TabAgentSchema`; `packs/pack.schema.json`). At pack level,
+  in one pack of a build:
+
+  ```json
+  "agent_defaults": {
+    "greeting": "What should we check today?",
+    "intro": "Ask about your audits and findings, or start from an example. Type / for quick commands.",
+    "examples": [{ "title": "What is past its SLA", "description": "Open findings past their due date", "prompt": "List every open finding past its SLA ..." }],
+    "commands": [{ "name": "overdue", "label": "Past the SLA", "description": "Open findings past or near their due date", "prompt": "List the open findings in {tab} that ..." }]
+  }
+  ```
+
+  and on a tab `"agent": {"examples": [...], "commands": [...]}` (one or both). Up to 6 examples and 12 commands each; a
+  command's `name` is what follows the "/" (lowercase, digits, -), `label` and `description` plain words, `prompt` up to
+  2000 characters; `send` may only be `false`. Refused in words: a command that would send, a name twice, `{{x}}` or a
+  stray brace, angle brackets, a tab agent with neither list, a greeting on a tab, an unknown key, a second pack's
+  `agent_defaults`. An in-page tab without its own takes its page's (its own commands first). Examples where nothing
+  is declared: the tab's examples, else the app's, else the shell's (workspace, tab or record ones); commands: the
+  app's, else the shell's five (Summarise, What changed, Find, Next steps, Draft an update).
+- **Generated.** `web/src/config/agent-prompts.generated.ts` (`agentPrompts`: the app's defaults and each shown tab's
+  own, by id; empty while the flag is off). Off: no examples, no "/" button or menu, the agent button opens the Agents
+  page, and the declarations are accepted and shown nowhere.
+
+Proof: `npm run test:agent-quick-commands` (config and its refusals, merge and dedupe order, filling and the cursor, the
+active tab and the address both ways, `opened_from` checked), `tsx scripts/agent-composer-test.ts` (a session keeps its
+`opened_from`; a malformed one refused), with `npm run test:agent-dock`, `npm run test:console-tabs`,
+`npm run test:declarative-packs` and `scripts/detail-action-keys-test.ts` unchanged.
+
 ## Early access form (mold_v0-266, mold_v0-289)
 
 The early-access (request-access) form is one JSON config end to end. It can be declared in the app's pack or spec, it is what the staff table reads and writes, and it drives the public form, the validation, the stored request, the requests list and its side panel, the export and the notification email, with no per-field code: a field added in the table appears everywhere without a deploy. With nothing saved and nothing declared, the form is exactly what the build declares, drawn by the same code.

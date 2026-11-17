@@ -2500,6 +2500,54 @@ export const isRelatedColumn = (c: unknown): c is TabRelatedColumn => !!c && typ
 /** A related column's id in the console's table and the API: rel_<area>_<count|latest_field>. */
 export const relatedColumnId = (c: TabRelatedColumn) => `rel_${c.related.area}_${c.show.replace(":", "_")}`;
 
+/**
+ * mold_v0-316 (flag agent_quick_commands; web/src/features/agent/composer/quick-commands.ts): what the workspace agent offers
+ * from a tab (`tabs[].agent`) or for the whole app (pack.json `agent_defaults`): the blank screen's example prompts (a
+ * title, one line under it, the prompt it fills the composer with) and the composer's "/" quick commands (a name, a
+ * label, a line, the prompt). A prompt's placeholders: {tab}, {area}, {record_key}, {record_title} are filled from where
+ * the agent was opened; any other {a few words} is a blank the cursor lands on. Nothing is ever sent on its own.
+ */
+export const AGENT_PLACEHOLDER = /\{([a-z][a-z0-9_ ]{0,39})\}/g;
+const agentTemplate = (max: number) => z.string().trim().min(1).max(max).superRefine((t, ctx) => {
+  if (t.includes("{{")) ctx.addIssue({ code: "custom", message: "a placeholder is {name} with single braces" });
+  else if (/[{}]/.test(t.replace(AGENT_PLACEHOLDER, ""))) ctx.addIssue({ code: "custom", message: "a brace that is not a placeholder: write placeholders as {name} in lowercase words (tab, area, record_key, record_title, or a blank such as {what to compare})" });
+  if (/[<>]/.test(t)) ctx.addIssue({ code: "custom", message: "plain words: no angle brackets" });
+});
+export const AgentExampleSchema = z.object({
+  title: agentTemplate(60),
+  description: plainWords(120).optional(),
+  prompt: agentTemplate(2000),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export const AgentCommandSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/, "a command's name: lowercase letters, digits and -, starting with a letter (what follows the /)"),
+  label: plainWords(40),
+  description: plainWords(120).optional(),
+  prompt: agentTemplate(2000),
+  send: z.literal(false, { error: () => "a quick command never sends on its own: it fills the composer and the person sends (leave send out, or false)" }).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+const agentLists = {
+  examples: z.array(AgentExampleSchema).min(1).max(6, "at most 6 example prompts (the blank screen shows 4 to 6)").optional(),
+  commands: z.array(AgentCommandSchema).min(1).max(12, "at most 12 quick commands").optional(),
+};
+const uniqueCommands = (a: { commands?: { name: string }[] }, ctx: z.RefinementCtx) => {
+  const seen = new Set<string>();
+  (a.commands ?? []).forEach((c, i) => { if (seen.has(c.name)) ctx.addIssue({ code: "custom", message: `the command /${c.name} is listed twice`, path: ["commands", i, "name"] }); seen.add(c.name); });
+};
+/** A tab's own (tabs[].agent): its examples replace the app's on the blank screen, its commands come first in the "/" menu. */
+export const TabAgentSchema = z.object({ ...agentLists, $comment: z.string().max(2000).optional() }).strict()
+  .superRefine((a, ctx) => { if (!a.examples && !a.commands) ctx.addIssue({ code: "custom", message: "a tab's agent names its examples, its commands or both" }); uniqueCommands(a, ctx); });
+/** The app's (pack.json agent_defaults): the greeting, the examples anywhere no tab has its own, the global commands. */
+export const AgentDefaultsSchema = z.object({
+  greeting: agentTemplate(80).optional(),
+  intro: agentTemplate(200).optional(),
+  ...agentLists,
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine(uniqueCommands);
+export type TabAgent = z.output<typeof TabAgentSchema>;
+export type AgentDefaults = z.output<typeof AgentDefaultsSchema>;
+
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -2549,6 +2597,8 @@ export const TabSchema = z.object({
    * as a sidebar entry of its own: it takes no group, and its page of before (/app/team, /app/keys) leads to that tab.
    */
   inside: z.enum(TAB_INSIDE).optional(),
+  /** mold_v0-316 (flag agent_quick_commands): the workspace agent's examples and quick commands when opened from this tab. */
+  agent: TabAgentSchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
