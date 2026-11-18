@@ -52,8 +52,10 @@ export function secretName(name: string): boolean {
 /** Headers never kept at all: the caller's address and where it is (the entry's ip column holds it, for staff only). */
 const DROPPED_HEADER = /^(x-forwarded-for|x-real-ip|forwarded|cf-connecting-ip|true-client-ip|x-client-ip|x-vercel-forwarded-for|x-vercel-proxied-for|x-vercel-ip-.*|cf-ipcountry|x-vercel-ip)$/i;
 
-/** A key's public prefix: `<letters>_` and six more, as the key list shows it (src/auth.ts createApiKey). */
-const PREFIXED_KEY = /^([a-z]{2,8}_)([A-Za-z0-9]{6})[A-Za-z0-9_-]{8,}$/;
+/** A key's public prefix: a known key prefix and six more, as the key list shows it (src/auth.ts createApiKey). Keys are
+ *  base64url, so the six may hold - and _; only known prefixes count, so a random token is never kept in part. */
+const KEY_PREFIXES = "oct|sk|pk|rk|whsec|oma|omr|omc|cs|ore|orr|ghp|gho|ghs|ghu|github_pat|glpat|re|app|key";
+const PREFIXED_KEY = new RegExp(`^((?:${KEY_PREFIXES})_)([A-Za-z0-9_-]{6})[A-Za-z0-9_-]{8,}$`, "i");
 const keepPrefix = (v: string) => { const m = PREFIXED_KEY.exec(v); return m ? `${m[1]}${m[2]}${MASK}` : MASK; };
 
 /** One header's value as kept. */
@@ -74,7 +76,8 @@ export function looksSecret(v: string): boolean {
   if (/^bearer\s+\S{8,}/i.test(s) || /^basic\s+[A-Za-z0-9+/=]{8,}$/i.test(s)) return true;
   if (/^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$/.test(s)) return true; // a JWT
   if (/-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----/.test(s)) return true;
-  if (PREFIXED_KEY.test(s) && /^(oct|sk|pk|rk|ghp|gho|ghs|ghu|github_pat|glpat|xox[abpr]|whsec|re|app|key)_/i.test(s)) return true;
+  if (PREFIXED_KEY.test(s)) return true;
+  if (/^xox[abpr]-[A-Za-z0-9-]{10,}$/.test(s)) return true; // a Slack token
   if (/^(sk-|AKIA|ASIA|AIza)[A-Za-z0-9_-]{12,}$/.test(s)) return true;
   if (/^data:[\w/+.-]+;base64,/i.test(s)) return true; // file contents
   if (s.length >= 256 && /^[A-Za-z0-9+/=_-]+$/.test(s)) return true; // a long opaque blob: base64 file contents or a key

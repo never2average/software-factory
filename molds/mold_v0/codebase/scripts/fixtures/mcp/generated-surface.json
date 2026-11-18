@@ -740,12 +740,12 @@
                 "app": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Application: the key of a Applications record (tracker_apps)."
+                  "description": "Application: the key of one of the Applications records (tracker_apps)."
                 },
                 "policy": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Policy: the key of a Policies record (tracker_policies)."
+                  "description": "Policy: the key of one of the Policies records (tracker_policies)."
                 },
                 "due": {
                   "type": "string",
@@ -858,12 +858,12 @@
                 "app": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Application: the key of a Applications record (tracker_apps)."
+                  "description": "Application: the key of one of the Applications records (tracker_apps)."
                 },
                 "policy": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Policy: the key of a Policies record (tracker_policies)."
+                  "description": "Policy: the key of one of the Policies records (tracker_policies)."
                 },
                 "due": {
                   "type": "string",
@@ -1026,7 +1026,7 @@
             "app": {
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-              "description": "Application: the key of a Applications record (tracker_apps)."
+              "description": "Application: the key of one of the Applications records (tracker_apps)."
             },
             "depth": {
               "type": "number",
@@ -1753,12 +1753,12 @@
                 "item": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Item: the key of a Items record (review_items)."
+                  "description": "Item: the key of one of the Items records (review_items)."
                 },
                 "guide": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Guide: the key of a Guides record (review_guides)."
+                  "description": "Guide: the key of one of the Guides records (review_guides)."
                 }
               },
               "required": [
@@ -1814,12 +1814,12 @@
                 "item": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Item: the key of a Items record (review_items)."
+                  "description": "Item: the key of one of the Items records (review_items)."
                 },
                 "guide": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-                  "description": "Guide: the key of a Guides record (review_guides)."
+                  "description": "Guide: the key of one of the Guides records (review_guides)."
                 }
               },
               "required": [
@@ -1928,7 +1928,7 @@
             "item": {
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$",
-              "description": "Item: the key of a Items record (review_items)."
+              "description": "Item: the key of one of the Items records (review_items)."
             },
             "depth": {
               "type": "number",

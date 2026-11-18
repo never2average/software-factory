@@ -97,6 +97,12 @@ async function words() {
     accept: "application/json", "user-agent": "audit-test/1", "x-forwarded-for": "198.51.100.7", "x-real-ip": "198.51.100.7", "x-vercel-ip-city": "Somewhere", "x-trace": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl" } });
   assert.equal(h.headers.authorization, `Bearer oct_abcdef${M}`, "Authorization: the scheme word and the key's public prefix");
   assert.equal(R.maskHeader("authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"), `Bearer ${M}`, "a bearer token without a prefix: masked whole");
+  // Keys are base64url: their public six may hold - and _ (about one key in six). Masked in a body or tool argument, and
+  // their prefix kept in a header; a random token that only looks prefixed ("ab_…") is masked whole.
+  const dashKey = ["oct", "_", "a-b_cd", "0123456789abcdef"].join("");
+  assert.equal(R.looksSecret(dashKey), true, "a key whose public six hold - and _: still a secret in a body");
+  assert.equal(R.maskHeader("authorization", `Bearer ${dashKey}`), `Bearer oct_a-b_cd${M}`, "and its public prefix kept in Authorization");
+  assert.equal(R.maskHeader("authorization", `Bearer ${["ab", "_", "Zx9-Qw", "0123456789abcdefgh"].join("")}`), `Bearer ${M}`, "an unknown prefix: masked whole");
   assert.equal(h.headers["proxy-authorization"], `Basic ${M}`);
   assert.equal(h.headers.cookie, M); assert.equal(h.headers["set-cookie"], M);
   assert.equal(h.headers["x-api-key"], `sk_live01${M}`, "X-Api-Key: its prefix kept");
