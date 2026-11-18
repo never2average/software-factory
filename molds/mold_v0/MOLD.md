@@ -684,7 +684,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **Providers** (`APP_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
   small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
   imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
-  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `apprun-<uid>`).
+  installed in the sandbox when missing, and python3 for recipes' scripts when the image lacks it (mold_v0-321, best
+  effort: never a failed start); the run's user is leased by the runner and given an account, `apprun-<uid>`).
   **A boat launch fits its call** (mold_v0-179): the launch only creates the sandbox, sends the code's tarball and the
   env file, and starts the set-up script (`runSetupScript`, `run-setup.sh`) as a detached unit; unpacking, `npm ci`,
   the run user, packages, the run tools and the runner's start happen in the sandbox afterwards, the script writing its
@@ -702,7 +703,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   connections after 5 s and is attached to the function (`attachDatabasePool`), so a frozen instance never reuses a
   dead one. `docker` (a server of its own: the compose project's
   `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
-  which has git and nftables (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
+  which has git, nftables and python3 (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
   is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
   privileges, no mount, memory, CPU and process limits); `freestyle` (below); `off`. `auto` takes boat when its key is in the vault, else
   docker when this process has the socket. **With no provider nothing runs unsandboxed:** queued runs wait, each with
@@ -4202,8 +4203,11 @@ runner reads (`LD_`, `PYTHON`, `BASH_`, `SSL_`, `CURL_`, `REQUESTS_`, `GCONV_`, 
 says who may start a session that receives it: **whoever starts the session can read every value delivered** (a program
 can print a variable in a form redaction does not know), so give it only to people who may hold the secrets. At start,
 for a person in `roles` who may update the area, the entry's one record AS THEY SEE IT (visibility honoured) matching
-`where` and `use` is frozen into the session's policy by key (two such records refuse the start: keep exactly one in
-use; none: its variables are not set, and the first system message says so, as it lists the names). Each wake's
+`where` and `use` is frozen into the session's policy by key (two such records refuse the start, naming the flag by its
+label: keep exactly one marked "Use in builds"; none: its variables are not set, and the first system message says so,
+as it lists the names: an entry with `use` by that flag's label, `No record of Hosting accounts is marked "Use in
+builds"`, each area once and not at all when another of its entries gave a record, as a network split per cloud by
+`where`; mold_v0-321). Each wake's
 credentials (fetched with the lease) include that record's values while it still matches, its encrypted fields opened
 on the server (one shorter than 8 characters is never delivered); the record is frozen with its identity and version (its row and the stored
 values of the fields the entry reads): changed, replaced or deleted and re-added since the start, a wake gets nothing of

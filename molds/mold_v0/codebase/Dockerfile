@@ -7,7 +7,8 @@ ENV NODE_ENV=production HOST=0.0.0.0 PORT=3333
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 # Run sandboxes on a server of its own (mold_v0-055, src/run-sandboxes.ts): each run is a container of this same image,
-# started as root only to lock its run user down (nftables) and switch to it. git for agent-workspace runs; the run's
+# started as root only to lock its run user down (nftables) and switch to it. git for agent-workspace runs, python3 for
+# their recipes' scripts (mold_v0-321); the run's
 # user (apprun) and the egress proxy's (appproxy), neither with a login or sudo. The server itself runs as node.
 # The run tools the packs' agent kinds declare (mold_v0-072; src/run-tools.generated.json, written by gen-packs): each
 # at its pinned version, its artifact checked against src/run-tools.ts's sha256 before it is unpacked into
@@ -16,7 +17,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src/run-tools.ts src/run-tools-wheels.ts src/run-tools.generated.json src/env-names.ts ./src/
 COPY orchestrator/core/env-names.ts ./orchestrator/core/
 COPY scripts/install-run-tools.ts ./scripts/
-RUN apt-get update && apt-get install -y --no-install-recommends git nftables iptables ca-certificates unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends git nftables iptables ca-certificates unzip python3 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -M -u 10001 -s /usr/sbin/nologin apprun && useradd -r -M -s /usr/sbin/nologin appproxy \
  && node --import tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools

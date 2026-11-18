@@ -38,8 +38,12 @@ export async function declaredConnectionEnv(profile: { id: string; source: strin
   return { pack: m[1]!, list: (decl?.connection_env ?? []).flatMap((c) => { const r = ConnectionEnvSchema.safeParse(c); return r.success ? [r.data] : []; }) };
 }
 
-/** What a start freezes: the entries with their record's key, and the areas that gave none (no record in use). */
-export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: string[] }
+/**
+ * What a start freezes: the entries with their record's key, and the areas that gave none: `none` (an entry without
+ * `use`: no record it would use) and `unmarked` (an entry with `use`: no record has that flag on, named by its label).
+ * Each area at most once, and never one another entry of the same area gave a record (a `where` split by provider).
+ */
+export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: string[]; unmarked?: { area: string; flag: string }[] }
 
 /**
  * The entries a session started by `actor` in workspace `orgId` receives (frozen into its policy): each whose `roles`
@@ -49,7 +53,7 @@ export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: strin
  */
 export async function connectionEnvForStart(orgId: number, profile: { id: string; source: string }, actor: { kind: string; role: AccountRole | null; user?: string | null }): Promise<ConnectionEnvStart> {
   const { pack, list } = await declaredConnectionEnv(profile);
-  const out: ConnectionEnvStart = { frozen: [], none: [] };
+  const out: ConnectionEnvStart = { frozen: [], none: [], unmarked: [] };
   if (!list.length || actor.kind !== "person" || !actor.role) return out;
   const { findArea, may, listFor } = await import("./record-areas.js");
   const { PackError } = await import("./pack-api.js");
@@ -60,11 +64,23 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
     if (!(c.roles ?? ["owner"]).includes(actor.role as never) || !may(area, "update", person)) continue;
     const page = await listFor(orgId, area.name, { filter: { ...(c.where ?? {}), ...(c.use ? { [c.use]: true } : {}) }, sort: "-updated_at", limit: 2 }, person);
     const hits = page.records.filter((r) => matches(c, r.data));
-    if (hits.length > 1) throw new PackError(`${area.label} has more than one record ${c.use ? "in use" : "this session would use"} (${hits.map((h) => h.title || h.key).join(", ")}): keep exactly one${c.use ? " in use" : ""}, then start again`, 409);
-    if (!hits.length) { out.none.push(area.label); continue; }
+    // mold_v0-321: the flag by its label (an area may hold two flags: "In use" for its files, "Use in builds" for this).
+    const flagLabel = c.use ? area.fields.find((f) => f.name === c.use)?.label ?? c.use : "", flag = `marked "${flagLabel}"`;
+    if (hits.length > 1) throw new PackError(`${area.label} has more than one record ${c.use ? flag : "this session would use"} (${hits.map((h) => h.title || h.key).join(", ")}): keep exactly one${c.use ? ` ${flag}` : ""}, then start again`, 409);
+    if (!hits.length) {
+      if (c.use) out.unmarked!.push({ area: area.label, flag: flagLabel });
+      else out.none.push(area.label);
+      continue;
+    }
     const version = await versionOf(orgId, area, hits[0]!.key, { where: c.where, use: c.use, vars: envVars(c) });
     out.frozen.push({ pack, area: c.area, key: hits[0]!.key, ...(version ? { version } : {}), ...(c.where ? { where: c.where } : {}), ...(c.use ? { use: c.use } : {}), vars: envVars(c) });
   }
+  // mold_v0-321: an area named once, and not at all when another of its entries gave a record (a network split by
+  // provider with `where`: the marked one is on Google Cloud, so the AWS and Azure entries find none, which is no news).
+  const given = new Set(out.frozen.map((f) => findArea(f.area)?.label));
+  out.none = [...new Set(out.none)].filter((l) => !given.has(l));
+  const seen = new Set<string>();
+  out.unmarked = out.unmarked!.filter((u) => !given.has(u.area) && !seen.has(u.area) && !!seen.add(u.area));
   return out;
 }
 
@@ -73,7 +89,11 @@ export function connectionEnvWords(start: ConnectionEnvStart): string | null {
   const parts: string[] = [];
   if (start.frozen.length) parts.push(`This session's environment has these variables from the workspace's connections (their values are never shown here): ${
     start.frozen.map((c) => `${c.vars.map((v) => v.env).join(", ")} (${c.area})`).join("; ")}.`);
-  if (start.none.length) parts.push(`No record of ${start.none.join(", ")} is in use: its variables are not set.`);
+  if (start.none.length) parts.push(`No record of ${start.none.join(", ")} is in use: ${start.none.length > 1 ? "their" : "its"} variables are not set.`);
+  // mold_v0-321: by the flag a person turns on (its label), so they know what to press.
+  const byFlag = new Map<string, string[]>();
+  for (const u of start.unmarked ?? []) byFlag.set(u.flag, [...(byFlag.get(u.flag) ?? []), u.area]);
+  for (const [flag, list] of byFlag) parts.push(`No record of ${list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list.at(-1)}` : list[0]} is marked "${flag}": ${list.length > 1 ? "their" : "its"} variables are not set.`);
   return parts.length ? parts.join(" ") : null;
 }
 
