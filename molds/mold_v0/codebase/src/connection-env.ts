@@ -26,7 +26,14 @@ import type { Delivered } from "./credentials.js";
 export interface FrozenConnectionEnv { pack: string; area: string; key: string;
   /** mold_v0-312: the record's identity and version at the start (its row and the fields this entry reads): a wake delivers only that. */
   version?: string;
-  where?: Record<string, string | number | boolean>; use?: string; vars: { env: string; field: string }[] }
+  where?: Record<string, string | number | boolean>; use?: string; vars: { env: string; field: string }[];
+  /**
+   * mold_v0-322: given to a member through the record's owners' opt-in (the entry's members_field, on at the start). Kept
+   * for the trail only: a wake delivers the record as frozen (its version), so turning the opt-in off later does not
+   * reach a session already started (the next one gets none); a member's change of where its secrets go does, as the
+   * version changes.
+   */
+  members?: true }
 
 /** The pack declaration of a pack profile's connection_env (its row's source is "pack:<id>"), or []. */
 export async function declaredConnectionEnv(profile: { id: string; source: string }): Promise<{ pack: string; list: ConnectionEnv[] }> {
@@ -39,21 +46,37 @@ export async function declaredConnectionEnv(profile: { id: string; source: strin
 }
 
 /**
+ * mold_v0-322: the `use` flags a pack's profiles' connection_env entries name on `area` (each once): what a person turns
+ * on for sessions to receive a record (a storage area's Test names them beside its own "In use").
+ */
+export async function connectionEnvFlags(area: { pack: string; name: string }): Promise<string[]> {
+  const { packs } = await import("./packs.js");
+  const out = new Set<string>();
+  for (const p of packs()) if (p.id === area.pack)
+    for (const prof of (p.definition.agentProfiles ?? []) as { connection_env?: unknown[] }[])
+      for (const raw of prof.connection_env ?? []) { const c = ConnectionEnvSchema.safeParse(raw); if (c.success && c.data.area === area.name && c.data.use) out.add(c.data.use); }
+  return [...out];
+}
+
+/**
  * What a start freezes: the entries with their record's key, and the areas that gave none: `none` (an entry without
  * `use`: no record it would use) and `unmarked` (an entry with `use`: no record has that flag on, named by its label).
  * Each area at most once, and never one another entry of the same area gave a record (a `where` split by provider).
  */
-export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: string[]; unmarked?: { area: string; flag: string }[] }
+export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: string[]; unmarked?: { area: string; flag: string }[];
+  /** mold_v0-322: areas whose record a member's session would use, its owners' opt-in off (named by its label). */
+  owners?: { area: string; flag: string }[] }
 
 /**
  * The entries a session started by `actor` in workspace `orgId` receives (frozen into its policy): each whose `roles`
  * (default owners) hold the person's role and whose area they may update, with its one record as THEY see it (the
  * records they may read, visibility honoured) matching `where` and `use`. Two such records refuse the start: the
- * workspace keeps exactly one in use. A staff member, a key or the system receives none.
+ * workspace keeps exactly one in use. A staff member, a key or the system receives none. mold_v0-322: a member beyond
+ * `roles` receives an entry with `members_field` when its record (one they may read) has that opt-in on now.
  */
 export async function connectionEnvForStart(orgId: number, profile: { id: string; source: string }, actor: { kind: string; role: AccountRole | null; user?: string | null }): Promise<ConnectionEnvStart> {
   const { pack, list } = await declaredConnectionEnv(profile);
-  const out: ConnectionEnvStart = { frozen: [], none: [], unmarked: [] };
+  const out: ConnectionEnvStart = { frozen: [], none: [], unmarked: [], owners: [] };
   if (!list.length || actor.kind !== "person" || !actor.role) return out;
   const { findArea, may, listFor } = await import("./record-areas.js");
   const { PackError } = await import("./pack-api.js");
@@ -61,7 +84,10 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
   for (const c of list) {
     const area = findArea(c.area);
     if (!area || area.pack !== pack || area.scope !== "workspace") continue;
-    if (!(c.roles ?? ["owner"]).includes(actor.role as never) || !may(area, "update", person)) continue;
+    const byRole = (c.roles ?? ["owner"]).includes(actor.role as never) && may(area, "update", person);
+    // mold_v0-322: a member through the owners' opt-in on the record itself (checked below), a record they may read.
+    const byConsent = !byRole && !!c.members_field && actor.role === "member" && may(area, "read", person);
+    if (!byRole && !byConsent) continue;
     const page = await listFor(orgId, area.name, { filter: { ...(c.where ?? {}), ...(c.use ? { [c.use]: true } : {}) }, sort: "-updated_at", limit: 2 }, person);
     const hits = page.records.filter((r) => matches(c, r.data));
     // mold_v0-321: the flag by its label (an area may hold two flags: "In use" for its files, "Use in builds" for this).
@@ -72,8 +98,13 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
       else out.none.push(area.label);
       continue;
     }
+    if (byConsent && hits[0]!.data[c.members_field!] !== true) {
+      out.owners!.push({ area: area.label, flag: area.fields.find((f) => f.name === c.members_field)?.label ?? c.members_field! });
+      continue;
+    }
     const version = await versionOf(orgId, area, hits[0]!.key, { where: c.where, use: c.use, vars: envVars(c) });
-    out.frozen.push({ pack, area: c.area, key: hits[0]!.key, ...(version ? { version } : {}), ...(c.where ? { where: c.where } : {}), ...(c.use ? { use: c.use } : {}), vars: envVars(c) });
+    out.frozen.push({ pack, area: c.area, key: hits[0]!.key, ...(version ? { version } : {}), ...(c.where ? { where: c.where } : {}), ...(c.use ? { use: c.use } : {}), vars: envVars(c),
+      ...(byConsent ? { members: true as const } : {}) });
   }
   // mold_v0-321: an area named once, and not at all when another of its entries gave a record (a network split by
   // provider with `where`: the marked one is on Google Cloud, so the AWS and Azure entries find none, which is no news).
@@ -81,6 +112,7 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
   out.none = [...new Set(out.none)].filter((l) => !given.has(l));
   const seen = new Set<string>();
   out.unmarked = out.unmarked!.filter((u) => !given.has(u.area) && !seen.has(u.area) && !!seen.add(u.area));
+  out.owners = out.owners!.filter((u) => !given.has(u.area) && !seen.has(u.area) && !!seen.add(u.area));
   return out;
 }
 
@@ -94,6 +126,8 @@ export function connectionEnvWords(start: ConnectionEnvStart): string | null {
   const byFlag = new Map<string, string[]>();
   for (const u of start.unmarked ?? []) byFlag.set(u.flag, [...(byFlag.get(u.flag) ?? []), u.area]);
   for (const [flag, list] of byFlag) parts.push(`No record of ${list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list.at(-1)}` : list[0]} is marked "${flag}": ${list.length > 1 ? "their" : "its"} variables are not set.`);
+  // mold_v0-322: a member's session, the record's owners' opt-in off: who can turn it on, and its name.
+  for (const o of start.owners ?? []) parts.push(`${o.area}: a workspace owner has not turned on "${o.flag}" for the record in use, so its variables are not set for sessions members start.`);
   return parts.length ? parts.join(" ") : null;
 }
 

@@ -42,6 +42,7 @@ import { changedByWords, recordHistory } from "./record-history.js";
 import { lineLinks, recordWriters } from "./record-runs.js";
 import { asAction, findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 const listForWorkspace = listFor;
+import { formOffers } from "./secret-binding.js";
 import { withTenant } from "./tenant-scope.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
@@ -191,7 +192,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         // mold_v0-305: an area with encrypted fields is edited too (each a secret input left empty: its value is kept).
         if (!writes || !may(area, "update", actor) || areaOpWithheld(area.name, "update")) continue;
         // mold_v0-309: a field only the app's actions set is not the form's (its stored value is kept).
-        const fields = area.fields.filter((f) => f.type !== "file" && f.name !== area.lifecycle?.field && personSets(f));
+        // mold_v0-322: nor a connection's members' opt-in, for anyone but an owner (its stored value is kept).
+        const fields = area.fields.filter((f) => f.type !== "file" && f.name !== area.lifecycle?.field && personSets(f)).filter(formOffers(area, role));
         out.push({ ...base, label: x.label ?? "Edit", disabled: unavailable, ...(opts.withForms === false ? {} : { fields: fields.map(formField) }) });
         break;
       }
@@ -285,7 +287,7 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const singular = target.label.replace(/ies$/i, "y").replace(/(?<!s)s$/i, "");
         const { uploadMax } = await import("./record-files.js");
         out.push({ ...base, label: x.label ?? `Add ${singular.charAt(0).toLowerCase()}${singular.slice(1)}`, disabled: unavailable,
-          create: { area: target.name, label: target.label, values, ...(opts.withForms === false ? {} : { fields: target.fields.filter(personSets).map(formField), upload_max: uploadMax(target),
+          create: { area: target.name, label: target.label, values, ...(opts.withForms === false ? {} : { fields: target.fields.filter(personSets).filter(formOffers(target, role)).map(formField), upload_max: uploadMax(target),
             ...((target as { key_from_title?: boolean }).key_from_title ? { key_from_title: true } : {}) }) } });
         break;
       }

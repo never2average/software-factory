@@ -190,8 +190,12 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
     const settings = await settingsOf(orgId, key, row.data);
     const { testBucket } = await import("./storage.js");
     const t = await testBucket(settings);
+    // mold_v0-322: the flags this area's records are used by, as the pack declares them: its own (the workspace's
+    // files) and each its agent sessions' connection_env names ("Use in builds"), not only the first.
+    const sessions = (await (await import("./connection-env.js")).connectionEnvFlags(area)).filter((f) => f !== d.fields.use)
+      .map((f) => (row.data[f] === true ? ` Agent sessions receive it (${fieldLabel(area, f)} is on).` : ` Turn on ${fieldLabel(area, f)} for agent sessions to receive it.`)).join("");
     result = { ...t, in_use: inUseNow, words: t.ok
-      ? `It works: a small test file was written to ${t.bucket}, read back and deleted in ${t.ms} ms.${inUseNow ? " This workspace's files are kept there." : ` Turn on ${fieldLabel(area, d.fields.use)} to keep this workspace's files there.`}`
+      ? `It works: a small test file was written to ${t.bucket}, read back and deleted in ${t.ms} ms.${inUseNow ? " This workspace's files are kept there." : ` Turn on ${fieldLabel(area, d.fields.use)} to keep this workspace's files there.`}${sessions}`
       : `It does not work yet: ${t.error}.` };
   } catch (e) {
     result = { ok: false, bucket: plain(row.data[d.fields.bucket]), endpoint: plain(row.data[d.fields.endpoint]) || null, ms: 0, steps: [], error: (e as Error).message, in_use: inUseNow,

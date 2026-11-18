@@ -12,10 +12,11 @@
  *   connection_env    a pack profile's entry (src/connection-env-config.ts): every plain field it delivers binds the
  *                     encrypted fields it delivers (the session decides where they go, with all of them)
  *   object_storage    the declared storage area (mold_v0-305): its endpoint binds both keys
+ *   members_field     mold_v0-322: a connection_env entry's owners-only opt-in for members' sessions (membersFlagWrite, below)
  */
 import { ConnectionTestSchema, destinationFields, probeSecrets } from "./connection-test-config.js";
 import { ConnectionEnvSchema, envVars } from "./connection-env-config.js";
-import { ObjectStorageDeclSchema } from "./pack-api.js";
+import { ObjectStorageDeclSchema, PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
 
 export interface Binding { decide: string[]; secrets: string[] }
@@ -78,3 +79,91 @@ export function secretsToClear(area: AreaLike, stored: Record<string, unknown> |
   }
   return [...out];
 }
+
+// ---------------------------------------------------------------- members' builds (mold_v0-322)
+//
+// A connection_env entry's `members_field` (src/connection-env-config.ts): a plain boolean only the workspace's owners
+// set, by hand, meaning "sessions members start may receive this record's values". Here, for the record store's write
+// (src/record-areas.ts putWorkspaceNow) and an import's preview (src/record-import.ts):
+//   who sets it     a person whose role is owner, writing directly (not an agent session's tool call, a pack tool, a
+//                   repository's index or the system). Anyone else's write that gives another value is refused (403);
+//                   one that leaves it out keeps it as stored
+//   what clears it  a write by anyone but such an owner that changes where the entry's secrets go: a delivered plain
+//                   field changed, or a delivered secret typed again (or cleared) — the binding's rule, for the consent
+//   the trail       each change is a data-trail line of its own: grant (on) or revoke (off), never a value
+
+/** One entry's opt-in: its field, and the fields the entry delivers (a change of one by a non-owner turns it off). */
+export interface MembersGate { field: string; label: string; delivers: string[] }
+interface GateArea { pack: string; name: string; label?: string; fields: readonly { name: string; label?: string; encrypted?: boolean }[] }
+const gateCache = new WeakMap<object, Map<string, MembersGate[]>>();
+
+/** The members' opt-in fields of `area` (its pack's profiles' connection_env entries that name one). */
+export function membersGatesOf(area: GateArea): MembersGate[] {
+  const key = packs();
+  let byArea = gateCache.get(key);
+  if (!byArea) { byArea = new Map(); gateCache.set(key, byArea); }
+  const id = `${area.pack}/${area.name}`;
+  const hit = byArea.get(id);
+  if (hit) return hit;
+  const out = new Map<string, MembersGate>();
+  for (const p of key) {
+    if (p.id !== area.pack) continue;
+    for (const prof of (p.definition.agentProfiles ?? []) as { connection_env?: unknown[] }[])
+      for (const raw of prof.connection_env ?? []) {
+        const c = ConnectionEnvSchema.safeParse(raw);
+        if (!c.success || c.data.area !== area.name || !c.data.members_field) continue;
+        const m = c.data.members_field, f = area.fields.find((x) => x.name === m);
+        const g = out.get(m) ?? { field: m, label: f?.label ?? m, delivers: [] };
+        g.delivers = [...new Set([...g.delivers, ...envVars(c.data).map((v) => v.field)])];
+        out.set(m, g);
+      }
+  }
+  const list = [...out.values()];
+  byArea.set(id, list);
+  return list;
+}
+
+/** The fields of `area` only owners set (its members' opt-ins): a form for anyone else leaves them out. */
+export const ownerOnlyFields = (area: GateArea): Set<string> => new Set(membersGatesOf(area).map((g) => g.field));
+
+/**
+ * A write's effect on the members' opt-ins of `area`. `owner`: an owner writing by hand (src/record-areas.ts says who).
+ * Refuses (403) anyone else's write that gives another value; for them returns the input without the field and what to
+ * carry (the stored value, or false when the write changes where the secrets go). `turned`: the opt-ins this write
+ * changes (for the trail). `given` is the write's input after its encrypted fields were split (a secret in it was typed
+ * again or cleared; one left out is kept).
+ */
+export function membersFlagWrite(area: GateArea, owner: boolean, stored: Record<string, unknown> | null, given: unknown):
+  { input: unknown; carried: Record<string, unknown>; turned: { field: string; on: boolean }[] } {
+  const gates = membersGatesOf(area);
+  if (!gates.length) return { input: given, carried: {}, turned: [] };
+  const g = given && typeof given === "object" && !Array.isArray(given) ? { ...(given as Record<string, unknown>) } : {};
+  const has = (f: string) => Object.prototype.hasOwnProperty.call(g, f);
+  const sealed = (n: string) => area.fields.some((f) => f.name === n && f.encrypted);
+  const carried: Record<string, unknown> = {};
+  const turned: { field: string; on: boolean }[] = [];
+  for (const gate of gates) {
+    const was = stored?.[gate.field] === true;
+    if (owner) {
+      const now = has(gate.field) ? g[gate.field] === true : false;
+      if (now !== was) turned.push({ field: gate.field, on: now });
+      continue;
+    }
+    if (has(gate.field)) {
+      if ((g[gate.field] === true) !== was)
+        throw new PackError(`"${gate.label}" of ${area.label ?? area.name} records is for the workspace's owners to set: leave it out`, 403);
+      delete g[gate.field];
+    }
+    // Where the secrets go, changed by someone other than an owner: the owners' consent does not follow it.
+    const moved = !!stored && gate.delivers.some((f) => (sealed(f) ? has(f) : !same(g[f], stored[f])));
+    if (was && moved) { carried[gate.field] = false; turned.push({ field: gate.field, on: false }); }
+    else if (was) carried[gate.field] = true;
+  }
+  return { input: given && typeof given === "object" && !Array.isArray(given) ? g : given, carried, turned };
+}
+
+/** Whether a form for a person of `role` offers field `f` of `area`: a members' opt-in only to owners (mold_v0-322). */
+export const formOffers = (area: GateArea, role: string | null) => {
+  const only = ownerOnlyFields(area);
+  return (f: { name: string }) => role === "owner" || !only.has(f.name);
+};

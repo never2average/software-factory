@@ -61,6 +61,9 @@ export function dataSentence(e: DataWordsInput): string {
     case "update": return many ? `Changed ${plural(e.rows!, "row")} in ${area}` : `Changed ${what ?? "a record"} in ${area}`;
     case "move": return many ? `Moved ${plural(e.rows!, "row")} in ${area}` : `Moved ${what ?? "a record"} in ${area}`;
     case "delete": return many ? `Deleted ${plural(e.rows!, "row")} from ${area}` : `Deleted ${what ?? "a record"} from ${area}`;
+    // mold_v0-322: an owner's consent that sessions members start may receive a connection's keys (or its end).
+    case "grant": return `Let members' sessions use the keys of ${what ?? "a record"} in ${area}`;
+    case "revoke": return `Stopped members' sessions using the keys of ${what ?? "a record"} in ${area}`;
     default: return `${cap(humanize(e.action))} ${what ?? "records"} in ${area}`;
   }
 }

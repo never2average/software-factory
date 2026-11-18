@@ -10112,6 +10112,10 @@
                     ]
                   }
                 },
+                "members_field": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
                 "fields": {
                   "type": "object",
                   "propertyNames": {

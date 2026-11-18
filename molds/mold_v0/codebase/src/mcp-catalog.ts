@@ -135,7 +135,7 @@ function fieldInput(f: Field, labelOf: (area: string) => string): z.ZodType {
       what = `one of ${labelled.join(", ")}`; break;
     }
     case "person": one = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@|-]{0,199}$/, "a person's sign-in id"); what = "a person's sign-in id"; break;
-    case "reference": one = z.string().regex(RECORD_KEY, `a record key: ${KEY_TEXT}`); what = `the key of a ${labelOf(f.to!)} record (${f.to})`; break;
+    case "reference": one = z.string().regex(RECORD_KEY, `a record key: ${KEY_TEXT}`); what = `the key of one of the ${labelOf(f.to!)} records (${f.to})`; break;
     // mold_v0-282 (flag record_resources): an existing GitHub repository, read through the platform's GitHub App on save.
     case "repository": one = z.string().regex(REPOSITORY_NAME, "a GitHub repository as owner/name"); what = "a GitHub repository as owner/name (the platform's GitHub App must be able to read it)"; break;
     case "file": one = z.strictObject({ path: z.string().min(1).max(500), name: z.string().max(200).optional(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(), size: z.number().int().min(0).optional() });
