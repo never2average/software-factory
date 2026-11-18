@@ -24,6 +24,7 @@ on:
       - ".claude/scripts/lib/features.py"
       - "state/application/app_id/*.schema.json"
       - ".claude/scripts/lib/secret_patterns.py"
+      - ".claude/scripts/repo.py"
   push:
     branches: [main]
   workflow_dispatch:
@@ -50,6 +51,7 @@ jobs:
         # mold_v0-320: a fake key written into a test fails here, not at an app's repository push (repo.py scan).
         run: |
           python3 .claude/scripts/lib/secret_patterns.py --self-test
+          python3 .claude/scripts/repo.py --self-test
           python3 .claude/scripts/lib/secret_patterns.py scan molds/mold_v0/codebase
       - name: The app-spec schemas are current (schemas/*.app.schema.json)
         run: python3 .claude/scripts/app_spec.py generate --check

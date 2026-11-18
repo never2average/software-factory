@@ -186,7 +186,8 @@ const WAKE_KEEP_MS = 6 * 3600_000;
 /** At most this long a run's values stay in the database when nothing ended its attempt (the sweep removes them then). */
 export const DELIVERED_KEEP_HOURS = 24;
 const given = new Map<string, { at: number; secrets: { name: string; value: string }[] }>();
-const deliveredAad = (orgId: number, runId: string, digest: string) => `run-delivered/v1/${orgId}/${runId}/${digest}`;
+// The row's name is bound too, so a relabelled row no longer opens (its label is what redacted text shows).
+const deliveredAad = (orgId: number, runId: string, digest: string, name: string) => `run-delivered/v1/${orgId}/${runId}/${digest}/${encodeURIComponent(name)}`;
 const DIGEST_PURPOSE = "run-delivered/v1";
 
 /**
@@ -210,10 +211,11 @@ export async function rememberDelivered(run: { id: string; org_id: number }, del
       const db = await getDb();
       for (const a of add) {
         const digest = await orgMac(run.org_id, DIGEST_PURPOSE, a.value);
-        const sealed = (await sealBytes(run.org_id, Buffer.from(a.value, "utf8"), deliveredAad(run.org_id, run.id, digest))).toString("base64");
+        const name = a.name.slice(0, 300);
+        const sealed = (await sealBytes(run.org_id, Buffer.from(a.value, "utf8"), deliveredAad(run.org_id, run.id, digest, name))).toString("base64");
         await db.query(`/* tenant: the leased run's own delivered values, by run id and its workspace */ INSERT INTO run_delivered_secrets (run_id, org_id, name, digest, sealed, expires_at)
-          SELECT id, org_id, $3, $4, $5, now() + make_interval(hours => $6) FROM runs WHERE id = $1 AND org_id = $2 AND status = 'running'
-          ON CONFLICT (run_id, digest) DO NOTHING`, [run.id, run.org_id, a.name.slice(0, 300), digest, sealed, DELIVERED_KEEP_HOURS]);
+          SELECT id, org_id, $3, $4, $5, now() + make_interval(hours => $6) FROM runs WHERE id = $1 AND org_id = $2 AND status = 'running' FOR SHARE
+          ON CONFLICT (run_id, digest) DO NOTHING`, [run.id, run.org_id, name, digest, sealed, DELIVERED_KEEP_HOURS]);
       }
     });
   } catch (e) {
@@ -232,7 +234,7 @@ async function deliveredFromDb(runId: string, orgId: number): Promise<{ name: st
         "/* tenant: the run's own delivered values, by run id and its workspace */ SELECT name, digest, sealed FROM run_delivered_secrets WHERE run_id = $1 AND org_id = $2 AND expires_at > now()", [runId, orgId]);
       const out: { name: string; value: string }[] = [];
       for (const r of rows) {
-        try { out.push({ name: r.name, value: (await openBytes(orgId, Buffer.from(r.sealed, "base64"), deliveredAad(orgId, runId, r.digest))).toString("utf8") }); }
+        try { out.push({ name: r.name, value: (await openBytes(orgId, Buffer.from(r.sealed, "base64"), deliveredAad(orgId, runId, r.digest, r.name))).toString("utf8") }); }
         catch { /* not this workspace's, run's or digest's: never a value */ }
       }
       return out;
