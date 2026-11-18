@@ -6242,6 +6242,18 @@
                                           "region": {
                                             "type": "string",
                                             "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "volume_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "file_system_id": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "bucket": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
                                           }
                                         },
                                         "additionalProperties": false
@@ -6249,6 +6261,15 @@
                                       "region": {
                                         "type": "string",
                                         "pattern": "^[a-z]{2}(-[a-z]+){1,2}-\\d{1,2}$"
+                                      },
+                                      "check": {
+                                        "type": "string",
+                                        "enum": [
+                                          "identity",
+                                          "ebs_volume",
+                                          "efs_file_system",
+                                          "s3_bucket"
+                                        ]
                                       },
                                       "timeout_seconds": {
                                         "type": "integer",
@@ -6281,6 +6302,26 @@
                                           "service_account_json": {
                                             "type": "string",
                                             "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "project": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "zone": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "disk": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "location": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "instance": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
                                           }
                                         },
                                         "additionalProperties": false
@@ -6289,7 +6330,9 @@
                                         "type": "string",
                                         "enum": [
                                           "project",
-                                          "token"
+                                          "token",
+                                          "compute_disk",
+                                          "filestore_instance"
                                         ]
                                       },
                                       "timeout_seconds": {
@@ -6335,9 +6378,29 @@
                                           "subscription_id": {
                                             "type": "string",
                                             "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "resource_group": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "storage_account": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "file_share": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
                                           }
                                         },
                                         "additionalProperties": false
+                                      },
+                                      "check": {
+                                        "type": "string",
+                                        "enum": [
+                                          "subscription",
+                                          "storage_account",
+                                          "file_share"
+                                        ]
                                       },
                                       "timeout_seconds": {
                                         "type": "integer",
@@ -6412,6 +6475,13 @@
                                           "minimum": 1024,
                                           "maximum": 65535
                                         }
+                                      },
+                                      "ca": {
+                                        "type": "string",
+                                        "enum": [
+                                          "aws-rds",
+                                          "azure"
+                                        ]
                                       },
                                       "timeout_seconds": {
                                         "type": "integer",

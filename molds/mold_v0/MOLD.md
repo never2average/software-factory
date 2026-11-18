@@ -4090,7 +4090,7 @@ the area has, never two roles in one field. No redirect is followed; every call 
   bind the secret.
 - `{"kind": "postgres", "fields": {"url"} | {"host", "port"?, "database"?, "user", "password"}, "hosts": [...],
   "ports"?: [5432]}`: TLS only (sslmode require with the server's certificate checked against the host's name, Node's
-  bundled and the system's CAs; a server answering without TLS is refused before anything is sent), the host a name on
+  bundled and the system's CAs, and a named provider bundle with `ca`: below; a server answering without TLS is refused before anything is sent), the host a name on
   `hosts` (required; the same wildcard rules) whose every address is public, the connection made to the address
   checked; never this app's own database, by name or by address (the addresses of
   `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_URL`, `POSTGRES_URL_NON_POOLING`, `POSTGRES_PRISMA_URL`: a provider
@@ -4100,8 +4100,8 @@ the area has, never two roles in one field. No redirect is followed; every call 
   0.5 s, then the socket destroyed), all within the probe's timeout. A sealed url
   (`postgres://user:password@host:port/db`) is parsed by the mold, never by the client library (its query, `sslmode` and `sslrootcert` included, is ignored). The server's error
   text is never read: its SQLSTATE in words ("refused the user name or password"). The host and port bind the password.
-  A database whose certificate comes from a provider's private CA (not in the bundled or system store) reads as
-  unreachable.
+  A database whose certificate comes from a provider's own CA (not in the bundled or system store) reads as
+  unreachable unless the probe names that provider's bundle (`ca`, mold_v0-319, below).
 
 Every value opened and everything made from one (a signature, the Authorization header, an assertion, an access token,
 a url's password, the AWS key id) is cut from the answer. "It works" names identifiers, never secrets: the host called,
@@ -4113,6 +4113,61 @@ record sees them. A service account's RSA key over 4096 bits is refused before a
 "hosts": ["*.db.example.com"]}}, "status": "status", "tested": "last_tested"}`. Test: `npx tsx
 scripts/signed-probes-test.ts` (an HTTPS stand-in that checks the SigV4 signature and the JWT assertion with its own
 code; a TLS Postgres stand-in speaking the wire protocol, `setPostgresStandinForTest`; both in a test world only).
+
+**Resource checks (mold_v0-319)**: a signed kind's `check` may prove one RESOURCE exists and the credentials can read
+it, not just the account. Each check is one fixed, read-only call of the mold's (never an action name from config);
+the record gives only validated parameters (an id in a form field or the query, a name as one path segment), never a
+host, except an AWS region as the one label of the regional host. Each check's resource roles are required on it and
+refused on any other check; they are plain fields, and they (with an Azure resource check's `subscription_id`, and a
+Google `project` field) bind the secrets like a region: another volume, bucket, disk or share without the secret typed
+again clears it. Every id, name and segment is checked before anything is signed or sent; "It works" names what was found,
+an AWS id trimmed to its prefix and last 4 characters.
+
+- `aws_sigv4` `"check": "identity"` (default, STS above) | `"ebs_volume"` (`fields.volume_id`: EC2 DescribeVolumes
+  `VolumeId.1`, POST `ec2.<region>.amazonaws.com`, service `ec2`; `^vol-([0-9a-f]{8}|[0-9a-f]{17})$`) |
+  `"efs_file_system"` (`fields.file_system_id`: GET `elasticfilesystem.<region>.amazonaws.com/2015-02-01/file-systems
+  ?FileSystemId=`, service `elasticfilesystem`; `^fs-...$`) | `"s3_bucket"` (`fields.bucket`: HeadBucket, path-style HEAD
+  `s3.<region>.amazonaws.com/<bucket>`, service `s3`, the payload's hash signed; S3's naming rules: 3 to 63 of a-z 0-9 . -,
+  no `..`, not an address, no reserved prefix or suffix). A resource check needs a region (`fields.region` or a fixed
+  `region`). "It works: AWS volume vol-…def0, 20 GB gp3, available, eu-west-1a", "AWS file system fs-…def0, available,
+  6.0 KB used, eu-west-1", "AWS bucket my-bucket, eu-west-1"; missing ("there is no volume vol-…3210 in eu-west-1 that
+  these keys can see"), in another region (S3's 301: "bucket x is in ap-southeast-2, not eu-west-1") and refused
+  (`UnauthorizedOperation`, `AccessDenied`, S3's 403) in words. IAM: `ec2:DescribeVolumes`,
+  `elasticfilesystem:DescribeFileSystems`, `s3:ListBucket`.
+- `gcp_service_account` `"check": "project"` | `"token"` | `"compute_disk"` (`fields.zone`, `fields.disk`: GET
+  `compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/disks/{disk}`, the token's scope
+  `compute.readonly`) | `"filestore_instance"` (`fields.location`, `fields.instance`: GET
+  `file.googleapis.com/v1/projects/{project}/locations/{location}/instances/{instance}`, scope `cloud-platform`, the only
+  one Filestore takes: the token is used for that one GET and dropped; give the account `roles/file.viewer` only).
+  `fields.project` (optional, plain) names the project, else the key file's `project_id`. Segments: a zone
+  `^[a-z]{2,20}-[a-z]{2,20}\d{1,2}-[a-z]$`, a location a zone or a region, a name RFC 1035
+  (`^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`). "It works: Google Cloud disk data-disk in us-central1-a, 200 GB pd-balanced,
+  READY, project my-project".
+- `azure_client_credentials` `"check": "subscription"` (default) | `"storage_account"` (`fields.subscription_id`,
+  `fields.resource_group`, `fields.storage_account`: GET `management.azure.com/subscriptions/{sub}/resourceGroups/{rg}/
+  providers/Microsoft.Storage/storageAccounts/{name}?api-version=2023-05-01`) | `"file_share"` (also `fields.file_share`:
+  `.../storageAccounts/{name}/fileServices/default/shares/{share}`). A resource group 1 to 90 of ASCII letters, digits,
+  `_ . ( ) -`, not ending in `.`; an account 3 to 24 of a-z 0-9; a share 3 to 63 of a-z 0-9 and single hyphens. "It works:
+  Azure storage account acmefiles01 in resource group rg, westeurope, StorageV2 Standard_LRS, Succeeded".
+
+**Managed-provider CAs (mold_v0-319)**: a `postgres` probe may name `"ca": "aws-rds" | "azure"`, a provider's PUBLIC CA
+bundle shipped in the mold (`src/ca/<name>.pem`, public certificates, not secrets: the repository's secret scans flag
+private key blocks only), trusted besides the bundled and system stores (so an RDS Proxy's public certificate still
+works). By name only: never a certificate from a record or the pack. `aws-rds` is
+`https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` (114 CA certificates, the file's SHA-256
+`90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b`); `azure` is DigiCert Global Root G2, DigiCert Global
+Root CA and Microsoft RSA Root Certificate Authority 2017 (Azure Database for PostgreSQL flexible server and Cosmos DB
+for PostgreSQL; G2 and Microsoft's are in Node's store too, DigiCert Global Root CA no longer is). With `ca`, every host
+is under that provider's zone (`rds.amazonaws.com`; `postgres.database.azure.com`, `postgres.cosmos.azure.com`), and
+a managed database zone is shared above the labels that are one customer's own: `*.<region>.rds.amazonaws.com` (every
+account's databases in a region), `*.rds.amazonaws.com` and `*.postgres.database.azure.com` are refused (bare too);
+`*.<id>.<region>.rds.amazonaws.com` (the id is one account's, per region; `proxy-<id>` likewise) and
+`<server>.postgres.database.azure.com` are fine (Redshift, Azure MySQL and SQL, and `cloudapp.azure.com` likewise, for
+every probe). Example: `{"kind": "postgres", "ca": "aws-rds", "fields": {"host": "host", "user": "user", "password":
+"password"}, "hosts": ["*.c9akq0example.eu-west-1.rds.amazonaws.com"]}`. Google Cloud SQL's server CA is per instance
+and DigitalOcean's and Aiven's per cluster or project, so none ships for them. Test:
+the same script, a TLS stand-in whose certificate a throwaway CA (made at run time) signed, trusted only through that
+CA registered as a named bundle (`registerCaBundleForTest`, a test world only).
 
 **Connections as a session's environment** (`src/connection-env-config.ts`, `src/connection-env.ts`): a pack agent
 profile's `connection_env: [{area, where?, use?, prefix, roles?, fields: {"VAR": "<field>"}}]` gives its sessions a workspace's
