@@ -4986,6 +4986,9 @@
                                       "azure"
                                     ]
                                   },
+                                  "any_customer_host": {
+                                    "type": "boolean"
+                                  },
                                   "timeout_seconds": {
                                     "type": "integer",
                                     "minimum": 1,

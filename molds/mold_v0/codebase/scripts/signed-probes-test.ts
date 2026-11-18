@@ -748,6 +748,23 @@ try {
       "*.vm1.westeurope.cloudapp.azure.com", "*.c9akq0example.eu-west-1.rds.amazonaws.com", "*.example.org", "*.sebi.gov.in"])
       assert.equal(cfg.sharedWildcard(h), false, h);
     for (const h of ["neon.tech", "supabase.com", "eu-west-1.rds.amazonaws.com", "co.uk", "*.co.uk", "*.vercel.app", "*.com"]) assert.equal(cfg.sharedWildcard(h), true, h);
+    // any_customer_host: a managed database product's every-customer zone, opted into, while the host is bound to the password.
+    const IMMACULATE = ["*.aws.neon.tech", "*.azure.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.postgres.database.azure.com"];
+    for (const h of IMMACULATE) {
+      refused({ hosts: [h] }, /is a wildcard over a name anyone can host under/, `${h} without the opt-in`);
+      assert.deepEqual(p({ hosts: [h], any_customer_host: true }), [], `${h} with the opt-in (a host field)`);
+      assert.deepEqual(p({ hosts: [h], any_customer_host: true, fields: { url: "secret" } }), [], `${h} with the opt-in (a sealed url)`);
+    }
+    assert.deepEqual(p({ hosts: ["*.rds.amazonaws.com", "*.eu-west-1.rds.amazonaws.com"], any_customer_host: true, ca: "aws-rds" }), [], "every RDS database, opted into");
+    for (const h of ["*.neon.tech", "*.compute-1.amazonaws.com", "*.s3.amazonaws.com", "*.us-east-1.elb.amazonaws.com", "*.amazonaws.com", "*.co.uk", "*.com", "*.vercel.app", "*.dsql.us-east-1.on.aws", "*.aivencloud.com"])
+      refused({ hosts: [h], any_customer_host: true }, /is a wildcard over a name anyone can host under|a host's name/, `${h} stays refused with the opt-in`);
+    // Not bound: the host written by an action (no clearing), a sealed host, no secret; and an opt-in with nothing to cover.
+    refused({ hosts: ["*.supabase.co"], any_customer_host: true, fields: { host: "status", user: "user", password: "secret" } }, /set_by "action": with any_customer_host the host is written by people only/, "a host an action writes");
+    refused({ hosts: ["*.supabase.co"], any_customer_host: true, fields: { host: "token", user: "user", password: "secret" } }, /any_customer_host needs the host in a plain field that decides/, "a sealed host");
+    refused({ hosts: ["db.abc.supabase.co"], any_customer_host: true }, /any_customer_host is for a wildcard over a managed database product's zone/, "an opt-in with only exact hosts");
+    assert.ok(cfg.connectionTestProblems({ ...structuredClone(AREA), lifecycle: { field: "host" } } as never,
+      { by: "kind", probes: { pg: { ...PROBE.probes.pg, hosts: ["*.supabase.co"], any_customer_host: true } } }).some((x) => /\{host\} is the lifecycle's field/.test(x.message)), "a host a move changes");
+
     refused({ ca: "aws-rds", hosts: ["*.pg.example"] }, /\*\.pg\.example is not a aws-rds database's name: with ca "aws-rds" every host is under rds\.amazonaws\.com/, "a bundle for another provider's hosts");
     refused({ ca: "azure", hosts: ["db.c9akq0example.eu-west-1.rds.amazonaws.com"] }, /not a azure database's name/, "the Azure bundle for an RDS host");
     refused({ ca: "letsencrypt" }, /a postgres probe's ca is a bundle the mold ships: aws-rds, azure/, "a bundle the mold does not ship");

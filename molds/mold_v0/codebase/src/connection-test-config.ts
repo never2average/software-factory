@@ -185,6 +185,12 @@ export const PostgresProbeSchema = z.object({
    * system stores: by name only, never a certificate from a record or the pack.
    */
   ca: z.enum(PG_CA_BUNDLES, { error: () => `a postgres probe's ca is a bundle the mold ships: ${PG_CA_BUNDLES.join(", ")}` }).optional(),
+  /**
+   * mold_v0-319: true lets `hosts` hold a wildcard over a managed database product's zone that every customer shares
+   * ("*.aws.neon.tech", "*.supabase.co"), for an app where each workspace connects its own database (ANY_CUSTOMER_ZONES
+   * only). Allowed only while the record's host is bound to its password (a host field, plain, written by people).
+   */
+  any_customer_host: z.boolean().optional(),
   timeout_seconds: probeTimeout,
 }).strict();
 
@@ -337,6 +343,20 @@ export const SHARED_ZONES: readonly { zone: string; own: number }[] = [
   ...["vercel.app", "github.io", "herokuapp.com", "netlify.app", "pages.dev", "fly.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
     "azurewebsites.net", "blob.core.windows.net"].map((zone) => ({ zone, own: 1 })),
 ];
+/**
+ * mold_v0-319: the managed database products whose zone a postgres probe with `any_customer_host` may cover with a
+ * wildcard (every customer's databases of that product, never a provider's general compute, storage or hosting).
+ * Explicit, not a heuristic: `*.neon.tech` (above the product), `*.amazonaws.com`, `*.compute-1.amazonaws.com`,
+ * `*.s3.amazonaws.com`, `*.elb.amazonaws.com` and a public suffix stay refused.
+ */
+export const ANY_CUSTOMER_ZONES = ["aws.neon.tech", "azure.neon.tech", "supabase.co", "pooler.supabase.com", "postgres.database.azure.com",
+  "postgres.cosmos.azure.com", "rds.amazonaws.com", "db.ondigitalocean.com"] as const;
+/** Whether `h` is a wildcard at or below an ANY_CUSTOMER_ZONES product zone. */
+export const anyCustomerWildcard = (h: string) => {
+  if (!h.startsWith("*.")) return false;
+  const base = h.slice(2).toLowerCase().replace(/\.$/, "");
+  return ANY_CUSTOMER_ZONES.some((z) => base === z || base.endsWith(`.${z}`));
+};
 /** The labels of `name` below `zone` (0 at the zone, -1 above it), or null when it is elsewhere. */
 const labelsBelow = (name: string, zone: string) =>
   name === zone ? 0 : name.endsWith(`.${zone}`) ? name.slice(0, -zone.length - 1).split(".").length : zone.endsWith(`.${name}`) ? -1 : null;
@@ -493,11 +513,24 @@ function signedProblems(p: SignedProbe, field: (n: string) => Field | undefined,
     if (pg.url && (pg.host || pg.port || pg.database || pg.user || pg.password)) bad("a postgres probe takes its connection from a sealed url, or from host, user and password: not both", "fields");
     if (!pg.url && !(pg.host && pg.user && pg.password)) bad("a postgres probe names a sealed url field, or host, user and password fields", "fields");
     for (const h of p.hosts) if (localName(h.replace(/^\*\./, ""))) bad(`${h} is an internal name: a test calls public hosts only`, "hosts");
-    for (const h of p.hosts) if (sharedWildcard(h)) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "hosts");
+    for (const h of p.hosts) if (sharedWildcard(h) && !(p.any_customer_host && anyCustomerWildcard(h))) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})${anyCustomerWildcard(h) ? `, or set any_customer_host: true when each workspace connects its own database` : ""}` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "hosts");
+    // mold_v0-319: any_customer_host only while the record's host is bound to every secret the probe sends: a sealed
+    // url (the host is inside the secret: changing it means typing the password again), or a host field (plain, one
+    // value, written by people through the record store's write, which clears the bound secrets when it changes).
+    if (p.any_customer_host) {
+      const hostField = pg.host ? field(pg.host) : undefined;
+      const dest = destinationFields(p), sealedHere = Object.values(pg).filter((n): n is string => !!n && !!field(n)?.encrypted);
+      const secrets = probeSecrets(p, (n) => !!field(n)?.encrypted);
+      if (pg.url) { if (!field(pg.url)?.encrypted) bad("any_customer_host needs the url sealed (encrypted): its host and password are typed together", "any_customer_host"); }
+      else if (!hostField || hostField.encrypted || !dest.includes(pg.host!)) bad("any_customer_host needs the host in a plain field that decides where the password goes (fields.host)", "any_customer_host");
+      else if (hostField.set_by !== undefined) bad(`${pg.host} is set_by ${JSON.stringify(hostField.set_by)}: with any_customer_host the host is written by people only, so a change clears the password`, "any_customer_host");
+      if (!sealedHere.length || sealedHere.some((n) => !secrets.includes(n))) bad("any_customer_host needs every secret the probe sends bound to its host (a sealed password)", "any_customer_host");
+      if (!p.hosts.some(anyCustomerWildcard)) bad(`any_customer_host is for a wildcard over a managed database product's zone (${ANY_CUSTOMER_ZONES.map((z) => `*.${z}`).join(", ")})`, "any_customer_host");
+    }
     // mold_v0-319: a provider's CA signs that provider's database names only: its hosts are under its zones.
     if (p.ca) for (const h of p.hosts) {
       const base = h.replace(/^\*\./, "").toLowerCase();
-      if (!PG_CA_ZONES[p.ca].some((z) => base.endsWith(`.${z}`)))
+      if (!PG_CA_ZONES[p.ca].some((z) => base.endsWith(`.${z}`) || (h.startsWith("*.") && base === z)))
         bad(`${h} is not a ${p.ca} database's name: with ca "${p.ca}" every host is under ${PG_CA_ZONES[p.ca].join(" or ")}`, "hosts");
     }
   }

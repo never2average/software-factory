@@ -4174,7 +4174,19 @@ public suffixes (`co.uk`, ...) 1, and hosting whose first label is the customer'
 `azurewebsites.net`, `blob.core.windows.net`) 1. Everywhere else under `amazonaws.com` (EC2's compute names, ELB, S3),
 `on.aws` (DSQL, Lambda URLs), `neon.tech`, `supabase.com` (the shared pooler), `ondigitalocean.com`, `aivencloud.com`,
 `render.com`, `onrender.com`, `run.app`, `azure.com`, `windows.net`, `cloudapp.net` and the tunnels, only exact hosts
-are allowed (`ep-x-123.us-east-2.aws.neon.tech`). Example: `{"kind": "postgres", "ca": "aws-rds", "fields": {"host": "host", "user": "user", "password":
+are allowed (`ep-x-123.us-east-2.aws.neon.tech`). **Any customer's database (opt-in)**: an app where each workspace
+connects ITS OWN database cannot know the host in advance, so a `postgres` probe may set `"any_customer_host": true` to
+list a wildcard over a managed database product's every-customer zone. Only these zones (`ANY_CUSTOMER_ZONES`, an
+explicit list, not a heuristic): `*.aws.neon.tech`, `*.azure.neon.tech`, `*.supabase.co`, `*.pooler.supabase.com`,
+`*.postgres.database.azure.com`, `*.postgres.cosmos.azure.com`, `*.rds.amazonaws.com`, `*.db.ondigitalocean.com` (and
+anything under them); `*.neon.tech`, `*.amazonaws.com`, `*.compute-1.amazonaws.com`, `*.s3.amazonaws.com`,
+`*.elb.amazonaws.com`, public suffixes and every general compute, storage or hosting zone stay refused with it. The
+build allows it only while the host is bound to every secret the probe sends: a sealed `url` (host and password typed
+together), or a plain `fields.host` that decides (no `set_by`, never the lifecycle's field) with every sealed role bound
+to it, so changing the host clears the password and a person can only ever send a password they typed for that same
+host; the public-address, pinning, port and TLS rules still apply. An opt-in with no such wildcard is refused. Example:
+`{"kind": "postgres", "fields": {"url": "connection_url"}, "hosts": ["*.aws.neon.tech", "*.supabase.co"], "ports": [5432,
+6543], "any_customer_host": true}`. Example: `{"kind": "postgres", "ca": "aws-rds", "fields": {"host": "host", "user": "user", "password":
 "password"}, "hosts": ["*.c9akq0example.eu-west-1.rds.amazonaws.com"]}`. Google Cloud SQL's server CA is per instance
 and DigitalOcean's and Aiven's per cluster or project, so none ships for them. Test:
 the same script, a TLS stand-in whose certificate a throwaway CA (made at run time) signed, trusted only through that
