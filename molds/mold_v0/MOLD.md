@@ -4235,34 +4235,47 @@ Each record opened is a data-trail read (its key, never a value); the run's `cre
 
 **Members' builds (mold_v0-322)**: an entry may name `members_field`, a plain boolean field of the area (its own: not
 the entry's `use`, a `where` or a delivered field; not `set_by`, not the lifecycle's; `roles` must then leave `member`
-out), meaning "sessions members start may receive this record's values". Example: `{"area": "build_connections", "use":
-"use_in_builds", "prefix": "BUILD_", "members_field": "members_may_use", "fields": {"HOST": "host", "TOKEN": "api_token"}}`
-with `{"name": "members_may_use", "label": "Members' builds may use its keys", "type": "boolean"}` on the area.
-- **Only an owner, by hand** (`src/secret-binding.ts` membersFlagWrite, in the record store's write
+out; and nothing else of the pack may set or decide it: another entry's `use` or `where` in any profile, the object
+storage's fields, a field a clock of the area names, a create_record's `input` or a test_connection's status or tested
+field: `src/connection-env-config.ts` membersFieldProblems, in validatePack), meaning "sessions members start may
+receive this record's values". Example: `{"area": "build_connections", "use": "use_in_builds", "prefix": "BUILD_",
+"members_field": "members_may_use", "fields": {"HOST": "host", "TOKEN": "api_token"}}` with `{"name": "members_may_use",
+"label": "Members' builds may use its keys", "type": "boolean"}` on the area.
+- **Only an owner, by hand, in the console** (`src/secret-binding.ts` membersFlagWrite, in the record store's write
   `src/record-areas.ts` putWorkspaceNow, so every door: the data API, a create, a batch, the record page's actions, the
-  MCP tools, an import's preview and write in `src/record-import.ts`): a person whose role is owner, writing directly.
-  Anyone else (a member, a billing person, an agent session's tool call even in an owner's session, a pack tool, the
-  system) giving another value is refused (403, by its label: `"Members' builds may use its keys" of Build connections
-  records is for the workspace's owners to set: leave it out`); leaving it out keeps it as stored. Forms offer it to
-  owners only (the record page's edit and create, a tab's create, the import form).
-- **A member's change of where the secrets go turns it off**: a write by anyone but such an owner that changes a plain
-  field the entry delivers, or types (or clears) a delivered secret, stores it off, even when it was sent on (with the
-  binding above, a new host also clears the token). An owner's own edit keeps it.
+  MCP tools, an import's preview and write in `src/record-import.ts`; who is `src/record-areas.ts` consentWriter): a
+  person whose role is owner, signed in to the console (`src/app.ts` customerSession runs the request under
+  `src/tenant-scope.ts` asConsole), not inside an agent session's tool call. An owner through their API key, an outside
+  MCP client (OAuth or key) or the stdio server is refused in words: `... is turned on or off by an owner in the console
+  (signed in), never through an API key, an MCP client or an agent: leave it out here` (a prompt-injected outside agent
+  holding an owner's credential cannot flip it). Anyone else (a member, a billing person, an account key, a pack tool,
+  the system) giving another value is refused (403, by its label: `"Members' builds may use its keys" of Build
+  connections records is for the workspace's owners to set: leave it out`); leaving it out keeps it as stored. Forms
+  offer it to owners only (the record page's edit and create, a tab's create, the import form).
+- **Anyone else's change of what decides turns it off**: a write by anyone but such an owner that changes a plain field
+  the entry delivers, its `where` or `use` fields, or types (or clears) a delivered secret, stores it off, even when it
+  was sent on (with the binding above, a new host also clears the token). An owner's own edit keeps it.
 - **Audited**: each change on or off (an owner's, or turned off by another's edit) is a data-trail line of its own,
   `grant` or `revoke` (migration 0073 widens the action's CHECK; "Let members' sessions use the keys of ci in Build
-  connections"), with the record's key, never a value; the record's history shows the change and who made it.
+  connections"), with the record's key, never a value. These lines are written only while the profile's `audit.data` is
+  on (the data trail); the record's change history records the change and who made it either way.
 - **At start**: a member outside `roles` receives the entry when its one record (as they see it: one they may read,
   visibility honoured; they need not be able to update the area) matching `where` and `use` has the opt-in on; it is
-  frozen like any other (`members: true` in the policy, for the trail). Off, nothing of it, and the first system message
-  names the switch: `Build connections: a workspace owner has not turned on "Members' builds may use its keys" for the
-  record in use, so its variables are not set for sessions members start.`
-- **Mid-session**: the frozen version reads the fields the entry delivers and matches on, not the opt-in, so an owner
-  turning it off does not reach a session a member already started (it keeps receiving the record as frozen until it
-  ends or the record changes); the next member session gets none. Stop the member's session to end it at once. A
-  member's change of where the secrets go changes the version, so that session gets nothing from then on.
+  frozen with `members: true`, the `members_field`, the entry's `roles` and who started the session (`starter`). Off,
+  nothing of it, and the first system message names the switch: `Build connections: a workspace owner has not turned on
+  "Members' builds may use its keys" for the record in use, so its variables are not set for sessions members start.`
+- **Every wake** (`src/connection-env.ts` membersMayStill): a member's entry is delivered only while the stored record
+  still has the opt-in on, and the starter is still in the workspace (the directory's role now: removed or suspended,
+  nothing) with a role that receives it (in `roles` and may update the area, or a member) and may read the record now
+  (made private to its owner: nothing). Else that wake gets nothing of it and the session is told: `Build connections: a
+  workspace owner turned off members' use of its keys, or the person who started this session may no longer receive
+  them, so its variables were not set for this wake.` So turning it off reaches a member's session already started
+  (parked or between wakes) at its next wake; a wake already running keeps what it was given until it ends (the values
+  are in its sandbox), and stays redacted. Turned on again with the record otherwise unchanged, the next wake receives it.
+  Redaction (`connectionSecrets`) never applies these checks: it redacts the record's current values whoever receives them.
 - Everything else holds: all or nothing per entry, the binding, redaction on every instance, never shown in the console,
   the chat or a log, and whoever starts the session can read every value delivered (so turn it on only for keys members
-  may hold). Test: `npx tsx scripts/connection-env-test.ts` (section 5).
+  may hold). Test: `npx tsx scripts/connection-env-test.ts` (sections 1 and 5).
 
 ## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
 

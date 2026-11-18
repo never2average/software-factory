@@ -113,3 +113,39 @@ export function connectionEnvProblems(raw: unknown, areas: readonly unknown[], t
   }
   return out;
 }
+
+/**
+ * mold_v0-322: what else of the pack must never set or decide a `members_field` (the owners' consent is theirs alone,
+ * set by hand): another entry's `use` or `where` on the area (any profile's), the pack's object storage fields, a field
+ * a clock of the area names (its escalations write fields), and a page action that fills or writes it (a create_record's
+ * `input`, a test_connection's `status` or `tested`). [] when nothing.
+ */
+export function membersFieldProblems(profiles: readonly unknown[], areas: readonly unknown[], objectStorage?: unknown): string[] {
+  const out: string[] = [];
+  const entries = profiles.flatMap((p) => {
+    const id = (p as { id?: string })?.id ?? "?";
+    return ((p as { connection_env?: unknown[] })?.connection_env ?? []).flatMap((raw, i) => {
+      const r = ConnectionEnvSchema.safeParse(raw);
+      return r.success ? [{ at: `agent profile ${id}: connection_env[${i}]`, c: r.data }] : [];
+    });
+  });
+  const named = (v: unknown, m: string) => JSON.stringify(v ?? null).includes(JSON.stringify(m));
+  for (const { at, c } of entries) {
+    const m = c.members_field;
+    if (!m) continue;
+    for (const o of entries) if (o.c.area === c.area && (o.c.use === m || Object.keys(o.c.where ?? {}).includes(m)))
+      out.push(`${at}.members_field: ${m} is also ${o.at}'s ${o.c.use === m ? "use" : "where"}: the owners' consent is a field of its own`);
+    const os = objectStorage as { area?: string; fields?: Record<string, unknown> } | undefined;
+    if (os?.area === c.area && Object.values(os.fields ?? {}).includes(m)) out.push(`${at}.members_field: ${m} is one of the object storage's fields: the owners' consent is a field of its own`);
+    const area = (areas as { name?: string; clocks?: unknown }[]).find((a) => a?.name === c.area);
+    if (area && named(area.clocks, m)) out.push(`${at}.members_field: a clock of ${c.area} names ${m}: nothing but an owner sets the consent`);
+    for (const a of areas as { name?: string; detail?: { actions?: { kind?: string; area?: string; input?: Record<string, unknown>; probe?: { status?: string; tested?: string } }[] } }[])
+      for (const x of a?.detail?.actions ?? []) {
+        if (x?.kind === "create_record" && x.area === c.area && Object.prototype.hasOwnProperty.call(x.input ?? {}, m))
+          out.push(`${at}.members_field: ${a.name}'s create_record action fills ${m}: nothing but an owner sets the consent`);
+        if (x?.kind === "test_connection" && a.name === c.area && (x.probe?.status === m || x.probe?.tested === m))
+          out.push(`${at}.members_field: ${a.name}'s test_connection writes ${m}: nothing but an owner sets the consent`);
+      }
+  }
+  return [...new Set(out)];
+}

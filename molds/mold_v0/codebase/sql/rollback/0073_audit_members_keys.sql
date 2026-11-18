@@ -21,7 +21,8 @@ BEGIN
       CHECK (action IN ('list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete')) NOT VALID;
   ELSE
     ALTER TABLE audit_data_events ADD CONSTRAINT audit_data_events_action_check
-      CHECK (action IN ('list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete'));
+      CHECK (action IN ('list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete')) NOT VALID;
+    ALTER TABLE audit_data_events VALIDATE CONSTRAINT audit_data_events_action_check;
   END IF;
   DELETE FROM schema_migrations WHERE version = v;
 END $rb$;

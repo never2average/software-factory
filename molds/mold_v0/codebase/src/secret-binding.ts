@@ -85,15 +85,17 @@ export function secretsToClear(area: AreaLike, stored: Record<string, unknown> |
 // A connection_env entry's `members_field` (src/connection-env-config.ts): a plain boolean only the workspace's owners
 // set, by hand, meaning "sessions members start may receive this record's values". Here, for the record store's write
 // (src/record-areas.ts putWorkspaceNow) and an import's preview (src/record-import.ts):
-//   who sets it     a person whose role is owner, writing directly (not an agent session's tool call, a pack tool, a
-//                   repository's index or the system). Anyone else's write that gives another value is refused (403);
-//                   one that leaves it out keeps it as stored
-//   what clears it  a write by anyone but such an owner that changes where the entry's secrets go: a delivered plain
-//                   field changed, or a delivered secret typed again (or cleared) — the binding's rule, for the consent
+//   who sets it     an owner, by hand, in the console (src/record-areas.ts consentWriter): never through their API
+//                   key, an outside MCP client, the stdio server or an agent session's tool call (refused in words
+//                   saying to use the console), nor a member, a pack tool, a repository's index or the system. A write
+//                   that gives another value is refused (403); one that leaves it out keeps it as stored
+//   what clears it  a write by anyone but such an owner that changes where the entry's secrets go or which record it
+//                   is: a delivered plain field, an entry's `where` or `use` field, or a delivered secret typed again
+//                   (or cleared) — the binding's rule, for the consent
 //   the trail       each change is a data-trail line of its own: grant (on) or revoke (off), never a value
 
-/** One entry's opt-in: its field, and the fields the entry delivers (a change of one by a non-owner turns it off). */
-export interface MembersGate { field: string; label: string; delivers: string[] }
+/** One entry's opt-in: its field, and the fields that decide (delivered, `where`, `use`): a non-owner's change turns it off. */
+export interface MembersGate { field: string; label: string; decides: string[] }
 interface GateArea { pack: string; name: string; label?: string; fields: readonly { name: string; label?: string; encrypted?: boolean }[] }
 const gateCache = new WeakMap<object, Map<string, MembersGate[]>>();
 
@@ -113,8 +115,8 @@ export function membersGatesOf(area: GateArea): MembersGate[] {
         const c = ConnectionEnvSchema.safeParse(raw);
         if (!c.success || c.data.area !== area.name || !c.data.members_field) continue;
         const m = c.data.members_field, f = area.fields.find((x) => x.name === m);
-        const g = out.get(m) ?? { field: m, label: f?.label ?? m, delivers: [] };
-        g.delivers = [...new Set([...g.delivers, ...envVars(c.data).map((v) => v.field)])];
+        const g = out.get(m) ?? { field: m, label: f?.label ?? m, decides: [] };
+        g.decides = [...new Set([...g.decides, ...envVars(c.data).map((v) => v.field), ...Object.keys(c.data.where ?? {}), ...(c.data.use ? [c.data.use] : [])])];
         out.set(m, g);
       }
   }
@@ -127,13 +129,13 @@ export function membersGatesOf(area: GateArea): MembersGate[] {
 export const ownerOnlyFields = (area: GateArea): Set<string> => new Set(membersGatesOf(area).map((g) => g.field));
 
 /**
- * A write's effect on the members' opt-ins of `area`. `owner`: an owner writing by hand (src/record-areas.ts says who).
- * Refuses (403) anyone else's write that gives another value; for them returns the input without the field and what to
+ * A write's effect on the members' opt-ins of `area`. `who`: src/record-areas.ts consentWriter ("owner": by hand in the
+ * console). Refuses (403) anyone else's write that gives another value (an owner elsewhere told to use the console); for them returns the input without the field and what to
  * carry (the stored value, or false when the write changes where the secrets go). `turned`: the opt-ins this write
  * changes (for the trail). `given` is the write's input after its encrypted fields were split (a secret in it was typed
  * again or cleared; one left out is kept).
  */
-export function membersFlagWrite(area: GateArea, owner: boolean, stored: Record<string, unknown> | null, given: unknown):
+export function membersFlagWrite(area: GateArea, who: "owner" | "owner_elsewhere" | "other", stored: Record<string, unknown> | null, given: unknown):
   { input: unknown; carried: Record<string, unknown>; turned: { field: string; on: boolean }[] } {
   const gates = membersGatesOf(area);
   if (!gates.length) return { input: given, carried: {}, turned: [] };
@@ -144,18 +146,20 @@ export function membersFlagWrite(area: GateArea, owner: boolean, stored: Record<
   const turned: { field: string; on: boolean }[] = [];
   for (const gate of gates) {
     const was = stored?.[gate.field] === true;
-    if (owner) {
+    if (who === "owner") {
       const now = has(gate.field) ? g[gate.field] === true : false;
       if (now !== was) turned.push({ field: gate.field, on: now });
       continue;
     }
     if (has(gate.field)) {
       if ((g[gate.field] === true) !== was)
-        throw new PackError(`"${gate.label}" of ${area.label ?? area.name} records is for the workspace's owners to set: leave it out`, 403);
+        throw new PackError(who === "owner_elsewhere"
+          ? `"${gate.label}" of ${area.label ?? area.name} records is turned on or off by an owner in the console (signed in), never through an API key, an MCP client or an agent: leave it out here`
+          : `"${gate.label}" of ${area.label ?? area.name} records is for the workspace's owners to set: leave it out`, 403);
       delete g[gate.field];
     }
     // Where the secrets go, changed by someone other than an owner: the owners' consent does not follow it.
-    const moved = !!stored && gate.delivers.some((f) => (sealed(f) ? has(f) : !same(g[f], stored[f])));
+    const moved = !!stored && gate.decides.some((f) => (sealed(f) ? has(f) : !same(g[f], stored[f])));
     if (was && moved) { carried[gate.field] = false; turned.push({ field: gate.field, on: false }); }
     else if (was) carried[gate.field] = true;
   }

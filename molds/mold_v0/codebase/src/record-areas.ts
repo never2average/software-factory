@@ -35,7 +35,7 @@ import { packs } from "./packs.js";
 import { crumbChain, tabShownAreas, type CrumbHop, type CrumbTab } from "./record-crumbs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
-import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
+import { asPlatform, currentTenant, inConsole, withTenant } from "./tenant-scope.js";
 import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
 import type { RevealedFields } from "./pack-api.js";
@@ -1027,10 +1027,15 @@ export async function onSaveChecks(orgId: number, area: RecordArea, key: string,
 }
 
 /**
- * mold_v0-322: an owner writing by hand (the data API's or the console's person, never an agent session's tool call, a
- * pack tool, a repository's index or the system): who may turn a connection's members' opt-in on or off.
+ * mold_v0-322: who may turn a connection's members' opt-in on or off: "owner", an owner by hand in the console (signed
+ * in: src/tenant-scope.ts inConsole); "owner_elsewhere", an owner through any other door (their API key, an outside MCP
+ * client, the stdio server, an agent session's tool call: a prompt could steer those), refused in words saying to use
+ * the console; "other", anyone else (a member, billing, a pack tool, a repository's index, the system).
  */
-export const ownerByHand = (actor: Actor, meta: WriteMeta | null) => actor.role === "owner" && !meta && !currentVia() && writerOf(actor, meta).by === "people";
+export function consentWriter(actor: Actor, meta: WriteMeta | null): "owner" | "owner_elsewhere" | "other" {
+  if (actor.role !== "owner" || meta || writerOf(actor, meta).by !== "people") return "other";
+  return inConsole() && !currentVia() ? "owner" : "owner_elsewhere";
+}
 /** Each opt-in a write turned on or off: a data-trail line of its own (grant, revoke), never a value. */
 const auditMembers = (orgId: number, area: RecordArea, key: string, turned: { on: boolean }[]) => {
   for (const x of turned) auditData(orgId, { action: x.on ? "grant" : "revoke", pack: area.pack, area: area.name, key });
@@ -1067,7 +1072,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   for (const k of secretsToClear(area, prev?.opened ?? null, own.input)) delete carried[k];
   // mold_v0-322: a connection's opt-in for members' sessions is an owner's, set by hand; another's write keeps it as
   // stored, refused when it gives another value, and turns it off when it changes where the secrets go.
-  const members = membersFlagWrite(area, ownerByHand(actor, meta), prev?.opened ?? null, own.input);
+  const members = membersFlagWrite(area, consentWriter(actor, meta), prev?.opened ?? null, own.input);
   const given = members.input;
   Object.assign(carried, members.carried);
   const t = title(value?.title);

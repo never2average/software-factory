@@ -28,12 +28,13 @@ export interface FrozenConnectionEnv { pack: string; area: string; key: string;
   version?: string;
   where?: Record<string, string | number | boolean>; use?: string; vars: { env: string; field: string }[];
   /**
-   * mold_v0-322: given to a member through the record's owners' opt-in (the entry's members_field, on at the start). Kept
-   * for the trail only: a wake delivers the record as frozen (its version), so turning the opt-in off later does not
-   * reach a session already started (the next one gets none); a member's change of where its secrets go does, as the
-   * version changes.
+   * mold_v0-322: given to a member through the record's owners' opt-in (the entry's members_field, on at the start).
+   * Each wake gives it only while the stored record still has `members_field` on, and while `starter` (who started the
+   * session) still holds a role that may receive the entry (`roles`, else a member) and may read the record (visibility
+   * honoured): an owner turning it off, a demotion or the record made private reaches the next wake of a session
+   * already started, which is told so.
    */
-  members?: true }
+  members?: true; members_field?: string; starter?: string; roles?: string[] }
 
 /** The pack declaration of a pack profile's connection_env (its row's source is "pack:<id>"), or []. */
 export async function declaredConnectionEnv(profile: { id: string; source: string }): Promise<{ pack: string; list: ConnectionEnv[] }> {
@@ -104,7 +105,7 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
     }
     const version = await versionOf(orgId, area, hits[0]!.key, { where: c.where, use: c.use, vars: envVars(c) });
     out.frozen.push({ pack, area: c.area, key: hits[0]!.key, ...(version ? { version } : {}), ...(c.where ? { where: c.where } : {}), ...(c.use ? { use: c.use } : {}), vars: envVars(c),
-      ...(byConsent ? { members: true as const } : {}) });
+      ...(byConsent ? { members: true as const, members_field: c.members_field!, starter: actor.user ?? "", roles: c.roles ?? ["owner"] } : {}) });
   }
   // mold_v0-321: an area named once, and not at all when another of its entries gave a record (a network split by
   // provider with `where`: the marked one is on Google Cloud, so the AWS and Azure entries find none, which is no news).
@@ -152,6 +153,28 @@ async function versionOf(orgId: number, area: import("./record-areas.js").Record
   return createHash("sha256").update(JSON.stringify([String(r.id), fields.map((f) => [f, (row.data as Record<string, unknown>)[f] ?? null])])).digest("hex");
 }
 
+/**
+ * mold_v0-322: whether a member's frozen entry may still be delivered: the stored record has its opt-in on, and the
+ * person who started the session is still in the workspace with a role that receives it (in `roles`, who may update the
+ * area, or a member through the opt-in) and may read the record now (visibility honoured). Fails closed.
+ */
+async function membersMayStill(orgId: number, area: import("./record-areas.js").RecordArea, c: FrozenConnectionEnv, data: Record<string, unknown>): Promise<boolean> {
+  if (!c.members_field || data[c.members_field] !== true || !c.starter) return false;
+  try {
+    const { memberRole } = await import("./auth.js");
+    const { getDb } = await import("./db.js");
+    const { asPlatform } = await import("./tenant-scope.js");
+    const [o] = await asPlatform(async () => (await getDb()).query<{ clerk_org_id: string | null }>("/* tenant: the run's own workspace's directory id */ SELECT clerk_org_id FROM organizations WHERE id = $1", [orgId]));
+    const role = await memberRole(c.starter, o?.clerk_org_id ?? null);
+    if (!role) return false;
+    const { may, getFor } = await import("./record-areas.js");
+    const { auditQuiet } = await import("./audit-trail.js");
+    const person = { role, userId: c.starter };
+    const allowed = (c.roles ?? ["owner"]).includes(role) ? may(area, "update", person) : role === "member" && may(area, "read", person);
+    return allowed && !!(await auditQuiet(() => getFor(orgId, area.name, c.key, person)));
+  } catch { return false; }
+}
+
 /** A secret shorter than this is never delivered: redaction could not tell it from ordinary words. */
 export const SECRET_MIN = 8;
 
@@ -161,8 +184,8 @@ export const SECRET_MIN = 8;
  * record gone or no longer in use, an empty field, a secret too short or that does not open) is listed in `missing`
  * by name. `audit`: a data-trail read per record (at delivery only). Throws only when `strict` and the vault is locked.
  */
-export async function connectionEnvValues(orgId: number, list: readonly FrozenConnectionEnv[], opts: { strict?: boolean; audit?: boolean } = {}): Promise<{ delivered: Delivered[]; missing: string[]; changed: string[] }> {
-  const out: { delivered: Delivered[]; missing: string[]; changed: string[] } = { delivered: [], missing: [], changed: [] };
+export async function connectionEnvValues(orgId: number, list: readonly FrozenConnectionEnv[], opts: { strict?: boolean; audit?: boolean; gate?: boolean } = {}): Promise<{ delivered: Delivered[]; missing: string[]; changed: string[]; withdrawn: string[] }> {
+  const out: { delivered: Delivered[]; missing: string[]; changed: string[]; withdrawn: string[] } = { delivered: [], missing: [], changed: [], withdrawn: [] };
   if (!list.length || !Number.isSafeInteger(orgId) || orgId <= 0) return out;
   const { findArea, workspaceStored } = await import("./record-areas.js");
   const { withTenant, withViewer } = await import("./tenant-scope.js");
@@ -178,6 +201,9 @@ export async function connectionEnvValues(orgId: number, list: readonly FrozenCo
     if (!area || !row || !matches(c, row.data)) { if (area) out.changed.push(area.label); none(); continue; }
     // mold_v0-312: only the record as it was when the session started: changed, replaced or re-added since, nothing.
     if (c.version !== undefined && (await versionOf(orgId, area, c.key, c)) !== c.version) { out.changed.push(area.label); none(); continue; }
+    // mold_v0-322: a member's, only while the owners' opt-in is still on and the starter may still receive it (not for
+    // redaction, `gate: false`, which redacts the record's current values whoever may receive them).
+    if (c.members && opts.gate !== false && !(await membersMayStill(orgId, area, c, row.data as Record<string, unknown>))) { out.withdrawn.push(area.label); none(); continue; }
     const data = row.data as Record<string, unknown>;
     if (opts.audit) auditData(orgId, { action: "read", pack: area.pack, area: area.name, key: c.key });
     // All or nothing: an entry missing any of its values gives none (an endpoint without its keys is not delivered).
@@ -208,8 +234,8 @@ const noted = new Set<string>();
  * Say in the session's conversation, once per wake, which connections were not given because their record changed
  * since the session started (names only). Never throws.
  */
-export async function noteChangedConnections(runId: string, orgId: number, changed: readonly string[]): Promise<void> {
-  if (!changed.length || noted.has(runId)) return;
+export async function noteChangedConnections(runId: string, orgId: number, changed: readonly string[], withdrawn: readonly string[] = []): Promise<void> {
+  if ((!changed.length && !withdrawn.length) || noted.has(runId)) return;
   noted.add(runId);
   try {
     const { getDb } = await import("./db.js");
@@ -218,8 +244,11 @@ export async function noteChangedConnections(runId: string, orgId: number, chang
     await asPlatform(async () => {
       const db = await getDb();
       const [r] = await db.query<{ harness_session_id: string | null }>("/* tenant: the wake's own run, by id */ SELECT harness_session_id FROM runs WHERE id = $1 AND org_id = $2", [runId, orgId]);
-      if (r?.harness_session_id) await systemMessage(db, { id: r.harness_session_id, org_id: orgId },
-        `${[...new Set(changed)].join(", ")} changed (or was replaced) since this session started, so its variables were not set for this wake. Start a new session to use it as it is now.`, runId);
+      const words = [
+        ...(changed.length ? [`${[...new Set(changed)].join(", ")} changed (or was replaced) since this session started, so its variables were not set for this wake. Start a new session to use it as it is now.`] : []),
+        // mold_v0-322: a member's session, the owners' consent withdrawn (or the starter may no longer receive it).
+        ...(withdrawn.length ? [`${[...new Set(withdrawn)].join(", ")}: a workspace owner turned off members' use of its keys, or the person who started this session may no longer receive them, so its variables were not set for this wake.`] : [])];
+      if (r?.harness_session_id) await systemMessage(db, { id: r.harness_session_id, org_id: orgId }, words.join(" "), runId);
     });
   } catch (e) { console.error(`connection env: the session's note was not written: ${String((e as Error).message).slice(0, 200)}`); }
 }
@@ -317,7 +346,7 @@ export async function connectionSecrets(run: { id?: string; org_id: number; spec
   if (run.id) for (const d of await deliveredFromDb(run.id, run.org_id)) push(d);
   try {
     const { auditQuiet } = await import("./audit-trail.js");
-    const now = await auditQuiet(() => connectionEnvValues(run.org_id, list, { strict: false, audit: false }));
+    const now = await auditQuiet(() => connectionEnvValues(run.org_id, list, { strict: false, audit: false, gate: false }));
     for (const d of now.delivered) if (!d.plain) push(d);
   } catch { /* the values given are still redacted */ }
   return out;

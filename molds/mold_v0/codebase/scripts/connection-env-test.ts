@@ -74,6 +74,7 @@ const BUILD = { name: "build_connections", label: "Build connections", role: "so
     { name: "use_in_builds", label: "Use in builds", type: "boolean" }, MEMBERS, { name: "notes", label: "Notes", type: "text" }],
   permissions: { read: ALL, create: ["owner", "member"], update: ["owner", "member"], delete: ["owner"] },
   contract: { ...contract, actions: { ...contract.actions, create: ["owner", "member"], update: ["owner", "member"] } },
+  visibility: { modes: ["workspace", "private"], default: "workspace" },
   detail: { tabs: [{ label: "Details", sections: [{ title: "Where", fields: ["host", "use_in_builds", "members_may_use"] }] }], actions: [{ kind: "edit", place: "secondary" }] } };
 // A connection of plain values only (it takes an import: an area with an encrypted field never does).
 const TARGETS = { name: "deploy_targets", label: "Deploy targets", role: "source", scope: "workspace",
@@ -155,12 +156,29 @@ try {
     badM((c) => { c[0].roles = ["owner", "member"]; }, /roles already gives members every record/, "members in roles too");
     badM((_c, a) => { a[0].fields[3].set_by = "action"; }, /members_field: members_may_use is set_by "action"/, "a field the app's actions set");
     badM((_c, a) => { a[0].lifecycle = { field: "members_may_use" }; }, /members_field: members_may_use is the lifecycle's field/, "the lifecycle's field");
+    // L3: nothing else of the pack sets or decides it (any profile's entry, the object storage, a clock, a page action).
+    const { membersFieldProblems } = await import("../src/connection-env-config.js");
+    assert.deepEqual(membersFieldProblems([{ id: "builder", connection_env: BUILDER_ENV }], [BUILD, TARGETS]), [], "the fixture");
+    const packBad = (profiles: unknown[], areas: unknown[], os: unknown, re: RegExp, what: string) => {
+      const p = membersFieldProblems(profiles, areas, os);
+      assert.ok(p.some((m) => re.test(m)), `${what}: ${JSON.stringify(p)}`);
+    };
+    const other = (c: Record<string, unknown>) => [{ id: "builder", connection_env: BUILDER_ENV }, { id: "other", connection_env: [{ area: "build_connections", prefix: "OTHER_", fields: { HOST: "host" }, ...c }] }];
+    packBad(other({ use: "members_may_use" }), [BUILD, TARGETS], undefined, /is also agent profile other: connection_env\[0\]'s use/, "another profile's use");
+    packBad(other({ where: { members_may_use: true } }), [BUILD, TARGETS], undefined, /connection_env\[0\]'s where/, "another profile's where");
+    packBad([{ id: "builder", connection_env: BUILDER_ENV }], [BUILD, TARGETS], { area: "build_connections", fields: { use: "members_may_use" } }, /object storage's fields/, "the object storage's use");
+    packBad([{ id: "builder", connection_env: BUILDER_ENV }], [{ ...BUILD, clocks: [{ name: "due", stops_when: { field: "members_may_use", in: ["true"] } }] }, TARGETS], undefined, /a clock of build_connections names members_may_use/, "a clock's field");
+    packBad([{ id: "builder", connection_env: BUILDER_ENV }], [BUILD, { ...TARGETS, detail: { actions: [{ kind: "create_record", area: "build_connections", input: { members_may_use: "region" } }] } }], undefined, /create_record action fills members_may_use/, "a create_record that fills it");
+    // And through the pack's own check (validatePack).
+    const defM = compileDeclarations({ ...PACK, agent_profiles: [...PACK.agent_profiles, { id: "other", name: "x", connection_env: [{ area: "build_connections", use: "members_may_use", prefix: "OTHER_", fields: { HOST: "host" } }] }] } as never);
+    assert.throws(() => api.validatePack({ id: PACK.id, ...defM } as never), /members_field: members_may_use is also agent profile other/);
     ok("the declaration: a workspace area whose contract reveals nothing, fields it has, well-formed names never the session's own or set twice, use a boolean, where on plain fields; members_field a plain boolean of its own, members not in roles");
   }
 
   setPacksForTest([{ manifest: { id: PACK.id, name: "x", version: "1", entry: null, migrations: null, words: {}, dir: TMP }, declared: compileDeclarations(PACK) } as never]);
   F.setFeatureForTest("agent_harness", true);
   F.setFeatureForTest("teams", true);
+  F.setFeatureForTest("record_pages", true); // mold_v0-322: the record page's edit, through the console
   const AT = await import("../src/audit-trail.js");
   AT.setAuditForTest({ data: true });
   P.resetProfileSeedForTest();
@@ -399,111 +417,160 @@ try {
   {
     const CE = await import("../src/connection-env.js");
     const RI = await import("../src/record-import.js");
+    const { dataApi } = await import("../src/data-api.js");
+    const { asConsole } = await import("../src/tenant-scope.js");
+    const { memberships } = await import("../src/clerk.js");
     const barea = ra.findArea("build_connections")!;
-    const ownerRecs = ra.workspaceRecords(PACK.id, A.orgId, { role: "owner", userId: "user_owner_a" });
-    const memberRecs = ra.workspaceRecords(PACK.id, A.orgId, { role: "member", userId: "user_member_a" });
-    const asOwner = <T>(fn: () => Promise<T>) => ra.asWriter({ by: "people", id: "user_owner_a" }, fn);
-    const asMember = <T>(fn: () => Promise<T>) => ra.asWriter({ by: "people", id: "user_member_a" }, fn);
+    // Real people of A's directory: a wake asks the directory for the starter's role now (L1).
+    const own = await web.signInAs(A, "owner"), mem = await web.signInAs(A, "member");
+    const ownerP = { kind: "person" as const, user: own.userId, name: "owner2@example.org", role: "owner" as const };
+    const memberP = { kind: "person" as const, user: mem.userId, name: "member2@example.org", role: "member" as const };
+    const ownerRecs = ra.workspaceRecords(PACK.id, A.orgId, { role: "owner", userId: own.userId });
+    const memberRecs = ra.workspaceRecords(PACK.id, A.orgId, { role: "member", userId: mem.userId });
+    // An owner by hand is the console's: its door (src/app.ts customerSession) is asConsole.
+    const asOwner = <T>(fn: () => Promise<T>) => asConsole(() => ra.asWriter({ by: "people", id: own.userId }, fn));
+    const asMember = <T>(fn: () => Promise<T>) => ra.asWriter({ by: "people", id: mem.userId }, fn);
     const ci = { host: "ci.example.com", use_in_builds: true };
+    const on = (v: boolean, extra: Record<string, unknown> = {}) => asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: v, ...extra } }));
     const flag = async () => (await ra.workspaceStored(A.orgId, barea, ["ci"])).get("ci")!.data.members_may_use;
     const policyOf = async (id: string) => ((await db.query<{ policy: any }>("SELECT policy FROM harness_sessions WHERE id = $1", [id]))[0]!.policy.connection_env ?? [])
       .filter((c: any) => c.area === "build_connections");
     const trailCount = async (action: string, key = "ci") => { await AT.flushAudit(); return (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM audit_data_events WHERE org_id = $1 AND action = $2 AND area IN ('build_connections', 'deploy_targets') AND record_key = $3", [A.orgId, action, key]))[0]!.n; };
-    const startM = async () => (await H.startSession(A.orgId, memberA, { message: "x", profile: "builder" })).id;
+    const startM = async () => (await H.startSession(A.orgId, memberP, { message: "x", profile: "builder" })).id;
+    const given = async (frozen: any[]) => CE.connectionEnvValues(A.orgId, frozen);
     await asOwner(() => ownerRecs.create("build_connections", "ci", { title: "ci", data: { ...ci, api_token: BUILD_TOKEN } }));
     await asOwner(() => ownerRecs.create("deploy_targets", "t1", { title: "t1", data: { region: "eu" } }));
 
     // Off (never turned on): a member's session gets none of it, said in words; an owner's gets it (roles: owners).
     let m = await startM();
     assert.deepEqual(await policyOf(m), [], "off: nothing frozen for a member");
-    assert.ok((await H.readSession(A.orgId, m, memberA)).messages.some((x) => x.role === "system" && /Build connections: a workspace owner has not turned on "Members' builds may use its keys" for the record in use, so its variables are not set for sessions members start\./.test(x.body)),
+    assert.ok((await H.readSession(A.orgId, m, memberP)).messages.some((x) => x.role === "system" && /Build connections: a workspace owner has not turned on "Members' builds may use its keys" for the record in use, so its variables are not set for sessions members start\./.test(x.body)),
       "the member's session says which switch an owner turns on");
-    await H.stopSession(A.orgId, m, memberA);
-    const o = (await H.startSession(A.orgId, ownerA, { message: "x", profile: "builder" })).id;
+    await H.stopSession(A.orgId, m, memberP);
+    const o = (await H.startSession(A.orgId, ownerP, { message: "x", profile: "builder" })).id;
     assert.equal((await policyOf(o)).length, 1, "an owner's session receives it whatever the opt-in");
-    await H.stopSession(A.orgId, o, ownerA);
+    await H.stopSession(A.orgId, o, ownerP);
 
-    // A member cannot set it: the data API's update and create, a batch (bulk), inside an action's scope; nor an agent's
-    // tool call in an owner's session; nor an import (its preview says so, its write refuses it, nothing is written).
+    // A member cannot set it: the data API's update and create, a batch (bulk), inside an action's scope; nor an import
+    // (its preview says so, its write refuses it, nothing is written).
     const refusal = /"Members' builds may use its keys" of Build connections records is for the workspace's owners to set: leave it out/;
     await assert.rejects(asMember(() => memberRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } })), refusal, "the API's update");
     await assert.rejects(asMember(() => memberRecs.create("build_connections", "mine", { title: "mine", data: { host: "mine.example.com", api_token: canary("mine"), members_may_use: true } })), refusal, "a create");
     await assert.rejects(asMember(() => memberRecs.batch([{ op: "update", area: "build_connections", key: "ci", title: "ci", data: { ...ci, members_may_use: true } }] as never)), refusal, "a batch");
     await assert.rejects(asMember(() => ra.asAction(() => memberRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }))), refusal, "an action's scope");
-    await assert.rejects(ra.asVia("run:fixture-wake", () => asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }))), refusal, "an agent's tool call, even in an owner's session");
     const rows = [{ key: "t1", title: "t1", data: { region: "eu", members_may_use: true } }];
-    const preview = await RI.importWorkspaceRecords(A.orgId, { role: "member", userId: "user_member_a" }, ra.findArea("deploy_targets")!, rows, { dryRun: true });
+    const preview = await RI.importWorkspaceRecords(A.orgId, { role: "member", userId: mem.userId }, ra.findArea("deploy_targets")!, rows, { dryRun: true });
     assert.equal(preview.rows[0]!.action, "invalid", JSON.stringify(preview.rows));
     assert.match(preview.rows[0]!.errors.join(" "), /"Members' builds may use its keys" of Deploy targets records is for the workspace's owners to set/);
-    await RI.importWorkspaceRecords(A.orgId, { role: "member", userId: "user_member_a" }, ra.findArea("deploy_targets")!, rows, { dryRun: false });
+    await RI.importWorkspaceRecords(A.orgId, { role: "member", userId: mem.userId }, ra.findArea("deploy_targets")!, rows, { dryRun: false });
     assert.notEqual((await ra.workspaceStored(A.orgId, ra.findArea("deploy_targets")!, ["t1"])).get("t1")!.data.members_may_use, true, "the import wrote nothing of it");
+    // M2: an owner outside the console is refused too, in words that say where: their own API key or an outside MCP
+    // client (the data API's caller as each door makes it: src/developer-api.ts dataCaller, src/mcp-tools.ts), the
+    // record store called directly, and an agent's tool call even inside a console request.
+    const elsewhere = /"Members' builds may use its keys" of Build connections records is turned on or off by an owner in the console \(signed in\), never through an API key, an MCP client or an agent/;
+    const mcpOwner = { orgId: A.orgId, role: "owner" as const, userId: own.userId };
+    await assert.rejects(dataApi.update(mcpOwner, "build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }), elsewhere, "an owner's outside MCP client (OAuth or key)");
+    await assert.rejects(dataApi.update({ orgId: A.orgId, role: null, userId: "key:1" }, "build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }), refusal, "an account API key (no role)");
+    await assert.rejects(ra.asWriter({ by: "people", id: own.userId }, () => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } })), elsewhere, "the store outside the console (the stdio server)");
+    await assert.rejects(ra.asVia("run:fixture-wake", () => asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }))), elsewhere, "an agent's tool call, even in an owner's console request");
+    await assert.rejects(RI.importWorkspaceRecords(A.orgId, { role: "owner", userId: own.userId }, ra.findArea("deploy_targets")!, rows, { dryRun: true })
+      .then((r) => { if (r.rows[0]!.action === "invalid") throw new Error(r.rows[0]!.errors.join(" ")); return r; }), /in the console/, "an owner's import outside the console");
     assert.notEqual(await flag(), true, "still off");
-    // A member's create that sends it off, and their edits that leave it out, are fine.
+    // A member's create that sends it off is fine.
     await asMember(() => memberRecs.create("build_connections", "mine", { title: "mine", data: { host: "mine.example.com", api_token: canary("mine"), members_may_use: false } }));
-    await ra.asWriter({ by: "people", id: "user_owner_a" }, () => ownerRecs.delete("build_connections", "mine"));
-    // An owner's import may set it (a person, by hand).
-    await RI.importWorkspaceRecords(A.orgId, { role: "owner", userId: "user_owner_a" }, ra.findArea("deploy_targets")!, rows, { dryRun: false });
-    assert.equal((await ra.workspaceStored(A.orgId, ra.findArea("deploy_targets")!, ["t1"])).get("t1")!.data.members_may_use, true, "an owner's import sets it");
+    await asOwner(() => ownerRecs.delete("build_connections", "mine"));
+    // An owner's import in the console may set it.
+    await asConsole(() => RI.importWorkspaceRecords(A.orgId, { role: "owner", userId: own.userId }, ra.findArea("deploy_targets")!, rows, { dryRun: false }));
+    assert.equal((await ra.workspaceStored(A.orgId, ra.findArea("deploy_targets")!, ["t1"])).get("t1")!.data.members_may_use, true, "an owner's import in the console sets it");
     assert.equal(await trailCount("grant", "t1"), 1, "and it is a grant line");
-    ok("mold_v0-322: off, a member's session gets nothing (said by the switch's label); a member cannot set it by the API, a create, a batch, an action or an import, nor an agent in an owner's session; an owner's import can");
+    ok("mold_v0-322: off, a member's session gets nothing (said by the switch's label); a member cannot set it by the API, a create, a batch, an action or an import; an owner can only in the console (not by MCP, a key, the store directly, an agent or an import elsewhere)");
 
-    // An owner turns it on: a grant line; a member's session now receives it (values, redaction).
+    // Through the real console (HTTP, an owner's sign-in): the record page's edit turns it on; a member's is refused.
+    const h = (tok: string) => ({ authorization: `Bearer ${tok}`, "x-pack-request": "1" });
     const grants = await trailCount("grant");
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }));
+    const byHttp = async (tok: string, v: boolean) => web.req("POST", "/api/records/_page/build_connections/ci/actions/edit", h(tok), { title: "ci", data: { ...ci, members_may_use: v } });
+    const memberHttp = await byHttp(mem.token, true);
+    assert.equal(memberHttp.status, 403, `a member's console edit: refused (${memberHttp.status} ${await memberHttp.text()})`);
+    const ownerHttp = await byHttp(own.token, true);
+    assert.equal(ownerHttp.status, 200, `an owner's console edit (${await ownerHttp.text()})`);
     assert.equal(await flag(), true);
     assert.equal(await trailCount("grant"), grants + 1, "turning it on is a grant line of the data trail (its key, never a value)");
+
+    // On: a member's session receives it (values, redaction).
     m = await startM();
     const frozen = await policyOf(m);
-    assert.deepEqual(frozen.map((c: any) => [c.key, c.members]), [["ci", true]], "frozen for the member, marked as the owners' consent");
-    const got = await CE.connectionEnvValues(A.orgId, frozen);
+    assert.deepEqual(frozen.map((c: any) => [c.key, c.members, c.members_field, c.starter]), [["ci", true, "members_may_use", mem.userId]], "frozen for the member, with the switch and who started it");
+    const got = await given(frozen);
     assert.deepEqual(got.delivered.map((d) => d.env), ["BUILD_HOST", "BUILD_TOKEN"], "the member's wake receives the entry whole");
     assert.ok(got.delivered.some((d) => d.env === "BUILD_TOKEN" && d.value === BUILD_TOKEN && !d.plain), "the token, as a secret");
     const secrets = await CE.connectionSecrets({ org_id: A.orgId, spec: { connection_env: frozen } });
     assert.equal(redactText(`token ${BUILD_TOKEN}`, secrets), "token [credential connection:build_connections/BUILD_TOKEN]", "and redacted from what it writes");
-    // A member's edit that leaves the switch out, and changes nothing of where the secrets go: kept on.
+    // A member's edit that leaves the switch out, and changes nothing that decides: kept on.
     await asMember(() => memberRecs.update("build_connections", "ci", { title: "ci renamed", data: { ...ci, notes: "a note" } }));
     assert.equal(await flag(), true, "a member's other edit keeps it");
-    assert.equal((await CE.connectionEnvValues(A.orgId, frozen)).delivered.length, 2, "and the session still receives it");
+    assert.equal((await given(frozen)).delivered.length, 2, "and the session still receives it");
 
-    // Turned off after the member's session started: that session keeps what was frozen (its record unchanged); the
-    // next member session gets none. A revoke line.
+    // M1: turned off while the member's session is parked: its next wake gets nothing, and the session is told. A
+    // revoke line. Turned on again (the record unchanged otherwise), the same session receives it again.
     const revokes = await trailCount("revoke");
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: false } }));
+    await on(false);
     assert.equal(await trailCount("revoke"), revokes + 1, "turning it off is a revoke line");
-    assert.equal((await CE.connectionEnvValues(A.orgId, frozen)).delivered.length, 2, "documented: a session already started keeps receiving the record as frozen");
+    const off = await given(frozen);
+    assert.deepEqual([off.delivered, off.withdrawn], [[], ["Build connections"]], "the next wake of a session already started gets nothing");
+    const [run] = await db.query<{ id: string; org_id: number; pack: string; spec: any; targets: any }>("SELECT id, org_id, pack, spec, targets FROM runs WHERE harness_session_id = $1 ORDER BY created_at DESC LIMIT 1", [m]);
+    const creds = await cred.runCredentials(run as never);
+    assert.ok(!creds.credentials.some((c) => c.name.startsWith("connection:build_connections/")) && creds.missing.includes("connection:build_connections/BUILD_TOKEN"), "through the real delivery path: none of it");
+    assert.ok((await H.readSession(A.orgId, m, memberP)).messages.some((x) => x.role === "system" && /Build connections: a workspace owner turned off members' use of its keys, or the person who started this session may no longer receive them, so its variables were not set for this wake\./.test(x.body)),
+      "the session is told, in words");
     const m2 = await startM();
     assert.deepEqual(await policyOf(m2), [], "a new member session gets none");
-    await H.stopSession(A.orgId, m2, memberA); await H.stopSession(A.orgId, m, memberA);
+    await H.stopSession(A.orgId, m2, memberP);
+    await on(true);
+    assert.equal((await given(frozen)).delivered.length, 2, "on again, the parked session's next wake receives it");
 
-    // A member's change of where the secrets go turns it off: the host (the token cleared by its binding too), or a token
-    // typed again. A revoke line each; nothing delivered to the member's session started before.
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, members_may_use: true } }));
+    // L1: the starter suspended (or removed) from the workspace, or the record made private to its owner: nothing.
+    await memberships.setSuspended(mem.clerkOrg, mem.userId, true);
+    assert.deepEqual((await given(frozen)).withdrawn, ["Build connections"], "the starter suspended: nothing");
+    await memberships.setSuspended(mem.clerkOrg, mem.userId, false);
+    assert.equal((await given(frozen)).delivered.length, 2, "back in the workspace: delivered");
+    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci renamed", data: { ...ci, notes: "a note", members_may_use: true }, visibility: { mode: "private" } }));
+    assert.deepEqual((await given(frozen)).withdrawn, ["Build connections"], "the record made private to its owner: the member may not read it, nothing");
+    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci renamed", data: { ...ci, notes: "a note", members_may_use: true }, visibility: { mode: "workspace" } }));
+    assert.equal((await given(frozen)).delivered.length, 2, "seen by the workspace again: delivered");
+    await H.stopSession(A.orgId, m, memberP);
+    ok("mold_v0-322: on, a member's session receives the record whole and redacts it; turned off while it is parked, its next wake gets nothing and is told (a revoke line), a new one none; the starter suspended or the record made private: nothing");
+
+    // A member's change of what decides turns it off: the host (the token cleared by its binding too), a token typed
+    // again, or the entry's `use` (L2). A revoke line each; the member's session started before gets nothing.
     m = await startM();
     const frozen2 = await policyOf(m);
     await asMember(() => memberRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, host: "collector.evil.example", members_may_use: true } }));
     const after = (await ra.workspaceStored(A.orgId, barea, ["ci"])).get("ci")!.data;
     assert.equal(after.members_may_use, false, "a member's new host turns it off (sent on, it is still turned off)");
     assert.equal(after.api_token, undefined, "and the token is cleared by its binding");
-    assert.equal(await trailCount("revoke"), revokes + 2, "a revoke line");
-    assert.deepEqual((await CE.connectionEnvValues(A.orgId, frozen2)).delivered, [], "the member's session started before gets nothing (its record changed)");
-    await H.stopSession(A.orgId, m, memberA);
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, api_token: BUILD_NEW, members_may_use: true } }));
+    assert.deepEqual((await given(frozen2)).delivered, [], "the member's session started before gets nothing (its record changed)");
+    await H.stopSession(A.orgId, m, memberP);
+    const before = await trailCount("revoke");
+    await on(true, { api_token: BUILD_NEW });
     await asMember(() => memberRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, api_token: BUILD_EVIL } }));
     assert.equal(await flag(), false, "a member's own token turns it off");
-    assert.equal(await trailCount("revoke"), revokes + 3);
+    await on(true, { api_token: BUILD_NEW });
+    await asMember(() => memberRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, use_in_builds: false } }));
+    assert.equal(await flag(), false, "a member's change of the entry's use turns it off (L2)");
+    assert.equal(await trailCount("revoke"), before + 2, "a revoke line each");
     // An owner's change of the host keeps their own consent.
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, host: "ci2.example.com", api_token: BUILD_NEW, members_may_use: true } }));
-    await asOwner(() => ownerRecs.update("build_connections", "ci", { title: "ci", data: { ...ci, host: "ci3.example.com", api_token: BUILD_NEW, members_may_use: true } }));
+    await on(true, { host: "ci2.example.com", api_token: BUILD_NEW });
+    await on(true, { host: "ci3.example.com", api_token: BUILD_NEW });
     assert.equal(await flag(), true, "an owner's own edit keeps it");
     // The form a member is offered leaves the switch out; an owner's has it.
     const { pageActions } = await import("../src/record-page-routes.js");
-    const row = (await ra.getFor(A.orgId, "build_connections", "ci", { role: "owner", userId: "user_owner_a" }))!;
-    const formOf = async (role: "owner" | "member") => (await pageActions(barea, row, { role, userId: `user_${role}_a` }, { org: A.orgId }))
+    const row = (await ra.getFor(A.orgId, "build_connections", "ci", { role: "owner", userId: own.userId }))!;
+    const formOf = async (role: "owner" | "member", userId: string) => (await pageActions(barea, row, { role, userId }, { org: A.orgId }))
       .find((x) => x.kind === "edit")?.fields?.map((f: any) => f.name) ?? null;
-    const [of, mf] = [await formOf("owner"), await formOf("member")];
+    const [of, mf] = [await formOf("owner", own.userId), await formOf("member", mem.userId)];
     assert.ok(of?.includes("members_may_use"), `an owner's edit form has it: ${JSON.stringify(of)}`);
     assert.ok(mf && !mf.includes("members_may_use") && mf.includes("host"), `a member's does not: ${JSON.stringify(mf)}`);
-    ok("mold_v0-322: on, a member's session receives the record whole and redacts it; a member's other edit keeps it; off later, a session already started keeps its frozen record, the next gets none; a member's new host or token turns it off (a revoke line each); an owner's edit keeps it; a member's form leaves it out");
+    ok("mold_v0-322: a member's new host, own token or change of the entry's use turns it off (a revoke line each); an owner's edit keeps it; a member's form leaves it out");
   }
 
   // ---------- 4. no secret anywhere ----------
