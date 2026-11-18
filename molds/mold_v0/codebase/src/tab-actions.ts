@@ -39,6 +39,7 @@ import { fill } from "./vocabulary.js";
 import { packs } from "./packs.js";
 import { findArea, may, recordAreas } from "./record-areas.js";
 import { uploadMax } from "./record-files.js";
+import { formOffers } from "./secret-binding.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.status(status).json(await fn(req, res)); }
@@ -146,7 +147,7 @@ export function tabActionAppRouter(): Router {
     const area = findArea(a.area!), role = roleOf(res);
     const actor = { role, userId: session(res).user ?? null };
     const allowed = !!area && !areaOpWithheld(area.name, "create") && (role === null || canAccount(role, "edit")) && may(area, "read", actor) && may(area, "create", actor);
-    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.filter(personSets).map(formField), // mold_v0-309: no field only the app's actions set
+    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.filter(personSets).filter(formOffers(area, role)).map(formField), // mold_v0-309: no field only the app's actions set (mold_v0-322: nor an owners' opt-in)
       // mold_v0-256 (flag record_pages): the Key filled from the Title, where the area says so.
       ...((area as { key_from_title?: boolean }).key_from_title && featureOn("record_pages") ? { key_from_title: true } : {}) } : null, upload_max: area ? uploadMax(area) : null };
   };

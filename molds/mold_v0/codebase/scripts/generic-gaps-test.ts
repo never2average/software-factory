@@ -133,8 +133,8 @@ try {
     const put = (key: string, data: Record<string, unknown>) => call("PUT", member.token, `/api/data/incidents/${key}`, { title: key, data: { severity: "high", ...data } });
     const paused = await call("POST", member.token, "/api/data/incidents", { key: "inc-2", title: "x", data: { severity: "high", customer: "globex" } });
     assert.equal(paused.status, 400, JSON.stringify(paused.body));
-    assert.match(paused.body.error, /globex is not a Customers record whose status is active/, "a paused customer: refused, in words");
-    assert.match((await call("POST", member.token, "/api/data/incidents", { key: "inc-2", title: "x", data: { severity: "high", customer: "acme", endpoint: "acme-old" } })).body.error, /acme-old is not a Endpoints record whose status is live/, "a retired endpoint: refused");
+    assert.match(paused.body.error, /globex is not one of the Customers whose status is active/, "a paused customer: refused, in words");
+    assert.match((await call("POST", member.token, "/api/data/incidents", { key: "inc-2", title: "x", data: { severity: "high", customer: "acme", endpoint: "acme-old" } })).body.error, /acme-old is not one of the Endpoints whose status is live/, "a retired endpoint: refused");
     const starter = await call("POST", member.token, "/api/data/incidents", { key: "inc-2", title: "x", data: { severity: "high", customer: "initech" } });
     assert.equal(starter.status, 409, JSON.stringify(starter.body));
     assert.equal(starter.body.error, "Incidents are opened for customers on a support plan only (growth or enterprise).", "a check on save: refused with its message");

@@ -75,7 +75,7 @@ import { configProblems, PackAgentProfileSchema, PackRecipeSchema, packRecipePro
 
 import { CheckSchema } from "./check-spec.js";
 import { ConnectionTestSchema, connectionTestProblems } from "./connection-test-config.js";
-import { connectionEnvProblems } from "./connection-env-config.js";
+import { connectionEnvProblems, membersFieldProblems } from "./connection-env-config.js";
 export { z };
 
 /** The workspace (a customer account) a tool call or a route works for. */
@@ -3294,6 +3294,8 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     if (profileIds.has(r.data.id)) problems.push(at(`agent profile ${r.data.id} is declared twice`));
     profileIds.add(r.data.id);
   }
+  // mold_v0-322: a members_field nothing else of the pack sets or decides.
+  for (const m of membersFieldProblems(p.agentProfiles ?? [], p.recordAreas ?? [], p.objectStorage)) problems.push(at(m));
   const knownProfile = (id: string | undefined) => !id || id === DEFAULT_PROFILE || profileIds.has(id);
   // mold_v0-303: the recipes it declares (each id once, its files' paths and sizes); a recipe another pack declares or
   // staff keep is checked by the build (scripts/gen-packs.mjs) and when a session starts.

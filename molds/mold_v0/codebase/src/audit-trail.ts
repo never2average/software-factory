@@ -70,7 +70,7 @@ export function setAuditForTest(s: Partial<AuditSettings> | null) { testSettings
 export type Channel = "console" | "api" | "mcp" | "admin_console" | "admin_mcp" | "run" | "system";
 export type ActorKind = "user" | "key" | "staff" | "agent_run" | "system";
 export interface AuditActor { kind: ActorKind; id: string | null; key_id?: number | null; scopes?: string[] }
-export type DataAction = "list" | "read" | "reveal" | "export" | "create" | "update" | "move" | "delete";
+export type DataAction = "list" | "read" | "reveal" | "export" | "create" | "update" | "move" | "delete" | "grant" | "revoke";
 export type DataTarget = "record" | "file" | "run_result";
 
 interface Ctx {

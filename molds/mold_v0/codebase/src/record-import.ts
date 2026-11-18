@@ -31,7 +31,8 @@
  */
 import { canonical } from "./data-repositories.js";
 import { PackError, RECORD_KEY } from "./pack-api.js";
-import { adminRecords, asWriterUnlessSet, assertMayImport, checkRecord, onSaveChecks, isReadOnlyArea, may, platformStored, SYSTEM_ACTOR, workspaceRecords, workspaceStored, type Actor, type RecordArea } from "./record-areas.js";
+import { adminRecords, asWriterUnlessSet, assertMayImport, checkRecord, consentWriter, onSaveChecks, isReadOnlyArea, may, platformStored, SYSTEM_ACTOR, workspaceRecords, workspaceStored, type Actor, type RecordArea } from "./record-areas.js";
+import { membersFlagWrite } from "./secret-binding.js";
 
 /** At most this many rows per import (the record store's batch). */
 export const IMPORT_MAX_ROWS = 1000;
@@ -205,6 +206,9 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
       }
       delete fields[life.field];
     }
+    // mold_v0-322: a connection's opt-in for members' sessions is set by an owner only (the write refuses it too).
+    try { membersFlagWrite(area, consentWriter(actor, null), before?.data ?? null, fields); }
+    catch (e) { if (!(e instanceof PackError)) throw e; errors.push(e.message); report("invalid"); continue; }
     const kept = { ...(before?.data ?? {}) };
     if (life) delete kept[life.field];
     const merged = { ...kept, ...fields };

@@ -58,6 +58,7 @@ const PACK = {
       { name: "use_for_files", label: "Keep this workspace's files here", type: "boolean" },
       { name: "status", label: "Last test", type: "enum", options: ["untested", "working", "failing"] },
       { name: "tested", label: "Tested on", type: "date" },
+      { name: "use_in_builds", label: "Use in builds", type: "boolean" },
     ],
     permissions: { read: ALL, create: ["owner"], update: ["owner"], delete: ["owner"] },
     contract: { provenance: ["people"], actions: { read: ALL, export: { none: "keys" }, create: ["owner"], update: ["owner"], move: { none: "no lifecycle" }, delete: ["owner"],
@@ -65,6 +66,8 @@ const PACK = {
     detail: { tabs: [{ label: "Details", sections: [{ title: "Where", fields: ["bucket", "endpoint", "use_for_files"] }] }],
       actions: [{ kind: "test_storage", place: "primary", label: "Test", roles: ["owner"] }, { kind: "edit", place: "secondary" }] },
   }],
+  // mold_v0-322: the same area given to agent sessions by another flag: its Test names both.
+  agent_profiles: [{ id: "builder", name: "Builder", connection_env: [{ area: "fx_storage", use: "use_in_builds", prefix: "STORE_", fields: { BUCKET: "bucket", SECRET: "secret_access_key" } }] }],
   object_storage: { area: "fx_storage", fields: { bucket: "bucket", endpoint: "endpoint", access_key_id: "access_key_id", secret_access_key: "secret_access_key", use: "use_for_files", status: "status", tested: "tested" } },
 };
 
@@ -219,6 +222,7 @@ try {
     assert.equal(t.body.ok, true, JSON.stringify(t.body));
     assert.deepEqual(t.body.steps.map((s: any) => s.step), ["write", "read", "delete"]);
     assert.match(t.body.words, /^It works: a small test file was written to ws-a-files, read back and deleted/);
+    assert.match(t.body.words, /This workspace's files are kept there\. Turn on "Use in builds" for agent sessions to receive it\.$/, `both flags the pack declares for the area, by label (mold_v0-322): ${t.body.words}`);
     assert.equal(s3.list("ws-a-files", storage.TEST_PREFIX).length, before, "nothing left behind");
     const after = await ra.getFor(A.orgId, "fx_storage", "a-files", owner);
     assert.equal(after!.data.status, "working"); assert.equal(after!.data.tested, new Date().toISOString().slice(0, 10));

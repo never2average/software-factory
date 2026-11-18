@@ -11,7 +11,7 @@ import { ContextError, contextLargeBody, contextRoutes } from "./account-context
 import { JourneyError, journeyRoutes, journeysLargeBody } from "./journeys.js";
 import { TipError, tipRoutes } from "./tips.js";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { withTenant } from "./tenant-scope.js";
+import { asConsole, withTenant } from "./tenant-scope.js";
 import { asViewerOf, teamsOn } from "./visibility.js";
 import { leaveAllTeams } from "./teams.js";
 import { workspaceCharges } from "./run-charges.js";
@@ -542,7 +542,8 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   res.locals.viaCookie = c.viaCookie;
   // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only; mold_v0-259
   // (flag teams): and, for a person who is not one of its owners, only the records they may see (src/visibility.ts).
-  withTenant(org.orgId, () => asViewerOf({ role: s.accountRole ?? null, userId: s.user ?? null }, () => next()));
+  // mold_v0-322: and it is the console's door (src/tenant-scope.ts asConsole).
+  withTenant(org.orgId, () => asViewerOf({ role: s.accountRole ?? null, userId: s.user ?? null }, () => asConsole(() => next())));
 }
 
 export function appRouter() {

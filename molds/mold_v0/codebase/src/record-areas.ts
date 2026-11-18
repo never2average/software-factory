@@ -35,13 +35,13 @@ import { packs } from "./packs.js";
 import { crumbChain, tabShownAreas, type CrumbHop, type CrumbTab } from "./record-crumbs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
-import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
+import { asPlatform, currentTenant, inConsole, withTenant } from "./tenant-scope.js";
 import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
 import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
-import { secretsToClear } from "./secret-binding.js";
+import { membersFlagWrite, secretsToClear } from "./secret-binding.js";
 import { asViewerOf, mayShare, VISIBILITY_COLUMNS, visibilityForWrite, visibilityOf, visibilityShown, type StoredVisibility, type VisibilityWrite } from "./visibility.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -369,7 +369,8 @@ export async function checkRecord(area: { name: string; fields: readonly Field[]
       }
       const out_ = keys.filter((k) => !kept.includes(k));
       const label = (n: string) => (target.fields.find((x) => x.name === n)?.label ?? n).toLowerCase();
-      if (out_.length) problems.push(`field ${f.name} of ${what}: ${out_.slice(0, 5).join(", ")} ${out_.length > 1 ? "are not" : "is not"} a ${target.label} record ${referenceWhereWords(f.where, label)}`);
+      // mold_v0-322: no article before a label ("is not a Outside products record"): one of the area's records.
+      if (out_.length) problems.push(`field ${f.name} of ${what}: ${out_.slice(0, 5).join(", ")} ${out_.length > 1 ? "are not among" : "is not one of"} the ${target.label} ${referenceWhereWords(f.where, label)}`);
     }
   }
   if (problems.length) throw new PackError(problems.join("; "), 400);
@@ -1025,6 +1026,21 @@ export async function onSaveChecks(orgId: number, area: RecordArea, key: string,
   }
 }
 
+/**
+ * mold_v0-322: who may turn a connection's members' opt-in on or off: "owner", an owner by hand in the console (signed
+ * in: src/tenant-scope.ts inConsole); "owner_elsewhere", an owner through any other door (their API key, an outside MCP
+ * client, the stdio server, an agent session's tool call: a prompt could steer those), refused in words saying to use
+ * the console; "other", anyone else (a member, billing, a pack tool, a repository's index, the system).
+ */
+export function consentWriter(actor: Actor, meta: WriteMeta | null): "owner" | "owner_elsewhere" | "other" {
+  if (actor.role !== "owner" || meta || writerOf(actor, meta).by !== "people") return "other";
+  return inConsole() && !currentVia() ? "owner" : "owner_elsewhere";
+}
+/** Each opt-in a write turned on or off: a data-trail line of its own (grant, revoke), never a value. */
+const auditMembers = (orgId: number, area: RecordArea, key: string, turned: { on: boolean }[]) => {
+  for (const x of turned) auditData(orgId, { action: x.on ? "grant" : "revoke", pack: area.pack, area: area.name, key });
+};
+
 /** An append-only area's record (mold_v0-195): added once, never changed or deleted. */
 const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.label} records are append-only: ${key} is never changed or deleted once added`, 409);
 
@@ -1051,9 +1067,14 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const enc = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   // mold_v0-309: a field only the app's actions set: a person's write keeps it as stored (another value is refused).
   const own = actionFieldsOf(area, actor, meta, enc.input, prev?.opened ?? null);
-  const given = own.input, carried = { ...enc.carried, ...own.carried };
+  const carried: Record<string, unknown> = { ...enc.carried, ...own.carried };
   // mold_v0-312: a kept secret bound to where it goes (src/secret-binding.ts) is cleared when that changes without it.
-  for (const k of secretsToClear(area, prev?.opened ?? null, given)) delete carried[k];
+  for (const k of secretsToClear(area, prev?.opened ?? null, own.input)) delete carried[k];
+  // mold_v0-322: a connection's opt-in for members' sessions is an owner's, set by hand; another's write keeps it as
+  // stored, refused when it gives another value, and turns it off when it changes where the secrets go.
+  const members = membersFlagWrite(area, consentWriter(actor, meta), prev?.opened ?? null, own.input);
+  const given = members.input;
+  Object.assign(carried, members.carried);
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
@@ -1062,6 +1083,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
     const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
     await onSaveChecks(orgId, area, key, t, data, prev ? "update" : "create", actor);
     const r = await writeRow(orgId, area, key, t, data, prev, w, meta, null, vis);
+    auditMembers(orgId, area, key, members.turned);
     await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data }, w) });
     return r;
   }
@@ -1080,6 +1102,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const after = { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, w = writerOf(actor, meta);
   await onSaveChecks(orgId, area, key, t, { ...data, [field]: state }, prev ? "update" : "create", actor);
   const r = await writeRow(orgId, area, key, t, after, prev, w, meta, null, vis);
+  auditMembers(orgId, area, key, members.turned);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
   return r;
 }

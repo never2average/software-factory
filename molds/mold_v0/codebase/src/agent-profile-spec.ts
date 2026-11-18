@@ -278,10 +278,18 @@ export const templateNames = (t: string): string[] => [...new Set([...t.matchAll
 const asWords = (v: unknown): string => (v == null ? "" : Array.isArray(v) ? v.map(asWords).filter(Boolean).join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v));
 /**
  * A start_agent action's first message with the record filled in: {{key}} its key, {{title}} its title, {{<field>}} a
- * field's value (an empty one: nothing). Filled on the server from the record as the person reads it.
+ * field's value (an empty one: nothing). Filled on the server from the record as the person reads it. mold_v0-322: a
+ * line whose every name is empty on the record is left out ("Network: {{network}}." with no network says nothing,
+ * never "Network: ."); a line with one value or none to fill stays.
  */
 export function fillTemplate(t: string, r: { key: string; title: string | null; data: Record<string, unknown> }): string {
-  return t.replace(TEMPLATE_NAME, (_m, n: string) => asWords(n === "key" ? r.key : n === "title" ? (r.title ?? r.key) : r.data[n])).slice(0, 20_000);
+  const value = (n: string) => asWords(n === "key" ? r.key : n === "title" ? (r.title ?? r.key) : r.data[n]);
+  const lines = t.split("\n").flatMap((line) => {
+    const names = [...line.matchAll(TEMPLATE_NAME)].map((m) => m[1]!);
+    if (names.length && names.every((n) => !value(n).trim())) return [];
+    return [line.replace(TEMPLATE_NAME, (_m, n: string) => value(n))];
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 20_000);
 }
 /** The first message an on_start template makes of the person's words: {{message}} replaced, else they follow it. */
 export function applyOnStart(template: string | null | undefined, message: string): string {

@@ -9,6 +9,7 @@
  *     "where": { "kind": "files" },               plain fields the record must hold (optional)
  *     "use": "use_for_files",                     a boolean field the record must have on (optional)
  *     "prefix": "STORAGE_",                       put before every variable's name (optional)
+ *     "members_field": "members_may_use",         a boolean field only owners set: on, members' sessions receive it too (optional)
  *     "fields": { "BUCKET": "bucket", "ENDPOINT": "endpoint", "ACCESS_KEY_ID": "access_key_id", "SECRET_ACCESS_KEY": "secret_access_key" }
  *   }]}]
  *
@@ -46,6 +47,13 @@ export const ConnectionEnvSchema = z.object({
    * hold the secrets themselves.
    */
   roles: z.array(z.enum(["owner", "billing", "member"])).min(1).max(3).optional(),
+  /**
+   * mold_v0-322: a plain boolean field of the area that only the workspace's owners set, by hand (src/secret-binding.ts
+   * membersFlagWrite): on a record, a session a member starts receives that record's values too (the record they may
+   * read, as frozen at the start). Off (or unset), members receive nothing of it. A member's change of where its secrets
+   * go (a delivered field, a secret typed again) turns it off.
+   */
+  members_field: fieldName.optional(),
   // The names are checked by connectionEnvProblems (a key's own error here would only say "Invalid key").
   fields: z.record(z.string().min(1).max(64), fieldName)
     .refine((f) => Object.keys(f).length >= 1 && Object.keys(f).length <= CONNECTION_VARS_MAX, `1 to ${CONNECTION_VARS_MAX} variables`),
@@ -56,7 +64,7 @@ export const ConnectionEnvListSchema = z.array(ConnectionEnvSchema).min(1).max(C
 /** Each variable an entry sets: its full name and the field it comes from. */
 export const envVars = (c: ConnectionEnv): { env: string; field: string }[] => Object.entries(c.fields).map(([k, f]) => ({ env: `${c.prefix ?? ""}${k}`, field: f }));
 
-interface Area { name?: string; scope?: string; repository?: string; fields?: { name?: string; type?: string; encrypted?: boolean; multiple?: boolean }[]; contract?: { actions?: Record<string, unknown> }; lifecycle?: { field?: string } }
+interface Area { name?: string; scope?: string; repository?: string; fields?: { name?: string; type?: string; encrypted?: boolean; multiple?: boolean; set_by?: string }[]; contract?: { actions?: Record<string, unknown> }; lifecycle?: { field?: string } }
 
 /**
  * What is wrong with a profile's connection_env against its pack's own areas ([]: nothing): each area a workspace area
@@ -80,6 +88,15 @@ export function connectionEnvProblems(raw: unknown, areas: readonly unknown[], t
     const field = (n: string) => (a.fields ?? []).find((f) => f?.name === n);
     for (const n of Object.keys(c.where ?? {})) { const f = field(n); if (!f) out.push(`${at}.where: ${c.area} has no field ${n}`); else if (f.encrypted) out.push(`${at}.where: ${n} is encrypted: narrow by a plain field`); }
     if (c.use) { const f = field(c.use); if (!f) out.push(`${at}.use: ${c.area} has no field ${c.use}`); else if (f.type !== "boolean" || f.encrypted) out.push(`${at}.use: ${c.use} is a plain boolean field (the record in use)`); }
+    if (c.members_field) {
+      const f = field(c.members_field), m = c.members_field;
+      if (!f) out.push(`${at}.members_field: ${c.area} has no field ${m}`);
+      else if (f.type !== "boolean" || f.encrypted || f.multiple) out.push(`${at}.members_field: ${m} is a plain boolean field (on: members' sessions may receive this record's values)`);
+      else if (f.set_by !== undefined) out.push(`${at}.members_field: ${m} is set_by ${JSON.stringify(f.set_by)}: the workspace's owners set it by hand`);
+      if (a.lifecycle?.field === m) out.push(`${at}.members_field: ${m} is the lifecycle's field: a move would change it without an owner`);
+      if (m === c.use || Object.keys(c.where ?? {}).includes(m) || envVars(c).some((v) => v.field === m)) out.push(`${at}.members_field: ${m} is also the entry's use, where or a delivered field: give the owners' consent a field of its own`);
+      if ((c.roles ?? []).includes("member")) out.push(`${at}.members_field: roles already gives members every record: leave member out of roles to let owners decide per record`);
+    }
     if (reservedEnv(c.prefix) || reservedEnv(`${c.prefix}X`)) out.push(`${at}.prefix: ${c.prefix} starts names a program or the session reads itself: choose another prefix`);
     for (const v of envVars(c)) {
       const f = field(v.field);
@@ -95,4 +112,40 @@ export function connectionEnvProblems(raw: unknown, areas: readonly unknown[], t
     }
   }
   return out;
+}
+
+/**
+ * mold_v0-322: what else of the pack must never set or decide a `members_field` (the owners' consent is theirs alone,
+ * set by hand): another entry's `use` or `where` on the area (any profile's), the pack's object storage fields, a field
+ * a clock of the area names (its escalations write fields), and a page action that fills or writes it (a create_record's
+ * `input`, a test_connection's `status` or `tested`). [] when nothing.
+ */
+export function membersFieldProblems(profiles: readonly unknown[], areas: readonly unknown[], objectStorage?: unknown): string[] {
+  const out: string[] = [];
+  const entries = profiles.flatMap((p) => {
+    const id = (p as { id?: string })?.id ?? "?";
+    return ((p as { connection_env?: unknown[] })?.connection_env ?? []).flatMap((raw, i) => {
+      const r = ConnectionEnvSchema.safeParse(raw);
+      return r.success ? [{ at: `agent profile ${id}: connection_env[${i}]`, c: r.data }] : [];
+    });
+  });
+  const named = (v: unknown, m: string) => JSON.stringify(v ?? null).includes(JSON.stringify(m));
+  for (const { at, c } of entries) {
+    const m = c.members_field;
+    if (!m) continue;
+    for (const o of entries) if (o.c.area === c.area && (o.c.use === m || Object.keys(o.c.where ?? {}).includes(m)))
+      out.push(`${at}.members_field: ${m} is also ${o.at}'s ${o.c.use === m ? "use" : "where"}: the owners' consent is a field of its own`);
+    const os = objectStorage as { area?: string; fields?: Record<string, unknown> } | undefined;
+    if (os?.area === c.area && Object.values(os.fields ?? {}).includes(m)) out.push(`${at}.members_field: ${m} is one of the object storage's fields: the owners' consent is a field of its own`);
+    const area = (areas as { name?: string; clocks?: unknown }[]).find((a) => a?.name === c.area);
+    if (area && named(area.clocks, m)) out.push(`${at}.members_field: a clock of ${c.area} names ${m}: nothing but an owner sets the consent`);
+    for (const a of areas as { name?: string; detail?: { actions?: { kind?: string; area?: string; input?: Record<string, unknown>; probe?: { status?: string; tested?: string } }[] } }[])
+      for (const x of a?.detail?.actions ?? []) {
+        if (x?.kind === "create_record" && x.area === c.area && Object.prototype.hasOwnProperty.call(x.input ?? {}, m))
+          out.push(`${at}.members_field: ${a.name}'s create_record action fills ${m}: nothing but an owner sets the consent`);
+        if (x?.kind === "test_connection" && a.name === c.area && (x.probe?.status === m || x.probe?.tested === m))
+          out.push(`${at}.members_field: ${a.name}'s test_connection writes ${m}: nothing but an owner sets the consent`);
+      }
+  }
+  return [...new Set(out)];
 }

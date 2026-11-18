@@ -1290,6 +1290,10 @@ try {
       assert.equal(p.status, 200, JSON.stringify(p.body));
       const a = p.body.actions.find((x: { id: string }) => x.id === "start_agent.builder");
       assert.deepEqual([a?.label, a?.place, a?.disabled, a?.agent?.message], ["Build", "primary", null, "Build the application Shop (shop) on typescript: An online shop"], "the Build button, its message filled from the record");
+      // mold_v0-322: a line whose every name is empty on the record is left out (never "Network: ." or "Entities: ").
+      const { fillTemplate } = await import("../src/agent-profile-spec.js");
+      assert.equal(fillTemplate("Build {{title}}.\nNetwork: {{network}}.\nEntities: {{entities}}\n\nStack: {{stack}} ({{network}})\nThanks.", { key: "shop", title: "Shop", data: { stack: "typescript", entities: [] } }),
+        "Build Shop.\n\nStack: typescript ()\nThanks.", "empty lines left out; a line with one value kept");
       assert.ok(!(await page(view.token)).body.actions.some((x: { id: string }) => x.id === "start_agent.builder"), "a viewer is not offered it");
       assert.equal((await app(view.token, "POST", "/api/records/_page/fx_apps/shop/actions/start_agent.builder", {})).status, 403, "nor may take it");
       const r = await app(mem.token, "POST", "/api/records/_page/fx_apps/shop/actions/start_agent.builder", { message: "whatever the browser says", profile: "release-notes-writer" });

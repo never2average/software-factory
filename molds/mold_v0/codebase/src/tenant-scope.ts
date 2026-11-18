@@ -62,6 +62,16 @@ export function withViewer<T>(id: string | null, fn: () => T): T {
 }
 
 /**
+ * mold_v0-322: the console's door: a request a person makes signed in to the console (src/app.ts customerSession: its
+ * cookie or its session token), never an API key, an MCP client (OAuth or key), the stdio server or a run's worker
+ * call. What only a person in the console may do (an owner's consent that members' sessions receive a connection's
+ * keys, src/secret-binding.ts) asks it.
+ */
+const consoleDoor = new AsyncLocalStorage<true>();
+export const asConsole = <T>(fn: () => T): T => consoleDoor.run(true, fn);
+export const inConsole = (): boolean => consoleDoor.getStore() === true;
+
+/**
  * The tenant role of this database: app_tenant_<10 hex of md5(database name)> (roles are server-wide, so one per
  * database). Read at boot from app_tenant_role() (sql/migrations/0003_row_level_security.sql, named since
  * 0024_neutral_database_names; src/db.ts).

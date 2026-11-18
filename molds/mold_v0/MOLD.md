@@ -3121,7 +3121,8 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   sets nothing. Every save is a new version (a save names the version it edited, a newer one refuses it) and every
   change is audited (`agent_profile_changes`, with `migrated` for 0056's rewrite of the earlier shape, which lists what it
   dropped). A session freezes the profile and version it started with; `start_agent: {profile, first_message}` on a
-  record page or a list tab starts one from a record. Enforced on the server and in the runner: archived (409), an
+  record page or a list tab starts one from a record (`{{key}}`, `{{title}}`, `{{<field>}}` filled from it; mold_v0-322:
+  a line whose every name is empty on the record is left out, never "Network: ." or "Entities: "). Enforced on the server and in the runner: archived (409), an
   unpinned harness, a price removed since it was saved (409), and the governance policy's rules with the reference's
   codes.
 
@@ -4023,7 +4024,10 @@ console's Key vault (`src/workspace-storage.ts`, `src/storage.ts`).
   storage record; its own bucket alone is enough when the platform has none.
 - **Test**: the record page's `test_storage` action (owners, or the roles that may update the area) writes, reads and
   deletes one object under `ops/key-vault-test/` with the record's own settings (the Key vault's Test), says in plain
-  words what it found and writes `status` and `tested`. An edit leaves an encrypted field's hidden input empty to keep it
+  words what it found and writes `status` and `tested`. Its "It works" names the flags the pack declares for the area
+  by their labels: its own `use` ("Turn on \"In use\" to keep this workspace's files there") and each other `use` a
+  profile's `connection_env` names on it ("Turn on \"Use in builds\" for agent sessions to receive it", or that they
+  receive it; mold_v0-322). An edit leaves an encrypted field's hidden input empty to keep it
   (mold_v0-305 lets an area with encrypted fields take an `edit` action).
 - **Merged tabs** take a per-area `filter` (`areas: [{area, filter}]`): a shared catalog's entries of one kind beside the
   workspace's own rows of that kind.
@@ -4062,7 +4066,9 @@ deciding where a kept secret goes, without typing the secret again, clears it: a
 its address or sits in its host (for the encrypted fields its headers carry), every plain field a `connection_env` entry
 delivers (for the encrypted ones it delivers), and the object storage area's endpoint (for both keys). Test:
 `npx tsx scripts/connection-test-test.ts` (a stand-in service on 127.0.0.1, `APP_CONNECTION_TEST_STANDIN`, never in
-production).
+production). An outside product's own API (a workspace area of the products a build calls) is tested with the same
+pack config, no mold code (mold_v0-322): a `test_connection` probe on that area, its address from the record's url field
+and its key in a header, with `hosts` naming the product's API hosts (a host nobody listed is never called, by design).
 
 **Signed kinds (mold_v0-313)** (`src/connection-test-signed.ts`): a probe may name a `kind` other than the default
 `"http"`, for a building block a bearer header cannot test. The kind fixes its hosts and its call; the pack names only
@@ -4226,6 +4232,50 @@ its record is unchanged, by every instance; the redaction lookups never audit or
 fields) from everything the wake writes, and the server does again (appendEvents, completion, wakeTurn: runSecrets).
 Each record opened is a data-trail read (its key, never a value); the run's `credentials` event lists the names. Test:
 `npx tsx scripts/connection-env-test.ts`.
+
+**Members' builds (mold_v0-322)**: an entry may name `members_field`, a plain boolean field of the area (its own: not
+the entry's `use`, a `where` or a delivered field; not `set_by`, not the lifecycle's; `roles` must then leave `member`
+out; and nothing else of the pack may set or decide it: another entry's `use` or `where` in any profile, the object
+storage's fields, a field a clock of the area names, a create_record's `input` or a test_connection's status or tested
+field: `src/connection-env-config.ts` membersFieldProblems, in validatePack), meaning "sessions members start may
+receive this record's values". Example: `{"area": "build_connections", "use": "use_in_builds", "prefix": "BUILD_",
+"members_field": "members_may_use", "fields": {"HOST": "host", "TOKEN": "api_token"}}` with `{"name": "members_may_use",
+"label": "Members' builds may use its keys", "type": "boolean"}` on the area.
+- **Only an owner, by hand, in the console** (`src/secret-binding.ts` membersFlagWrite, in the record store's write
+  `src/record-areas.ts` putWorkspaceNow, so every door: the data API, a create, a batch, the record page's actions, the
+  MCP tools, an import's preview and write in `src/record-import.ts`; who is `src/record-areas.ts` consentWriter): a
+  person whose role is owner, signed in to the console (`src/app.ts` customerSession runs the request under
+  `src/tenant-scope.ts` asConsole), not inside an agent session's tool call. An owner through their API key, an outside
+  MCP client (OAuth or key) or the stdio server is refused in words: `... is turned on or off by an owner in the console
+  (signed in), never through an API key, an MCP client or an agent: leave it out here` (a prompt-injected outside agent
+  holding an owner's credential cannot flip it). Anyone else (a member, a billing person, an account key, a pack tool,
+  the system) giving another value is refused (403, by its label: `"Members' builds may use its keys" of Build
+  connections records is for the workspace's owners to set: leave it out`); leaving it out keeps it as stored. Forms
+  offer it to owners only (the record page's edit and create, a tab's create, the import form).
+- **Anyone else's change of what decides turns it off**: a write by anyone but such an owner that changes a plain field
+  the entry delivers, its `where` or `use` fields, or types (or clears) a delivered secret, stores it off, even when it
+  was sent on (with the binding above, a new host also clears the token). An owner's own edit keeps it.
+- **Audited**: each change on or off (an owner's, or turned off by another's edit) is a data-trail line of its own,
+  `grant` or `revoke` (migration 0073 widens the action's CHECK; "Let members' sessions use the keys of ci in Build
+  connections"), with the record's key, never a value. These lines are written only while the profile's `audit.data` is
+  on (the data trail); the record's change history records the change and who made it either way.
+- **At start**: a member outside `roles` receives the entry when its one record (as they see it: one they may read,
+  visibility honoured; they need not be able to update the area) matching `where` and `use` has the opt-in on; it is
+  frozen with `members: true`, the `members_field`, the entry's `roles` and who started the session (`starter`). Off,
+  nothing of it, and the first system message names the switch: `Build connections: a workspace owner has not turned on
+  "Members' builds may use its keys" for the record in use, so its variables are not set for sessions members start.`
+- **Every wake** (`src/connection-env.ts` membersMayStill): a member's entry is delivered only while the stored record
+  still has the opt-in on, and the starter is still in the workspace (the directory's role now: removed or suspended,
+  nothing) with a role that receives it (in `roles` and may update the area, or a member) and may read the record now
+  (made private to its owner: nothing). Else that wake gets nothing of it and the session is told: `Build connections: a
+  workspace owner turned off members' use of its keys, or the person who started this session may no longer receive
+  them, so its variables were not set for this wake.` So turning it off reaches a member's session already started
+  (parked or between wakes) at its next wake; a wake already running keeps what it was given until it ends (the values
+  are in its sandbox), and stays redacted. Turned on again with the record otherwise unchanged, the next wake receives it.
+  Redaction (`connectionSecrets`) never applies these checks: it redacts the record's current values whoever receives them.
+- Everything else holds: all or nothing per entry, the binding, redaction on every instance, never shown in the console,
+  the chat or a log, and whoever starts the session can read every value delivered (so turn it on only for keys members
+  may hold). Test: `npx tsx scripts/connection-env-test.ts` (sections 1 and 5).
 
 ## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
 
@@ -4482,7 +4532,7 @@ is not a capability and has no flag. The fixture `scripts/fixtures/packs/fixture
 5. **References limited by a condition, checks on save** (`record_rules`). A reference field's
    `where` (one test of `equals`, `in`, `not_in`, `empty`, or `all` of up to 6) on its target's fields: every write
    (the data API, the forms, the MCP tools, an import's preview) refuses a key whose record it does not keep, read in
-   the writer's workspace ("acme-old is not a Endpoints record whose status is live"); the record picker lists only the
+   the writer's workspace ("acme-old is not one of the Endpoints whose status is live"; mold_v0-322: no article before a label); the record picker lists only the
    records it keeps and says so under the field. An area's `on_save`: a declarative check (mold_v0-196) with inputs from
    the record being saved (`@field`, `$key`, `$title`, a literal), on create or update; a no is refused (409) with the
    declared message. The build checks the fields, the enum values, the check, its inputs (`gapBuildProblems`).
