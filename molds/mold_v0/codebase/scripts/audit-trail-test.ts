@@ -497,7 +497,7 @@ async function inner() {
       assert.ok(slice.every((e) => typeof e.has_request === "boolean" && !("request" in e)), "the list says whether an entry has a request, never carries it");
       const mcpReq = await db.query<any>("SELECT request FROM audit_platform_events WHERE org_id = $1 AND path LIKE '/mcp tools/call:fixture_vulns_list_audit_findings%' LIMIT 1", [o.org.orgId]);
       assert.equal(mcpReq[0]!.request.tools[0].name, "fixture_vulns_list_audit_findings", "an MCP call: its tool and arguments");
-      assert.match(mcpReq[0]!.request.headers.authorization, /^Bearer oct_[A-Za-z0-9]{6}••••$/, "the key: its public prefix only");
+      assert.match(mcpReq[0]!.request.headers.authorization, /^Bearer oct_[A-Za-z0-9_-]{6}••••$/, "the key: its public prefix only (base64url: - and _ too)");
       const csv = await app.req("GET", "/api/audit/platform.csv", o.owner);
       assert.ok(csv.text.includes(ownerEmail) && csv.text.includes("Called Vulnerabilities"), "the CSV: the email and the sentence");
       ok("each entry keeps its request, masked as stored (a session token as 'Bearer ••••', a key by its prefix, a sealed area's values masked, an MCP call's tool); one entry's export: owners their own (a staff request withheld, no address), staff any; never in the list");
