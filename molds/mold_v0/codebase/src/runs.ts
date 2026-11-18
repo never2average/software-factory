@@ -332,6 +332,8 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
     return { requeued: rows.filter((r) => r.status === "queued").length, failed: rows.filter((r) => r.status === "failed").length, cancelled: rows.filter((r) => r.status === "cancelled").length };
   }));
   await removeObjects(gone);
+  // mold_v0-320: sealed values a run was given that its end missed (a delivery racing the end), or past their time.
+  await asPlatform(async () => (await import("./connection-env.js")).sweepDelivered(await getDb())).catch((e) => console.error(`run sweep: delivered values: ${String((e as Error).message).slice(0, 200)}`));
   // The workspace agent's wakes whose runner went silent (mold_v0-243): their sessions settle (a crash, src/harness-sessions.ts).
   for (const id of wakes) await import("./harness-sessions.js").then((h) => h.reconcileWake(id)).catch((e) => console.error(`run ${id}: its agent session: ${(e as Error).message}`));
   // mold_v0-014: GitHub App tokens of ended runs that GitHub was not yet told to revoke (a process that ended before its

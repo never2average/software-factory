@@ -428,7 +428,7 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
   if (run.pack === "_agent" && Array.isArray(run.spec?.connection_env) && run.spec.connection_env.length && opts.mint !== false) {
     const C = await import("./connection-env.js");
     const got = await C.connectionEnvValues(run.org_id, run.spec.connection_env, { strict: opts.strict, audit: true });
-    if (run.id) { C.rememberDelivered(run.id, got.delivered); await C.noteChangedConnections(run.id, run.org_id, got.changed); }
+    if (run.id) { await C.rememberDelivered({ id: run.id, org_id: run.org_id }, got.delivered); await C.noteChangedConnections(run.id, run.org_id, got.changed); }
     out.credentials.push(...got.delivered); out.missing.push(...got.missing);
   }
   if (!names.length) return out;

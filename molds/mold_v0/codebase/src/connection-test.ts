@@ -353,7 +353,7 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
   const { workspaceStored, getFor, workspaceRecords, may } = await import("./record-areas.js");
   // mold_v0-312: this record as the person sees it (visibility honoured), and theirs to update: else no test at all.
   if (!(await getFor(orgId, area.name, key, actor)) || !may(area, "update", actor)) throw new PackError(`no ${area.name} record ${key}`, 404);
-  takeTest(orgId);
+  await takeTest(orgId);
   const row = (await workspaceStored(orgId, area, [key])).get(key);
   if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
   const fieldOf = (n: string) => area.fields.find((f) => f.name === n);
@@ -391,16 +391,30 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
   }
   return result;
 }
-/** mold_v0-312: at most TESTS_PER_MINUTE tests a minute per workspace (this process): never a scanner. */
+/**
+ * mold_v0-312: at most TESTS_PER_MINUTE tests a minute per workspace: never a scanner. mold_v0-320: counted in the
+ * database (src/rate-limits.ts hit: rate_limit_hits, one fixed one-minute window per workspace, one statement per test),
+ * so the limit holds across every server instance; and in this process too, so a database that cannot count still
+ * holds this instance to it.
+ */
 export const TESTS_PER_MINUTE = 10;
+/** A test's reset starts a new shared count (tests only: always 0 in the app, so every instance counts in one bucket). */
+let round = 0;
+const BUCKET = (orgId: number) => `connection-test:${orgId}${round ? `:t${round}` : ""}`;
 const recent = new Map<number, number[]>();
-function takeTest(orgId: number) {
+async function takeTest(orgId: number) {
+  const refuse = () => new PackError(`This workspace has tested ${TESTS_PER_MINUTE} connections in the last minute: try again in a minute`, 429);
   const now = Date.now(), list = (recent.get(orgId) ?? []).filter((t) => now - t < 60_000);
-  if (list.length >= TESTS_PER_MINUTE) throw new PackError(`This workspace has tested ${TESTS_PER_MINUTE} connections in the last minute: try again in a minute`, 429);
+  if (list.length >= TESTS_PER_MINUTE) throw refuse();
+  const { hit } = await import("./rate-limits.js");
+  if (await hit([{ bucket: BUCKET(orgId), limit: TESTS_PER_MINUTE, what: "workspace" }], 60)) throw refuse();
   list.push(now); recent.set(orgId, list);
 }
-/** Tests only: forget the minute's tests. */
-export const resetTestRateForTest = () => recent.clear();
+/**
+ * Tests only: forget the minute's tests: this process's count, and (unless `processOnly`: what a second instance, which
+ * never counted here, sees) the shared one.
+ */
+export const resetTestRateForTest = (opts: { processOnly?: boolean } = {}) => { recent.clear(); if (!opts.processOnly) round++; };
 /** The status written: "working" or "failing", or the enum's option whose value or label says so. */
 function statusValue(f: { type?: string; options?: readonly (string | { value: string; label?: string })[] } | undefined, ok: boolean): string {
   const want = ok ? "working" : "failing";

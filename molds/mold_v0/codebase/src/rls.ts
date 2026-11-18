@@ -119,7 +119,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // Programs and the holds of model requests in flight (mold_v0-291, 0066_nested_runs): the platform's own.
   "harness_programs", "harness_program_versions", "harness_gateway_holds",
   // A shared record's own databases and their sealed connection strings (mold_v0-282, 0061_record_resources): the shell's code only.
-  "record_resources"];
+  "record_resources",
+  // The sealed values a running attempt was given, for redaction on any instance (mold_v0-320, 0072_run_delivered_secrets): the shell's code only.
+  "run_delivered_secrets"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

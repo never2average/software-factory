@@ -171,31 +171,100 @@ export async function noteChangedConnections(runId: string, orgId: number, chang
 }
 
 // ---------------------------------------------------------------- what each run was given (the redaction's set)
+//
+// mold_v0-320: the app runs on many instances at once (serverless), and a wake's requests (its events, its answers, its
+// completion) reach any of them. What a run was given is therefore kept twice:
+//   in this process   `given`, for the instance that delivered it (no query; up to WAKE_KEEP_MS)
+//   in the database   run_delivered_secrets (0072): each value SEALED with the workspace's data key (orgcrypto sealBytes,
+//                     the encrypted fields' key and scheme), its additional data binding it to its workspace, run and
+//                     digest (a keyed fingerprint, orgMac: one row per value). Never a plain value at rest, never a plain
+//                     hash. Opened by any instance for its redaction; deleted when the attempt ends (src/workspace-
+//                     store.ts endAttempt, in the transaction that ends it), and by the run sweep (src/runs.ts
+//                     sweepRuns) past expires_at or once the run is no longer running.
 
 const WAKE_KEEP_MS = 6 * 3600_000;
+/** At most this long a run's values stay in the database when nothing ended its attempt (the sweep removes them then). */
+export const DELIVERED_KEEP_HOURS = 24;
 const given = new Map<string, { at: number; secrets: { name: string; value: string }[] }>();
-/** Keep what a run was given (its secrets), so what it writes is redacted of those values even after a rotation. */
-export function rememberDelivered(runId: string, delivered: readonly Delivered[]) {
+// The row's name is bound too, so a relabelled row no longer opens (its label is what redacted text shows).
+const deliveredAad = (orgId: number, runId: string, digest: string, name: string) => `run-delivered/v1/${orgId}/${runId}/${digest}/${encodeURIComponent(name)}`;
+const DIGEST_PURPOSE = "run-delivered/v1";
+
+/**
+ * Keep what a run was given (its secrets), so what it writes is redacted of those values on every instance, even after
+ * a rotation: in this process, and sealed in the database for the life of the attempt. Never throws: a value that could
+ * not be kept for the other instances is said in the log (by its name, never its value), and the frozen records' current
+ * values are still redacted everywhere (connectionSecrets).
+ */
+export async function rememberDelivered(run: { id: string; org_id: number }, delivered: readonly Delivered[]): Promise<void> {
   const now = Date.now();
   for (const [k, v] of given) if (now - v.at > WAKE_KEEP_MS) given.delete(k);
-  const was = given.get(runId)?.secrets ?? [];
+  const was = given.get(run.id)?.secrets ?? [];
   const add = delivered.filter((d) => !d.plain).map((d) => ({ name: d.name, value: d.value }));
-  given.set(runId, { at: now, secrets: [...was, ...add.filter((a) => !was.some((w) => w.value === a.value))] });
+  given.set(run.id, { at: now, secrets: [...was, ...add.filter((a) => !was.some((w) => w.value === a.value))] });
+  if (!add.length) return;
+  try {
+    const { orgMac, sealBytes } = await import("./orgcrypto.js");
+    const { getDb } = await import("./db.js");
+    const { asPlatform } = await import("./tenant-scope.js");
+    await asPlatform(async () => {
+      const db = await getDb();
+      for (const a of add) {
+        const digest = await orgMac(run.org_id, DIGEST_PURPOSE, a.value);
+        const name = a.name.slice(0, 300);
+        const sealed = (await sealBytes(run.org_id, Buffer.from(a.value, "utf8"), deliveredAad(run.org_id, run.id, digest, name))).toString("base64");
+        await db.query(`/* tenant: the leased run's own delivered values, by run id and its workspace */ INSERT INTO run_delivered_secrets (run_id, org_id, name, digest, sealed, expires_at)
+          SELECT id, org_id, $3, $4, $5, now() + make_interval(hours => $6) FROM runs WHERE id = $1 AND org_id = $2 AND status = 'running' FOR SHARE
+          ON CONFLICT (run_id, digest) DO NOTHING`, [run.id, run.org_id, name, digest, sealed, DELIVERED_KEEP_HOURS]);
+      }
+    });
+  } catch (e) {
+    console.error(`connection env: run ${run.id}: its connection values were not kept for the other instances' redaction (${add.map((a) => a.name).join(", ")}): ${String((e as Error).message).slice(0, 200)}`);
+  }
+}
+
+/** What run `runId` of workspace `orgId` was given, opened from the database (any instance's delivery). Never throws. */
+async function deliveredFromDb(runId: string, orgId: number): Promise<{ name: string; value: string }[]> {
+  try {
+    const { openBytes } = await import("./orgcrypto.js");
+    const { getDb } = await import("./db.js");
+    const { asPlatform } = await import("./tenant-scope.js");
+    return await asPlatform(async () => {
+      const rows = await (await getDb()).query<{ name: string; digest: string; sealed: string }>(
+        "/* tenant: the run's own delivered values, by run id and its workspace */ SELECT name, digest, sealed FROM run_delivered_secrets WHERE run_id = $1 AND org_id = $2 AND expires_at > now()", [runId, orgId]);
+      const out: { name: string; value: string }[] = [];
+      for (const r of rows) {
+        try { out.push({ name: r.name, value: (await openBytes(orgId, Buffer.from(r.sealed, "base64"), deliveredAad(orgId, runId, r.digest, r.name))).toString("utf8") }); }
+        catch { /* not this workspace's, run's or digest's: never a value */ }
+      }
+      return out;
+    });
+  } catch { return []; }
+}
+
+/** The run sweep (src/runs.ts sweepRuns): values past their time, or of a run no longer running (an end that missed them). */
+export async function sweepDelivered(q: import("./db.js").Queryable): Promise<number> {
+  const rows = await q.query<{ run_id: string }>(
+    `/* tenant: platform sweep across workspaces */ DELETE FROM run_delivered_secrets d WHERE d.expires_at < now()
+       OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = d.run_id AND r.org_id = d.org_id AND r.status = 'running') RETURNING d.run_id`);
+  return rows.length;
 }
 
 /**
- * The connection secrets to redact from what a run writes: every value it was given (this process), and the frozen
- * records' current values (another process delivered them). Never throws, never audits: a redaction lookup never
- * fails or floods what it guards.
+ * The connection secrets to redact from what a run writes: every value it was given (this process, and any instance's,
+ * from the database), and the frozen records' current values. Never throws, never audits: a redaction lookup never fails
+ * or floods what it guards.
  */
 export async function connectionSecrets(run: { id?: string; org_id: number; spec: { connection_env?: FrozenConnectionEnv[] } | null }): Promise<{ name: string; value: string }[]> {
   const list = run.spec?.connection_env ?? [];
   if (!list.length) return [];
   const out = [...(run.id ? given.get(run.id)?.secrets ?? [] : [])];
+  const push = (d: { name: string; value: string }) => { if (d.value && !out.some((o) => o.value === d.value)) out.push({ name: d.name, value: d.value }); };
+  if (run.id) for (const d of await deliveredFromDb(run.id, run.org_id)) push(d);
   try {
     const { auditQuiet } = await import("./audit-trail.js");
     const now = await auditQuiet(() => connectionEnvValues(run.org_id, list, { strict: false, audit: false }));
-    for (const d of now.delivered) if (!d.plain && !out.some((o) => o.value === d.value)) out.push({ name: d.name, value: d.value });
-  } catch { /* the values this process gave are still redacted */ }
+    for (const d of now.delivered) if (!d.plain) push(d);
+  } catch { /* the values given are still redacted */ }
   return out;
 }

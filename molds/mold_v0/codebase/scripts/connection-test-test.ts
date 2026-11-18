@@ -383,8 +383,16 @@ try {
     for (let i = 0; i < C.TESTS_PER_MINUTE; i++) assert.equal((await call("POST", ownerTok, "/api/records/_page/fx_connections/paas-empty/actions/test_connection")).status, 200);
     const limited = await call("POST", ownerTok, "/api/records/_page/fx_connections/paas-empty/actions/test_connection");
     assert.equal(limited.status, 429); assert.match(limited.body.error, /tested 10 connections in the last minute/);
+    // mold_v0-320: the count is shared: another instance (this process's count forgotten, the database's kept) refuses too.
+    C.resetTestRateForTest({ processOnly: true });
+    const elsewhere = await call("POST", ownerTok, "/api/records/_page/fx_connections/paas-empty/actions/test_connection");
+    assert.equal(elsewhere.status, 429, "another instance: the shared count refuses the 11th test too");
+    assert.match(elsewhere.body.error, /tested 10 connections in the last minute: try again in a minute/);
+    const [shared] = await db.query<{ hits: number }>("SELECT hits FROM rate_limit_hits WHERE bucket LIKE 'connection-test:%' ORDER BY window_start DESC, hits DESC LIMIT 1");
+    assert.ok(shared && shared.hits >= C.TESTS_PER_MINUTE + 1, "counted in the database (rate_limit_hits), not only in the process");
     C.resetTestRateForTest();
     await web.close();
+    ok("mold_v0-320: the 10 a minute holds across instances: counted in the database, a second instance's 11th test is refused in the same plain words");
     ok("the attacks: an endpoint or kind changed without the token clears it (an owner's edit, a member's API write, storage's keys too), so Test sends nothing; a host off the probe's list refused on every hop, a cross-host hop without the token; '.' and '..', a non-header character and a short secret said in words; failures without timing; 10 tests a minute");
     ok("the action: an owner's only; works (200 in N ms), 401 refused with its echo cut out, a POST read at json_path, an internal endpoint and a private redirect refused (nothing sent), a timeout, an empty field said; status and date written as the action, never by a person's edit");
   }
