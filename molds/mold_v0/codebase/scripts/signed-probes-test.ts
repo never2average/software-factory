@@ -23,11 +23,23 @@
 //      that never closes does not hold the probe (its socket destroyed); the statement timeout set inside the transaction
 //   8. the record: status and date written as the app's action, an owner's only, no secret in the answer, anything
 //      printed, the history, the data trail or the stored row
+//   9. mold_v0-319, resource checks: the declaration (a check's resource roles required, another check's refused, a
+//      regional check has a region, a resource check binds its resource and subscription); aws_sigv4 ebs_volume (EC2,
+//      service ec2), efs_file_system (EFS, service elasticfilesystem), s3_bucket (path-style HEAD, service s3) signed and
+//      checked by the stand-in's own SigV4; gcp_service_account compute_disk / filestore_instance (each check's scope);
+//      azure_client_credentials storage_account / file_share; each one found, missing and refused in words with ids
+//      trimmed, and a bad id, a region / project / zone / resource group that climbs or leaves its segment refused
+//      before anything is signed or sent
+//  10. mold_v0-319, managed-provider CAs: the shipped bundles parse (aws-rds 114 CA certificates, azure its 3 roots);
+//      ca names a shipped bundle only, its hosts under that provider's zone; a shared database zone ("*.<region>.rds.
+//      amazonaws.com", "*.postgres.database.azure.com") refused, one account's ("*.<id>.<region>.rds.amazonaws.com")
+//      allowed; a TLS stand-in whose certificate a throwaway CA signed works only with that CA registered as a named
+//      bundle (a test world only), and without it no password is sent
 import { cleanup, STAMP, TMP } from "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import crypto, { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import path from "node:path";
@@ -49,29 +61,39 @@ const GTOKEN = can("ya29."), AZ_SECRET = can("azSecret~"), AZ_BAD = can("azBad~"
 const TENANT = "11111111-2222-3333-4444-555555555555", CLIENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", SUB = "99999999-8888-7777-6666-555555555555";
 const keyFile = (pem: string, over: Record<string, unknown> = {}) => JSON.stringify({ type: "service_account", project_id: "my-project-123", private_key_id: "0123456789abcdef0123456789abcdef01234567",
   private_key: pem, client_email: "probe@my-project-123.iam.gserviceaccount.com", client_id: "1234567890", token_uri: "https://oauth2.googleapis.com/token", ...over }, null, 2);
-const SECRETS = [AWS_SECRET, AWS_TOKEN, AWS_BAD, SA_PEM, OTHER_PEM, GTOKEN, AZ_SECRET, AZ_BAD, AZ_TOKEN, PG_PW, PG_BAD,
+const GTOKEN_COMPUTE = can("ya29.c"), GTOKEN_CP = can("ya29.p");
+const SECRETS = [AWS_SECRET, AWS_TOKEN, AWS_BAD, SA_PEM, OTHER_PEM, GTOKEN, GTOKEN_COMPUTE, GTOKEN_CP, AZ_SECRET, AZ_BAD, AZ_TOKEN, PG_PW, PG_BAD,
   ...[SA_PEM, OTHER_PEM].map((p) => p.split("\n")[5]!)]; // a line of each key's body, too
 const derived: string[] = []; // what the stand-ins saw that only a secret makes: signatures, assertions, Authorization
 
 // ---------- an independent SigV4 check (the stand-in's own code, not src/'s) ----------
 const H = (k: crypto.BinaryLike, s: string) => crypto.createHmac("sha256", k).update(s).digest();
 const sha = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
-function sigv4Valid(host: string, headers: http.IncomingHttpHeaders, body: string, secrets: Record<string, string>): { ok: boolean; region?: string; token?: string } {
-  const m = /^AWS4-HMAC-SHA256 Credential=([A-Z0-9]+)\/(\d{8})\/([a-z0-9-]+)\/sts\/aws4_request, SignedHeaders=([a-z0-9;-]+), Signature=([0-9a-f]{64})$/.exec(String(headers.authorization ?? ""));
+/** The request as signed: its method, path and query (mold_v0-319: any service's, its credential scope read back). */
+function sigv4Valid(host: string, headers: http.IncomingHttpHeaders, body: string, secrets: Record<string, string>, method = "POST", pathQuery = "/"):
+  { ok: boolean; region?: string; service?: string; token?: string } {
+  const m = /^AWS4-HMAC-SHA256 Credential=([A-Z0-9]+)\/(\d{8})\/([a-z0-9-]+)\/([a-z0-9-]+)\/aws4_request, SignedHeaders=([a-z0-9;-]+), Signature=([0-9a-f]{64})$/.exec(String(headers.authorization ?? ""));
   if (!m) return { ok: false };
-  const [, akid, date, region, signed, sig] = m as unknown as string[];
+  const [, akid, date, region, service, signed, sig] = m as unknown as string[];
   derived.push(sig!, String(headers.authorization));
   const secret = secrets[akid!];
   if (!secret) return { ok: false };
   const names = signed!.split(";");
   if (!names.includes("host") || !names.includes("x-amz-date")) return { ok: false };
+  // S3 signs its payload's hash as a header, and it must be the body's.
+  if (service === "s3" && (!names.includes("x-amz-content-sha256") || headers["x-amz-content-sha256"] !== sha(body))) return { ok: false };
+  const [p, q = ""] = pathQuery.split("?");
+  const query = q ? q.split("&").sort().join("&") : "";
   const val = (n: string) => (n === "host" ? host : String(headers[n] ?? "").trim());
-  const canonical = `POST\n/\n\n${names.map((n) => `${n}:${val(n)}\n`).join("")}\n${signed}\n${sha(body)}`;
-  const toSign = `AWS4-HMAC-SHA256\n${headers["x-amz-date"]}\n${date}/${region}/sts/aws4_request\n${sha(canonical)}`;
-  const k = H(H(H(H(`AWS4${secret}`, date!), region!), "sts"), "aws4_request");
+  const canonical = `${method}\n${p}\n${query}\n${names.map((n) => `${n}:${val(n)}\n`).join("")}\n${signed}\n${sha(body)}`;
+  const toSign = `AWS4-HMAC-SHA256\n${headers["x-amz-date"]}\n${date}/${region}/${service}/aws4_request\n${sha(canonical)}`;
+  const k = H(H(H(H(`AWS4${secret}`, date!), region!), service!), "aws4_request");
   const want = crypto.createHmac("sha256", k).update(toSign).digest("hex");
-  return { ok: crypto.timingSafeEqual(Buffer.from(want), Buffer.from(sig!)), region, token: headers["x-amz-security-token"] as string | undefined };
+  return { ok: crypto.timingSafeEqual(Buffer.from(want), Buffer.from(sig!)), region, service, token: headers["x-amz-security-token"] as string | undefined };
 }
+// mold_v0-319: the resources the stand-in holds.
+const VOL_ATT = "vol-0bbbbbbbbbbbbbbbb", VOL_DENIED = "vol-0aaaaaaaaaaaaaaaa";
+const VOL = "vol-0123456789abcdef0", VOL_GONE = "vol-0fedcba9876543210", FS = "fs-0123456789abcdef0", FS_GONE = "fs-89abcdef";
 function jwtValid(assertion: string): { ok: boolean; claims?: any; head?: any } {
   derived.push(assertion, assertion.split(".")[2] ?? "");
   const [h, b, s] = assertion.split(".");
@@ -91,10 +113,44 @@ const standin = http.createServer((req, res) => {
     seen.push({ host: host!, path: p, method: req.method!, body, auth: (req.headers.authorization as string) ?? null });
     const json = (status: number, v: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
     const xml = (status: number, x: string) => { res.writeHead(status, { "content-type": "text/xml" }); res.end(x); };
+    // mold_v0-319: EC2, EFS and S3, each signed for its own service and region.
+    const awsRes = /^(ec2|elasticfilesystem|s3)\.([a-z0-9-]+)\.amazonaws\.com$/.exec(host!);
+    if (awsRes) {
+      const [, service, region] = awsRes;
+      const v = sigv4Valid(host!, req.headers, body, { [AKID]: AWS_SECRET }, req.method, p);
+      const signedOk = v.ok && v.service === service && v.region === region;
+      if (service === "ec2") {
+        const f = new URLSearchParams(body);
+        if (!signedOk || req.method !== "POST" || p !== "/" || f.get("Action") !== "DescribeVolumes" || f.get("Version") !== "2016-11-15" || [...f.keys()].length !== 3)
+          return xml(401, `<Response><Errors><Error><Code>AuthFailure</Code><Message>AWS was not able to validate the provided access credentials ${req.headers.authorization}</Message></Error></Errors></Response>`);
+        const id = f.get("VolumeId.1");
+        if (id === VOL_DENIED) return xml(403, `<Response><Errors><Error><Code>UnauthorizedOperation</Code><Message>You are not authorized to perform this operation. User: arn:aws:iam::123456789012:user/Alice is not authorized to perform: ec2:DescribeVolumes in account 123456789012</Message></Error></Errors></Response>`);
+        // An attached volume: its attachments' own <item>s come before its type, as EC2 answers.
+        if (id === VOL_ATT) return xml(200, `<DescribeVolumesResponse><volumeSet><item><volumeId>${VOL_ATT}</volumeId><size>8</size><availabilityZone>${region}b</availabilityZone><status>in-use</status><attachmentSet><item><volumeId>${VOL_ATT}</volumeId><instanceId>i-0123456789abcdef0</instanceId><device>/dev/xvda</device><status>attached</status></item></attachmentSet><volumeType>io2</volumeType></item></volumeSet></DescribeVolumesResponse>`);
+        if (id !== VOL) return xml(400, `<Response><Errors><Error><Code>InvalidVolume.NotFound</Code><Message>The volume '${id}' does not exist.</Message></Error></Errors></Response>`);
+        return xml(200, `<DescribeVolumesResponse><volumeSet><item><volumeId>${VOL}</volumeId><size>20</size><availabilityZone>${region}a</availabilityZone><status>available</status><volumeType>gp3</volumeType></item></volumeSet></DescribeVolumesResponse>`);
+      }
+      if (service === "elasticfilesystem") {
+        const u = new URL(`https://x${p}`);
+        if (!signedOk || req.method !== "GET" || u.pathname !== "/2015-02-01/file-systems" || [...u.searchParams.keys()].join() !== "FileSystemId")
+          return json(403, { ErrorCode: "AccessDeniedException", Message: `denied ${req.headers.authorization}` });
+        const id = u.searchParams.get("FileSystemId");
+        if (id !== FS) return json(404, { ErrorCode: "FileSystemNotFound", Message: `File system '${id}' does not exist.` });
+        return json(200, { FileSystems: [{ FileSystemId: FS, LifeCycleState: "available", SizeInBytes: { Value: 6144 }, Name: "shared" }] });
+      }
+      // S3 HeadBucket, path-style: no body, the bucket's region in a header.
+      const head = (status: number, h: Record<string, string> = {}) => { res.writeHead(status, h); res.end(); };
+      if (req.method !== "HEAD" || !signedOk) return head(403);
+      const bucket = p.slice(1);
+      if (bucket === "my-bucket.example") return head(200, { "x-amz-bucket-region": region! });
+      if (bucket === "far-bucket") return head(301, { "x-amz-bucket-region": "ap-southeast-2" });
+      if (bucket === "locked-bucket") return head(403, { "x-amz-bucket-region": region! });
+      return head(404);
+    }
     if (/^sts(\.[a-z0-9-]+)?\.amazonaws\.com$/.test(host!) && p === "/" && req.method === "POST") {
       const v = sigv4Valid(host!, req.headers, body, { [AKID]: AWS_SECRET });
       const regionOk = host === "sts.amazonaws.com" ? v.region === "us-east-1" : host === `sts.${v.region}.amazonaws.com`;
-      if (!v.ok || !regionOk || body !== "Action=GetCallerIdentity&Version=2011-06-15" || !String(req.headers["content-type"]).startsWith("application/x-www-form-urlencoded"))
+      if (!v.ok || v.service !== "sts" || !regionOk || body !== "Action=GetCallerIdentity&Version=2011-06-15" || !String(req.headers["content-type"]).startsWith("application/x-www-form-urlencoded"))
         return xml(403, `<ErrorResponse><Error><Type>Sender</Type><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match ${req.headers.authorization}</Message></Error></ErrorResponse>`);
       const arn = v.token === AWS_TOKEN ? "arn:aws:sts::123456789012:assumed-role/Deployer/probe-session" : "arn:aws:iam::123456789012:user/Alice";
       return xml(200, `<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>${arn}</Arn><UserId>AIDAEXAMPLE</UserId><Account>123456789012</Account></GetCallerIdentityResult></GetCallerIdentityResponse>`);
@@ -103,10 +159,25 @@ const standin = http.createServer((req, res) => {
       const f = new URLSearchParams(body);
       const v = jwtValid(f.get("assertion") ?? "");
       const c = v.claims ?? {};
+      const scopes: Record<string, string> = { "https://www.googleapis.com/auth/cloud-platform.read-only": GTOKEN, "https://www.googleapis.com/auth/compute.readonly": GTOKEN_COMPUTE,
+        "https://www.googleapis.com/auth/cloud-platform": GTOKEN_CP };
       if (f.get("grant_type") !== "urn:ietf:params:oauth:grant-type:jwt-bearer" || !v.ok || v.head?.alg !== "RS256" || c.aud !== "https://oauth2.googleapis.com/token"
-        || c.scope !== "https://www.googleapis.com/auth/cloud-platform.read-only" || c.iss !== "probe@my-project-123.iam.gserviceaccount.com" || !(c.exp > c.iat && c.exp - c.iat <= 3600))
+        || !scopes[c.scope] || c.iss !== "probe@my-project-123.iam.gserviceaccount.com" || !(c.exp > c.iat && c.exp - c.iat <= 3600))
         return json(400, { error: "invalid_grant", error_description: `Invalid JWT Signature. ${f.get("assertion")}` });
-      return json(200, { access_token: GTOKEN, expires_in: 3599, token_type: "Bearer" });
+      return json(200, { access_token: scopes[c.scope], expires_in: 3599, token_type: "Bearer" });
+    }
+    // mold_v0-319: a disk (a compute.readonly token only) and a Filestore instance (cloud-platform: its only scope).
+    if (host === "compute.googleapis.com" && req.method === "GET") {
+      if (req.headers.authorization !== `Bearer ${GTOKEN_COMPUTE}`) return json(403, { error: { code: 403, message: "Request had insufficient authentication scopes." } });
+      if (p === "/compute/v1/projects/my-project-123/zones/us-central1-a/disks/data-disk" || p === "/compute/v1/projects/other-project-9/zones/us-central1-a/disks/data-disk")
+        return json(200, { kind: "compute#disk", name: "data-disk", sizeGb: "200", status: "READY", type: "https://www.googleapis.com/compute/v1/projects/my-project-123/zones/us-central1-a/diskTypes/pd-balanced" });
+      return json(404, { error: { code: 404, message: "The resource 'projects/my-project-123/zones/us-central1-a/disks/x' was not found" } });
+    }
+    if (host === "file.googleapis.com" && req.method === "GET") {
+      if (req.headers.authorization !== `Bearer ${GTOKEN_CP}`) return json(403, { error: { code: 403, message: "Request had insufficient authentication scopes." } });
+      if (p === "/v1/projects/my-project-123/locations/us-central1-a/instances/nfs-1")
+        return json(200, { name: "projects/my-project-123/locations/us-central1-a/instances/nfs-1", state: "READY", tier: "BASIC_HDD", fileShares: [{ name: "vol1", capacityGb: "1024" }] });
+      return json(404, { error: { code: 404, message: "not found" } });
     }
     if (host === "cloudresourcemanager.googleapis.com" && p === "/v1/projects/my-project-123") {
       if (req.headers.authorization !== `Bearer ${GTOKEN}`) return json(401, { error: { message: "no" } });
@@ -122,6 +193,13 @@ const standin = http.createServer((req, res) => {
       if (req.headers.authorization !== `Bearer ${AZ_TOKEN}`) return json(401, { error: { code: "InvalidAuthenticationToken", message: "no" } });
       if (p === `/subscriptions/${SUB}?api-version=2022-12-01`) return json(200, { subscriptionId: SUB, displayName: "Production", state: "Enabled" });
       if (p === "/subscriptions?api-version=2022-12-01") return json(200, { value: [{ subscriptionId: SUB }, { subscriptionId: TENANT }] });
+      // mold_v0-319: a storage account and a file share, read only.
+      const acct = `/subscriptions/${SUB}/resourceGroups/rg-files.prod(1)/providers/Microsoft.Storage/storageAccounts/acmefiles01`;
+      if (req.method === "GET" && p === `${acct}?api-version=2023-05-01`)
+        return json(200, { name: "acmefiles01", location: "westeurope", kind: "StorageV2", sku: { name: "Standard_LRS" }, properties: { provisioningState: "Succeeded" } });
+      if (req.method === "GET" && p === `${acct}/fileServices/default/shares/team-share?api-version=2023-05-01`)
+        return json(200, { name: "team-share", properties: { shareQuota: 100, enabledProtocols: "SMB", accessTier: "TransactionOptimized" } });
+      if (p.includes("/providers/Microsoft.Storage/")) return json(404, { error: { code: "ResourceNotFound", message: "The Resource 'Microsoft.Storage/storageAccounts/x' was not found." } });
     }
     json(404, { message: "not here" });
   });
@@ -171,7 +249,7 @@ function speak(sock: net.Socket | tls.TLSSocket, conn: PgConn, stubborn = false)
     }
   });
 }
-const pgServer = (withTls: boolean, stubborn = false) => net.createServer({ allowHalfOpen: stubborn }, (raw) => {
+const pgServer = (withTls: boolean, stubborn = false, key = PG_KEY, cert = PG_CERT) => net.createServer({ allowHalfOpen: stubborn }, (raw) => {
   raw.on("error", () => {});
   raw.once("data", (first: Buffer) => {
     const conn: PgConn = { tls: false, params: {}, password: null, queries: [], closed: false };
@@ -181,11 +259,20 @@ const pgServer = (withTls: boolean, stubborn = false) => net.createServer({ allo
     if (!withTls) { raw.write("N"); return; }
     raw.write("S");
     conn.tls = true;
-    speak(new tls.TLSSocket(raw, { isServer: true, key: PG_KEY, cert: PG_CERT, ...(stubborn ? { allowHalfOpen: true } : {}) } as tls.TLSSocketOptions), conn, stubborn);
+    speak(new tls.TLSSocket(raw, { isServer: true, key, cert, ...(stubborn ? { allowHalfOpen: true } : {}) } as tls.TLSSocketOptions), conn, stubborn);
   });
 });
-const pgTls = pgServer(true), pgPlain = pgServer(false), pgStubborn = pgServer(true, true);
-await Promise.all([pgTls, pgPlain, pgStubborn].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))));
+// mold_v0-319: a throwaway CA (made here, never stored) and a server certificate it signs, for the named-bundle test.
+const tmp = (n: string) => path.join(TMP, n);
+execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", tmp("ca-key.pem"), "-out", tmp("ca-cert.pem"), "-days", "1", "-subj", "/CN=Fixture Provider Root CA",
+  "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"], { stdio: "ignore" });
+execFileSync("openssl", ["req", "-newkey", "rsa:2048", "-nodes", "-keyout", tmp("srv-key.pem"), "-out", tmp("srv.csr"), "-subj", "/CN=db.pg.example"], { stdio: "ignore" });
+writeFileSync(tmp("srv.ext"), "subjectAltName=DNS:db.pg.example\nbasicConstraints=CA:FALSE\n");
+execFileSync("openssl", ["x509", "-req", "-in", tmp("srv.csr"), "-CA", tmp("ca-cert.pem"), "-CAkey", tmp("ca-key.pem"), "-CAcreateserial", "-out", tmp("srv-cert.pem"), "-days", "1",
+  "-extfile", tmp("srv.ext")], { stdio: "ignore" });
+const FIXTURE_CA = readFileSync(tmp("ca-cert.pem"), "utf8");
+const pgTls = pgServer(true), pgPlain = pgServer(false), pgStubborn = pgServer(true, true), pgProvider = pgServer(true, false, readFileSync(tmp("srv-key.pem"), "utf8"), readFileSync(tmp("srv-cert.pem"), "utf8"));
+await Promise.all([pgTls, pgPlain, pgStubborn, pgProvider].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))));
 const pgPort = (s: net.Server) => (s.address() as AddressInfo).port;
 
 // ---------- the area ----------
@@ -268,7 +355,9 @@ try {
     bad((_a, p) => { p.probes.pg.hosts = ["db.internal"]; }, /internal name/, "an internal host");
     for (const h of ["amazonaws.com", "fly.dev", "co.uk", "vercel.app"]) bad((_a, p) => { p.probes.pg.hosts = [h]; }, /is a name anyone can host under/, `a bare shared suffix ${h}`);
     for (const h of ["amazonaws.com", "fly.dev"]) bad((_a, p) => { p.probes.other = { method: "GET", url: "https://api.example.com/v1", hosts: [h] }; }, /is a name anyone can host under/, `an http probe's bare ${h}`);
-    assert.deepEqual(problems((_a, p) => { p.probes.pg.hosts = ["my-db.fly.dev", "rds.amazonaws.com"]; }), [], "an exact host under a shared suffix: fine");
+    assert.deepEqual(problems((_a, p) => { p.probes.pg.hosts = ["my-db.fly.dev", "my-db.c9akq0example.eu-west-1.rds.amazonaws.com"]; }), [], "an exact host under a shared suffix: fine");
+    // mold_v0-319: the zone itself is no database's name.
+    bad((_a, p) => { p.probes.pg.hosts = ["rds.amazonaws.com"]; }, /rds\.amazonaws\.com is a name anyone can host under/, "a bare database zone");
     // A bare entry is exactly itself; only "*." matches subdomains.
     assert.equal(cfg.hostListed("x.rds.amazonaws.com", ["rds.amazonaws.com"]), false);
     assert.equal(cfg.hostListed("a.db.example", ["db.example"]), false);
@@ -460,6 +549,262 @@ try {
     ok("postgres: works over TLS (a 10 s statement timeout, a read-only transaction, SELECT 1); a password refused without the server's words; a certificate for another name or from another CA and a server without TLS refused before the password; a host off the list, a private or mapped address, an address literal, another port and this app's own database refused before any connection; a url parsed safely, TLS whatever it says");
   }
 
+  // ---------- 9. mold_v0-319: resource checks ----------
+  {
+    const R = {
+      by: "kind",
+      probes: {
+        ebs: { kind: "aws_sigv4", check: "ebs_volume", fields: { access_key_id: "key_id", secret_access_key: "secret", region: "region", volume_id: "volume" }, timeout_seconds: 5 },
+        efs: { kind: "aws_sigv4", check: "efs_file_system", fields: { access_key_id: "key_id", secret_access_key: "secret", file_system_id: "fs_id" }, region: "eu-west-1", timeout_seconds: 5 },
+        s3: { kind: "aws_sigv4", check: "s3_bucket", fields: { access_key_id: "key_id", secret_access_key: "secret", region: "region", bucket: "bucket" }, timeout_seconds: 5 },
+        disk: { kind: "gcp_service_account", check: "compute_disk", fields: { service_account_json: "key_file", project: "project", zone: "zone", disk: "disk" }, timeout_seconds: 5 },
+        filestore: { kind: "gcp_service_account", check: "filestore_instance", fields: { service_account_json: "key_file", location: "zone", instance: "instance" }, timeout_seconds: 5 },
+        account: { kind: "azure_client_credentials", check: "storage_account", fields: { tenant_id: "tenant", client_id: "client", client_secret: "secret", subscription_id: "subscription",
+          resource_group: "rg", storage_account: "account" }, timeout_seconds: 5 },
+        share: { kind: "azure_client_credentials", check: "file_share", fields: { tenant_id: "tenant", client_id: "client", client_secret: "secret", subscription_id: "subscription",
+          resource_group: "rg", storage_account: "account", file_share: "share" }, timeout_seconds: 5 },
+      },
+      status: "status", tested: "last_tested",
+    };
+    const RAREA = { ...structuredClone(AREA), name: "fx_resources",
+      fields: [...AREA.fields.filter((f) => f.name !== "kind"), { name: "kind", label: "Kind", type: "enum", options: Object.keys(R.probes) },
+        ...["volume", "fs_id", "bucket", "project", "zone", "disk", "instance", "rg", "account", "share"].map((n) => ({ name: n, label: n, type: "text" }))],
+      detail: { ...structuredClone(AREA.detail), actions: [{ kind: "test_connection", place: "primary", label: "Test connection", roles: ["owner"], probe: R }, { kind: "edit", place: "secondary" }] } };
+    const problems = (patch: (p: any) => void) => {
+      const a = structuredClone(RAREA) as any; patch(a.detail.actions[0].probe);
+      const r = api.RecordAreaSchema.safeParse(a);
+      return r.success ? [] : r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+    };
+    assert.deepEqual(problems(() => {}), [], "the resource checks' area");
+    const bad = (patch: (p: any) => void, re: RegExp, what: string) => { const p = problems(patch); assert.ok(p.some((m) => re.test(m)), `${what}: ${JSON.stringify(p)}`); };
+    bad((p) => { p.probes.ebs.check = "ec2:TerminateInstances"; }, /an aws_sigv4 probe's check is identity, ebs_volume, efs_file_system, s3_bucket/, "a free-form action as a check");
+    bad((p) => { p.probes.disk.check = "delete"; }, /a gcp_service_account probe's check is project, token, compute_disk, filestore_instance/, "an unknown Google check");
+    bad((p) => { p.probes.account.check = "keys"; }, /an azure_client_credentials probe's check is subscription, storage_account, file_share/, "an unknown Azure check");
+    bad((p) => { delete p.probes.ebs.fields.volume_id; }, /check "ebs_volume" names the field holding its volume id/, "no volume field");
+    bad((p) => { delete p.probes.ebs.fields.region; }, /check "ebs_volume" calls a regional endpoint/, "a regional check without a region");
+    bad((p) => { p.probes.ebs.check = "identity"; }, /fields\.volume_id is read by another check than "identity"/, "a resource role on another check");
+    bad((p) => { p.probes.ebs.fields.volume_id = "token"; }, /token is encrypted: a volume id decides/, "a sealed volume id");
+    bad((p) => { p.probes.ebs.fields.bucket = "bucket"; }, /fields\.bucket is read by another check than "ebs_volume"/, "a bucket on the volume check");
+    bad((p) => { delete p.probes.disk.fields.zone; }, /check "compute_disk" names the field holding its zone/, "no zone");
+    bad((p) => { p.probes.disk.check = "token"; delete p.probes.disk.fields.zone; delete p.probes.disk.fields.disk; }, /check "token" reads no project/, "a project on the token check");
+    bad((p) => { delete p.probes.account.fields.subscription_id; }, /check "storage_account" reads a resource in one subscription/, "no subscription");
+    bad((p) => { delete p.probes.share.fields.file_share; }, /check "file_share" names the field holding its file share/, "no share");
+    bad((p) => { delete p.probes.efs.region; p.probes.efs.region = "us-gov-west-1"; }, /us-gov-west-1 is an AWS China or GovCloud region/, "a fixed GovCloud region");
+    bad((p) => { p.probes.ebs.fields.volume_id = "last_tested"; }, /last_tested is a date field: a volume id is a text or enum field/, "a date as a volume id");
+    // The binding: a resource check's resource (and its subscription) decide, so changing them without the secret clears it.
+    assert.deepEqual(cfg.destinationFields(R.probes.ebs as never).sort(), ["key_id", "region", "volume"]);
+    assert.deepEqual(cfg.destinationFields(R.probes.s3 as never).sort(), ["bucket", "key_id", "region"]);
+    assert.deepEqual(cfg.destinationFields(R.probes.disk as never).sort(), ["disk", "project", "zone"]);
+    assert.deepEqual(cfg.destinationFields(R.probes.share as never).sort(), ["account", "client", "rg", "share", "subscription", "tenant"]);
+    assert.deepEqual(cfg.destinationFields(PROBE.probes.azure as never).sort(), ["client", "tenant"], "the subscription check's subscription still binds nothing (mold_v0-313)");
+    let ones = 0; // each its own area (the bindings are cached by area)
+    const one = (probe: unknown) => ({ pack: "fixture_clouds", name: `fx_one_${++ones}`, fields: RAREA.fields, detail: { actions: [{ kind: "test_connection", probe: { probes: { "*": probe } } }] } }) as never;
+    const st = { key_id: AKID, region: "eu-west-1", volume: VOL, tenant: TENANT, client: CLIENT, subscription: SUB, rg: "rg-a", account: "acmefiles01", share: "team-share", secret: "x", key_file: "z", zone: "us-central1-a", disk: "d", project: "my-project-123" };
+    const drop = (o: Record<string, unknown>) => { const g: Record<string, unknown> = { ...st, ...o }; delete g.secret; delete g.key_file; return g; };
+    assert.deepEqual(secretsToClear(one(R.probes.ebs), st, drop({ volume: VOL_GONE })), ["secret"], "another volume: the keys cleared");
+    assert.deepEqual(secretsToClear(one(R.probes.share), st, drop({ share: "other-share" })), ["secret"], "another share: the secret cleared");
+    assert.deepEqual(secretsToClear(one(R.probes.share), st, drop({ subscription: TENANT })), ["secret"], "another subscription on a resource check: cleared");
+    assert.deepEqual(secretsToClear(one(R.probes.disk), st, drop({ zone: "europe-west4-b" })), ["key_file"], "another zone: the key file cleared");
+    assert.deepEqual(secretsToClear(one(R.probes.share), st, drop({})), [], "nothing changed: kept");
+    ok("resource checks, declared: fixed checks only (never an action from config), a check's resource fields required and another check's refused, plain, a region for a regional call; the resource and its subscription bind the secret");
+
+    const run2 = async (probe: keyof typeof R.probes, data: Record<string, unknown>) => {
+      const r = await C.runProbe(probe, R.probes[probe] as never, { plain: Object.fromEntries(Object.entries(data).filter(([k]) => !sealedNames.has(k))), sealed: sealedNames,
+        open: async (n) => String(data[n] ?? ""), label: (n) => `"${n}"` });
+      answers.push(JSON.stringify(r));
+      return r;
+    };
+    const aws = { key_id: AKID, secret: AWS_SECRET, region: "eu-west-1" };
+    // EC2 DescribeVolumes.
+    const e1 = await run2("ebs", { ...aws, volume: VOL });
+    assert.equal(e1.ok, true, e1.words); assert.match(e1.words, /^It works: AWS volume vol-…def0, 20 GB gp3, available, eu-west-1a, answered by ec2\.eu-west-1\.amazonaws\.com in \d+ ms\.$/);
+    assert.equal(seen.at(-1)!.host, "ec2.eu-west-1.amazonaws.com"); assert.equal(seen.at(-1)!.body, `Action=DescribeVolumes&Version=2016-11-15&VolumeId.1=${VOL}`);
+    assert.match(seen.at(-1)!.auth!, /Credential=[A-Z0-9]+\/\d{8}\/eu-west-1\/ec2\/aws4_request/, "signed for ec2 in its region");
+    const e2 = await run2("ebs", { ...aws, volume: VOL_GONE });
+    assert.equal(e2.outcome, "unexpected"); assert.equal(e2.words, "It does not work yet: AWS at ec2.eu-west-1.amazonaws.com answered 400: there is no volume vol-…3210 in eu-west-1 that these keys can see.");
+    const e3 = await run2("ebs", { ...aws, secret: AWS_BAD, volume: VOL });
+    assert.equal(e3.outcome, "refused", e3.words); assert.match(e3.words, /answered 401: the keys were refused \(it said: "AuthFailure: AWS was not able to validate/);
+    let n = seen.length;
+    for (const volume of ["vol-123", "vol-0123456789abcdef0/../x", "i-0123456789abcdef0", "vol-0123456789ABCDEF0", "vol-0123456789abcdef0&Action=DeleteVolume", "../vol-01234567"]) {
+      const r = await run2("ebs", { ...aws, volume });
+      assert.equal(r.outcome, "not_ready", volume); assert.match(r.words, /is not an EBS volume's ID/);
+    }
+    for (const region of ["eu-west-1.evil.example", "evil.example/x", "eu-west-1/../x"]) assert.match((await run2("ebs", { ...aws, region, volume: VOL })).words, /is not an AWS region's name/);
+    assert.match((await run2("ebs", { key_id: AKID, secret: AWS_SECRET, volume: VOL })).words, /^It can't be tested yet: the region is empty: a volume is read at its region's endpoint\.$/);
+    for (const region of ["cn-north-1", "cn-northwest-1", "us-gov-west-1", "us-gov-east-1"]) {
+      const r = await run2("ebs", { ...aws, region, volume: VOL });
+      assert.equal(r.outcome, "not_ready", region); assert.match(r.words, /is an AWS (China|GovCloud) region, and this test does not cover those yet/);
+    }
+    assert.match((await run("aws", { key_id: AKID, secret: AWS_SECRET, region: "cn-north-1" })).words, /China region/, "the identity check too");
+    assert.equal(seen.length, n, "a bad id or region: nothing signed or sent");
+    // An attached volume keeps its own type (its attachments' items cut out first); an error's ARN and account id cut.
+    const e4 = await run2("ebs", { ...aws, volume: VOL_ATT });
+    assert.equal(e4.ok, true, e4.words); assert.match(e4.words, /^It works: AWS volume vol-…bbbb, 8 GB io2, in-use, eu-west-1b,/);
+    const e5 = await run2("ebs", { ...aws, volume: VOL_DENIED });
+    assert.equal(e5.outcome, "refused"); assert.match(e5.words, /these keys may not describe volumes \(ec2:DescribeVolumes\) \(it said: "UnauthorizedOperation: You are not authorized/);
+    assert.ok(!e5.words.includes("123456789012") && !/arn:aws/.test(e5.words), e5.words);
+    assert.equal(S.awsWords("User: arn:aws:iam::123456789012:user/Alice in 123456789012, arn:aws-us-gov:sts::210987654321:assumed-role/R/s."), "User: an ARN in …9012, an ARN");
+    // EFS DescribeFileSystems (a fixed region).
+    const f1 = await run2("efs", { ...aws, fs_id: FS });
+    assert.equal(f1.ok, true, f1.words); assert.match(f1.words, /^It works: AWS file system fs-…def0, available, 6\.0 KB used, eu-west-1, answered by elasticfilesystem\.eu-west-1\.amazonaws\.com in \d+ ms\.$/);
+    assert.equal(seen.at(-1)!.path, `/2015-02-01/file-systems?FileSystemId=${FS}`); assert.match(seen.at(-1)!.auth!, /\/eu-west-1\/elasticfilesystem\/aws4_request/);
+    const f2 = await run2("efs", { ...aws, fs_id: FS_GONE });
+    assert.equal(f2.words, "It does not work yet: AWS at elasticfilesystem.eu-west-1.amazonaws.com answered 404: there is no file system fs-…cdef in eu-west-1 that these keys can see.");
+    n = seen.length;
+    for (const fs_id of ["fs-1", "fs-0123456789abcdef0&MaxItems=1", "fsap-0123456789abcdef0"]) assert.match((await run2("efs", { ...aws, fs_id })).words, /is not an EFS file system's ID/);
+    assert.equal(seen.length, n);
+    // S3 HeadBucket, path-style: the bucket's name is the path, never the host.
+    const b1 = await run2("s3", { ...aws, bucket: "my-bucket.example" });
+    assert.equal(b1.ok, true, b1.words); assert.match(b1.words, /^It works: AWS bucket my-bucket\.example, eu-west-1, answered by s3\.eu-west-1\.amazonaws\.com in \d+ ms\.$/);
+    assert.deepEqual([seen.at(-1)!.host, seen.at(-1)!.path, seen.at(-1)!.method], ["s3.eu-west-1.amazonaws.com", "/my-bucket.example", "HEAD"]);
+    assert.match(seen.at(-1)!.auth!, /\/eu-west-1\/s3\/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date,/, "signed for s3, its payload hash signed");
+    assert.match((await run2("s3", { ...aws, bucket: "far-bucket" })).words, /answered 301: bucket far-bucket is in ap-southeast-2, not eu-west-1\.$/);
+    assert.match((await run2("s3", { ...aws, bucket: "gone-bucket" })).words, /answered 404: there is no bucket named gone-bucket\.$/);
+    const b4 = await run2("s3", { ...aws, bucket: "locked-bucket" });
+    assert.equal(b4.outcome, "refused"); assert.match(b4.words, /answered 403: the keys were refused for bucket locked-bucket/);
+    assert.equal((await run2("s3", { ...aws, secret: AWS_BAD, bucket: "my-bucket.example" })).outcome, "refused");
+    n = seen.length;
+    for (const bucket of ["../x", "My_Bucket", "ab", "192.168.1.10", "evil.example/..", "b?x=1", "a..b", "xn--bucket", "bucket-s3alias", "x".repeat(64), "-bucket", "bucket#x"]) {
+      const r = await run2("s3", { ...aws, bucket });
+      assert.equal(r.outcome, "not_ready", bucket); assert.match(r.words, /is not an S3 bucket's name/);
+    }
+    assert.equal(seen.length, n, "a bad bucket name: nothing sent");
+    ok("aws_sigv4 resource checks: EC2 DescribeVolumes, EFS DescribeFileSystems and S3 HeadBucket (path-style) signed for ec2, elasticfilesystem and s3 in the region; found, missing, in another region and refused in words, ids trimmed; a bad id, bucket or region refused before anything is signed");
+
+    // Google: a disk (compute.readonly), a Filestore instance (cloud-platform).
+    const g = { key_file: keyFile(SA_PEM), zone: "us-central1-a" };
+    const d1 = await run2("disk", { ...g, disk: "data-disk" });
+    assert.equal(d1.ok, true, d1.words); assert.match(d1.words, /^It works: Google Cloud disk data-disk in us-central1-a, 200 GB pd-balanced, READY, project my-project-123, read by probe@my-project-123\.iam\.gserviceaccount\.com in \d+ ms\.$/);
+    assert.deepEqual(seen.slice(-2).map((x) => x.host), ["oauth2.googleapis.com", "compute.googleapis.com"]);
+    const d1b = await run2("disk", { ...g, project: "other-project-9", disk: "data-disk" });
+    assert.equal(d1b.ok, true, d1b.words); assert.match(d1b.words, /project other-project-9/);
+    const d2 = await run2("disk", { ...g, disk: "gone-disk" });
+    assert.equal(d2.outcome, "unexpected"); assert.match(d2.words, /answered 404: there is no disk gone-disk in us-central1-a in project my-project-123 \(or the service account may not see it\)\.$/);
+    const fi = await run2("filestore", { ...g, instance: "nfs-1" });
+    assert.equal(fi.ok, true, fi.words); assert.match(fi.words, /^It works: Google Cloud Filestore instance nfs-1 in us-central1-a, 1024 GB BASIC_HDD, READY, project my-project-123/);
+    assert.equal(seen.at(-1)!.host, "file.googleapis.com");
+    n = seen.length;
+    for (const [k, v] of [["zone", "us-central1-a/../../x"], ["zone", "us-central1"], ["disk", "Data_Disk"], ["disk", "../x"], ["disk", "a/b"], ["disk", "1disk"], ["disk", "disk-"], ["project", "evil/../x"], ["project", "my-project-123/zones"], ["zone", "us-central1-a?x"]] as const) {
+      const r = await run2("disk", { ...g, disk: "data-disk", [k]: v });
+      assert.equal(r.outcome, "not_ready", `${k}=${v}: ${r.words}`);
+    }
+    for (const [k, v] of [["zone", "us-central1/x"], ["instance", "NFS"], ["instance", "nfs-1/../../x"]] as const) assert.equal((await run2("filestore", { ...g, instance: "nfs-1", [k]: v })).outcome, "not_ready", `${k}=${v}`);
+    assert.equal(seen.length, n, "a segment that is not one: nothing signed or sent, not even the token request");
+    ok("gcp_service_account resource checks: a Compute disk (a compute.readonly token) and a Filestore instance (cloud-platform, its only scope) read at their fixed hosts; missing said in words; a project, zone, location or name that is not one segment of Google's rules refused before anything is signed");
+
+    // Azure: a storage account and a file share.
+    const z = { tenant: TENANT, client: CLIENT, secret: AZ_SECRET, subscription: SUB, rg: "rg-files.prod(1)", account: "acmefiles01" };
+    const s1 = await run2("account", z);
+    assert.equal(s1.ok, true, s1.words); assert.match(s1.words, /^It works: Azure storage account acmefiles01 in resource group rg-files\.prod\(1\), westeurope, StorageV2 Standard_LRS, Succeeded, in \d+ ms\.$/);
+    const s2 = await run2("share", { ...z, share: "team-share" });
+    assert.equal(s2.ok, true, s2.words); assert.match(s2.words, /^It works: Azure file share team-share in storage account acmefiles01, 100 GB SMB, TransactionOptimized, in \d+ ms\.$/);
+    const s3 = await run2("share", { ...z, share: "gone-share" });
+    assert.equal(s3.outcome, "unexpected"); assert.match(s3.words, /answered 404: there is no file share gone-share in storage account acmefiles01 in subscription …5555/);
+    assert.equal((await run2("account", { ...z, secret: AZ_BAD })).outcome, "refused");
+    assert.match((await run2("account", { ...z, subscription: "" })).words, /"subscription" is empty/);
+    n = seen.length;
+    for (const [k, v] of [["rg", "../x"], ["rg", "rg/.."], ["rg", "rg?api-version=1"], ["rg", "rg."], ["rg", "rg%2f"], ["account", "Bad-Account"], ["account", "ab"], ["account", "acme/../x"], ["subscription", "../x"]] as const)
+      assert.equal((await run2("account", { ...z, [k]: v })).outcome, "not_ready", `${k}=${v}`);
+    for (const share of ["a--b", "Team", "../x", "x", "share/"]) assert.equal((await run2("share", { ...z, share })).outcome, "not_ready", share);
+    assert.equal(seen.length, n, "a resource group, account, share or subscription that is not one: nothing sent");
+    ok("azure_client_credentials resource checks: a storage account and a file share read at management.azure.com (api 2023-05-01); missing and refused in words; a name that leaves its segment refused before anything is sent");
+  }
+
+  // ---------- 10. mold_v0-319: managed-provider CAs for postgres ----------
+  {
+    const rds = S.caBundle("aws-rds")!, az = S.caBundle("azure")!;
+    assert.equal(rds.length, 114, "the RDS global bundle: 114 certificates");
+    for (const c of rds) assert.ok(new crypto.X509Certificate(c).ca, "each an authority's");
+    assert.deepEqual(az.map((c) => new crypto.X509Certificate(c).fingerprint256).sort(), [
+      "43:48:A0:E9:44:4C:78:CB:26:5E:05:8D:5E:89:44:B4:D8:4F:96:62:BD:26:DB:25:7F:89:34:A4:43:C7:01:61", // DigiCert Global Root CA
+      "C7:41:F7:0F:4B:2A:8D:88:BF:2E:71:C1:41:22:EF:53:EF:10:EB:A0:CF:A5:E6:4C:FA:20:F4:18:85:30:73:E0", // Microsoft RSA Root Certificate Authority 2017
+      "CB:3C:CB:B7:60:31:E5:E0:13:8F:8D:D3:9A:23:F9:DE:47:FF:C3:5E:43:C1:14:4C:EA:27:D4:6A:5A:B1:CB:5F", // DigiCert Global Root G2
+    ]);
+    for (const f of ["aws-rds.pem", "azure.pem"]) assert.ok(!/PRIVATE KEY/.test(readFileSync(new URL(`../src/ca/${f}`, import.meta.url), "utf8")), `${f}: certificates only`);
+    assert.equal(S.caBundle("letsencrypt"), null); assert.equal(S.caBundle("../ca/aws-rds"), null);
+    const p = (o: Record<string, unknown>) => cfg.connectionTestProblems(AREA as never, { by: "kind", probes: { pg: { ...PROBE.probes.pg, ...o } }, status: "status", tested: "last_tested" }).map((x) => x.message);
+    const refused = (o: Record<string, unknown>, re: RegExp, what: string) => assert.ok(p(o).some((m) => re.test(m)), `${what}: ${JSON.stringify(p(o))}`);
+    assert.deepEqual(p({ ca: "aws-rds", hosts: ["*.c9akq0example.eu-west-1.rds.amazonaws.com", "orders.c9akq0example.eu-west-1.rds.amazonaws.com", "*.proxy-c9akq0example.eu-west-1.rds.amazonaws.com"] }), [], "one account's RDS names");
+    assert.deepEqual(p({ ca: "azure", hosts: ["orders-prod.postgres.database.azure.com", "*.orders-prod.postgres.database.azure.com"] }), [], "one Azure server");
+    refused({ ca: "aws-rds", hosts: ["*.eu-west-1.rds.amazonaws.com"] }, /\*\.eu-west-1\.rds\.amazonaws\.com is a wildcard over a name anyone can host under/, "every account's databases in a region");
+    refused({ ca: "aws-rds", hosts: ["*.rds.amazonaws.com"] }, /is a wildcard over a name anyone can host under/, "every RDS database");
+    refused({ ca: "aws-rds", hosts: ["eu-west-1.rds.amazonaws.com"] }, /is a name anyone can host under/, "a region's zone, bare");
+    refused({ ca: "azure", hosts: ["*.postgres.database.azure.com"] }, /is a wildcard over a name anyone can host under/, "every Azure server");
+    refused({ ca: "azure", hosts: ["*.database.azure.com"] }, /is a wildcard over a name anyone can host under/, "above the zone");
+    refused({ hosts: ["*.redshift.amazonaws.com"] }, /anyone can host under/, "Redshift's zone, without a ca too");
+    // Fail closed: a wildcard anywhere under a shared provider name is refused, unless that zone's own labels allow it.
+    const multi = ["*.compute-1.amazonaws.com", "*.us-east-1.elb.amazonaws.com", "*.s3.amazonaws.com", "*.dsql.us-east-1.on.aws", "*.neon.tech", "*.aws.neon.tech",
+      "*.us-east-2.aws.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.db.ondigitalocean.com", "*.b.db.ondigitalocean.com", "*.aivencloud.com", "*.a.aivencloud.com",
+      "*.oregon-postgres.render.com", "*.cloudapp.net", "*.a.run.app", "*.eu-west-1.compute.amazonaws.com", "*.lambda-url.us-east-1.on.aws", "*.core.windows.net", "*.westeurope.cloudapp.azure.com"];
+    for (const h of multi) {
+      assert.equal(cfg.sharedWildcard(h), true, h);
+      refused({ hosts: [h] }, /is a wildcard over a name anyone can host under/, `a postgres probe's ${h}`);
+      const hp = cfg.connectionTestProblems(AREA as never, { probes: { "*": { method: "GET", url: "https://api.example.com/v1", hosts: [h] } } }).map((x) => x.message);
+      assert.ok(hp.some((m) => /is a wildcard over a name anyone can host under/.test(m)), `an http probe's ${h}: ${JSON.stringify(hp)}`);
+    }
+    // Exact hosts under them, and wildcards under one customer's own labels, are fine.
+    for (const h of ["ep-cool-river-123456.us-east-2.aws.neon.tech", "db.abcdefghijklmnop.supabase.co", "*.abcdefghijklmnop.supabase.co", "ec2-1-2-3-4.compute-1.amazonaws.com",
+      "my-db.b.db.ondigitalocean.com", "pg-acme.aivencloud.com", "dpg-abc.oregon-postgres.render.com", "*.example.co.uk", "*.myapp.vercel.app", "*.acme.workers.dev",
+      "*.vm1.westeurope.cloudapp.azure.com", "*.c9akq0example.eu-west-1.rds.amazonaws.com", "*.example.org", "*.sebi.gov.in"])
+      assert.equal(cfg.sharedWildcard(h), false, h);
+    for (const h of ["neon.tech", "supabase.com", "eu-west-1.rds.amazonaws.com", "co.uk", "*.co.uk", "*.vercel.app", "*.com"]) assert.equal(cfg.sharedWildcard(h), true, h);
+    // any_customer_host: a managed database product's every-customer zone, opted into, while the host is bound to the password.
+    const IMMACULATE = ["*.aws.neon.tech", "*.azure.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.postgres.database.azure.com"];
+    for (const h of IMMACULATE) {
+      refused({ hosts: [h] }, /is a wildcard over a name anyone can host under/, `${h} without the opt-in`);
+      assert.deepEqual(p({ hosts: [h], any_customer_host: true }), [], `${h} with the opt-in (a host field)`);
+      assert.deepEqual(p({ hosts: [h], any_customer_host: true, fields: { url: "secret" } }), [], `${h} with the opt-in (a sealed url)`);
+    }
+    assert.deepEqual(p({ hosts: ["*.rds.amazonaws.com", "*.eu-west-1.rds.amazonaws.com"], any_customer_host: true, ca: "aws-rds" }), [], "every RDS database, opted into");
+    for (const h of ["*.neon.tech", "*.compute-1.amazonaws.com", "*.s3.amazonaws.com", "*.us-east-1.elb.amazonaws.com", "*.amazonaws.com", "*.co.uk", "*.com", "*.vercel.app", "*.dsql.us-east-1.on.aws", "*.aivencloud.com"])
+      refused({ hosts: [h], any_customer_host: true }, /is a wildcard over a name anyone can host under|a host's name/, `${h} stays refused with the opt-in`);
+    // Not bound: the host written by an action (no clearing), a sealed host, no secret; and an opt-in with nothing to cover.
+    refused({ hosts: ["*.supabase.co"], any_customer_host: true, fields: { host: "status", user: "user", password: "secret" } }, /set_by "action": with any_customer_host the host is written by people only/, "a host an action writes");
+    refused({ hosts: ["*.supabase.co"], any_customer_host: true, fields: { host: "token", user: "user", password: "secret" } }, /any_customer_host needs the host in a plain field that decides/, "a sealed host");
+    refused({ hosts: ["db.abc.supabase.co"], any_customer_host: true }, /any_customer_host is for a wildcard over a managed database product's zone/, "an opt-in with only exact hosts");
+    assert.ok(cfg.connectionTestProblems({ ...structuredClone(AREA), lifecycle: { field: "host" } } as never,
+      { by: "kind", probes: { pg: { ...PROBE.probes.pg, hosts: ["*.supabase.co"], any_customer_host: true } } }).some((x) => /\{host\} is the lifecycle's field/.test(x.message)), "a host a move changes");
+
+    refused({ ca: "aws-rds", hosts: ["*.pg.example"] }, /\*\.pg\.example is not a aws-rds database's name: with ca "aws-rds" every host is under rds\.amazonaws\.com/, "a bundle for another provider's hosts");
+    refused({ ca: "azure", hosts: ["db.c9akq0example.eu-west-1.rds.amazonaws.com"] }, /not a azure database's name/, "the Azure bundle for an RDS host");
+    refused({ ca: "letsencrypt" }, /a postgres probe's ca is a bundle the mold ships: aws-rds, azure/, "a bundle the mold does not ship");
+    refused({ ca: FIXTURE_CA }, /a postgres probe's ca is a bundle the mold ships/, "an inline certificate");
+    // The options: the named bundle besides the stores (never instead of them).
+    delete process.env.APP_TEST_WORLD;
+    const withRds = S.pgTlsOptionsForTest("db.c9akq0example.eu-west-1.rds.amazonaws.com", "aws-rds").ca as string[];
+    for (const c of rds) assert.ok(withRds.includes(c));
+    assert.ok(withRds.length > rds.length, "the bundled and system stores kept");
+    process.env.APP_TEST_WORLD = "1";
+
+    // The TLS stand-in whose certificate a throwaway CA signed: trusted only through that CA as a named bundle.
+    S.registerCaBundleForTest("fixture-ca", FIXTURE_CA);
+    S.setPostgresStandinForTest({ port: pgPort(pgProvider), ca: OTHER_CA }); // the stand-in's own trust: not this server's
+    const pgBase = { host: "db.pg.example", port: 5432, database: "orders", user: "app", secret: PG_PW };
+    const runPg = async (o: Record<string, unknown>, data = pgBase) => {
+      const r = await C.runProbe("pg", { ...PROBE.probes.pg, ...o } as never, { plain: Object.fromEntries(Object.entries(data).filter(([k]) => !sealedNames.has(k))), sealed: sealedNames, open: async (k) => String((data as any)[k] ?? ""), label });
+      answers.push(JSON.stringify(r)); return r;
+    };
+    let m = pgSeen.length;
+    const c1 = await runPg({ ca: "fixture-ca" });
+    assert.equal(c1.ok, true, c1.words); assert.match(c1.words, /^It works: the orders database at db\.pg\.example answered SELECT 1 over TLS in \d+ ms\.$/);
+    assert.equal(pgSeen.at(-1)!.password, PG_PW);
+    const c2 = await runPg({});
+    assert.equal(c2.outcome, "unreachable", c2.words); assert.equal(pgSeen.at(-1)!.password, null, "without the bundle: no password sent");
+    const c3 = await runPg({ ca: "aws-rds" });
+    assert.equal(c3.outcome, "unreachable", c3.words); assert.equal(pgSeen.at(-1)!.password, null, "another provider's bundle: no password sent");
+    assert.equal(pgSeen.length, m + 3);
+    const c4 = await runPg({ ca: "no-such-bundle" });
+    assert.equal(c4.outcome, "not_ready"); assert.match(c4.words, /this app has no CA bundle named "no-such-bundle"/);
+    assert.equal(pgSeen.length, m + 3, "an unknown bundle: nothing connected");
+    // Outside a test world the registered bundle is never trusted.
+    delete process.env.APP_TEST_WORLD;
+    assert.equal(S.caBundle("fixture-ca"), null);
+    process.env.APP_TEST_WORLD = "1";
+    S.registerCaBundleForTest("fixture-ca", null);
+    S.setPostgresStandinForTest({ port: pgPort(pgTls), ca: PG_CERT });
+    ok("managed-provider CAs: the RDS global bundle (114) and Azure's 3 roots ship as public certificates; ca names a shipped bundle only, its hosts one account's or one server's under that provider's zone; a throwaway CA's server is trusted only through its named bundle (a test world only), and without it no password is sent");
+  }
+
   // ---------- 8. the record ----------
   {
     const { getDb } = await import("../src/db.js");
@@ -508,7 +853,7 @@ try {
   }
   console.log("signed-probes-test: all passed");
 } finally {
-  standin.close(); pgTls.close(); pgPlain.close(); pgStubborn.close();
+  standin.close(); pgTls.close(); pgPlain.close(); pgStubborn.close(); pgProvider.close();
   cleanup();
 }
 process.exit(0);

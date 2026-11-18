@@ -20,7 +20,8 @@
  *                trail say what changed: never a secret). The record's read is the person's (its own trail line).
  *
  * mold_v0-313: a probe with a `kind` other than "http" (aws_sigv4, gcp_service_account, azure_client_credentials,
- * postgres) is made by src/connection-test-signed.ts, through this file's host check, wire and words.
+ * postgres) is made by src/connection-test-signed.ts, through this file's host check, wire and words (mold_v0-319: a
+ * signed kind's `check` may read one resource: a volume, a file system, a bucket, a disk, a storage account, a share).
  *
  * Tests and the lane world only (never in production): APP_CONNECTION_TEST_STANDIN=http://127.0.0.1:<port> sends every
  * call that passed the checks to that address instead (`/<host><path>`), so a fixture stands in for the real service.
@@ -216,7 +217,8 @@ export function atPath(v: unknown, path: string): unknown {
 
 // ---------------------------------------------------------------- the call
 
-export interface Wire { status: number; location: string | null; body: Buffer }
+/** An answer: its status, where a redirect points, its body (at most 64 KB), and (mold_v0-319) its one-value headers. */
+export interface Wire { status: number; location: string | null; body: Buffer; headers: Record<string, string> }
 export function send(u: URL, method: string, headers: Record<string, string>, body: string | null, deadline: number, timeoutWords: string): Promise<Wire> {
   const sub = standin();
   return new Promise((resolve, reject) => {
@@ -226,7 +228,7 @@ export function send(u: URL, method: string, headers: Record<string, string>, bo
     if (body !== null) { h["content-type"] ??= "application/json"; h["content-length"] = String(Buffer.byteLength(body)); }
     const opts = { method, headers: h, timeout: left };
     const req = sub
-      ? http.request(`${sub}/${u.host}${u.pathname}${u.search}`, opts)
+      ? http.request(`${sub}/${u.host}${u.pathname}${u.search}`, { ...opts, agent: false }) // never a kept-alive socket the stand-in may close
       : https.request(u, { ...opts, lookup: publicLookup, agent: false });
     let done = false;
     const finish = (f: () => void) => { if (!done) { done = true; clearTimeout(timer); f(); } };
@@ -244,7 +246,8 @@ export function send(u: URL, method: string, headers: Record<string, string>, bo
       const location = typeof res.headers.location === "string" ? res.headers.location : null;
       const chunks: Buffer[] = [];
       let got = 0;
-      const end = () => finish(() => { req.destroy(); resolve({ status, location, body: Buffer.concat(chunks) }); });
+      const headers = Object.fromEntries(Object.entries(res.headers).filter((e): e is [string, string] => typeof e[1] === "string"));
+      const end = () => finish(() => { req.destroy(); resolve({ status, location, body: Buffer.concat(chunks), headers }); });
       if (method === "HEAD" || (status >= 300 && status < 400)) { res.resume(); return end(); }
       res.on("data", (c: Buffer) => {
         if (got >= BODY_MAX) return;

@@ -26,18 +26,31 @@
  * Each kind's call, hosts and signing are the kind's own (src/connection-test.ts); the pack names only which of the
  * record's fields fill its roles (`fields`), and the build checks which roles must be, may be or never are encrypted:
  *
- *   aws_sigv4                  STS GetCallerIdentity at sts.amazonaws.com (or sts.<region>.amazonaws.com), SigV4-signed
+ *   aws_sigv4                  SigV4-signed; `check` (mold_v0-319) picks one fixed, read-only call:
+ *     "identity" (default)      STS GetCallerIdentity at sts.amazonaws.com (or sts.<region>.amazonaws.com)
+ *     "ebs_volume"              EC2 DescribeVolumes (VolumeId.1) at ec2.<region>.amazonaws.com
+ *     "efs_file_system"         EFS DescribeFileSystems (FileSystemId) at elasticfilesystem.<region>.amazonaws.com
+ *     "s3_bucket"               S3 HeadBucket, path-style, at s3.<region>.amazonaws.com/<bucket>
  *     fields: access_key_id (plain or sealed), secret_access_key (sealed), session_token? (sealed), region? (plain;
- *     decides the host); region?: a fixed region instead of a field
+ *     decides the host); region?: a fixed region instead of a field (a resource check needs one or the other);
+ *     volume_id / file_system_id / bucket (plain): the resource of its check, a validated parameter, never in a host
  *   gcp_service_account        a service account's key file (sealed JSON): an RS256 assertion to oauth2.googleapis.com/token
- *     only (its token_uri must be exactly that), a read-only token, then (check "project", the default) its project read
- *     at cloudresourcemanager.googleapis.com; check "token" stops at the token
- *     fields: service_account_json (sealed)
+ *     only (its token_uri must be exactly that), a token, then by `check`: "project" (default) its project read at
+ *     cloudresourcemanager.googleapis.com; "token" stops at the token; "compute_disk" (mold_v0-319) GET
+ *     compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/disks/{disk}; "filestore_instance" GET
+ *     file.googleapis.com/v1/projects/{project}/locations/{location}/instances/{instance}
+ *     fields: service_account_json (sealed); project? (plain; default the key file's project_id), zone + disk,
+ *     location + instance (plain): each one path segment checked against Google's naming rules
  *   azure_client_credentials   login.microsoftonline.com/<tenant>/oauth2/v2.0/token (client credentials, the management
- *     scope), then a read-only GET of the subscription (or the list) at management.azure.com
- *     fields: tenant_id (plain; decides where the secret goes), client_id (plain), client_secret (sealed), subscription_id? (plain)
+ *     scope), then by `check` one read-only GET at management.azure.com: "subscription" (default) the subscription (or
+ *     the list); "storage_account" (mold_v0-319) .../resourceGroups/{rg}/providers/Microsoft.Storage/storageAccounts/{name};
+ *     "file_share" .../storageAccounts/{name}/fileServices/default/shares/{share}
+ *     fields: tenant_id (plain; decides where the secret goes), client_id (plain), client_secret (sealed), subscription_id?
+ *     (plain; required by a resource check), resource_group, storage_account, file_share (plain)
  *   postgres                   TLS only (the certificate checked against the host's name), SELECT 1 in a read-only
- *     transaction with a 10 s statement timeout; hosts (required) and ports (default [5432]) bound where it connects
+ *     transaction with a 10 s statement timeout; hosts (required) and ports (default [5432]) bound where it connects;
+ *     ca? (mold_v0-319): a managed provider's public CA bundle shipped in the mold, by name ("aws-rds", "azure"),
+ *     trusted besides the bundled and system stores, its hosts under that provider's database zone
  *     fields: url (sealed: postgres://user:password@host:port/db) or host + port? + database? (plain; host and port
  *     decide where the password goes) + user (plain or sealed) + password (sealed)
  *
@@ -94,29 +107,71 @@ export type HttpProbe = z.output<typeof HttpProbeSchema>;
 
 /** An AWS region's name (eu-west-1, us-gov-west-1, ap-southeast-4): it is a label of STS's host. */
 export const AWS_REGION = /^[a-z]{2}(-[a-z]+){1,2}-\d{1,2}$/;
+/** mold_v0-319: China (another endpoint domain) and GovCloud (other CAs, other partitions): refused in words for now. */
+export const AWS_REGION_UNCOVERED = /^(cn|us-gov)-/;
+/**
+ * mold_v0-319: each signed kind's checks (fixed, read-only calls; never an action name from config) and the roles
+ * naming the resource each one reads (required by it, refused on any other check).
+ */
+export const AWS_CHECKS = ["identity", "ebs_volume", "efs_file_system", "s3_bucket"] as const;
+export const GCP_CHECKS = ["project", "token", "compute_disk", "filestore_instance"] as const;
+export const AZURE_CHECKS = ["subscription", "storage_account", "file_share"] as const;
+export const CHECK_ROLES: Record<string, readonly string[]> = {
+  identity: [], ebs_volume: ["volume_id"], efs_file_system: ["file_system_id"], s3_bucket: ["bucket"],
+  project: [], token: [], compute_disk: ["zone", "disk"], filestore_instance: ["location", "instance"],
+  subscription: [], storage_account: ["resource_group", "storage_account"], file_share: ["resource_group", "storage_account", "file_share"],
+};
+/** The roles that name a resource (any check's): a field filling one is refused on a check that does not read it. */
+const RESOURCE_ROLES = new Set(Object.values(CHECK_ROLES).flat());
+/** The check a probe makes (its kind's default when it names none). */
+export const probeCheck = (p: SignedProbe): string | null =>
+  p.kind === "aws_sigv4" ? (p.check ?? "identity") : p.kind === "gcp_service_account" ? (p.check ?? "project") : p.kind === "azure_client_credentials" ? (p.check ?? "subscription") : null;
+/** Whether a probe's check reads one resource (a volume, a bucket, a disk, a share), not the account alone. */
+export const resourceCheck = (p: SignedProbe) => (CHECK_ROLES[probeCheck(p) ?? ""] ?? []).length > 0;
+
 export const AwsSigv4ProbeSchema = z.object({
   kind: z.literal("aws_sigv4"),
   label: probeLabel,
-  fields: z.object({ access_key_id: fieldName.optional(), secret_access_key: fieldName.optional(), session_token: fieldName.optional(), region: fieldName.optional() }).strict(),
-  /** A fixed region (its regional STS host) when no field names one; neither: the global sts.amazonaws.com. */
+  fields: z.object({ access_key_id: fieldName.optional(), secret_access_key: fieldName.optional(), session_token: fieldName.optional(), region: fieldName.optional(),
+    volume_id: fieldName.optional(), file_system_id: fieldName.optional(), bucket: fieldName.optional() }).strict(),
+  /** A fixed region (its regional host) when no field names one; neither: the global sts.amazonaws.com (identity only). */
   region: z.string().regex(AWS_REGION, "an AWS region's name (eu-west-1)").optional(),
+  /** mold_v0-319: "identity" (default, STS), "ebs_volume", "efs_file_system", "s3_bucket". */
+  check: z.enum(AWS_CHECKS, { error: () => `an aws_sigv4 probe's check is ${AWS_CHECKS.join(", ")}` }).optional(),
   timeout_seconds: probeTimeout,
 }).strict();
 export const GcpServiceAccountProbeSchema = z.object({
   kind: z.literal("gcp_service_account"),
   label: probeLabel,
-  fields: z.object({ service_account_json: fieldName.optional() }).strict(),
-  /** "project" (default): the token, then the key file's project read; "token": the read-only token alone. */
-  check: z.enum(["project", "token"]).optional(),
+  fields: z.object({ service_account_json: fieldName.optional(), project: fieldName.optional(), zone: fieldName.optional(), disk: fieldName.optional(),
+    location: fieldName.optional(), instance: fieldName.optional() }).strict(),
+  /**
+   * "project" (default): the token, then the key file's project read; "token": the token alone; mold_v0-319:
+   * "compute_disk", "filestore_instance": one resource read.
+   */
+  check: z.enum(GCP_CHECKS, { error: () => `a gcp_service_account probe's check is ${GCP_CHECKS.join(", ")}` }).optional(),
   timeout_seconds: probeTimeout,
 }).strict();
 export const AzureClientCredentialsProbeSchema = z.object({
   kind: z.literal("azure_client_credentials"),
   label: probeLabel,
-  fields: z.object({ tenant_id: fieldName.optional(), client_id: fieldName.optional(), client_secret: fieldName.optional(), subscription_id: fieldName.optional() }).strict(),
+  fields: z.object({ tenant_id: fieldName.optional(), client_id: fieldName.optional(), client_secret: fieldName.optional(), subscription_id: fieldName.optional(),
+    resource_group: fieldName.optional(), storage_account: fieldName.optional(), file_share: fieldName.optional() }).strict(),
+  /** "subscription" (default): the subscription (or the list); mold_v0-319: "storage_account", "file_share". */
+  check: z.enum(AZURE_CHECKS, { error: () => `an azure_client_credentials probe's check is ${AZURE_CHECKS.join(", ")}` }).optional(),
   timeout_seconds: probeTimeout,
 }).strict();
 export const POSTGRES_DEFAULT_PORT = 5432;
+/**
+ * mold_v0-319: the managed providers' public CA bundles the mold ships (src/ca/<name>.pem, read by
+ * src/connection-test-signed.ts), and the database zones each one signs for: a probe naming one lists hosts under them.
+ */
+export const PG_CA_BUNDLES = ["aws-rds", "azure"] as const;
+export type PgCaBundle = (typeof PG_CA_BUNDLES)[number];
+export const PG_CA_ZONES: Record<PgCaBundle, readonly string[]> = {
+  "aws-rds": ["rds.amazonaws.com"],
+  azure: ["postgres.database.azure.com", "postgres.cosmos.azure.com"],
+};
 export const PostgresProbeSchema = z.object({
   kind: z.literal("postgres"),
   label: probeLabel,
@@ -125,6 +180,17 @@ export const PostgresProbeSchema = z.object({
   hosts: hostList,
   /** The ports it may listen on (default [5432]). */
   ports: z.array(z.number().int().min(1024, "a database's port is 1024 to 65535").max(65535, "a database's port is 1024 to 65535")).min(1).max(5).optional(),
+  /**
+   * mold_v0-319: a managed provider's public CA bundle, shipped in the mold (src/ca/), trusted besides the bundled and
+   * system stores: by name only, never a certificate from a record or the pack.
+   */
+  ca: z.enum(PG_CA_BUNDLES, { error: () => `a postgres probe's ca is a bundle the mold ships: ${PG_CA_BUNDLES.join(", ")}` }).optional(),
+  /**
+   * mold_v0-319: true lets `hosts` hold a wildcard over a managed database product's zone that every customer shares
+   * ("*.aws.neon.tech", "*.supabase.co"), for an app where each workspace connects its own database (ANY_CUSTOMER_ZONES
+   * only). Allowed only while the record's host is bound to its password (a host field, plain, written by people).
+   */
+  any_customer_host: z.boolean().optional(),
   timeout_seconds: probeTimeout,
 }).strict();
 
@@ -144,17 +210,31 @@ type Role = { seal: "sealed" | "either" | "plain"; required?: boolean; decides?:
 const PLAIN_TEXT = ["text", "enum"];
 export const KIND_ROLES: Record<SignedProbe["kind"], Record<string, Role>> = {
   aws_sigv4: { access_key_id: { seal: "either", required: true, decides: true }, secret_access_key: { seal: "sealed", required: true }, session_token: { seal: "sealed" },
-    region: { seal: "plain", decides: true, types: PLAIN_TEXT } },
-  gcp_service_account: { service_account_json: { seal: "sealed", required: true } },
+    region: { seal: "plain", decides: true, types: PLAIN_TEXT },
+    // mold_v0-319: the resource a check reads (bound to the keys: which resource is tested is not a reader's to change).
+    volume_id: { seal: "plain", decides: true, types: PLAIN_TEXT }, file_system_id: { seal: "plain", decides: true, types: PLAIN_TEXT },
+    bucket: { seal: "plain", decides: true, types: PLAIN_TEXT } },
+  gcp_service_account: { service_account_json: { seal: "sealed", required: true },
+    project: { seal: "plain", decides: true, types: PLAIN_TEXT }, zone: { seal: "plain", decides: true, types: PLAIN_TEXT }, disk: { seal: "plain", decides: true, types: PLAIN_TEXT },
+    location: { seal: "plain", decides: true, types: PLAIN_TEXT }, instance: { seal: "plain", decides: true, types: PLAIN_TEXT } },
   azure_client_credentials: { tenant_id: { seal: "plain", required: true, decides: true, types: PLAIN_TEXT }, client_id: { seal: "plain", required: true, decides: true, types: PLAIN_TEXT },
-    client_secret: { seal: "sealed", required: true }, subscription_id: { seal: "plain", types: PLAIN_TEXT } },
+    client_secret: { seal: "sealed", required: true }, subscription_id: { seal: "plain", types: PLAIN_TEXT },
+    resource_group: { seal: "plain", decides: true, types: PLAIN_TEXT }, storage_account: { seal: "plain", decides: true, types: PLAIN_TEXT },
+    file_share: { seal: "plain", decides: true, types: PLAIN_TEXT } },
   postgres: { url: { seal: "sealed" }, host: { seal: "plain", decides: true, types: ["text", "url"] }, port: { seal: "plain", decides: true, types: ["number", "text", "enum"] },
     database: { seal: "plain", types: PLAIN_TEXT }, user: { seal: "either" }, password: { seal: "sealed" } },
 };
-/** The fixed hosts of the kinds whose host is the kind's (postgres's are its `hosts`). */
+/**
+ * The fixed hosts of the kinds whose host is the kind's (postgres's are its `hosts`): per check, only the host its
+ * call needs (mold_v0-319). AWS's resource checks are regional (the region a validated label, the only record value in
+ * a host); S3 is path-style, so a bucket's name is never a host.
+ */
+const AWS_SERVICE_HOST: Record<(typeof AWS_CHECKS)[number], string> = { identity: "sts", ebs_volume: "ec2", efs_file_system: "elasticfilesystem", s3_bucket: "s3" };
 export const KIND_HOSTS = {
-  aws_sigv4: (region: string | null) => [region ? `sts.${region}.amazonaws.com` : "sts.amazonaws.com"],
-  gcp_service_account: () => ["oauth2.googleapis.com", "cloudresourcemanager.googleapis.com"],
+  aws_sigv4: (region: string | null, check: (typeof AWS_CHECKS)[number] = "identity") =>
+    [check === "identity" && !region ? "sts.amazonaws.com" : `${AWS_SERVICE_HOST[check]}.${region}.amazonaws.com`],
+  gcp_service_account: (check: (typeof GCP_CHECKS)[number] = "project") => ["oauth2.googleapis.com",
+    ...(check === "project" ? ["cloudresourcemanager.googleapis.com"] : check === "compute_disk" ? ["compute.googleapis.com"] : check === "filestore_instance" ? ["file.googleapis.com"] : [])],
   azure_client_credentials: () => ["login.microsoftonline.com", "management.azure.com"],
 } as const;
 /** The one address a service account's key file may name as its token_uri: its signed assertion goes there only. */
@@ -188,7 +268,8 @@ const hostPart = (url: string) => (startsWithField(url) ? null : (/^https:\/\/([
  * roles that decide (an AWS region, an Azure tenant, a database's host and port).
  */
 export function destinationFields(p: ConnectionProbe): string[] {
-  if (!isHttpProbe(p)) return roleFields(p).filter(([r]) => KIND_ROLES[p.kind][r]?.decides).map(([, f]) => f);
+  // mold_v0-319: on a resource check, the subscription that holds the resource decides too.
+  if (!isHttpProbe(p)) return roleFields(p).filter(([r]) => KIND_ROLES[p.kind][r]?.decides || (r === "subscription_id" && resourceCheck(p))).map(([, f]) => f);
   if (startsWithField(p.url)) return [placeholders(p.url)[0]!];
   return placeholders(hostPart(p.url) ?? "");
 }
@@ -227,22 +308,76 @@ interface Field { name: string; label?: string; type?: string; encrypted?: boole
 interface Area { name?: string; scope?: string; repository?: string; fields: readonly Field[]; contract?: { actions?: Record<string, unknown> }; lifecycle?: { field?: string } }
 
 /**
- * Suffixes anyone can host a name under (a cloud's shared hosting, a public suffix): a wildcard under one ("*.x")
- * would let any of its customers receive the call. An exact host under one is fine.
+ * Suffixes anyone can host a name under (a cloud's shared hosting, a managed database provider, a public suffix).
+ * mold_v0-319 (fails closed): a wildcard at, above or ANYWHERE below one ("*.x" with x under it) is refused, unless the
+ * zone's `own` count says how many labels below it are one customer's own (SHARED_ZONES); an exact host under one is fine.
  */
-export const SHARED_SUFFIXES = ["amazonaws.com", "on.aws", "vercel.app", "workers.dev", "github.io", "herokuapp.com", "cloudfront.net", "azurewebsites.net",
-  "appspot.com", "netlify.app", "pages.dev", "fly.dev", "onrender.com", "web.app", "firebaseapp.com", "run.app", "azurestaticapps.net", "blob.core.windows.net",
+export const SHARED_SUFFIXES = ["amazonaws.com", "amazonaws.com.cn", "on.aws", "vercel.app", "workers.dev", "github.io", "herokuapp.com", "cloudfront.net", "azurewebsites.net",
+  "appspot.com", "netlify.app", "pages.dev", "fly.dev", "onrender.com", "render.com", "web.app", "firebaseapp.com", "run.app", "azurestaticapps.net",
+  "blob.core.windows.net", "windows.net", "azure.com", "azure.net", "cloudapp.net", "azurecr.io", "azurefd.net", "trafficmanager.net",
   "trycloudflare.com", "ngrok.io", "ngrok.app", "ngrok-free.app", "glitch.me", "repl.co", "surge.sh", "vercel.sh", "deno.dev", "railway.app", "up.railway.app",
+  "neon.tech", "supabase.co", "supabase.com", "ondigitalocean.com", "digitaloceanspaces.com", "aivencloud.com", "elasticbeanstalk.com", "cloudflarestorage.com",
   "co.uk", "com.au", "co.jp", "com.br", "co.in", "co.za", "com.cn", "org.uk", "gov.uk", "ac.uk"];
 /**
- * Whether a probe's `hosts` entry is a wildcard over a shared suffix (or a bare top-level name), or (mold_v0-313) a
- * shared suffix itself or a name above one, listed bare ("amazonaws.com", "fly.dev", "co.uk").
+ * mold_v0-319: the zones whose labels below are known to be one customer's own, and how many (the most specific zone a
+ * name is under decides; every other shared suffix allows exact hosts only).
+ *   rds / redshift   <instance>.<id>.<region>.rds.amazonaws.com: <id> is one account's per region, so
+ *                    "*.<id>.<region>.rds.amazonaws.com" is one account's, "*.<region>.rds.amazonaws.com" everyone's
+ *   azure databases  <server>.postgres.database.azure.com: the server's name is global and one customer's
+ *   cloudapp.azure   <name>.<region>.cloudapp.azure.com
+ *   supabase.co      <ref>.supabase.co and db.<ref>.supabase.co: one project's
+ *   public suffixes  <name>.co.uk is a registrable domain, one registrant's
+ *   hosting          <project>.vercel.app, <user>.github.io, <app>.herokuapp.com, <site>.netlify.app, <project>.pages.dev,
+ *                    <app>.fly.dev, <account>.workers.dev, <site>.web.app / firebaseapp.com, <project>.appspot.com,
+ *                    <app>.azurewebsites.net, <account>.blob.core.windows.net: the first label is one customer's name
+ * Left exact-only (names below are anyone's, or the naming is not certain): amazonaws.com otherwise (EC2's compute,
+ * ELB, S3, ...), on.aws (DSQL, Lambda URLs), neon.tech, supabase.com (its shared pooler), ondigitalocean.com, aivencloud.com,
+ * render.com and onrender.com, run.app (a.run.app is shared), cloudapp.net, the tunnels, and the rest.
+ */
+export const SHARED_ZONES: readonly { zone: string; own: number }[] = [
+  { zone: "rds.amazonaws.com", own: 2 }, { zone: "rds.amazonaws.com.cn", own: 2 }, { zone: "redshift.amazonaws.com", own: 2 },
+  { zone: "redshift-serverless.amazonaws.com", own: 2 }, { zone: "postgres.database.azure.com", own: 1 }, { zone: "mysql.database.azure.com", own: 1 },
+  { zone: "postgres.cosmos.azure.com", own: 2 }, { zone: "database.windows.net", own: 1 }, { zone: "cloudapp.azure.com", own: 2 },
+  { zone: "supabase.co", own: 1 },
+  ...["co.uk", "com.au", "co.jp", "com.br", "co.in", "co.za", "com.cn", "org.uk", "gov.uk", "ac.uk"].map((zone) => ({ zone, own: 1 })),
+  ...["vercel.app", "github.io", "herokuapp.com", "netlify.app", "pages.dev", "fly.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
+    "azurewebsites.net", "blob.core.windows.net"].map((zone) => ({ zone, own: 1 })),
+];
+/**
+ * mold_v0-319: the managed database products whose zone a postgres probe with `any_customer_host` may cover with a
+ * wildcard (every customer's databases of that product, never a provider's general compute, storage or hosting).
+ * Explicit, not a heuristic: `*.neon.tech` (above the product), `*.amazonaws.com`, `*.compute-1.amazonaws.com`,
+ * `*.s3.amazonaws.com`, `*.elb.amazonaws.com` and a public suffix stay refused.
+ */
+export const ANY_CUSTOMER_ZONES = ["aws.neon.tech", "azure.neon.tech", "supabase.co", "pooler.supabase.com", "postgres.database.azure.com",
+  "postgres.cosmos.azure.com", "rds.amazonaws.com", "db.ondigitalocean.com"] as const;
+/** Whether `h` is a wildcard at or below an ANY_CUSTOMER_ZONES product zone. */
+export const anyCustomerWildcard = (h: string) => {
+  if (!h.startsWith("*.")) return false;
+  const base = h.slice(2).toLowerCase().replace(/\.$/, "");
+  return ANY_CUSTOMER_ZONES.some((z) => base === z || base.endsWith(`.${z}`));
+};
+/** The labels of `name` below `zone` (0 at the zone, -1 above it), or null when it is elsewhere. */
+const labelsBelow = (name: string, zone: string) =>
+  name === zone ? 0 : name.endsWith(`.${zone}`) ? name.slice(0, -zone.length - 1).split(".").length : zone.endsWith(`.${name}`) ? -1 : null;
+/**
+ * Whether a probe's `hosts` entry is shared with others: a bare top-level name; a wildcard at, above or below a shared
+ * suffix, unless the most specific zone it is under grants that many labels as one customer's own (fails closed); a
+ * bare name at or above a shared suffix, or above a zone's own labels ("eu-west-1.rds.amazonaws.com").
  */
 export const sharedWildcard = (h: string) => {
   const wild = h.startsWith("*.");
-  const base = (wild ? h.slice(2) : h).toLowerCase();
-  if (!wild) return SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
-  return !base.includes(".") || SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
+  const base = (wild ? h.slice(2) : h).toLowerCase().replace(/\.$/, "");
+  if (wild && !base.includes(".")) return true;
+  const zones = [...SHARED_SUFFIXES.map((zone) => ({ zone, own: Infinity })), ...SHARED_ZONES];
+  // At or above any shared name: everyone's.
+  if (zones.some(({ zone }) => { const n = labelsBelow(base, zone); return n !== null && n <= 0; })) return true;
+  // Below: the most specific zone decides (its own count; none known: exact hosts only).
+  const under = zones.filter(({ zone }) => base.endsWith(`.${zone}`)).sort((x, y) => y.zone.length - x.zone.length || (x.own === Infinity ? 1 : -1));
+  const z = under[0];
+  if (!z) return false;
+  const n = labelsBelow(base, z.zone)!;
+  return wild ? n < z.own : Number.isFinite(z.own) && n < z.own;
 };
 const values = (f: Field) => (f.options ?? []).map((o) => (typeof o === "string" ? o : o.value));
 
@@ -361,11 +496,42 @@ function signedProblems(p: SignedProbe, field: (n: string) => Field | undefined,
     seen.set(n, role);
   }
   if (p.kind === "aws_sigv4" && p.region && named.region) bad("a fixed region or a region field, not both", "region");
+  if (p.kind === "aws_sigv4" && p.region && AWS_REGION_UNCOVERED.test(p.region)) bad(`${p.region} is an AWS China or GovCloud region: this test does not cover those yet`, "region");
+  // mold_v0-319: a check's resource roles are required, every other check's refused; a regional check has a region.
+  const check = probeCheck(p);
+  if (check !== null) {
+    const mine = CHECK_ROLES[check] ?? [];
+    for (const role of mine) if (named[role] === undefined) bad(`a ${p.kind} probe with check "${check}" names the field holding its ${role.replace(/_/g, " ")} (fields.${role})`, "fields", role);
+    for (const role of Object.keys(named)) if (named[role] !== undefined && RESOURCE_ROLES.has(role) && !mine.includes(role))
+      bad(`fields.${role} is read by another check than "${check}": name it only on a check that reads it`, "fields", role);
+    if (p.kind === "aws_sigv4" && check !== "identity" && !p.region && !named.region) bad(`check "${check}" calls a regional endpoint: name a region field (fields.region) or a fixed region`, "region");
+    if (p.kind === "azure_client_credentials" && check !== "subscription" && !named.subscription_id) bad(`check "${check}" reads a resource in one subscription: name the field holding it (fields.subscription_id)`, "fields", "subscription_id");
+    if (p.kind === "gcp_service_account" && check === "token" && named.project) bad(`check "token" reads no project: fields.project is for project, compute_disk or filestore_instance`, "fields", "project");
+  }
   if (p.kind === "postgres") {
     const pg = named;
     if (pg.url && (pg.host || pg.port || pg.database || pg.user || pg.password)) bad("a postgres probe takes its connection from a sealed url, or from host, user and password: not both", "fields");
     if (!pg.url && !(pg.host && pg.user && pg.password)) bad("a postgres probe names a sealed url field, or host, user and password fields", "fields");
     for (const h of p.hosts) if (localName(h.replace(/^\*\./, ""))) bad(`${h} is an internal name: a test calls public hosts only`, "hosts");
-    for (const h of p.hosts) if (sharedWildcard(h)) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "hosts");
+    for (const h of p.hosts) if (sharedWildcard(h) && !(p.any_customer_host && anyCustomerWildcard(h))) bad(h.startsWith("*.") ? `${h} is a wildcard over a name anyone can host under: list the exact host (my-db.${h.slice(2)})${anyCustomerWildcard(h) ? `, or set any_customer_host: true when each workspace connects its own database` : ""}` : `${h} is a name anyone can host under: list the exact host (my-db.${h})`, "hosts");
+    // mold_v0-319: any_customer_host only while the record's host is bound to every secret the probe sends: a sealed
+    // url (the host is inside the secret: changing it means typing the password again), or a host field (plain, one
+    // value, written by people through the record store's write, which clears the bound secrets when it changes).
+    if (p.any_customer_host) {
+      const hostField = pg.host ? field(pg.host) : undefined;
+      const dest = destinationFields(p), sealedHere = Object.values(pg).filter((n): n is string => !!n && !!field(n)?.encrypted);
+      const secrets = probeSecrets(p, (n) => !!field(n)?.encrypted);
+      if (pg.url) { if (!field(pg.url)?.encrypted) bad("any_customer_host needs the url sealed (encrypted): its host and password are typed together", "any_customer_host"); }
+      else if (!hostField || hostField.encrypted || !dest.includes(pg.host!)) bad("any_customer_host needs the host in a plain field that decides where the password goes (fields.host)", "any_customer_host");
+      else if (hostField.set_by !== undefined) bad(`${pg.host} is set_by ${JSON.stringify(hostField.set_by)}: with any_customer_host the host is written by people only, so a change clears the password`, "any_customer_host");
+      if (!sealedHere.length || sealedHere.some((n) => !secrets.includes(n))) bad("any_customer_host needs every secret the probe sends bound to its host (a sealed password)", "any_customer_host");
+      if (!p.hosts.some(anyCustomerWildcard)) bad(`any_customer_host is for a wildcard over a managed database product's zone (${ANY_CUSTOMER_ZONES.map((z) => `*.${z}`).join(", ")})`, "any_customer_host");
+    }
+    // mold_v0-319: a provider's CA signs that provider's database names only: its hosts are under its zones.
+    if (p.ca) for (const h of p.hosts) {
+      const base = h.replace(/^\*\./, "").toLowerCase();
+      if (!PG_CA_ZONES[p.ca].some((z) => base.endsWith(`.${z}`) || (h.startsWith("*.") && base === z)))
+        bad(`${h} is not a ${p.ca} database's name: with ca "${p.ca}" every host is under ${PG_CA_ZONES[p.ca].join(" or ")}`, "hosts");
+    }
   }
 }
