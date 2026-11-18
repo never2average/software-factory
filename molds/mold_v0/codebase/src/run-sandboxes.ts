@@ -151,11 +151,14 @@ real="$(readlink -f /usr/local/bin/node 2>/dev/null || true)"
 case "$real" in /home/*|/root/*) { sudo -n cp --remove-destination "$real" /usr/local/bin/node && sudo -n chmod 0755 /usr/local/bin/node; } || fail "node could not be copied for the run user" ;; esac
 
 at packages
-# What agent-workspace runs need (git) and the firewall the lockdown sets (nft or iptables), and setfacl (the runner's
+# What agent-workspace runs need (git, python3 for recipes' scripts) and the firewall the lockdown sets (nft or iptables), and setfacl (the runner's
 # lockdown denies the local resolver's and the system bus's sockets to the run's user with it): installed when missing.
 command -v setfacl >/dev/null 2>&1 || ${apt} install -y -qq acl >/dev/null 2>&1 || true
 command -v git >/dev/null 2>&1 || { ${apt} update -qq && ${apt} install -y -qq git; } >/dev/null 2>&1 || true
 command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || ${apt} install -y -qq nftables >/dev/null 2>&1 || true
+# mold_v0-321: an agent's recipes run their scripts with python3 (a build's checks, validators): installed when missing,
+# never a failed start without it (a session whose recipes need none still runs).
+command -v python3 >/dev/null 2>&1 || { ${apt} update -qq && ${apt} install -y -qq --no-install-recommends python3; } >/dev/null 2>&1 || true
 command -v git >/dev/null 2>&1 || fail "git is missing in the run sandbox"
 command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || fail "neither nft nor iptables in the run sandbox"
 

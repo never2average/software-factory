@@ -62,7 +62,13 @@ const NETWORK = { name: "network_connections", label: "Network connections", rol
   permissions: { read: ALL, create: ["owner", "member"], update: ["owner", "member"], delete: ["owner"] },
   contract: { ...contract, actions: { ...contract.actions, create: ["owner", "member"], update: ["owner", "member"] } } };
 const PACK = { id: "fixture_conn_env", name: "Fixture connection env", version: "1", record_areas: [STORAGE, COMPUTE, NETWORK],
-  agent_profiles: [{ id: "deployer", name: "Deploy an application", connection_env: CONNECTION_ENV }, { id: "plain-agent", name: "No connections" }] };
+  agent_profiles: [{ id: "deployer", name: "Deploy an application", connection_env: CONNECTION_ENV }, { id: "plain-agent", name: "No connections" },
+    // mold_v0-321: one area split by `where` (as a network per cloud), and two entries of one area naming a flag no record has on.
+    { id: "split", name: "Split entries", connection_env: [
+      { area: "compute_connections", where: { provider: "paas" }, prefix: "COMPUTE_", fields: { API_TOKEN: "api_token" } },
+      { area: "compute_connections", where: { provider: "vm" }, prefix: "VM_", fields: { API_TOKEN: "api_token" } },
+      { area: "storage_connections", use: "use_for_files", prefix: "STORAGE_", fields: { BUCKET: "bucket" } },
+      { area: "storage_connections", use: "use_for_files", where: { bucket: "other-files" }, prefix: "OTHER_", fields: { BUCKET: "bucket" } }] }] };
 
 try {
   const F = await import("../src/features.js");
@@ -158,7 +164,7 @@ try {
   {
     // M1: two storage records in use refuse the start (exactly one is used); one again, it starts.
     await add(A.orgId, "storage_connections", "rival", { bucket: "rival-files", endpoint: "https://rival.example.com", access_key_id: canary("rival-id"), secret_access_key: canary("rival"), use_for_files: true });
-    await assert.rejects(H.startSession(A.orgId, ownerA, { message: "x", profile: "deployer" }), /Storage connections has more than one record in use[^:]*: keep exactly one in use/);
+    await assert.rejects(H.startSession(A.orgId, ownerA, { message: "x", profile: "deployer" }), /Storage connections has more than one record marked "In use" \(\w+, \w+\): keep exactly one marked "In use", then start again/);
     await ra.asWriter({ by: "people", id: "owner" }, () => recs(A.orgId).delete("storage_connections", "rival"));
     const s = await H.startSession(A.orgId, ownerA, { message: "env STORAGE_BUCKET", profile: "deployer" });
     sid = s.id;
@@ -193,6 +199,17 @@ try {
     // Their queued wakes are not this test's: they are stopped before any runs.
     await H.stopSession(A.orgId, m.id, memberA); await H.stopSession(A.orgId, p.id, ownerA);
     ok("at start: the names frozen (no value) and listed in the first system message; a member who may not update the areas and a profile without connection_env get none");
+    // mold_v0-321: workspace B has a paas account (the vm entry finds none: the area gave a record, so it is no news) and
+    // no storage record in use (two entries of one area: named once, by the flag's label a person turns on).
+    const ownerB = { kind: "person" as const, user: "user_owner_b", name: "owner-b@example.org", role: "owner" as const };
+    const sp = await H.startSession(B.orgId, ownerB, { message: "x", profile: "split" });
+    const spSys = (await H.readSession(B.orgId, sp.id, ownerB)).messages.filter((y) => y.role === "system").map((y) => y.body).join("\n");
+    assert.match(spSys, /COMPUTE_API_TOKEN \(compute_connections\)/, "the paas entry gave its record");
+    assert.ok(!/Compute connections/.test(spSys), `an area another entry gave a record is not said to have none: ${spSys}`);
+    assert.equal(spSys.match(/Storage connections/g)?.length, 1, `an area named once: ${spSys}`);
+    assert.match(spSys, /No record of Storage connections is marked "In use": its variables are not set\./, "by the flag's label");
+    await H.stopSession(B.orgId, sp.id, ownerB);
+    ok("mold_v0-321: an area without a record is named once, by the flag a person turns on, and not when another of its entries gave one");
   }
 
   // ---------- 3. each wake ----------

@@ -474,6 +474,8 @@ try {
       stub("apt-get", "exit 0"); stub("git", "exit 0"); stub("nft", "exit 0");
       const script = sbx.runSetupScript(h);
       assert.equal(spawnSync("bash", ["-n"], { input: script }).status, 0, "the set-up script parses");
+      // mold_v0-321: python3 (recipes' scripts) installed when missing, never a failed start without it.
+      assert.match(script, /command -v python3 >\/dev\/null 2>&1 \|\| \{ .*apt-get update -qq && .*apt-get install -y -qq --no-install-recommends python3; \} >\/dev\/null 2>&1 \|\| true/, "python3 installed when missing, best effort");
       writeFileSync(path.join(h, "run-setup.sh"), script);
       const r = spawnSync("bash", [path.join(h, "run-setup.sh")], { encoding: "utf8", timeout: 60_000, env: { PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`, HOME: h } });
       const status = readFileSync(path.join(h, "run-setup.status"), "utf8").trim(), log = readFileSync(path.join(h, "run-setup.err"), "utf8");
