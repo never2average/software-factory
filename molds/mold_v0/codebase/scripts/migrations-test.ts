@@ -1098,6 +1098,30 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} the workspace agent's tool tokens: row-level security on, no tenant grant; its rollback drops the table, and it applies again`);
   }
 
+  // What a running attempt was given (mold_v0-320, run_delivered_secrets): sealed values closed to tenant work, gone with
+  // their run; the rollback drops the table, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "run_delivered_secrets")!.version;
+    const d = await shellAt(kind);
+    const [t] = await d.query<{ rls: boolean }>("SELECT relrowsecurity AS rls FROM pg_class WHERE relname = 'run_delivered_secrets'");
+    assert.equal(t?.rls, true, "row-level security on");
+    const grants = await d.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'run_delivered_secrets' AND grantee LIKE 'app_tenant_%'");
+    assert.equal(grants.length, 0, "the tenant role has no grant on it");
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Delivered', 'delivered-0072') RETURNING id");
+    await d.query("INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd) VALUES ('run_delivered', $1, 'p', 'k', '{}', 1, 60, 60, 1)", [org]);
+    await d.query("INSERT INTO run_delivered_secrets (run_id, org_id, name, digest, sealed, expires_at) VALUES ('run_delivered', $1, 'n', 'd', 's', now())", [org]);
+    await assert.rejects(d.query("INSERT INTO run_delivered_secrets (run_id, org_id, name, digest, sealed, expires_at) VALUES ('run_none', $1, 'n', 'd', 's', now())", [org]), /foreign key/, "only a run's");
+    await d.query("DELETE FROM runs WHERE id = 'run_delivered'");
+    assert.equal((await d.query("SELECT 1 FROM run_delivered_secrets")).length, 0, "gone with its run");
+    await d.query("DELETE FROM organizations WHERE id = $1", [org]);
+    await rollBackAfter(d, v);
+    await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_run_delivered_secrets.sql`), "utf8"));
+    assert.equal((await d.query("SELECT 1 FROM pg_class WHERE relname = 'run_delivered_secrets'")).length, 0, "dropped by its rollback");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_run_delivered_secrets")).length, 1, "and it applies again");
+    await d.drop();
+    log(`  ✓ ${kind}: ${v} what a running attempt was given: row-level security on, no tenant grant, only a run's and gone with it; its rollback drops the table, and it applies again`);
+  }
+
   // A record's change history (mold_v0-256, record_changes, found by name): an append-only table under row-level
   // security (the tenant role reads and adds its workspace's lines, never changes or removes one); its rollback drops it,
   // the records staying, leaves exactly what the migration before left, and it applies again.

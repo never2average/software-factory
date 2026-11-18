@@ -50,7 +50,8 @@ export async function renewLease(runId: string, seconds: number): Promise<void> 
 }
 /**
  * The end of an attempt, inside the transaction that ends it (src/runs.ts complete and sweep): its store lease goes and
- * every stage it did not commit is discarded, before any later attempt can be claimed. Returns the discarded objects'
+ * every stage it did not commit is discarded, and the sealed values it was given go (run_delivered_secrets, mold_v0-320),
+ * before any later attempt can be claimed. Returns the discarded objects'
  * keys, removed after the transaction commits (removeObjects).
  */
 export async function endAttempt(tx: Queryable, runId: string): Promise<string[]> {
@@ -59,6 +60,8 @@ export async function endAttempt(tx: Queryable, runId: string): Promise<string[]
     "/* tenant: the ending run's own staged snapshots, by run id */ UPDATE workspace_snapshots SET status = 'discarded' WHERE run_id = $1 AND status = 'staged' RETURNING object_key", [runId]);
   // mold_v0-182: the attempt's transfers through object storage (an upload never committed, a checkout's download).
   const transfers = await endTransfers(tx, runId);
+  // mold_v0-320: the sealed values the attempt was given, kept for redaction on any instance (src/connection-env.ts).
+  await tx.query("/* tenant: the ending run's own delivered values, by run id */ DELETE FROM run_delivered_secrets WHERE run_id = $1", [runId]);
   return [...rows.map((r) => r.object_key).filter(Boolean), ...transfers];
 }
 export async function removeObjects(list: string[]): Promise<void> {

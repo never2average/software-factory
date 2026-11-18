@@ -221,8 +221,33 @@ try {
     await ra.asWriter({ by: "people", id: "owner" }, () => recs(A.orgId).update("compute_connections", "hosting", { title: "hosting", data: { provider: "paas", account_id: "team-a", api_token: ROTATED } }));
     assert.equal(await ask(`run echo "old=$COMPUTE_API_TOKEN"`, /^Ran: 0 old=/), "Ran: 0 old=[credential connection:compute_connections/COMPUTE_API_TOKEN]", "the old value, after a rotation: redacted");
     const runId = w.claim.run.id;
+    // mold_v0-320: another server instance (a fresh copy of the module: nothing in its memory) redacts what this one
+    // delivered: the old token is no record's value any more, so only the database's sealed copy can name it.
+    const [{ org_id: runOrg }] = await db.query<{ org_id: number }>("SELECT org_id FROM runs WHERE id = $1", [runId]);
+    const frozen = (await db.query<{ spec: any }>("SELECT spec FROM runs WHERE id = $1", [runId]))[0]!.spec.connection_env;
+    const second = await import(`../src/connection-env.js?instance=${randomBytes(4).toString("hex")}`) as typeof import("../src/connection-env.js");
+    assert.notEqual(second, await import("../src/connection-env.js"), "the second instance is a fresh module (its own memory)");
+    const elsewhere = await second.connectionSecrets({ id: runId, org_id: runOrg, spec: { connection_env: frozen } });
+    assert.ok(elsewhere.some((x) => x.value === A_TOKEN && x.name === "connection:compute_connections/COMPUTE_API_TOKEN"), "a second instance redacts the value the first delivered (rotated since: no record holds it)");
+    assert.equal(redactText(`leak ${A_TOKEN}`, elsewhere), "leak [credential connection:compute_connections/COMPUTE_API_TOKEN]");
+    const atRest = await db.query<{ run_id: string; digest: string; sealed: string }>("SELECT run_id, digest, sealed FROM run_delivered_secrets WHERE run_id = $1", [runId]);
+    assert.ok(atRest.length >= 3, `the delivered secrets are kept sealed while the run runs (${atRest.length})`);
+    const restText = JSON.stringify(atRest);
+    for (const x of SECRETS) {
+      assert.ok(!restText.includes(x) && !restText.includes(sha(x)) && !restText.includes(Buffer.from(x).toString("base64")), "no plain value, plain hash or encoding at rest");
+      assert.ok(!atRest.some((r) => Buffer.from(r.sealed, "base64").includes(Buffer.from(x))), "the sealed bytes hold no plain value");
+    }
+    assert.ok(!(await db.query<{ n: number }>("SELECT count(*)::int AS n FROM run_delivered_secrets WHERE name LIKE '%STORAGE_BUCKET%'"))[0]!.n, "a plain field is never kept");
     await H.stopSession(A.orgId, sid, ownerA);
     await w.done;
+    assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM run_delivered_secrets WHERE run_id = $1", [runId]))[0]!.n, 0, "the run's end deletes what it was given");
+    const third = await import(`../src/connection-env.js?instance=${randomBytes(4).toString("hex")}`) as typeof import("../src/connection-env.js");
+    assert.ok(!(await third.connectionSecrets({ id: runId, org_id: runOrg, spec: { connection_env: frozen } })).some((x) => x.value === A_TOKEN), "after the end, nothing of it is left to open");
+    // A delivery that raced the end (a row the end missed) goes with the next run sweep.
+    await db.query("INSERT INTO run_delivered_secrets (run_id, org_id, name, digest, sealed, expires_at) VALUES ($1, $2, 'x', 'leftover', 'x', now() + interval '1 hour')", [runId, runOrg]);
+    await (await import("../src/runs.js")).sweepRuns();
+    assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM run_delivered_secrets WHERE run_id = $1", [runId]))[0]!.n, 0, "the sweep removes a leftover of an ended run");
+    ok("mold_v0-320: what a wake was given is kept sealed in the database (no plain value, hash or encoding at rest), a second instance redacts it, it is gone when the run ends, and the sweep removes a leftover");
     const ev = await db.query<{ type: string; data: any }>("SELECT type, data FROM run_events WHERE run_id = $1 ORDER BY id", [runId]);
     assert.deepEqual(ev.find((e) => e.type === "credentials")?.data.delivered.sort(), [
       "connection:compute_connections/COMPUTE_ACCOUNT", "connection:compute_connections/COMPUTE_API_TOKEN", "connection:network_connections/NETWORK_ID", "connection:network_connections/NETWORK_TOKEN", "connection:storage_connections/STORAGE_ACCESS_KEY_ID",

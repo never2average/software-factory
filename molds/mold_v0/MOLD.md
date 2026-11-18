@@ -4050,7 +4050,7 @@ in 340 ms", "It does not work yet: ... answered 401: the token was refused"), ne
 a cleaned line of the service's own error message. The console never receives the probe. A probe whose address starts with a url field, or whose host has a `{field}`,
 declares `hosts` (a name matches itself exactly, `*.x` x and its subdomains; mold_v0-313); every hop must be on the probe's hosts (its own host and `hosts`), port
 443 only, never this app's own host; a network failure reads the same whatever its cause, a failure carries no timing,
-and a workspace runs at most 10 tests a minute. A value never climbs the address (`.`, `..`, a host label of anything
+and a workspace runs at most 10 tests a minute (mold_v0-320: counted in the database, `rate_limit_hits` through `src/rate-limits.ts` hit, so the limit holds across every server instance, and in each process too; the 11th is a 429 in words). A value never climbs the address (`.`, `..`, a host label of anything
 but letters, digits and -), a header carries printable ASCII only, and a secret shorter than 8 characters is refused.
 The action is offered and taken only on a record the person sees and may update. A wildcard
 `hosts` entry over a name anyone can host under (`*.vercel.app`, `*.amazonaws.com`, `*.github.io`, `*.co.uk`, ...) is
@@ -4130,8 +4130,17 @@ credentials (fetched with the lease) include that record's values while it still
 on the server (one shorter than 8 characters is never delivered); the record is frozen with its identity and version (its row and the stored
 values of the fields the entry reads): changed, replaced or deleted and re-added since the start, a wake gets nothing of
 it, and the session is told so in a system message; an entry is all or nothing (an endpoint never without its keys);
-the values each run was given are kept (this
-process) so what it writes is redacted of them after a rotation too; the redaction lookups never audit or fail; the runner sets them, never over its own variables, and redacts the secrets (not the plain
+the values each run was given are kept so what it writes is redacted of them after a rotation too, on whichever server
+instance takes its request (mold_v0-320): in the delivering process's memory, and in `run_delivered_secrets` (migration
+0072) for the life of the attempt, each value SEALED with the workspace's data key (`src/orgcrypto.ts` sealBytes,
+AES-256-GCM, the encrypted fields' key and scheme; additional data binding it to its workspace, run and digest), with a
+keyed fingerprint (orgMac) as its row key, so a value is kept once per run; never a plain value or a plain hash at rest
+(a hash of a short token could be guessed, and redaction needs the value to find it in text, so a fingerprint alone
+could not redact). Written only for a run still running; deleted in the transaction that ends the attempt
+(`src/workspace-store.ts` endAttempt: completed, cancelled, lapsed or retried); the run sweep (`src/runs.ts` sweepRuns)
+removes any row of a run no longer running or past its 24 hours; closed to tenant work (`src/rls.ts` NO_ACCESS). A value
+that cannot be sealed (the key vault locked) is logged by name and still redacted by the delivering process and, while
+its record is unchanged, by every instance; the redaction lookups never audit or fail; the runner sets them, never over its own variables, and redacts the secrets (not the plain
 fields) from everything the wake writes, and the server does again (appendEvents, completion, wakeTurn: runSecrets).
 Each record opened is a data-trail read (its key, never a value); the run's `credentials` event lists the names. Test:
 `npx tsx scripts/connection-env-test.ts`.
