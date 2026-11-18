@@ -40,7 +40,7 @@ import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
-import { AWS_REGION, GCP_TOKEN_URI, hostListed, KIND_HOSTS, localName, PG_CA_BUNDLES, POSTGRES_DEFAULT_PORT, PROBE_TIMEOUT_DEFAULT, type SignedProbe } from "./connection-test-config.js";
+import { AWS_REGION, AWS_REGION_UNCOVERED, GCP_TOKEN_URI, hostListed, KIND_HOSTS, localName, PG_CA_BUNDLES, POSTGRES_DEFAULT_PORT, PROBE_TIMEOUT_DEFAULT, type SignedProbe } from "./connection-test-config.js";
 import { asText, checkAddress, cleanAnswer, cleanWords, noBreaks, ownHosts, ProbeError, resolveHost, safeSummary, SECRET_MIN, send, standin, statusWords,
   type ConnectionOutcome, type ConnectionTestAnswer, type ProbeValues, type Wire } from "./connection-test.js";
 import { privateAddress } from "./egress-hosts.js";
@@ -161,6 +161,12 @@ export function sigv4(r: SigV4Request): { headers: Record<string, string>; signa
 }
 const xmlTag = (xml: string, tag: string) => new RegExp(`<${tag}>([^<]{0,2048})</${tag}>`).exec(xml)?.[1]?.trim() ?? null;
 
+/**
+ * mold_v0-319: an AWS error's words with what identifies an account cut: an ARN said as "an ARN", a 12-digit account
+ * id as its last 4 digits.
+ */
+export const awsWords = (s: string) => s.replace(/\barn:aws[a-z-]*:[^\s"'<>,;()]*/g, "an ARN").replace(/\b\d{12}\b/g, (d) => `…${d.slice(-4)}`);
+
 /** mold_v0-319: AWS's own shapes of the ids a resource check reads (checked before anything is signed). */
 export const AWS_VOLUME_ID = /^vol-([0-9a-f]{8}|[0-9a-f]{17})$/;
 export const AWS_FILE_SYSTEM_ID = /^fs-([0-9a-f]{8}|[0-9a-f]{17})$/;
@@ -177,6 +183,8 @@ async function aws(p: Extract<SignedProbe, { kind: "aws_sigv4" }>, value: Reader
   const check = p.check ?? "identity";
   if (!/^[A-Z0-9]{16,128}$/.test(accessKeyId)) throw new ProbeError("not_ready", "the access key ID is not an AWS access key ID (capital letters and digits)");
   if (region !== null && !AWS_REGION.test(region)) throw new ProbeError("not_ready", `"${cleanWords(region, ctx.secrets) ?? "the region"}" is not an AWS region's name (eu-west-1)`);
+  // mold_v0-319: China's endpoints are under another domain and GovCloud's and China's use other CAs: not covered yet.
+  if (region !== null && AWS_REGION_UNCOVERED.test(region)) throw new ProbeError("not_ready", `${region} is an AWS ${region.startsWith("cn-") ? "China" : "GovCloud"} region, and this test does not cover those yet`);
   if (sessionToken && !/^[\x21-\x7e]+$/.test(sessionToken)) throw new ProbeError("not_ready", "the session token holds a character a header cannot carry");
   if (!/^[\x21-\x7e]+$/.test(secretAccessKey)) throw new ProbeError("not_ready", "the secret access key holds a character it cannot hold");
   if (check !== "identity") return awsResource(p, check, value, ctx, { accessKeyId, secretAccessKey, sessionToken, region });
@@ -189,7 +197,7 @@ async function aws(p: Extract<SignedProbe, { kind: "aws_sigv4" }>, value: Reader
   const xml = w.body.toString("utf8");
   if (!ok2xx(w)) {
     const code = xmlTag(xml, "Code"), msg = xmlTag(xml, "Message");
-    const said = msg ? cleanWords(`${code && /^[A-Za-z.]{1,64}$/.test(code) ? `${code}: ` : ""}${msg}`, ctx.secrets) : safeSummary(w.body, ctx.secrets);
+    const said = msg ? cleanWords(awsWords(`${code && /^[A-Za-z.]{1,64}$/.test(code) ? `${code}: ` : ""}${msg}`), ctx.secrets) : safeSummary(w.body, ctx.secrets);
     failed(ctx, w, "the keys were refused", said);
   }
   const account = xmlTag(xml, "Account"), arn = xmlTag(xml, "Arn");
@@ -217,7 +225,7 @@ async function awsResource(p: Extract<SignedProbe, { kind: "aws_sigv4" }>, check
     let code = xmlTag(text, "Code"), msg = xmlTag(text, "Message");
     if (!code) { const j = json(w); code = word(j?.ErrorCode ?? j?.code ?? j?.__type, /^[A-Za-z.#:]{1,64}$/); msg = typeof (j?.Message ?? j?.message) === "string" ? String(j?.Message ?? j?.message) : null; }
     code = code && /^[A-Za-z.#:]{1,64}$/.test(code) ? code.replace(/^.*#/, "") : null;
-    return { code, said: msg ? cleanWords(`${code ? `${code}: ` : ""}${msg}`, ctx.secrets) : code };
+    return { code, said: msg ? cleanWords(awsWords(`${code ? `${code}: ` : ""}${msg}`), ctx.secrets) : code };
   };
   const awsFailed = (w: Wire, missing: RegExp, noneWords: string, mayNot: string): never => {
     const { code, said } = awsSaid(w);
@@ -234,7 +242,8 @@ async function awsResource(p: Extract<SignedProbe, { kind: "aws_sigv4" }>, check
     const w = await call(ctx, `https://${host}/`, [host], "POST", { ...sign("POST", "/", "", { "content-type": FORM }, body, "ec2"), accept: "text/xml" }, body);
     if (!ok2xx(w)) awsFailed(w, /^InvalidVolume\.NotFound$/, `there is no volume ${trimId(id)} in ${region} that these keys can see`, "these keys may not describe volumes (ec2:DescribeVolumes)");
     const xml = w.body.toString("utf8");
-    const item = /<volumeSet>\s*<item>([\s\S]{0,8192}?)<\/item>/.exec(xml)?.[1] ?? "";
+    // The attachments' own <item>s cut out first: the volume's item ends at its own </item>.
+    const item = /<volumeSet>\s*<item>([\s\S]{0,8192}?)<\/item>/.exec(xml.replace(/<attachmentSet>[\s\S]*?<\/attachmentSet>/g, ""))?.[1] ?? "";
     if (xmlTag(item, "volumeId") !== id) throw new ProbeError("unexpected", `${ctx.label} at ${host} answered ${w.status}, but not with the volume this test reads`);
     const size = num(xmlTag(item, "size")), state = word(xmlTag(item, "status")), type = word(xmlTag(item, "volumeType")), az = word(xmlTag(item, "availabilityZone"));
     return `It works: AWS volume ${trimId(id)}${size !== null ? `, ${size} GB` : ""}${type ? ` ${type}` : ""}${state ? `, ${state}` : ""}, ${az ?? region}, answered by ${host} in ${took(ctx)}.`;
@@ -283,8 +292,8 @@ export const GCP_ZONE = /^[a-z]{2,20}-[a-z]{2,20}\d{1,2}-[a-z]$/;
 export const GCP_LOCATION = /^[a-z]{2,20}-[a-z]{2,20}\d{1,2}(-[a-z])?$/;
 export const GCP_NAME = /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/;
 /** The token's scope per check: read-only where the API takes it (Filestore takes cloud-platform only). */
-export const GCP_SCOPES: Record<string, string> = { project: GCP_SCOPE_RO, token: GCP_SCOPE_RO, compute_disk: "https://www.googleapis.com/auth/compute.readonly",
-  filestore_instance: "https://www.googleapis.com/auth/cloud-platform" };
+export const GCP_SCOPES: Readonly<Record<string, string>> = Object.freeze({ project: GCP_SCOPE_RO, token: GCP_SCOPE_RO, compute_disk: "https://www.googleapis.com/auth/compute.readonly",
+  filestore_instance: "https://www.googleapis.com/auth/cloud-platform" });
 
 async function gcp(p: Extract<SignedProbe, { kind: "gcp_service_account" }>, value: Reader, ctx: Ctx): Promise<string> {
   const raw = (await value("service_account_json", true, true))!;

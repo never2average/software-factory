@@ -92,6 +92,7 @@ function sigv4Valid(host: string, headers: http.IncomingHttpHeaders, body: strin
   return { ok: crypto.timingSafeEqual(Buffer.from(want), Buffer.from(sig!)), region, service, token: headers["x-amz-security-token"] as string | undefined };
 }
 // mold_v0-319: the resources the stand-in holds.
+const VOL_ATT = "vol-0bbbbbbbbbbbbbbbb", VOL_DENIED = "vol-0aaaaaaaaaaaaaaaa";
 const VOL = "vol-0123456789abcdef0", VOL_GONE = "vol-0fedcba9876543210", FS = "fs-0123456789abcdef0", FS_GONE = "fs-89abcdef";
 function jwtValid(assertion: string): { ok: boolean; claims?: any; head?: any } {
   derived.push(assertion, assertion.split(".")[2] ?? "");
@@ -123,6 +124,9 @@ const standin = http.createServer((req, res) => {
         if (!signedOk || req.method !== "POST" || p !== "/" || f.get("Action") !== "DescribeVolumes" || f.get("Version") !== "2016-11-15" || [...f.keys()].length !== 3)
           return xml(401, `<Response><Errors><Error><Code>AuthFailure</Code><Message>AWS was not able to validate the provided access credentials ${req.headers.authorization}</Message></Error></Errors></Response>`);
         const id = f.get("VolumeId.1");
+        if (id === VOL_DENIED) return xml(403, `<Response><Errors><Error><Code>UnauthorizedOperation</Code><Message>You are not authorized to perform this operation. User: arn:aws:iam::123456789012:user/Alice is not authorized to perform: ec2:DescribeVolumes in account 123456789012</Message></Error></Errors></Response>`);
+        // An attached volume: its attachments' own <item>s come before its type, as EC2 answers.
+        if (id === VOL_ATT) return xml(200, `<DescribeVolumesResponse><volumeSet><item><volumeId>${VOL_ATT}</volumeId><size>8</size><availabilityZone>${region}b</availabilityZone><status>in-use</status><attachmentSet><item><volumeId>${VOL_ATT}</volumeId><instanceId>i-0123456789abcdef0</instanceId><device>/dev/xvda</device><status>attached</status></item></attachmentSet><volumeType>io2</volumeType></item></volumeSet></DescribeVolumesResponse>`);
         if (id !== VOL) return xml(400, `<Response><Errors><Error><Code>InvalidVolume.NotFound</Code><Message>The volume '${id}' does not exist.</Message></Error></Errors></Response>`);
         return xml(200, `<DescribeVolumesResponse><volumeSet><item><volumeId>${VOL}</volumeId><size>20</size><availabilityZone>${region}a</availabilityZone><status>available</status><volumeType>gp3</volumeType></item></volumeSet></DescribeVolumesResponse>`);
       }
@@ -585,6 +589,7 @@ try {
     bad((p) => { p.probes.disk.check = "token"; delete p.probes.disk.fields.zone; delete p.probes.disk.fields.disk; }, /check "token" reads no project/, "a project on the token check");
     bad((p) => { delete p.probes.account.fields.subscription_id; }, /check "storage_account" reads a resource in one subscription/, "no subscription");
     bad((p) => { delete p.probes.share.fields.file_share; }, /check "file_share" names the field holding its file share/, "no share");
+    bad((p) => { delete p.probes.efs.region; p.probes.efs.region = "us-gov-west-1"; }, /us-gov-west-1 is an AWS China or GovCloud region/, "a fixed GovCloud region");
     bad((p) => { p.probes.ebs.fields.volume_id = "last_tested"; }, /last_tested is a date field: a volume id is a text or enum field/, "a date as a volume id");
     // The binding: a resource check's resource (and its subscription) decide, so changing them without the secret clears it.
     assert.deepEqual(cfg.destinationFields(R.probes.ebs as never).sort(), ["key_id", "region", "volume"]);
@@ -626,7 +631,19 @@ try {
     }
     for (const region of ["eu-west-1.evil.example", "evil.example/x", "eu-west-1/../x"]) assert.match((await run2("ebs", { ...aws, region, volume: VOL })).words, /is not an AWS region's name/);
     assert.match((await run2("ebs", { key_id: AKID, secret: AWS_SECRET, volume: VOL })).words, /^It can't be tested yet: the region is empty: a volume is read at its region's endpoint\.$/);
+    for (const region of ["cn-north-1", "cn-northwest-1", "us-gov-west-1", "us-gov-east-1"]) {
+      const r = await run2("ebs", { ...aws, region, volume: VOL });
+      assert.equal(r.outcome, "not_ready", region); assert.match(r.words, /is an AWS (China|GovCloud) region, and this test does not cover those yet/);
+    }
+    assert.match((await run("aws", { key_id: AKID, secret: AWS_SECRET, region: "cn-north-1" })).words, /China region/, "the identity check too");
     assert.equal(seen.length, n, "a bad id or region: nothing signed or sent");
+    // An attached volume keeps its own type (its attachments' items cut out first); an error's ARN and account id cut.
+    const e4 = await run2("ebs", { ...aws, volume: VOL_ATT });
+    assert.equal(e4.ok, true, e4.words); assert.match(e4.words, /^It works: AWS volume vol-…bbbb, 8 GB io2, in-use, eu-west-1b,/);
+    const e5 = await run2("ebs", { ...aws, volume: VOL_DENIED });
+    assert.equal(e5.outcome, "refused"); assert.match(e5.words, /these keys may not describe volumes \(ec2:DescribeVolumes\) \(it said: "UnauthorizedOperation: You are not authorized/);
+    assert.ok(!e5.words.includes("123456789012") && !/arn:aws/.test(e5.words), e5.words);
+    assert.equal(S.awsWords("User: arn:aws:iam::123456789012:user/Alice in 123456789012, arn:aws-us-gov:sts::210987654321:assumed-role/R/s."), "User: an ARN in …9012, an ARN");
     // EFS DescribeFileSystems (a fixed region).
     const f1 = await run2("efs", { ...aws, fs_id: FS });
     assert.equal(f1.ok, true, f1.words); assert.match(f1.words, /^It works: AWS file system fs-…def0, available, 6\.0 KB used, eu-west-1, answered by elasticfilesystem\.eu-west-1\.amazonaws\.com in \d+ ms\.$/);
@@ -715,6 +732,22 @@ try {
     refused({ ca: "azure", hosts: ["*.postgres.database.azure.com"] }, /is a wildcard over a name anyone can host under/, "every Azure server");
     refused({ ca: "azure", hosts: ["*.database.azure.com"] }, /is a wildcard over a name anyone can host under/, "above the zone");
     refused({ hosts: ["*.redshift.amazonaws.com"] }, /anyone can host under/, "Redshift's zone, without a ca too");
+    // Fail closed: a wildcard anywhere under a shared provider name is refused, unless that zone's own labels allow it.
+    const multi = ["*.compute-1.amazonaws.com", "*.us-east-1.elb.amazonaws.com", "*.s3.amazonaws.com", "*.dsql.us-east-1.on.aws", "*.neon.tech", "*.aws.neon.tech",
+      "*.us-east-2.aws.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.db.ondigitalocean.com", "*.b.db.ondigitalocean.com", "*.aivencloud.com", "*.a.aivencloud.com",
+      "*.oregon-postgres.render.com", "*.cloudapp.net", "*.a.run.app", "*.eu-west-1.compute.amazonaws.com", "*.lambda-url.us-east-1.on.aws", "*.core.windows.net", "*.westeurope.cloudapp.azure.com"];
+    for (const h of multi) {
+      assert.equal(cfg.sharedWildcard(h), true, h);
+      refused({ hosts: [h] }, /is a wildcard over a name anyone can host under/, `a postgres probe's ${h}`);
+      const hp = cfg.connectionTestProblems(AREA as never, { probes: { "*": { method: "GET", url: "https://api.example.com/v1", hosts: [h] } } }).map((x) => x.message);
+      assert.ok(hp.some((m) => /is a wildcard over a name anyone can host under/.test(m)), `an http probe's ${h}: ${JSON.stringify(hp)}`);
+    }
+    // Exact hosts under them, and wildcards under one customer's own labels, are fine.
+    for (const h of ["ep-cool-river-123456.us-east-2.aws.neon.tech", "db.abcdefghijklmnop.supabase.co", "*.abcdefghijklmnop.supabase.co", "ec2-1-2-3-4.compute-1.amazonaws.com",
+      "my-db.b.db.ondigitalocean.com", "pg-acme.aivencloud.com", "dpg-abc.oregon-postgres.render.com", "*.example.co.uk", "*.myapp.vercel.app", "*.acme.workers.dev",
+      "*.vm1.westeurope.cloudapp.azure.com", "*.c9akq0example.eu-west-1.rds.amazonaws.com", "*.example.org", "*.sebi.gov.in"])
+      assert.equal(cfg.sharedWildcard(h), false, h);
+    for (const h of ["neon.tech", "supabase.com", "eu-west-1.rds.amazonaws.com", "co.uk", "*.co.uk", "*.vercel.app", "*.com"]) assert.equal(cfg.sharedWildcard(h), true, h);
     refused({ ca: "aws-rds", hosts: ["*.pg.example"] }, /\*\.pg\.example is not a aws-rds database's name: with ca "aws-rds" every host is under rds\.amazonaws\.com/, "a bundle for another provider's hosts");
     refused({ ca: "azure", hosts: ["db.c9akq0example.eu-west-1.rds.amazonaws.com"] }, /not a azure database's name/, "the Azure bundle for an RDS host");
     refused({ ca: "letsencrypt" }, /a postgres probe's ca is a bundle the mold ships: aws-rds, azure/, "a bundle the mold does not ship");

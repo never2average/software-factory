@@ -4129,7 +4129,10 @@ an AWS id trimmed to its prefix and last 4 characters.
   ?FileSystemId=`, service `elasticfilesystem`; `^fs-...$`) | `"s3_bucket"` (`fields.bucket`: HeadBucket, path-style HEAD
   `s3.<region>.amazonaws.com/<bucket>`, service `s3`, the payload's hash signed; S3's naming rules: 3 to 63 of a-z 0-9 . -,
   no `..`, not an address, no reserved prefix or suffix). A resource check needs a region (`fields.region` or a fixed
-  `region`). "It works: AWS volume vol-…def0, 20 GB gp3, available, eu-west-1a", "AWS file system fs-…def0, available,
+  `region`). AWS China (`cn-*`: endpoints under another domain) and GovCloud (`us-gov-*`: other partitions and CAs) are
+  not covered yet: such a region is refused in words, at build time for a fixed one, before anything is signed, on every
+  check including `identity`. An AWS error's own words are shown with every ARN said as "an ARN" and every 12-digit
+  account id cut to its last 4 digits; an attached volume's attachments are cut from the answer before it is read. "It works: AWS volume vol-…def0, 20 GB gp3, available, eu-west-1a", "AWS file system fs-…def0, available,
   6.0 KB used, eu-west-1", "AWS bucket my-bucket, eu-west-1"; missing ("there is no volume vol-…3210 in eu-west-1 that
   these keys can see"), in another region (S3's 301: "bucket x is in ap-southeast-2, not eu-west-1") and refused
   (`UnauthorizedOperation`, `AccessDenied`, S3's 403) in words. IAM: `ec2:DescribeVolumes`,
@@ -4163,7 +4166,15 @@ a managed database zone is shared above the labels that are one customer's own: 
 account's databases in a region), `*.rds.amazonaws.com` and `*.postgres.database.azure.com` are refused (bare too);
 `*.<id>.<region>.rds.amazonaws.com` (the id is one account's, per region; `proxy-<id>` likewise) and
 `<server>.postgres.database.azure.com` are fine (Redshift, Azure MySQL and SQL, and `cloudapp.azure.com` likewise, for
-every probe). Example: `{"kind": "postgres", "ca": "aws-rds", "fields": {"host": "host", "user": "user", "password":
+every probe). **Fail closed** (every probe's `hosts`): a wildcard at, above or anywhere below a shared provider name is
+refused unless the most specific zone it is under grants that many labels as one customer's own: RDS and Redshift 2
+(`*.<id>.<region>`), Azure database servers 1, `cloudapp.azure.com` 2, `supabase.co` 1 (`*.<ref>.supabase.co`),
+public suffixes (`co.uk`, ...) 1, and hosting whose first label is the customer's name (`vercel.app`, `github.io`,
+`herokuapp.com`, `netlify.app`, `pages.dev`, `fly.dev`, `workers.dev`, `web.app`, `firebaseapp.com`, `appspot.com`,
+`azurewebsites.net`, `blob.core.windows.net`) 1. Everywhere else under `amazonaws.com` (EC2's compute names, ELB, S3),
+`on.aws` (DSQL, Lambda URLs), `neon.tech`, `supabase.com` (the shared pooler), `ondigitalocean.com`, `aivencloud.com`,
+`render.com`, `onrender.com`, `run.app`, `azure.com`, `windows.net`, `cloudapp.net` and the tunnels, only exact hosts
+are allowed (`ep-x-123.us-east-2.aws.neon.tech`). Example: `{"kind": "postgres", "ca": "aws-rds", "fields": {"host": "host", "user": "user", "password":
 "password"}, "hosts": ["*.c9akq0example.eu-west-1.rds.amazonaws.com"]}`. Google Cloud SQL's server CA is per instance
 and DigitalOcean's and Aiven's per cluster or project, so none ships for them. Test:
 the same script, a TLS stand-in whose certificate a throwaway CA (made at run time) signed, trusted only through that

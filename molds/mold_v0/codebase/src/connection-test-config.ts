@@ -107,6 +107,8 @@ export type HttpProbe = z.output<typeof HttpProbeSchema>;
 
 /** An AWS region's name (eu-west-1, us-gov-west-1, ap-southeast-4): it is a label of STS's host. */
 export const AWS_REGION = /^[a-z]{2}(-[a-z]+){1,2}-\d{1,2}$/;
+/** mold_v0-319: China (another endpoint domain) and GovCloud (other CAs, other partitions): refused in words for now. */
+export const AWS_REGION_UNCOVERED = /^(cn|us-gov)-/;
 /**
  * mold_v0-319: each signed kind's checks (fixed, read-only calls; never an action name from config) and the roles
  * naming the resource each one reads (required by it, refused on any other check).
@@ -300,38 +302,62 @@ interface Field { name: string; label?: string; type?: string; encrypted?: boole
 interface Area { name?: string; scope?: string; repository?: string; fields: readonly Field[]; contract?: { actions?: Record<string, unknown> }; lifecycle?: { field?: string } }
 
 /**
- * Suffixes anyone can host a name under (a cloud's shared hosting, a public suffix): a wildcard under one ("*.x")
- * would let any of its customers receive the call. An exact host under one is fine.
+ * Suffixes anyone can host a name under (a cloud's shared hosting, a managed database provider, a public suffix).
+ * mold_v0-319 (fails closed): a wildcard at, above or ANYWHERE below one ("*.x" with x under it) is refused, unless the
+ * zone's `own` count says how many labels below it are one customer's own (SHARED_ZONES); an exact host under one is fine.
  */
-export const SHARED_SUFFIXES = ["amazonaws.com", "on.aws", "vercel.app", "workers.dev", "github.io", "herokuapp.com", "cloudfront.net", "azurewebsites.net",
-  "appspot.com", "netlify.app", "pages.dev", "fly.dev", "onrender.com", "web.app", "firebaseapp.com", "run.app", "azurestaticapps.net", "blob.core.windows.net",
+export const SHARED_SUFFIXES = ["amazonaws.com", "amazonaws.com.cn", "on.aws", "vercel.app", "workers.dev", "github.io", "herokuapp.com", "cloudfront.net", "azurewebsites.net",
+  "appspot.com", "netlify.app", "pages.dev", "fly.dev", "onrender.com", "render.com", "web.app", "firebaseapp.com", "run.app", "azurestaticapps.net",
+  "blob.core.windows.net", "windows.net", "azure.com", "azure.net", "cloudapp.net", "azurecr.io", "azurefd.net", "trafficmanager.net",
   "trycloudflare.com", "ngrok.io", "ngrok.app", "ngrok-free.app", "glitch.me", "repl.co", "surge.sh", "vercel.sh", "deno.dev", "railway.app", "up.railway.app",
+  "neon.tech", "supabase.co", "supabase.com", "ondigitalocean.com", "digitaloceanspaces.com", "aivencloud.com", "elasticbeanstalk.com", "cloudflarestorage.com",
   "co.uk", "com.au", "co.jp", "com.br", "co.in", "co.za", "com.cn", "org.uk", "gov.uk", "ac.uk"];
 /**
- * mold_v0-319: managed database zones whose names below are anyone's for the asking, and how many labels below the
- * zone are one customer's own. An RDS endpoint is <instance>.<id>.<region>.rds.amazonaws.com, its <id> fixed per account
- * and region: "*.<id>.<region>.rds.amazonaws.com" is one account's, "*.<region>.rds.amazonaws.com" every account's. An
- * Azure server's name is global (<server>.postgres.database.azure.com): an exact host, or a wildcard under the server.
+ * mold_v0-319: the zones whose labels below are known to be one customer's own, and how many (the most specific zone a
+ * name is under decides; every other shared suffix allows exact hosts only).
+ *   rds / redshift   <instance>.<id>.<region>.rds.amazonaws.com: <id> is one account's per region, so
+ *                    "*.<id>.<region>.rds.amazonaws.com" is one account's, "*.<region>.rds.amazonaws.com" everyone's
+ *   azure databases  <server>.postgres.database.azure.com: the server's name is global and one customer's
+ *   cloudapp.azure   <name>.<region>.cloudapp.azure.com
+ *   supabase.co      <ref>.supabase.co and db.<ref>.supabase.co: one project's
+ *   public suffixes  <name>.co.uk is a registrable domain, one registrant's
+ *   hosting          <project>.vercel.app, <user>.github.io, <app>.herokuapp.com, <site>.netlify.app, <project>.pages.dev,
+ *                    <app>.fly.dev, <account>.workers.dev, <site>.web.app / firebaseapp.com, <project>.appspot.com,
+ *                    <app>.azurewebsites.net, <account>.blob.core.windows.net: the first label is one customer's name
+ * Left exact-only (names below are anyone's, or the naming is not certain): amazonaws.com otherwise (EC2's compute,
+ * ELB, S3, ...), on.aws (DSQL, Lambda URLs), neon.tech, supabase.com (its shared pooler), ondigitalocean.com, aivencloud.com,
+ * render.com and onrender.com, run.app (a.run.app is shared), cloudapp.net, the tunnels, and the rest.
  */
 export const SHARED_ZONES: readonly { zone: string; own: number }[] = [
   { zone: "rds.amazonaws.com", own: 2 }, { zone: "rds.amazonaws.com.cn", own: 2 }, { zone: "redshift.amazonaws.com", own: 2 },
   { zone: "redshift-serverless.amazonaws.com", own: 2 }, { zone: "postgres.database.azure.com", own: 1 }, { zone: "mysql.database.azure.com", own: 1 },
   { zone: "postgres.cosmos.azure.com", own: 2 }, { zone: "database.windows.net", own: 1 }, { zone: "cloudapp.azure.com", own: 2 },
+  { zone: "supabase.co", own: 1 },
+  ...["co.uk", "com.au", "co.jp", "com.br", "co.in", "co.za", "com.cn", "org.uk", "gov.uk", "ac.uk"].map((zone) => ({ zone, own: 1 })),
+  ...["vercel.app", "github.io", "herokuapp.com", "netlify.app", "pages.dev", "fly.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
+    "azurewebsites.net", "blob.core.windows.net"].map((zone) => ({ zone, own: 1 })),
 ];
 /** The labels of `name` below `zone` (0 at the zone, -1 above it), or null when it is elsewhere. */
 const labelsBelow = (name: string, zone: string) =>
   name === zone ? 0 : name.endsWith(`.${zone}`) ? name.slice(0, -zone.length - 1).split(".").length : zone.endsWith(`.${name}`) ? -1 : null;
 /**
- * Whether a probe's `hosts` entry is a wildcard over a shared suffix (or a bare top-level name), or (mold_v0-313) a
- * shared suffix itself or a name above one, listed bare ("amazonaws.com", "fly.dev", "co.uk"); mold_v0-319: or a name
- * (bare or wildcard) in a managed database zone above the labels that are one customer's own.
+ * Whether a probe's `hosts` entry is shared with others: a bare top-level name; a wildcard at, above or below a shared
+ * suffix, unless the most specific zone it is under grants that many labels as one customer's own (fails closed); a
+ * bare name at or above a shared suffix, or above a zone's own labels ("eu-west-1.rds.amazonaws.com").
  */
 export const sharedWildcard = (h: string) => {
   const wild = h.startsWith("*.");
   const base = (wild ? h.slice(2) : h).toLowerCase().replace(/\.$/, "");
-  if (SHARED_ZONES.some(({ zone, own }) => { const n = labelsBelow(base, zone); return n !== null && n < own; })) return true;
-  if (!wild) return SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
-  return !base.includes(".") || SHARED_SUFFIXES.some((x) => base === x || x.endsWith(`.${base}`));
+  if (wild && !base.includes(".")) return true;
+  const zones = [...SHARED_SUFFIXES.map((zone) => ({ zone, own: Infinity })), ...SHARED_ZONES];
+  // At or above any shared name: everyone's.
+  if (zones.some(({ zone }) => { const n = labelsBelow(base, zone); return n !== null && n <= 0; })) return true;
+  // Below: the most specific zone decides (its own count; none known: exact hosts only).
+  const under = zones.filter(({ zone }) => base.endsWith(`.${zone}`)).sort((x, y) => y.zone.length - x.zone.length || (x.own === Infinity ? 1 : -1));
+  const z = under[0];
+  if (!z) return false;
+  const n = labelsBelow(base, z.zone)!;
+  return wild ? n < z.own : Number.isFinite(z.own) && n < z.own;
 };
 const values = (f: Field) => (f.options ?? []).map((o) => (typeof o === "string" ? o : o.value));
 
@@ -450,6 +476,7 @@ function signedProblems(p: SignedProbe, field: (n: string) => Field | undefined,
     seen.set(n, role);
   }
   if (p.kind === "aws_sigv4" && p.region && named.region) bad("a fixed region or a region field, not both", "region");
+  if (p.kind === "aws_sigv4" && p.region && AWS_REGION_UNCOVERED.test(p.region)) bad(`${p.region} is an AWS China or GovCloud region: this test does not cover those yet`, "region");
   // mold_v0-319: a check's resource roles are required, every other check's refused; a regional check has a region.
   const check = probeCheck(p);
   if (check !== null) {
