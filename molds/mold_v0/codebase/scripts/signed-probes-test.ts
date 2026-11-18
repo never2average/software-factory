@@ -749,8 +749,8 @@ try {
       assert.equal(cfg.sharedWildcard(h), false, h);
     for (const h of ["neon.tech", "supabase.com", "eu-west-1.rds.amazonaws.com", "co.uk", "*.co.uk", "*.vercel.app", "*.com"]) assert.equal(cfg.sharedWildcard(h), true, h);
     // any_customer_host: a managed database product's every-customer zone, opted into, while the host is bound to the password.
-    const IMMACULATE = ["*.aws.neon.tech", "*.azure.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.postgres.database.azure.com"];
-    for (const h of IMMACULATE) {
+    const MANAGED_DB_ZONES = ["*.aws.neon.tech", "*.azure.neon.tech", "*.supabase.co", "*.pooler.supabase.com", "*.postgres.database.azure.com"];
+    for (const h of MANAGED_DB_ZONES) {
       refused({ hosts: [h] }, /is a wildcard over a name anyone can host under/, `${h} without the opt-in`);
       assert.deepEqual(p({ hosts: [h], any_customer_host: true }), [], `${h} with the opt-in (a host field)`);
       assert.deepEqual(p({ hosts: [h], any_customer_host: true, fields: { url: "secret" } }), [], `${h} with the opt-in (a sealed url)`);
