@@ -17,6 +17,14 @@ on:
       - ".github/actions/mold-v0-setup/**"
       - ".claude/scripts/leakcheck.py"
       - ".claude/scripts/lib/deploy_gate.py"
+      # mold_v0-320: the app-spec schema generated from the mold (and its sources), and the key-shaped patterns.
+      - "schemas/**"
+      - ".claude/scripts/app_spec.py"
+      - ".claude/scripts/lib/spec_schema.py"
+      - ".claude/scripts/lib/features.py"
+      - "state/application/app_id/*.schema.json"
+      - ".claude/scripts/lib/secret_patterns.py"
+      - ".claude/scripts/repo.py"
   push:
     branches: [main]
   workflow_dispatch:
@@ -39,6 +47,14 @@ jobs:
       - uses: ./.github/actions/mold-v0-setup
       - name: Leak check (no local denylist in CI; the generic rules only)
         run: python3 .claude/scripts/leakcheck.py scan
+      - name: Key-shaped strings (the repository secret gate's patterns) in the shell's tracked files
+        # mold_v0-320: a fake key written into a test fails here, not at an app's repository push (repo.py scan).
+        run: |
+          python3 .claude/scripts/lib/secret_patterns.py --self-test
+          python3 .claude/scripts/repo.py --self-test
+          python3 .claude/scripts/lib/secret_patterns.py scan molds/mold_v0/codebase
+      - name: The app-spec schemas are current (schemas/*.app.schema.json)
+        run: python3 .claude/scripts/app_spec.py generate --check
       - name: Every test suite is run or skipped with a reason
         run: python3 .github/mold-v0/suites.py check
       - name: Deploy gate self-test (reads this workflow's job names)
