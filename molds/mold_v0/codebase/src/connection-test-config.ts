@@ -17,7 +17,19 @@
  *                                               the only place an encrypted (sealed) field may be used
  *       "body": { "query": "{database}" },      POST only: JSON, its strings templates of plain fields
  *       "expect": { "status": "2xx" | [200, 204], "json_path": "data.account.state", "equals": "active" },
- *       "timeout_seconds": 10 },                1 to 15 (default 10)
+ *       "timeout_seconds": 10,                  1 to 15 (default 10)
+ *       mold_v0-326:
+ *       "basic_auth": { "user": "x-access-token", "password": "{token}" },
+ *                                               the Authorization header as HTTP Basic (base64 made on the server)
+ *       "expect": { ..., "content_type": "application/x-git-receive-pack-advertisement" },
+ *                                               the working answer's media type (an answer that is not JSON)
+ *       "if_empty": { "field": "account_id", "url": "https://api.example.com/v1/user", "expect": {...} },
+ *                                               the address used when that optional plain field is empty (same host)
+ *       "hints": { "403": "A token needs the write permission." },
+ *                                               a plain sentence added when the service answers that status
+ *                                               (expect.hint: one added when a working status's answer is not the one read)
+ *       "binds": ["database"] },                plain fields bound to the probe's secrets (besides every field of its
+ *                                               address, bound already when it sends a secret)
  *     },
  *     "status": "status",                       an enum (options working and failing) or text field, set_by "action"
  *     "tested": "last_tested" }}]               a date field, set_by "action"
@@ -79,6 +91,24 @@ const probeLabel = z.string().trim().min(1).max(60).regex(/^[^\n\r{}<>]*$/, "pla
 const probeTimeout = z.number().int().min(1).max(PROBE_TIMEOUT_MAX, `a test waits at most ${PROBE_TIMEOUT_MAX} seconds`).optional();
 const hostList = z.array(z.string().regex(/^(\*\.)?(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "a host's name (api.example.com, or *.example.com)")).min(1).max(10);
 
+/** What a probe's answer must be to count as working. */
+const ProbeExpectSchema = z.object({
+  status: z.union([z.literal("2xx"), z.array(statusCode).min(1).max(10)]).optional(),
+  json_path: z.string().regex(/^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64}){0,9}$/, "a path into the JSON answer: names and list positions joined by dots (data.items.0.id)").optional(),
+  equals: z.union([z.string().max(200), z.number().finite(), z.boolean(), z.null()]).optional(),
+  /**
+   * mold_v0-326: the answer's media type (its Content-Type before any ";", compared without case): for a service whose
+   * working answer is not JSON (git's push discovery answers application/x-git-receive-pack-advertisement).
+   */
+  content_type: z.string().max(100).regex(/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/, "a media type (application/json)").optional(),
+  /**
+   * mold_v0-326: a plain sentence added when the service answers a working status but not the answer this expect reads
+   * (json_path, equals, content_type): the pack's words for what that answer means.
+   */
+  hint: z.string().trim().min(1).max(400).regex(/^[^\n\r{}<>]*$/, "plain text on one line").optional(),
+}).strict();
+export type ProbeExpect = z.output<typeof ProbeExpectSchema>;
+
 /** The probe of mold_v0-312: one HTTPS call, a secret only in a header (kind "http", the default). */
 export const HttpProbeSchema = z.object({
   kind: z.literal("http").optional(),
@@ -87,12 +117,35 @@ export const HttpProbeSchema = z.object({
   url: template(2000),
   headers: z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,63}$/, "a header's name: letters, digits and -"), template(2000))
     .refine((h) => Object.keys(h).length <= PROBE_HEADERS_MAX, `at most ${PROBE_HEADERS_MAX} headers`).optional(),
+  /**
+   * mold_v0-326: HTTP Basic authentication (RFC 7617): the Authorization header made from a user and a password, each a
+   * template like a header's (the password usually the sealed token; the user a fixed word or a plain field), base64
+   * encoded on the server. A secret it carries is dropped on a redirect to another host, like a header's.
+   */
+  basic_auth: z.object({ user: template(200), password: template(2000) }).strict().optional(),
   body: z.unknown().optional(),
-  expect: z.object({
-    status: z.union([z.literal("2xx"), z.array(statusCode).min(1).max(10)]).optional(),
-    json_path: z.string().regex(/^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64}){0,9}$/, "a path into the JSON answer: names and list positions joined by dots (data.items.0.id)").optional(),
-    equals: z.union([z.string().max(200), z.number().finite(), z.boolean(), z.null()]).optional(),
-  }).strict().optional(),
+  expect: ProbeExpectSchema.optional(),
+  /**
+   * mold_v0-326: another address (and its expect) for when one optional plain field of the record is empty: "the team's
+   * own call when a team is named, the account's otherwise". The field is in the probe's own address; the other
+   * address never names it; both addresses' hosts are the pack's own and the same.
+   */
+  if_empty: z.object({ field: fieldName, url: template(2000), expect: ProbeExpectSchema.optional() }).strict().optional(),
+  /**
+   * mold_v0-326: a plain sentence added to the answer when the service answers that failing status ("403": what a token
+   * needs to be allowed): the pack's words for its provider's tokens, never a value of the record.
+   */
+  hints: z.record(z.string(), z.string().trim().min(1).max(400).regex(/^[^\n\r{}<>]*$/, "plain text on one line"))
+    .refine((h) => Object.keys(h).every((k) => /^[45]\d\d$/.test(k)), "a hint's key is a failing status: 400 to 599")
+    .refine((h) => Object.keys(h).length <= 8, "at most 8 hints")
+    // The JSON Schema says the same as the refinements (zod writes neither).
+    .meta({ propertyNames: { type: "string", pattern: "^[45]\\d\\d$" }, maxProperties: 8 }).optional(),
+  /**
+   * mold_v0-326: plain fields bound to the secrets this probe sends besides those deciding its host (src/secret-binding.ts:
+   * a write changing one without typing the secret again clears it). Every field of its address is bound already when
+   * it sends a secret; binds adds others (a body's database, say).
+   */
+  binds: z.array(fieldName).min(1).max(10).optional(),
   timeout_seconds: probeTimeout,
   /**
    * mold_v0-312: the hosts the call may reach (a name allows itself only; "*.x" is x and its subdomains),
@@ -273,6 +326,17 @@ export function destinationFields(p: ConnectionProbe): string[] {
   if (startsWithField(p.url)) return [placeholders(p.url)[0]!];
   return placeholders(hostPart(p.url) ?? "");
 }
+/**
+ * mold_v0-326: the plain fields bound to a probe's secrets besides those deciding its host: its `binds`, and, when it
+ * sends a sealed secret (in a header or basic_auth), every field of its address and of if_empty's. Which repository,
+ * team or account a kept token is used on is not an editor's to change without typing the token again: else a person
+ * who may edit the record could point Test at another private repository or team the token's owner reaches.
+ */
+export function boundFields(p: ConnectionProbe, sealed: (n: string) => boolean): string[] {
+  if (!isHttpProbe(p)) return [];
+  const sends = probeSecrets(p, sealed).length > 0;
+  return [...new Set([...(p.binds ?? []), ...(sends ? [...placeholders(p.url), ...placeholders(p.if_empty?.url ?? "")] : [])])].filter((n) => !sealed(n));
+}
 /** The hosts an HTTP probe may reach: its declared ones, and its address's own host when the pack wrote it. */
 export function probeHosts(p: HttpProbe): string[] {
   const h = hostPart(p.url);
@@ -292,9 +356,11 @@ export function hostListed(host: string, list: readonly string[]): boolean {
     return h === l || h.endsWith(`.${l}`);
   });
 }
+/** An HTTP probe's header templates: its headers' and (mold_v0-326) its basic_auth's user and password. */
+export const headerTemplates = (p: HttpProbe): string[] => [...Object.values(p.headers ?? {}), ...(p.basic_auth ? [p.basic_auth.user, p.basic_auth.password] : [])];
 /** The fields whose secret a probe sends: encrypted fields named in an HTTP probe's headers, or in a signed kind's roles. */
 export const probeSecrets = (p: ConnectionProbe, sealed: (n: string) => boolean): string[] =>
-  isHttpProbe(p) ? [...new Set(Object.values(p.headers ?? {}).flatMap(placeholders).filter(sealed))] : [...new Set(roleFields(p).map(([, f]) => f).filter(sealed))];
+  isHttpProbe(p) ? [...new Set(headerTemplates(p).flatMap(placeholders).filter(sealed))] : [...new Set(roleFields(p).map(([, f]) => f).filter(sealed))];
 
 /** A private, loopback or internal name a test never calls (src/connection-test.ts checks the addresses too). */
 export const LOCAL_NAMES = ["localhost", "local", "internal", "localdomain", "home.arpa", "lan", "intranet", "corp"];
@@ -424,7 +490,7 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
   // A lifecycle's move changes its field without the write's checks (src/secret-binding.ts): it never decides a destination.
   const lc = area.lifecycle?.field;
   if (lc && t.by === lc) bad(`${lc} is the lifecycle's field: a move would change which probe runs without the secret's binding; by names another field`, "by");
-  for (const [k, p] of Object.entries(t.probes)) if (lc && destinationFields(p).includes(lc)) bad(`{${lc}} is the lifecycle's field: it never decides where a secret goes`, "probes", k, "url");
+  for (const [k, p] of Object.entries(t.probes)) if (lc && [...destinationFields(p), ...boundFields(p, (n) => !!field(n)?.encrypted)].includes(lc)) bad(`{${lc}} is the lifecycle's field: it never decides where a secret goes`, "probes", k, "url");
   for (const [k, p] of Object.entries(t.probes)) {
     if (!isHttpProbe(p)) { signedProblems(p, field, (m, ...path) => bad(m, "probes", k, ...path)); continue; }
     // The address: https, a host that is not an address or an internal name; {field} only for plain fields.
@@ -466,8 +532,41 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
       else if (text.length > 4000) bad("a body is at most 4000 characters of JSON", "probes", k, "body");
       for (const s of bodyStrings(p.body)) for (const n of placeholders(s)) plainUse(n, "a body", "probes", k, "body");
     }
-    if (p.expect?.equals !== undefined && !p.expect.json_path) bad("equals compares the value at json_path: name it", "probes", k, "expect", "equals");
-    if (p.expect?.json_path && p.method === "HEAD") bad("a HEAD's answer has no body: json_path is for a GET or a POST", "probes", k, "expect", "json_path");
+    for (const [e, path] of [[p.expect, ["expect"]], [p.if_empty?.expect, ["if_empty", "expect"]]] as const) {
+      if (e?.equals !== undefined && !e.json_path) bad("equals compares the value at json_path: name it", "probes", k, ...path, "equals");
+      if (e?.json_path && p.method === "HEAD") bad("a HEAD's answer has no body: json_path is for a GET or a POST", "probes", k, ...path, "json_path");
+    }
+    // mold_v0-326: binds names plain fields of the area, one value each.
+    for (const n of p.binds ?? []) {
+      const f = field(n);
+      if (!f) bad(`${n} is not one of the area's fields`, "probes", k, "binds");
+      else if (f.encrypted) bad(`${n} is encrypted: binds names the plain fields a secret is bound to`, "probes", k, "binds");
+      else if (["file", "json", "person"].includes(f.type ?? "text") || f.multiple) bad(`${n} is a ${f.multiple ? "list" : `${f.type} field`}: binds names fields of one plain value`, "probes", k, "binds");
+    }
+    // mold_v0-326: Basic authentication's user and password are header templates; it makes the Authorization header.
+    if (p.basic_auth) {
+      if (Object.keys(p.headers ?? {}).some((h) => h.toLowerCase() === "authorization")) bad("basic_auth makes the Authorization header: a probe sets one or the other", "probes", k, "basic_auth");
+      for (const part of ["user", "password"] as const) for (const n of placeholders(p.basic_auth[part])) {
+        const f = field(n);
+        if (!f) bad(`{${n}} is not one of the area's fields`, "probes", k, "basic_auth", part);
+        else if (["file", "json", "person"].includes(f.type ?? "text") || f.multiple) bad(`{${n}} is a ${f.multiple ? "list" : `${f.type} field`}: a header takes one plain value`, "probes", k, "basic_auth", part);
+      }
+      if (p.basic_auth.user.replace(PLACEHOLDER, "").includes(":")) bad("a Basic user never holds a colon (it ends the user)", "probes", k, "basic_auth", "user");
+    }
+    // mold_v0-326: the other address when one optional field is empty: the same host, written by the pack, both ways.
+    if (p.if_empty) {
+      const n = p.if_empty.field, f = field(n);
+      if (!f) bad(`${n} is not one of the area's fields`, "probes", k, "if_empty", "field");
+      else if (f.encrypted) bad(`${n} is encrypted: if_empty reads a plain field`, "probes", k, "if_empty", "field");
+      if (!names.includes(n)) bad(`${n} is not in the probe's address: if_empty is the address used when that field is empty`, "probes", k, "if_empty", "field");
+      if (placeholders(p.if_empty.url).includes(n)) bad(`the address for an empty ${n} never names it`, "probes", k, "if_empty", "url");
+      for (const m of placeholders(p.if_empty.url)) plainUse(m, "the address", "probes", k, "if_empty", "url");
+      const own = hostPart(p.url), other = hostPart(p.if_empty.url);
+      if (!own || own.includes("{") || !other || other.includes("{") || own.toLowerCase() !== other.toLowerCase())
+        bad("if_empty's address is at the probe's own host, written by the pack in both addresses (https://api.example.com/...)", "probes", k, "if_empty", "url");
+      else if (destinationFields(p).includes(n)) bad(`${n} decides where the call goes: it is never optional`, "probes", k, "if_empty", "field");
+      if (!/^https:\/\//i.test(p.if_empty.url)) bad("a test calls https:// addresses only", "probes", k, "if_empty", "url");
+    }
   }
   return out;
 }
