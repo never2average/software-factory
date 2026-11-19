@@ -21,6 +21,8 @@
 // runs it with its three users and empty networks as root.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+// mold_v0-324: the evaluator refuses to run programs as the runner itself unless a test says so (offline, no root).
+process.env.APP_TEST_UNISOLATED_EVALUATIONS = "yes";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -520,6 +522,9 @@ await item("no sandbox provider (mold_v0-324): the evaluation is refused in plai
   const { RunScaler } = await import("../src/run-sandboxes.js");
   const was = process.env.APP_AUTOSCALE;
   process.env.APP_AUTOSCALE = "on";
+  const early = await new RunScaler({ provider: null, log: () => {} }).tick();
+  assert.ok(!early.failed?.includes(ev.run_id!), "within the grace period (10 minutes by default) it waits");
+  process.env.APP_EVAL_NO_SANDBOX_GRACE_MINUTES = "0"; // the grace period over
   const t = await new RunScaler({ provider: null, log: () => {} }).tick().finally(() => { if (was === undefined) delete process.env.APP_AUTOSCALE; else process.env.APP_AUTOSCALE = was; });
   assert.ok(t.failed?.includes(ev.run_id!), `the tick failed the evaluation's run: ${JSON.stringify(t)}`);
   const [run] = await db.query<{ status: string; error: string; started_at: Date | null }>("SELECT status, error, started_at FROM runs WHERE id = $1", [ev.run_id]);

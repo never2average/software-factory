@@ -29,6 +29,30 @@ process.stdin.on("end", async () => {
     }
     return "absent";
   };
+  // Unix sockets: a local resolver or the system bus would resolve a name for it (DNS out); the driver's planted one.
+  const unix = async () => {
+    const paths = ["/run/systemd/resolve/io.systemd.Resolve", "/run/dbus/system_bus_socket", "/run/systemd/journal/stdout", "/run/nscd/socket", ...(i.plant_socket ? [i.plant_socket] : [])];
+    for (const p of paths) {
+      const got = await new Promise((res) => {
+        const s = net.connect({ path: p });
+        const t = setTimeout(() => { s.destroy(); res("blocked"); }, 1500);
+        s.on("connect", () => { clearTimeout(t); s.destroy(); res("open"); });
+        s.on("error", () => { clearTimeout(t); res("blocked"); });
+      });
+      if (got === "open") return "open";
+    }
+    return "blocked";
+  };
+  // Leave code where a later program (the baseline, the scorer) might load it: a module in /tmp, a package.json, files in
+  // the shared folders.
+  const plant = () => {
+    const put = (p, body) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, body); } catch { /* not writable */ } };
+    put("/tmp/node_modules/judge-plant/index.js", "require('fs').writeFileSync('/tmp/judge-plant-ran', 'x'); module.exports = 'planted';\n");
+    put("/tmp/package.json", JSON.stringify({ type: "module" }));
+    put("/dev/shm/judge-plant", "x"); put("/var/tmp/judge-plant", "x");
+    for (const d of [path.resolve(".."), path.resolve("../..")]) put(path.join(d, "node_modules", "judge-plant", "index.js"), "module.exports = 'planted';\n");
+  };
+  plant();
   const up = path.resolve("..");
   const report = {
     answer: (Number(i.x) || 0) * JSON.parse(fs.readFileSync("lib.json", "utf8")).mult,
@@ -41,6 +65,7 @@ process.stdin.on("end", async () => {
     champion: canRead(path.join(up, "champion", "champion-only.txt")),
     write_test: canWrite(path.join(up, "test", "planted.txt")),
     secret: secretSeen(),
+    unix: await unix(),
   };
   process.stdout.write(JSON.stringify(report));
   process.exit(0);

@@ -18,7 +18,8 @@ export interface JudgeSpec {
   candidate_command: string[]; scorer_command: string[]; timeout_seconds: number; metric: string; floors: string[];
   /** "auto": a namespace each where one can be made, else the firewall; "firewall": the firewall always. */
   network?: "auto" | "firewall"; deadline_seconds?: number; control?: { host: string; port: number };
-  uids?: { first: number; last: number };
+  /** A unix socket the runner listens on, connectable by anyone: the evaluation's users must not reach it (tests). */
+  plant_socket?: string;
 }
 export interface JudgeOut {
   control: string;
@@ -43,7 +44,9 @@ export function judgeHere(spec: JudgeSpec, env: Record<string, string> = {}): Ju
   const s = stage(spec);
   try {
     const out = path.join(s.dir, "out.json");
-    writeFileSync(path.join(s.dir, "spec.json"), JSON.stringify({ uids: { first: 62600, last: 62660 }, ...s.rel(s.dir), out }));
+    // Run users outside the default lease range (src/run-users.ts DEFAULT_RUN_UIDS) and their own lease folder: a runner
+    // of this machine never hands one of them to a run meanwhile.
+    writeFileSync(path.join(s.dir, "spec.json"), JSON.stringify({ ...s.rel(s.dir), uids: { first: 59000, last: 59060 }, out }));
     const r = spawnSync(process.execPath, ["--import", "tsx", path.join(ROOT, DRIVER), path.join(s.dir, "spec.json")], { cwd: ROOT, encoding: "utf8", timeout: 4 * 3600_000, env: { ...process.env, ...env } });
     if (r.status !== 0 || !existsSync(out)) throw new Error(`the driver: exit ${r.status} ${r.signal ?? ""} ${(r.stderr || r.stdout).slice(-1500)}`);
     return JSON.parse(readFileSync(out, "utf8"));
@@ -67,7 +70,7 @@ export async function judgeInContainer(spec: JudgeSpec, o: { image: string; drop
   const s = stage(spec);
   const ttl = Math.max(60, Math.round(o.ttlSeconds ?? 3600));
   try {
-    writeFileSync(path.join(s.dir, "spec.json"), JSON.stringify({ network: "auto", egress: "system", uids: { first: 61000, last: 61100 }, ...s.rel("/spec"), out: "/spec/out.json" }));
+    writeFileSync(path.join(s.dir, "spec.json"), JSON.stringify({ network: "auto", ...s.rel("/spec"), egress: "system", uids: { first: 61000, last: 61100 }, out: "/spec/out.json" }));
     const body = runContainerBody({ image: o.image, network: "bridge", ttlSeconds: ttl, labels: { "org.judge-sandbox": "1" }, env: o.env ?? {} }) as unknown as { Cmd: string[]; HostConfig: { CapAdd: string[]; Binds: string[] } };
     body.Cmd = ["timeout", "-s", "KILL", String(ttl), "node", "--import", "tsx", DRIVER, "/spec/spec.json"];
     body.HostConfig.CapAdd = body.HostConfig.CapAdd.filter((c) => !(o.drop ?? []).includes(c));

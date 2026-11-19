@@ -5,12 +5,14 @@
 //   node --import tsx scripts/fixtures/judge/drive.ts <spec.json>
 // spec: {test_dir, cases_path, candidate_command, scorer_command, timeout_seconds, candidate_dir, champion_dir?, metric,
 //        floors, deadline_seconds?, network?: "auto"|"firewall", egress?: "system"|"off", uids: {first, last}, uid_dir,
-//        control?: {host, port}, out?}
+//        control?: {host, port}, plant_socket?, out?}
+// plant_socket: a unix socket this runner (root) listens on, connectable by anyone (as a local resolver's is): the
+// evaluation's users must not reach it.
 // It writes {control, result, events, completion} to spec.out (else stdout). `control`: whether this runner (root) reaches
 // the outside listener itself, so a "blocked" seen by the evaluation's users means the rules, not a dead address.
 // Imports only runner code (what a run sandbox gets) and node's own modules.
 import { createHash, randomBytes } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { runWorkspaceHarness, type RunnerClient } from "../../../src/run-harness.js";
@@ -30,6 +32,12 @@ const control = spec.control ? await new Promise<string>((res) => {
   s.on("error", () => { clearTimeout(t); res("unreachable"); });
 }) : "untested";
 
+let planted: net.Server | null = null;
+if (spec.plant_socket) {
+  rmSync(spec.plant_socket, { force: true });
+  planted = await new Promise<net.Server>((res, rej) => { const s = net.createServer((c) => { c.end("planted\n"); }); s.once("error", rej); s.listen(spec.plant_socket, () => res(s)); });
+  chmodSync(spec.plant_socket, 0o666);
+}
 const events: { type: string; data?: Record<string, unknown> }[] = [];
 let result: EvaluationResult | null = null, completion: unknown = null;
 const runId = `run_judge${randomBytes(4).toString("hex")}`, lease = `orl_${randomBytes(8).toString("hex")}`;
@@ -55,6 +63,8 @@ const claim = {
 } as never;
 const t0 = Date.now();
 await runWorkspaceHarness(client, claim, { runUsers: spec.uids, runUidDir: spec.uid_dir, egress: spec.egress ?? "off", noNewPrivs: true, evaluationNetwork: spec.network ?? "auto" });
+planted?.close();
+if (spec.plant_socket) rmSync(spec.plant_socket, { force: true });
 const out = JSON.stringify({ control, result, events, completion, ms: Date.now() - t0 });
 if (spec.out) writeFileSync(spec.out, out); else process.stdout.write(out);
 process.exit(0);

@@ -4335,14 +4335,29 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   Docker), never in the app. Its three users get an empty network namespace each where the sandbox can make one (a VM);
   where it cannot (a run container: no `CAP_SYS_ADMIN`) the sandbox's own firewall drops every packet they send (a table
   `app_eval_<run>`, nft, else iptables with ip6tables; loopback and IPv6 included). Before anything runs a probe as each
-  user must fail to reach a loopback listener of the runner's; else, or with neither, the evaluation is refused with
-  nothing run or measured. The run's event `evaluation_isolation` says which. Limits: the test's `timeout_seconds` per
+  user must fail to reach a loopback listener of the runner's (IPv4 and IPv6) and every open unix socket; else, or with
+  neither, the evaluation is refused with nothing run or measured. The run's event `evaluation_isolation` says which.
+  **Unix sockets** (a local resolver's, the system bus, the journal, nscd, and every socket on a path anyone may connect
+  to, from `/proc/net/unix`): no namespace or firewall sees them, and a resolver resolves names out. On the namespace path
+  each program also gets mount and IPC namespaces of its own, each such socket covered by `/dev/null`, and `/tmp`,
+  `/var/tmp` and `/dev/shm` an empty tmpfs of its own; on the firewall path each user is denied each socket by an ACL entry
+  (taken back afterwards, never one that was there before), and where one exists and `setfacl` is missing or fails the
+  evaluation is refused. **Between programs** every process of the program's user must be gone (else refused) and what it
+  left in `/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`, `/dev/mqueue` and SysV IPC is removed; the evaluation's folder is
+  under `/run/app-eval` (root's, `0711`; no folder above it writable by a run user, else refused), so nothing a program
+  leaves is on another's module path. Every program runs with no_new_privs. A runner with no run users of its own refuses
+  (only offline tests set `APP_TEST_UNISOLATED_EVALUATIONS=yes`). **Known gaps on the firewall path** (a run container):
+  abstract unix sockets (a namespace covers them; nothing in a run container listens on one, and every process of a user
+  is killed after each program), inbound UDP to a user's socket (it can send nothing back), and AF_VSOCK (a VM provider's
+  host channel, where the namespace path is the one taken). Limits: the test's `timeout_seconds` per
   program cut to the run's own deadline less a minute (past it: refused, nothing scored), 4 MB of output a program,
-  bundles of 128 MB, test files of 64 MB, 2000 cases. No provider: the autoscaler's tick fails the queued evaluation run
-  and the guardian refuses it in plain words ("No run sandbox provider is set up ... nothing was scored"), never waiting.
+  bundles of 128 MB, test files of 64 MB, 2000 cases. No provider for a grace period (`APP_EVAL_NO_SANDBOX_GRACE_MINUTES`,
+  default 10, counted from the run's queueing): the autoscaler's tick fails the queued evaluation run and the guardian
+  refuses it in plain words ("No run sandbox provider is set up ... nothing was scored"), never waiting forever.
   Proof: `npm run test:hosted-judge` (as root; `JUDGE_RUN_IMAGE=<runner image>` adds the run-container items): a hostile
-  candidate's probes of the outside, loopback, DNS, the expected answers, the baseline's files and the runner's secret
-  all held, scores back, a hang cut at its limit, the run's deadline enforced, a container without `NET_ADMIN` refused.
+  candidate's probes of the outside, loopback, DNS, open unix sockets (a planted one; the host's resolver), the expected
+  answers, the baseline's files and the runner's secret all held, what it planted in `/tmp` (a module, a package.json)
+  and the shared folders gone before the scorer runs, scores back, a hang cut at its limit, the run's deadline enforced, a container without `NET_ADMIN` refused.
   `npx tsx scripts/judge-sandbox.ts <spec.json> [--container <image>]` measures a pack's own frozen test the same way.
 
 ## Records and the runs that wrote them (mold_v0-310)

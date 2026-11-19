@@ -9,7 +9,10 @@
 // the driver keeps them), a listing of the evaluator's folder, the baseline's own file, writing into the test, and any
 // readable environment holding the runner's fake secret; the scorer tries the outside too.
 //  1. This machine, the firewall path (no namespace used): every case scored, every way out held, the hung case cut at
-//     the test's time limit with nothing scored for it, the isolation reported as "firewall".
+//     the test's time limit with nothing scored for it, the isolation reported as "firewall". Where setfacl is missing the
+//     open unix sockets (the planted one, a local resolver's) cannot be denied, so it is refused with nothing run.
+// The candidate also tries every open unix socket (a local resolver's, the system bus, one the runner planted) and leaves
+// a module in /tmp, a package.json and files in the shared folders: the scorer must find none of it, nor load it.
 //  2. This machine, the namespace path (what a VM sandbox gives): the same, reported as "netns".
 //  3. A run container (src/run-container.ts runContainerBody: every capability dropped but the runner's, no new
 //     privileges, the runs' limits), the runner image JUDGE_RUN_IMAGE with this checkout's code mounted over its own:
@@ -46,13 +49,13 @@ const listen = (host: string) => new Promise<{ port: number; hits: () => number 
   s.listen(0, host, () => { listeners.push(s); resolve({ port: (s.address() as net.AddressInfo).port, hits: () => hits }); });
 });
 
-const FLOORS = ["net_blocked", "loopback_blocked", "dns_blocked", "expected_hidden", "scratch_hidden", "champion_hidden", "test_unwritable", "secret_absent", "scorer_net_blocked"];
+const FLOORS = ["net_blocked", "loopback_blocked", "dns_blocked", "expected_hidden", "scratch_hidden", "champion_hidden", "test_unwritable", "secret_absent", "unix_blocked", "plant_absent", "scorer_net_blocked"];
 /** One evaluation's folder: the test (cases and scorer), the candidate (mult 2) and the baseline (mult 1, with a file of its own). */
 function setUp(name: string, o: { outside: { host: string; port: number }; loopback: number; specDir?: string; timeout: number }) {
   const dir = path.join(work, name);
   for (const d of ["test", "candidate", "champion"]) mkdirSync(path.join(dir, d), { recursive: true });
   copyFileSync(path.join(FIX, "test", "score.cjs"), path.join(dir, "test", "score.cjs"));
-  const input = (x: number, mode?: string) => ({ x, ...(mode ? { mode } : {}), outside: o.outside, loopback: o.loopback, cases_path: "cases.json", spec_cases: path.join(o.specDir ?? dir, "test", "cases.json"), secret_name: "JUDGE_FAKE_SECRET" });
+  const input = (x: number, mode?: string) => ({ x, ...(mode ? { mode } : {}), outside: o.outside, loopback: o.loopback, cases_path: "cases.json", spec_cases: path.join(o.specDir ?? dir, "test", "cases.json"), secret_name: "JUDGE_FAKE_SECRET", plant_socket: `/run/judge-plant-${name}.sock` });
   const cases = [1, 2, 3, 4, 5].map((x) => ({ id: `c${x}`, input: input(x), expected: 2 * x })).concat([{ id: "hang", input: input(6, "sleep"), expected: 12 }]);
   writeFileSync(path.join(dir, "test", "cases.json"), JSON.stringify({ cases }));
   for (const d of ["candidate", "champion"]) copyFileSync(path.join(FIX, "candidate", "run.cjs"), path.join(dir, d, "run.cjs"));
@@ -62,7 +65,7 @@ function setUp(name: string, o: { outside: { host: string; port: number }; loopb
   const spec = (extra: Partial<JudgeSpec> = {}): JudgeSpec => ({
     test_dir: path.join(dir, "test"), candidate_dir: path.join(dir, "candidate"), champion_dir: path.join(dir, "champion"), cases_path: "cases.json",
     candidate_command: ["node", "run.cjs"], scorer_command: ["node", "score.cjs"], timeout_seconds: o.timeout, metric: "score", floors: FLOORS,
-    control: o.outside, ...extra });
+    control: o.outside, plant_socket: `/run/judge-plant-${name}.sock`, ...extra });
   return { dir, spec };
 }
 type Out = JudgeOut;
@@ -72,7 +75,8 @@ function holds(out: Out, network: string, timeout: number) {
   assert.equal(out.completion?.outcome, "succeeded", JSON.stringify(out.completion));
   assert.ok(out.result && !out.result.error && !out.result.tampered, JSON.stringify(out.result));
   const iso = out.events.find((e) => e.type === "evaluation_isolation");
-  assert.deepEqual(iso?.data, { network, users: 3 }, "the isolation used is the run's event");
+  assert.equal(iso?.data?.network, network, "the isolation used is the run's event"); assert.equal(iso?.data?.users, 3);
+  assert.ok(Number(iso?.data?.sockets_denied) >= 1, "the planted socket (at least) was covered or denied");
   const byId = Object.fromEntries(out.result!.cases.map((c) => [c.id, c]));
   for (const x of [1, 2, 3, 4, 5]) {
     const c = byId[`c${x}`]!;
@@ -88,12 +92,19 @@ const TIMEOUT = 6;
 const secretEnv = () => ({ JUDGE_FAKE_SECRET: randomBytes(12).toString("hex") });
 try {
   const outside = await listen("127.0.0.1"), loop = await listen("127.0.0.1");
-  await item("1. this machine, the firewall path: scores back, every way out held, the hang cut at its limit", async () => {
+  await item("1. this machine, the firewall path: scores back, every way out held, the hang cut at its limit (without setfacl: refused)", async () => {
     const s = setUp("fw", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT });
     const before = outside.hits();
     const out = judgeHere(s.spec({ network: "firewall" }), secretEnv());
-    holds(out, "firewall", TIMEOUT);
     await new Promise((r) => setTimeout(r, 300)); // the driver ran synchronously: its connections are accepted now
+    if (spawnSync("sh", ["-c", "command -v setfacl"]).status !== 0) {
+      // The planted socket (and a local resolver's, where there is one) cannot be denied: nothing may run.
+      assert.deepEqual(out.result?.cases, []);
+      assert.match(out.result?.error ?? "", /cannot keep the evaluation's programs off the network \(setfacl is not installed, so the local sockets .+ cannot be denied\), so nothing was run or measured/);
+      assert.equal(outside.hits() - before, 1, "nothing but the runner's own control connection arrived");
+      return;
+    }
+    holds(out, "firewall", TIMEOUT);
     assert.equal(outside.hits() - before, 1, "only the runner's own control connection arrived");
     assert.equal(spawnSync("sh", ["-c", "nft list tables 2>/dev/null | grep -c app_eval_"], { encoding: "utf8" }).stdout.trim(), "0", "the evaluation's firewall table is gone after it");
   });
@@ -104,7 +115,7 @@ try {
   await item("5. the run's own deadline: an evaluation that would outlast it is refused, nothing scored", async () => {
     const s = setUp("late", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT });
     // A minute and a half: past the minute kept to report, about 30 s to measure in, less than the cases take.
-    const out = judgeHere(s.spec({ network: "firewall", deadline_seconds: 75 }), secretEnv());
+    const out = judgeHere(s.spec({ network: "auto", deadline_seconds: 75 }), secretEnv());
     assert.equal(out.completion?.outcome, "succeeded", "the run itself ends; the API refuses the evaluation");
     assert.deepEqual(out.result?.cases, []);
     assert.match(out.result?.error ?? "", /ran past its run's time limit after \d of 6 cases, so nothing was scored/);

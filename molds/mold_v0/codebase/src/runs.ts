@@ -499,14 +499,18 @@ export async function failUnlaunchedRun(runId: string, reason: string): Promise<
 }
 
 /**
- * mold_v0-324: the acceptance evaluator's queued runs fail at once when no sandbox provider can carry them out (they
+ * mold_v0-324: the acceptance evaluator's queued runs fail when no sandbox provider can carry them out (they
  * never run anywhere else): the guardian then refuses the evaluation with this run's error, in plain words, with
  * nothing scored, instead of the evaluation waiting for a sandbox that is not coming. Returns the runs failed.
  */
 export async function failQueuedEvaluations(why: string, limit = 100): Promise<string[]> {
+  // A grace period first (APP_EVAL_NO_SANDBOX_GRACE_MINUTES, default 10): a provider's key being replaced, or a vault
+  // that does not answer for a moment, never refuses an evaluation that was just queued.
+  const g = Number(ENV.APP_EVAL_NO_SANDBOX_GRACE_MINUTES ?? 10), grace = Number.isFinite(g) && g >= 0 ? g : 10;
   const rows = await asPlatform(async () => (await getDb()).query<{ id: string }>(
     `/* tenant: internal: the autoscaler's queued evaluation runs across workspaces, by id */ SELECT id FROM runs
-      WHERE status = 'queued' AND runner_location = 'hosted' AND spec->>'runner' = 'program-evaluation' ORDER BY created_at LIMIT $1`, [limit]));
+      WHERE status = 'queued' AND runner_location = 'hosted' AND spec->>'runner' = 'program-evaluation'
+        AND created_at <= now() - make_interval(secs => $2) ORDER BY created_at LIMIT $1`, [limit, grace * 60]));
   const out: string[] = [];
   for (const r of rows) if (await failUnlaunchedRun(r.id, evaluationUnsandboxedText(why))) out.push(r.id);
   return out;

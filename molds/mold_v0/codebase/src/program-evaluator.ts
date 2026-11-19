@@ -33,17 +33,18 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdtempSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { RunView } from "./pack-api.js";
 import type { Claim } from "./runs.js";
 import type { HarnessOptions, RunnerClient } from "./run-harness.js";
 import { runIsolation } from "./run-harness.js";
-import { killUser, leaseRunUser, runUidRange, type RunUser } from "./run-users.js";
+import { killUntilGone, leaseRunUser, runUidRange, sweepUserFiles, type RunUser } from "./run-users.js";
 import { unpackBundle } from "./workspace-bundle.js";
 import type { AcceptanceTest } from "./program-spec.js";
 import { builtinScore } from "./program-scorers.js";
+import { ENV } from "./env-names.js";
 
 export interface EvaluationStart { evaluation: string; test: AcceptanceTest; metric: string; floors: string[]; has_candidate: boolean; has_champion: boolean }
 export interface CaseMeasurement { id: string; baseline: number | null; candidate: number | null; floors: Record<string, number | null> }
@@ -63,16 +64,76 @@ const UNSHARE = "/usr/bin/unshare";
 const SETPRIV = "/usr/bin/setpriv";
 /** A system program by its usual places (a runner's PATH may lack /usr/sbin). */
 const sbin = (name: string) => ["/usr/sbin", "/sbin", "/usr/bin", "/bin"].map((d) => path.join(d, name)).find((p) => existsSync(p)) ?? null;
-/** The sockets a run's user is denied in a sandbox (src/run-sandbox-runner.ts): a network namespace does not cover a unix socket. */
-const LOCAL_RESOLVER_SOCKETS = ["/run/systemd/resolve/io.systemd.Resolve", "/run/systemd/resolve/io.systemd.Resolve.Monitor", "/run/dbus/system_bus_socket"];
-/** One program as one user with no network: made as root, which drops to the user (and its one group) before it runs. */
-const netlessArgv = (argv: string[], u: { uid: number; gid: number }, noNewPrivs: boolean) => [...(noNewPrivs ? ["setpriv", "--no-new-privs", "--"] : []), UNSHARE, "--net", `--setgid=${u.gid}`, `--setuid=${u.uid}`, "--", ...argv];
-/** mold_v0-324: one program as one user the firewall has shut out (no namespace): root drops to the user, its one group, no other. */
-const firewalledArgv = (argv: string[], u: { uid: number; gid: number }, noNewPrivs: boolean) => [SETPRIV, ...(noNewPrivs ? ["--no-new-privs"] : []), `--reuid=${u.uid}`, `--regid=${u.gid}`, "--clear-groups", "--", ...argv];
+/**
+ * Unix sockets on a path (mold_v0-324, review): no network namespace or firewall sees one, so a local resolver, the system
+ * bus or the journal would be a way out (a resolver resolves a name it is given: DNS out). These are always looked for;
+ * every other socket on a path any user may connect to (its file writable by others) is found in /proc/net/unix.
+ */
+const KNOWN_SOCKETS = ["/run/systemd/resolve/io.systemd.Resolve", "/run/systemd/resolve/io.systemd.Resolve.Monitor", "/run/dbus/system_bus_socket",
+  "/var/run/dbus/system_bus_socket", "/run/nscd/socket", "/var/run/nscd/socket", "/dev/log", "/run/systemd/journal/socket", "/run/systemd/journal/stdout", "/run/systemd/journal/dev-log"];
+/** The unix sockets a run user could connect to here: each by its real path, once. */
+export function openUnixSockets(): string[] {
+  const paths = new Set<string>(KNOWN_SOCKETS);
+  try {
+    for (const line of readFileSync("/proc/net/unix", "utf8").split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length >= 8 && cols[7]!.startsWith("/")) paths.add(cols.slice(7).join(" "));
+    }
+  } catch { /* no /proc/net/unix: the known paths only */ }
+  const out = new Set<string>();
+  for (const p of paths) {
+    try {
+      const real = realpathSync(p), st = statSync(real);
+      if (st.isSocket() && (st.mode & 0o002 || KNOWN_SOCKETS.includes(p))) out.add(real);
+    } catch { /* not there */ }
+  }
+  return [...out].sort();
+}
+/**
+ * One program as one user with no network (mold_v0-324): made as root in new network, mount and IPC namespaces, where
+ * every open unix socket is covered by /dev/null and /tmp, /var/tmp and /dev/shm are an empty tmpfs of the program's
+ * own, then root drops to the user, its one group, no other, with no_new_privs. A mount that fails ends it (exit 97).
+ */
+const NETNS_SH = 'while [ "$1" != "--" ]; do mount --bind /dev/null "$1" || exit 97; shift; done; shift; '
+  + 'for d in /tmp /var/tmp /dev/shm; do [ -d "$d" ] && { mount -t tmpfs -o mode=1777,size=64m,nosuid,nodev tmpfs "$d" || exit 97; }; done; exec "$@"';
+const netlessArgv = (sockets: string[]) => (argv: string[], u: { uid: number; gid: number }) =>
+  [UNSHARE, "--net", "--mount", "--ipc", "--propagation", "private", "--", "/bin/sh", "-c", NETNS_SH, "judge", ...sockets, "--", ...firewalledArgv(argv, u)];
+/** One program as one user the firewall has shut out (no namespace): root drops to the user, its one group, no other, no_new_privs. */
+const firewalledArgv = (argv: string[], u: { uid: number; gid: number }) => [SETPRIV, "--no-new-privs", `--reuid=${u.uid}`, `--regid=${u.gid}`, "--clear-groups", "--", ...argv];
 
 /** How the evaluation's programs are kept off every network (mold_v0-324). */
 export type EvaluationNetwork = "netns" | "firewall";
-export const canUnshareNet = () => existsSync(UNSHARE) && spawnSync(UNSHARE, ["--net", "/bin/true"], { stdio: "ignore", timeout: 10_000 }).status === 0;
+export const canUnshareNet = () => existsSync(UNSHARE) && spawnSync(UNSHARE, ["--net", "--mount", "--ipc", "--propagation", "private", "/bin/sh", "-c", "mount -t tmpfs tmpfs /tmp"], { stdio: "ignore", timeout: 10_000 }).status === 0;
+/**
+ * The firewall path's unix sockets (mold_v0-324): an ACL entry denying each user each socket. Returns how to take back
+ * only the entries added here (an entry already there, the run's own lockdown's, stays); throws when a socket exists and
+ * cannot be denied (no setfacl, or it fails): the evaluation is then refused.
+ */
+export function denySockets(uids: number[], sockets: string[]): () => void {
+  if (!sockets.length) return () => {};
+  const setfacl = sbin("setfacl"), getfacl = sbin("getfacl");
+  if (!setfacl || !getfacl) throw new Error(`setfacl is not installed, so the local sockets ${sockets.slice(0, 3).join(", ")} cannot be denied`);
+  const added: [number, string][] = [];
+  const undo = () => { for (const [uid, p] of added) spawnSync(setfacl, ["-x", `u:${uid}`, p], { stdio: "ignore", timeout: 10_000 }); };
+  for (const p of sockets) {
+    const had = spawnSync(getfacl, ["-n", "-p", "--omit-header", p], { encoding: "utf8", timeout: 10_000 }).stdout ?? "";
+    for (const uid of uids) {
+      const before = new RegExp(`^user:${uid}:`, "m").test(had);
+      if (spawnSync(setfacl, ["-m", `u:${uid}:---`, p], { stdio: "ignore", timeout: 10_000 }).status !== 0) { undo(); throw new Error(`setfacl could not deny ${p}`); }
+      if (!before) added.push([uid, p]);
+    }
+  }
+  return undo;
+}
+/** The folder evaluations are made in (mold_v0-324): root's, never writable by a run user, nor is any folder above it. */
+export const EVAL_ROOT = "/run/app-eval";
+export function safeAncestry(dir: string): string | null {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    const st = statSync(d);
+    if (st.uid !== 0 || st.mode & 0o022) return d;
+    if (d === path.dirname(d)) return null;
+  }
+}
 /**
  * mold_v0-324: the sandbox's firewall drops every packet the users send (IPv4 and IPv6, loopback included), in a table of
  * its own that runs before every other output chain: a drop anywhere is final, whatever the run's lockdown accepts for
@@ -107,22 +168,35 @@ export function shutOutUsers(uids: number[], tag: string): () => void {
   function fail(): never { throw new Error(why.join("; ")); }
 }
 /**
- * mold_v0-324: before anything runs, each user tries a listener of this runner's on loopback (and IPv6 loopback where
- * there is one): it must not get through. Resolves to the users that did (none, when isolated), or throws when the
- * probe itself could not run.
+ * mold_v0-324: before anything runs, each user tries a listener of this runner's on loopback (IPv4, and IPv6 where there
+ * is one) and every open unix socket: none may get through. Resolves to what got through (nothing, when isolated), or
+ * throws when the probe itself could not run.
  */
-export async function probeShutOut(users: { uid: number; gid: number }[], wrap: (argv: string[], u: { uid: number; gid: number }) => string[]): Promise<number[]> {
+export async function probeShutOut(users: { uid: number; gid: number }[], wrap: (argv: string[], u: { uid: number; gid: number }) => string[], sockets: string[]): Promise<string[]> {
   const net = await import("node:net");
   let reached = 0;
-  const server = net.createServer((s) => { reached++; s.destroy(); });
-  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve()); });
-  const port = (server.address() as { port: number }).port;
-  const probe = `const net=require("net");const s=net.connect(${port},"127.0.0.1");const t=setTimeout(()=>{process.stdout.write("blocked");process.exit(0)},1500);s.on("connect",()=>{process.stdout.write("open");process.exit(0)});s.on("error",()=>{clearTimeout(t);process.stdout.write("blocked");process.exit(0)});`;
+  const servers: import("node:net").Server[] = [];
+  const listen = (host: string) => new Promise<number | null>((resolve) => {
+    const s = net.createServer((c) => { reached++; c.destroy(); });
+    s.once("error", () => resolve(null));
+    s.listen(0, host, () => { servers.push(s); resolve((s.address() as { port: number }).port); });
+  });
+  const v4 = await listen("127.0.0.1"), v6 = await listen("::1");
+  if (v4 === null) throw new Error("the probe's loopback listener could not start");
+  const probe = `const net=require("net"),fs=require("fs");const out=[];
+const tcp=(h,p)=>new Promise(r=>{if(!p)return r();const s=net.connect(p,h);const t=setTimeout(()=>{s.destroy();r()},1500);s.on("connect",()=>{clearTimeout(t);out.push(h);s.destroy();r()});s.on("error",()=>{clearTimeout(t);r()})});
+for(const p of process.argv.slice(1)){try{if(fs.statSync(p).isSocket()){fs.accessSync(p,fs.constants.W_OK);out.push(p)}}catch{}}
+Promise.all([tcp("127.0.0.1",${v4}),tcp("::1",${v6 ?? 0})]).then(()=>{process.stdout.write(JSON.stringify(out));process.exit(0)});`;
   try {
-    const out = await Promise.all(users.map((u) => runProgram(wrap([process.execPath, "-e", probe], u), { cwd: "/", input: "", timeoutMs: 15_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" } })));
-    out.forEach((o, i) => { if (!o.ok && !o.stdout) throw new Error(`the network probe as uid ${users[i]!.uid} did not run: ${o.why}`); });
-    return users.filter((_, i) => out[i]!.stdout !== "blocked" || reached > 0).map((u) => u.uid);
-  } finally { server.close(); }
+    const out = await Promise.all(users.map((u) => runProgram(wrap([process.execPath, "-e", probe, ...sockets], u), { cwd: "/", input: "", timeoutMs: 15_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" } })));
+    const through: string[] = [];
+    out.forEach((o, i) => {
+      if (!o.ok) throw new Error(`the isolation probe as uid ${users[i]!.uid} did not run: ${o.why}`);
+      for (const w of JSON.parse(o.stdout) as string[]) through.push(`uid ${users[i]!.uid}: ${w}`);
+    });
+    if (reached && !through.length) through.push("a loopback listener was reached");
+    return through;
+  } finally { for (const s of servers) s.close(); }
 }
 
 /** A program run with a time limit: its stdout (bounded), and whether it exited cleanly. */
@@ -181,11 +255,15 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
   const iso = runIsolation(opts);
   const owned: RunUser[] = [];
   let candidateUser: RunUser | null = null, championUser: RunUser | null = null, scorerUser: RunUser | null = null;
-  let undoFirewall: (() => void) | null = null;
-  const deniedSockets: string[] = [];
+  let undoFirewall: (() => void) | null = null, undoSockets: (() => void) | null = null;
   // mold_v0-324: the run's own deadline bounds the whole evaluation (less a margin to report what it measured).
   const deadline = (Number.isFinite(Date.parse(claim.deadline_at)) ? Date.parse(claim.deadline_at) : Date.now() + 3600_000) - EVAL_LIMITS.reportMarginMs;
-  const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), "evaluation-"));
+  // mold_v0-324: with run users, the folder is made under one only root may write, as is every folder above it: nothing a
+  // program leaves (a node_modules, a package.json) is ever on another program's module path.
+  let base = opts.tmp ?? tmpdir();
+  if (iso) { base = opts.tmp ?? EVAL_ROOT; mkdirSync(base, { recursive: true, mode: 0o711 }); if (base === EVAL_ROOT) { chownSync(base, 0, 0); chmodSync(base, 0o711); } }
+  const unsafe = iso ? safeAncestry(base) : null;
+  const scratch = mkdtempSync(path.join(base, "evaluation-"));
   // The lease is this runner's to keep while a slow test runs; a cancel is seen between cases.
   let cancelled = false;
   const beat = setInterval(() => { client.heartbeat(run.id, lease).then((h) => { if (h.cancel) cancelled = true; }).catch(() => {}); }, Math.max(1000, (claim.lease_seconds * 1000) / 3));
@@ -195,6 +273,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     return client.complete(run.id, lease, failed ? { outcome: "failed", error_kind: "run", error: failed.slice(0, 2000) } : { outcome: "succeeded", results: [] }).catch(() => null);
   };
   try {
+    if (unsafe) return finish({ cases: [], tampered: null, error: `the evaluation's folder is under ${unsafe}, which a run user could write to, so nothing was run or measured` }, null);
     if (iso) {
       const range = iso.mode === "pool" ? iso.range : (opts.runUsers ?? runUidRange());
       const lease3 = async (role: string) => { const u = await leaseRunUser(`${run.id}:${role}`, { range, dir: opts.runUidDir }); owned.push(u); return u; };
@@ -205,29 +284,35 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       scorerUser = await lease3("scorer");
     }
     const isolated = !!(candidateUser && championUser && scorerUser);
-    // mold_v0-324: an empty network namespace each where one can be made, else the sandbox's firewall shuts the three out.
+    // mold_v0-324: a runner with no run users runs the programs as itself: only offline tests may ask for that.
+    if (!isolated && ENV.APP_TEST_UNISOLATED_EVALUATIONS !== "yes") return finish({ cases: [], tampered: null, error: "this runner has no run users of its own to run the evaluation's programs as, so nothing was run or measured" }, null);
+    // mold_v0-324: an empty network namespace each where one can be made, else the sandbox's firewall shuts the three out;
+    // the unix sockets any user could connect to covered (a namespace) or denied (ACLs) on either path.
     let network: EvaluationNetwork | null = null;
+    let wrap: ((argv: string[], u: { uid: number; gid: number }) => string[]) | null = null;
     if (isolated) {
       const users = [candidateUser!, championUser!, scorerUser!];
-      if (opts.evaluationNetwork !== "firewall" && canUnshareNet()) network = "netns";
+      const sockets = openUnixSockets();
+      if (opts.evaluationNetwork !== "firewall" && canUnshareNet()) { network = "netns"; wrap = netlessArgv(sockets); }
       else {
         const why: string[] = [];
         if (opts.evaluationNetwork !== "firewall") why.push("no network namespace can be made here");
         if (!existsSync(SETPRIV)) why.push("setpriv is not installed");
-        else try { undoFirewall = shutOutUsers(users.map((u) => u.uid), run.id); network = "firewall"; }
-        catch (e) { why.push(`its firewall could not shut the evaluation's users out (${(e as Error).message})`); }
+        else {
+          try { undoFirewall = shutOutUsers(users.map((u) => u.uid), run.id); }
+          catch (e) { why.push(`its firewall could not shut the evaluation's users out (${(e as Error).message})`); }
+          if (undoFirewall) {
+            try { undoSockets = denySockets(users.map((u) => u.uid), sockets); network = "firewall"; wrap = firewalledArgv; }
+            catch (e) { why.push((e as Error).message); }
+          }
+        }
         if (!network) return finish({ cases: [], tampered: null, error: `this sandbox cannot keep the evaluation's programs off the network (${why.join("; ")}), so nothing was run or measured` }, null);
       }
-      const wrap = network === "netns" ? netlessArgv : firewalledArgv;
-      const through = await probeShutOut(users, (argv, u) => wrap(argv, u, !!opts.noNewPrivs)).catch((e: Error) => [`(${e.message.slice(0, 200)})`]);
-      for (const u of users) killUser({ uid: u.uid, gid: u.gid });
-      if (through.length) return finish({ cases: [], tampered: null, error: `the evaluation's programs were not cut off from the network (${network}: a probe got through as ${through.join(", ")}), so nothing was run or measured` }, null);
-      await client.events(run.id, lease, [{ type: "evaluation_isolation", data: { network, users: users.length } }]).catch(() => {});
+      const through = await probeShutOut(users, wrap!, sockets).catch((e: Error) => [`(${e.message.slice(0, 200)})`]);
+      for (const u of users) killUntilGone(u);
+      if (through.length) return finish({ cases: [], tampered: null, error: `the evaluation's programs were not cut off from the network (${network}: a probe got through, ${through.slice(0, 3).join("; ")}), so nothing was run or measured` }, null);
+      await client.events(run.id, lease, [{ type: "evaluation_isolation", data: { network, users: users.length, sockets_denied: sockets.length } }]).catch(() => {});
     }
-    // The local resolver's and the system bus's unix sockets (no namespace or firewall sees one): denied to all three in a
-    // run sandbox (the run's own user already is, by its lockdown).
-    if (isolated && opts.egress === "system") for (const u of [candidateUser!, championUser!, scorerUser!]) for (const s of LOCAL_RESOLVER_SOCKETS)
-      if (existsSync(s) && spawnSync("setfacl", ["-m", `u:${u.uid}:---`, s], { stdio: "ignore", timeout: 10_000 }).status === 0) deniedSockets.push(`${u.uid}:${s}`);
     // Each user may pass through to its own folders (0711: never list); what is not its own it cannot open.
     if (isolated) chmodSync(scratch, 0o711);
     const start = await ev.start(run.id, lease);
@@ -280,7 +365,13 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     /** Each program gets the test's time limit, cut to what is left of the run's (mold_v0-324); none left: refused. */
     const timeoutMs = () => Math.min(testTimeoutMs, deadline - Date.now());
     const results: CaseMeasurement[] = [];
-    const command = (argv: string[], u: RunUser | null) => (u ? (network === "firewall" ? firewalledArgv : netlessArgv)(argv, u, !!opts.noNewPrivs) : argv);
+    const command = (argv: string[], u: RunUser | null) => (u ? wrap!(argv, u) : argv);
+    /** After every program (mold_v0-324): every process of its user gone (else refused) and what it left in the shared folders and IPC. */
+    const clearUser = (u: RunUser | null) => {
+      if (!u) return;
+      if (!killUntilGone(u)) throw Object.assign(new Error(`a program's processes (uid ${u.uid}) would not end, so nothing was scored`), { refuse: true });
+      sweepUserFiles(u.uid);
+    };
     const outOfTime = () => finish({ cases: [], tampered: null, error: `the evaluation ran past its run's time limit after ${results.length} of ${cases.length} cases, so nothing was scored` }, null);
     const builtinFile = start.test.candidate_command[0] === "builtin:file" ? start.test.candidate_command[1]! : null;
     const runOne = async (dir: string, user: RunUser | null, name: string, c: EvalCase): Promise<{ output: string | null; why: string | null }> => {
@@ -293,7 +384,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       // It gets the input only: never the expected answer, the test's folder, the other's, or the runner's own user.
       const work = freshWork(name, user);
       const r = await runProgram(command(start.test.candidate_command, user), { cwd: dir, input: JSON.stringify({ id: c.id, input: c.input }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: work, TMPDIR: work, EVAL: "1" } });
-      if (user) killUser({ uid: user.uid, gid: user.gid });
+      clearUser(user);
       return r.ok ? { output: r.stdout, why: null } : { output: null, why: r.why };
     };
     const builtinScorer = start.test.scorer_command[0]?.startsWith("builtin:") ? start.test.scorer_command[0] : null;
@@ -302,7 +393,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       if (builtinScorer) return builtinScore(builtinScorer, c, output);
       const work = freshWork("scorer", scorerUser);
       const s = await runProgram(command(start.test.scorer_command, scorerUser), { cwd: testDir, input: JSON.stringify({ id: c.id, input: c.input, expected: c.expected, output }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: scorerHome, TMPDIR: work } });
-      if (scorerUser) killUser({ uid: scorerUser.uid, gid: scorerUser.gid });
+      clearUser(scorerUser);
       if (!s.ok) return {};
       try { const v = JSON.parse(s.stdout) as Record<string, unknown>; return Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]))); }
       catch { return {}; }
@@ -327,10 +418,13 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     return finish({ cases: results, tampered: null }, null);
   } catch (e) {
     if ((e as { tamper?: boolean }).tamper) return finish({ cases: [], tampered: (e as Error).message.slice(0, 300) }, null);
+    if ((e as { refuse?: boolean }).refuse) return finish({ cases: [], tampered: null, error: (e as Error).message.slice(0, 500) }, null);
     return finish({ cases: [], tampered: null, error: `the evaluation failed: ${(e as Error).message}`.slice(0, 500) }, (e as Error).message);
   } finally {
     clearInterval(beat);
-    for (const d of deniedSockets) { const i = d.indexOf(":"); spawnSync("setfacl", ["-x", `u:${d.slice(0, i)}`, d.slice(i + 1)], { stdio: "ignore", timeout: 10_000 }); }
+    // Every process of the three gone first (mold_v0-324): only then are the sockets and the network given back.
+    for (const u of [candidateUser, championUser, scorerUser]) if (u) { killUntilGone(u); sweepUserFiles(u.uid); }
+    try { undoSockets?.(); } catch { /* the sandbox goes with its entries */ }
     try { undoFirewall?.(); } catch { /* the sandbox goes with its rules */ }
     for (const u of owned) await u.release().catch(() => false);
     rmSync(scratch, { recursive: true, force: true });
