@@ -1471,6 +1471,22 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and masks shapes of secrets (a URL's password, well-known token prefixes) in what it prints, on top of the redaction
   each event got when it was written. As an `audit:` script the factory runs it with no yes
   (`provision.py <app> --operator audit:run-events -- <run_id>`). `npm run test:run-events`.
+- **Credentials kept in the audit trails, read-only** (mold_v0-323, built): until mold_v0-322 an entry's kept request
+  (mold_v0-286) did not mask a prefixed key whose six public characters held `-` or `_` (keys are base64url: about one
+  in six) nor a Slack token, in bodies, MCP tool arguments and headers not named for a secret; until mold_v0-323 an
+  admin or agent tool token (`adm_`, `hst_`, ...) was not either, and a legacy `/mcp/<key>` request kept its key in its
+  route. `npm run operator:audit-key-scan [-- --json]`
+  (`scripts/operator/audit-key-scan.ts`, `src/audit-key-scan.ts`) reads every row of `audit_platform_events`,
+  `audit_data_events` (every column but the chain's hashes) and `admin_access_log`, every workspace, as vault-status
+  reads (one `READ ONLY` transaction, rolled back, never `getDb`), and checks every string and field name against the
+  current `looksSecret` and the factory's credential shapes (`.claude/scripts/lib/secret_patterns.py`). It prints counts
+  per table, kind and workspace, the dates, and per finding its table, row, date, JSON path and kind; never a value:
+  an app key (`oct_`, `sk_`, `adm_`) by the prefix its key list shows, with whether that key (by its sha256, in memory,
+  else by its prefix) is still active, revoked or not found; anything else by its last 4 characters (none under 16).
+  Exit 0 with or without findings. `-- --redact --yes` (never by default; without `--yes`: the scan and exit 3) masks
+  each flagged value in the kept `request` in one transaction, lifting the trails' append-only trigger for that
+  transaction only; the request is not a chained field, so the chain and its checkpoints still verify. The chained text
+  columns (a route) are never changed: revoke those keys. `npm run test:audit-key-scan`.
 - **A kind that always writes** (mold_v0-183, built): an agent-workspace kind's `write_back_required: true` fails a run
   ("run": it changed nothing in its workspace) that exited 0 and validated but left every write-back path as it found
   it, instead of letting it succeed silently (the audit app's seed-company stopped to ask a question; its refresh-apps was
@@ -3189,7 +3205,13 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   stay: op, area, pack, action, paging); every encrypted and file field of an area the request touched; file contents;
   and any value that looks like a credential whatever its name (a bearer token, a JWT, a PEM block, a prefixed key).
   The caller's address headers are not kept (the entry's `ip` is, for staff only); a non-JSON body is kept as its type
-  and size. This replaces the old rule that a trail holds no record values: an unsealed area's values a request sent
+  and size. A credential in the route (the legacy `/mcp/<key>`, `/api/journeys/nudges/<secret>`, any segment shaped like
+  one) is masked, its listed prefix kept (`/mcp/oct_ab12cd••••`), in the request's path and the platform trail's `path`
+  column (mold_v0-323, new entries only). Which key prefixes count is one rule, `src/key-shapes.ts`, shared with the
+  audit key scan: every prefix the app issues (`oct_`, `adm_`, `hst_`, `oma_`/`omr_`/`omc_`, `ocs_`, `ogw_`, `orl_`,
+  `owk_`, `ore_`/`orr_`, `whsec_`) and GitHub's and GitLab's always; a generic one (`sk_`, `cs_`, `pk_`, `rk_`, `re_`,
+  `npm_`, `npg_`, `app_`, `key_`) only when what follows looks like a key (16 or more characters, letters with digits or
+  both cases, not a phrase of plain words), so `app_settings_dashboard` is kept. This replaces the old rule that a trail holds no record values: an unsealed area's values a request sent
   are kept in its request, sealed and encrypted fields never. Read only in the side panel and Export entry
   (`GET /api/audit/entry/<trail>/<seq>`, owners, their own workspace's; `GET /api/admin/audit/entry/<trail>/<scope>/<seq>`,
   staff, any), never in the list, the CSV or MCP; a staff member's request is withheld from a workspace's owners.

@@ -38,7 +38,7 @@ import { PROFILE } from "./profile.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { tracked } from "./scheduler-jobs.js";
 import { featureSetting } from "./feature-flags.js";
-import { areasNamed, captureRequest, type AreaMasking, type AuditRequest } from "./audit-request.js";
+import { areasNamed, captureRequest, maskPath, type AreaMasking, type AuditRequest } from "./audit-request.js";
 import { dataSentence, platformSentence, resolveWho, resultWord, type Who } from "./audit-words.js";
 
 // ---------------------------------------------------------------- settings
@@ -182,7 +182,7 @@ export function auditRequests(): RequestHandler {
         // The request's details (mold_v0-286), masked and capped; a staff request in a workspace's slice shows none to
         // its owners (readTrailEntry), so they are kept for staff alone.
         platformEntry({ request: requestOf(ctx),
-          kind: ctx.kind ?? "request", channel: channelNow(ctx), method: req.method, path: (rpc ? `${path} ${rpc}` : path).slice(0, 300),
+          kind: ctx.kind ?? "request", channel: channelNow(ctx), method: req.method, path: (rpc ? `${maskPath(path)} ${rpc}` : maskPath(path)).slice(0, 300),
           status: res.statusCode, latency_ms: Math.round(performance.now() - t0), ip: String(req.ip ?? "").slice(0, 64),
           actor: actorOf(ctx), org_id: orgOf(ctx), org_slug: channel === "admin_console" ? /\/orgs\/([^/]+)/.exec(path)?.[1] ?? null : null,
         });
@@ -223,7 +223,7 @@ function requestOf(c: Ctx | undefined, area?: string | null): AuditRequest | nul
     return { ...captureRequest({ method: req.method, path, headers, body: req.body, contentType: req.get?.("content-type") ?? null,
       contentLength: Number(req.get?.("content-length") ?? 0) || null }, maskingOf(names), channelOf(path) === "mcp", !areaMod), ...(c!.reqId ? { request_id: c!.reqId } : {}) };
   } catch (e) {
-    return { method: req.method, path: req.path.slice(0, 300), headers: {}, body: null, note: `not kept: ${(e as Error).message.slice(0, 120)}` };
+    return { method: req.method, path: maskPath(req.path).slice(0, 300), headers: {}, body: null, note: `not kept: ${(e as Error).message.slice(0, 120)}` };
   }
 }
 /** A data entry's request: the first entry of a request keeps it whole; the rest of that request name it by its id. */

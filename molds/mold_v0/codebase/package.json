@@ -150,6 +150,8 @@
     "fleet:status": "tsx --env-file-if-exists=.env scripts/fleet-status.ts",
     "orchestrator:install": "npm --prefix orchestrator ci",
     "keyvault": "tsx --env-file-if-exists=.env scripts/keyvault.ts",
+    "operator:audit-key-scan": "node --env-file-if-exists=.env --import=tsx scripts/operator/audit-key-scan.ts",
+    "test:audit-key-scan": "tsx scripts/audit-key-scan-test.ts",
     "operator:vault-status": "node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts",
     "test:vault-status": "tsx scripts/vault-status-test.ts",
     "operator:import-records": "node --env-file-if-exists=.env --import=tsx scripts/operator/import-records.ts",
