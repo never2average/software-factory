@@ -19,6 +19,8 @@
 //     no namespace can be made there (no CAP_SYS_ADMIN), so the firewall path is taken, and holds.
 //  4. The same container without NET_ADMIN: neither a namespace nor the firewall: refused, with nothing run or measured.
 //  5. The run's own deadline: an evaluation that would outlast it is refused with nothing scored.
+//  7. The firewall path's sweep on a machine with many shared folders full of others' files (as a build machine's tool
+//     cache): listed once at the start, then after each program only the folders whose change stamp moved are read.
 //  6. A run container where a local socket is deleted and made again while the evaluation runs (a resolver restarting):
 //     a new inode without the deny entry, found before the next program: refused, nothing scored.
 // Each run also plants a socket outside /run and a folder anyone may write to (as /var/crash is): on the namespace path
@@ -114,6 +116,7 @@ try {
       assert.equal(outside.hits() - before, 1, "nothing but the runner's own control connection arrived");
       return;
     }
+    console.log(`    (${out.ms} ms; the shared folders' sweep: ${JSON.stringify(out.events.find((e) => e.type === "evaluation_sweep")?.data ?? null)})`);
     holds(out, "firewall", TIMEOUT);
     assert.equal(outside.hits() - before, 1, "only the runner's own control connection arrived");
     assert.equal(spawnSync("sh", ["-c", "nft list tables 2>/dev/null | grep -c app_eval_"], { encoding: "utf8" }).stdout.trim(), "0", "the evaluation's firewall table is gone after it");
@@ -130,6 +133,45 @@ try {
     assert.equal(out.completion?.outcome, "succeeded", "the run itself ends; the API refuses the evaluation");
     assert.deepEqual(out.result?.cases, []);
     assert.match(out.result?.error ?? "", /ran past its run's time limit after \d of 6 cases, so nothing was scored/);
+  });
+
+  await item("7. the firewall path's sweep on a machine with many shared folders: read once, then only what changed", async () => {
+    const { WritableSweep, worldWritableDirs } = await import("../src/program-evaluator.js");
+    const { sweepUserFiles } = await import("../src/run-users.js");
+    // As a big build machine has (a tool cache, a work folder): 40 folders anyone may write to, 1500 files of others' each.
+    const load = path.join("/var/lib", `judge-load-${randomBytes(3).toString("hex")}`);
+    mkdirSync(load, { mode: 0o755 });
+    try {
+      for (let d = 0; d < 40; d++) {
+        const dir = path.join(load, `shared-${d}`);
+        mkdirSync(dir); chmodSync(dir, 0o1777);
+        for (let f = 0; f < 1500; f++) writeFileSync(path.join(dir, `f${f}`), "");
+      }
+      const t0 = Date.now();
+      const dirs = await worldWritableDirs();
+      const listedMs = Date.now() - t0;
+      assert.ok(dirs.includes(path.join(load, "shared-7")), "the start-time walk finds them");
+      const sweep = new WritableSweep(dirs);
+      const uid = 59990;
+      const t1 = Date.now();
+      assert.equal(sweep.sweep([uid]), 0, "nothing changed: no folder is read");
+      const idleMs = Date.now() - t1;
+      // A program's leftovers: a file, and a folder anyone may write to with a file in it, in two shared folders.
+      const as = (cmd: string) => assert.equal(spawnSync("/bin/sh", ["-c", cmd], { uid, gid: uid, stdio: "ignore" }).status, 0, cmd);
+      as(`echo held-out > ${load}/shared-3/kept-for-later && mkdir -m 1777 ${load}/shared-9/drop && echo x > ${load}/shared-9/drop/inside`);
+      writeFileSync(path.join(load, "shared-3", "someone-elses"), "");
+      const t2 = Date.now();
+      const read = sweep.sweep([uid]);
+      const changedMs = Date.now() - t2;
+      assert.equal(read, 2, "only the two folders that changed are read");
+      assert.ok(!existsSync(path.join(load, "shared-3", "kept-for-later")) && !existsSync(path.join(load, "shared-9", "drop")), "the program's file and folder are gone");
+      assert.ok(existsSync(path.join(load, "shared-3", "someone-elses")), "another's file stays");
+      const t3 = Date.now();
+      sweepUserFiles(uid, dirs);
+      const fullMs = Date.now() - t3;
+      console.log(`    (listed ${dirs.length} folders in ${listedMs} ms; a sweep with nothing changed ${idleMs} ms, with two changed ${changedMs} ms; reading every folder ${fullMs} ms)`);
+      assert.ok(idleMs < 1000 && changedMs < 1000, "a sweep is quick whatever the machine holds");
+    } finally { rmSync(load, { recursive: true, force: true }); }
   });
 
   // ---------- a run container ----------

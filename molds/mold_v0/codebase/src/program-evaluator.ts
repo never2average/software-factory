@@ -216,6 +216,42 @@ export async function worldWritableDirs(timeoutMs = 300_000): Promise<string[]> 
   await Promise.all(Array.from({ length: width }, async () => { while (next < jobs.length) await walk(jobs[next++]!); }));
   return [...out];
 }
+/**
+ * The firewall path's sweep (review of mold_v0-324): the folders anyone may write to, each with its change stamp (ctime,
+ * mtime and inode, to the nanosecond) taken at the start. A program that makes, renames or removes an entry in a folder
+ * changes the folder's ctime (no user can set a ctime back), so after a program only the folders whose stamp moved are
+ * read, and in them every entry of the evaluation's users goes; a folder anyone may write to that appeared in one of them
+ * is added and read too. A big machine's folders full of other people's files are read once, at the start, never again.
+ */
+export class WritableSweep {
+  private stamps = new Map<string, string>();
+  constructor(dirs: string[]) { for (const d of dirs) this.stamps.set(d, WritableSweep.stamp(d)); }
+  static stamp(d: string): string {
+    try { const st = statSync(d, { bigint: true }); return `${st.ino}:${st.ctimeNs}:${st.mtimeNs}`; } catch { return "gone"; }
+  }
+  get size() { return this.stamps.size; }
+  /** Every entry of these users in a folder that changed; how many folders were read. */
+  sweep(uids: number[]): number {
+    const who = new Set(uids), queue = [...this.stamps.keys()];
+    let read = 0;
+    for (let i = 0; i < queue.length; i++) {
+      const d = queue[i]!, before = this.stamps.get(d);
+      if (WritableSweep.stamp(d) === before) continue;
+      read++;
+      let names: string[] = [];
+      try { names = readdirSync(d); } catch { /* gone, or no longer a folder */ }
+      for (const n of names) {
+        const p = path.join(d, n);
+        let st;
+        try { st = lstatSync(p); } catch { continue; }
+        if (who.has(st.uid)) { rmSync(p, { recursive: true, force: true }); continue; }
+        if (st.isDirectory() && st.mode & 0o002 && st.mode & 0o001 && !this.stamps.has(p)) { this.stamps.set(p, "new"); queue.push(p); }
+      }
+      this.stamps.set(d, WritableSweep.stamp(d));
+    }
+    return read;
+  }
+}
 /** The users an evaluation leases (review of mold_v0-324): APP_EVAL_UIDS, default 60000-60999, a range runs never get. */
 export function evalUidRange() {
   const e = runUidRange(ENV.APP_EVAL_UIDS || "60000-60999"), r = runUidRange();
@@ -358,8 +394,10 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
   const owned: RunUser[] = [];
   let candidateUser: RunUser | null = null, championUser: RunUser | null = null, scorerUser: RunUser | null = null;
   let undoFirewall: (() => void) | null = null, socketGuard: ReturnType<typeof denySockets> | null = null;
-  let sweepRoots: string[] = SWEPT_DIRS;
+  let shared: WritableSweep | null = null;
+  const sweepStats = { programs: 0, folders_read: 0, ms: 0 };
   // mold_v0-324: the run's own deadline bounds the whole evaluation (less a margin to report what it measured).
+  let clearShared: (u: RunUser) => void = (u) => sweepUserFiles(u.uid, SWEPT_DIRS);
   const deadline = (Number.isFinite(Date.parse(claim.deadline_at)) ? Date.parse(claim.deadline_at) : Date.now() + 3600_000) - EVAL_LIMITS.reportMarginMs;
   // mold_v0-324: with run users, the folder is made under one only root may write, as is every folder above it: nothing a
   // program leaves (a node_modules, a package.json) is ever on another program's module path.
@@ -411,14 +449,26 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
           }
         }
         if (!network) return finish({ cases: [], tampered: null, error: `this sandbox cannot keep the evaluation's programs off the network (${why.join("; ")}), so nothing was run or measured` }, null);
-        try { sweepRoots = await worldWritableDirs(); }
+        const t0 = Date.now();
+        try { shared = new WritableSweep(await worldWritableDirs()); }
         catch (e) { return finish({ cases: [], tampered: null, error: `${(e as Error).message}, so nothing was run or measured` }, null); }
+        Object.assign(sweepStats, { folders: shared.size, listed_ms: Date.now() - t0 });
       }
       const through = await probeShutOut(users, wrap!, sockets).catch((e: Error) => [`(${e.message.slice(0, 200)})`]);
       for (const u of users) killUntilGone(u);
       if (through.length) return finish({ cases: [], tampered: null, error: `the evaluation's programs were not cut off from the network (${network}: a probe got through, ${through.slice(0, 3).join("; ")}), so nothing was run or measured` }, null);
       await client.events(run.id, lease, [{ type: "evaluation_isolation", data: { network, users: users.length, sockets_denied: sockets.length } }]).catch(() => {});
     }
+    /**
+     * What a program's user left behind: its keyrings and IPC objects; on the firewall path its entries in the folders
+     * anyone may write to (those that changed). The namespace path gave the program nothing writable but its own.
+     */
+    clearShared = (u: RunUser) => {
+      const t = Date.now();
+      sweepUserFiles(u.uid, []);
+      if (shared) sweepStats.folders_read += shared.sweep([u.uid]);
+      sweepStats.programs++; sweepStats.ms += Date.now() - t;
+    };
     // Each user may pass through to its own folders (0711: never list); what is not its own it cannot open.
     if (isolated) chmodSync(scratch, 0o711);
     const start = await ev.start(run.id, lease);
@@ -480,10 +530,11 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       return wrap!(argv, u, work);
     };
     /** After every program (mold_v0-324): every process of its user gone (else refused) and what it left in the shared folders and IPC. */
+    // (clearShared is defined with the evaluation's users, below the isolation.)
     const clearUser = (u: RunUser | null) => {
       if (!u) return;
       if (!killUntilGone(u)) throw Object.assign(new Error(`a program's processes (uid ${u.uid}) would not end, so nothing was scored`), { refuse: true });
-      sweepUserFiles(u.uid, sweepRoots);
+      clearShared(u);
     };
     /** A program whose isolation could not be made (the wrapper's word on fd 3): refused, never scored as its failure. */
     const madeAsItMust = (r: ProgramRun) => { if (r.isolation) throw Object.assign(new Error(`a program's isolation could not be made (${r.isolation.slice(0, 300)}), so nothing was scored`), { refuse: true }); };
@@ -532,6 +583,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       const changed = changedBetween(before, treeHashes(testDir));
       if (changed.length) return finish({ cases: [], tampered: `the test's files changed while it ran: ${changed.slice(0, 5).join(", ")}` }, null);
     }
+    if (shared) await client.events(run.id, lease, [{ type: "evaluation_sweep", data: sweepStats }]).catch(() => {});
     return finish({ cases: results, tampered: null }, null);
   } catch (e) {
     if ((e as { tamper?: boolean }).tamper) return finish({ cases: [], tampered: (e as Error).message.slice(0, 300) }, null);
@@ -542,7 +594,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     // Every process of the three gone first (mold_v0-324): only then are the sockets and the network given back. A user
     // whose processes would not end keeps them shut out (rules and entries stay) and its lease is kept (quarantined).
     const stuck = new Set<number>();
-    for (const u of [candidateUser, championUser, scorerUser]) if (u) { if (!killUntilGone(u)) stuck.add(u.uid); sweepUserFiles(u.uid, sweepRoots); }
+    for (const u of [candidateUser, championUser, scorerUser]) if (u) { if (!killUntilGone(u)) stuck.add(u.uid); try { clearShared(u); } catch { /* the sandbox goes with it */ } }
     if (stuck.size) console.error(`evaluation ${run.id}: processes of uid ${[...stuck].join(", ")} would not end: their firewall rules, socket entries and leases are kept`);
     else {
       try { socketGuard?.undo(); } catch { /* the sandbox goes with its entries */ }

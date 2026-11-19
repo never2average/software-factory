@@ -4375,16 +4375,19 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   the sockets are found again: one made again (a new inode, without the entry), a new one or an entry gone ends it and
   refuses the evaluation (a socket made again mid-program is reachable for at most that interval: a known gap of this path).
   **Between programs** every process of the program's user must be gone (else refused) and what it left is removed: on
-  the firewall path in every folder anyone may write to that a run user can reach, on every file system mounted (found
-  once: folders others may not search are not walked into; a walk that does not finish refuses the evaluation), and
-  SysV IPC; the evaluation's folder is under `/var/lib/app-eval` (root's, `0711`; no folder above it writable by
+  the firewall path in every folder anyone may write to that a run user can reach, on every file system mounted (listed
+  once at the start: folders others may not search are not walked into; a walk that does not finish refuses the
+  evaluation; after each program only the folders whose change stamp, ctime and mtime, moved are read, so a build
+  machine's shared folders full of others' files cost nothing per program; the run's `evaluation_sweep` event gives the
+  counts and times), and SysV IPC and keyrings; the evaluation's folder is under `/var/lib/app-eval` (root's, `0711`; no folder above it writable by
   a run user, else refused). The evaluation's users are leased from `APP_EVAL_UIDS` (default 60000-60999, refused when it
   overlaps `APP_RUN_UIDS`), never a run's; a user whose processes would not end keeps its firewall rules, socket entries
   and lease (quarantined). Every program runs with no_new_privs. A runner with no run users of its own refuses (only
   offline tests set `APP_TEST_UNISOLATED_EVALUATIONS=yes`, never with `NODE_ENV=production`). **Known gaps on the firewall
   path** (a run container): abstract unix sockets (a namespace covers them; nothing in a run container listens on one, and
   every process of a user is killed after each program), inbound UDP to a user's socket (it can send nothing back), and
-  AF_VSOCK (a VM provider's host channel, where the namespace path is the one taken). Limits: the test's `timeout_seconds` per
+  AF_VSOCK (a VM provider's host channel, where the namespace path is the one taken), and a file anyone may write to
+  that already exists (a user can change its content; nothing of a run sandbox's own is such a file). Limits: the test's `timeout_seconds` per
   program cut to the run's own deadline less a minute (past it: refused, nothing scored), 4 MB of output a program,
   bundles of 128 MB, test files of 64 MB, 2000 cases. No provider for a grace period (`APP_EVAL_NO_SANDBOX_GRACE_MINUTES`,
   default 10, counted from the run's queueing): the autoscaler's tick fails the queued evaluation run and the guardian
