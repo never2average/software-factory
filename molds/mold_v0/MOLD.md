@@ -4092,6 +4092,20 @@ production). An outside product's own API (a workspace area of the products a bu
 pack config, no mold code (mold_v0-322): a `test_connection` probe on that area, its address from the record's url field
 and its key in a header, with `hosts` naming the product's API hosts (a host nobody listed is never called, by design).
 
+**Probes that prove what a build needs (mold_v0-326)**: an HTTP probe may also declare `basic_auth: {user, password}`
+(HTTP Basic, RFC 7617: the two header templates joined and base64 encoded on the server; it is the Authorization header,
+so a probe never sets both; a sealed field in it is dropped on a cross-host redirect and its encoding is cut from the
+words like the secret), `expect.content_type` (the working answer's media type, before any `;`: for a service whose
+answer is not JSON, such as git's push discovery `info/refs?service=git-receive-pack`, which answers
+`application/x-git-receive-pack-advertisement` only to a sign-in that may push; a sign-in page's 200 fails),
+`if_empty: {field, url, expect?}` (the address, and its expect, used when that optional plain field of the record is
+empty: "the named team's own read, or the account's when none is named"; the field is in the probe's address, never in
+the other one, never a field deciding the host; both addresses are at the same host, written by the pack, so the field
+decides no destination and binds no secret) and `hints: {"<4xx|5xx>": "<sentence>"}` (the pack's own plain sentence
+added to the words when the service answers that status: what its provider's tokens need). A refusal answered in plain
+text (`text/plain`) gives its first line, cleaned like a JSON message. Test: `npx tsx scripts/connection-test-test.ts`
+(section 5).
+
 **Signed kinds (mold_v0-313)** (`src/connection-test-signed.ts`): a probe may name a `kind` other than the default
 `"http"`, for a building block a bearer header cannot test. The kind fixes its hosts and its call; the pack names only
 which of the record's fields fill its roles (`fields`), and the build checks each role: encrypted where it holds a
