@@ -33,6 +33,7 @@ import { onboardingAppRouter } from "./onboarding.js";
 import { usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter, sparklineAppRouter } from "./view-routes.js";
+import { logDrainAppRouter } from "./log-drain-health.js";
 import { tabActionAppRouter } from "./tab-actions.js";
 import { workspaceFileAppRouter } from "./workspace-files.js";
 import { programAdminRoutes } from "./program-routes.js";
@@ -345,6 +346,8 @@ export function createApp() {
   app.use("/api/notices", noticeAppRouter());
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
+  // mold_v0-325: a log drain's state for the console's pages (src/log-drain-health.ts), with a log-drain receiver.
+  app.use("/api/log-drains", logDrainAppRouter());
   app.use("/api/runs", runAppRouter());
   // A list tab's four cards (mold_v0-181): with no list tab nothing is mounted.
   app.use("/api/sparklines", sparklineAppRouter());

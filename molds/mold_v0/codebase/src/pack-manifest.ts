@@ -195,6 +195,21 @@ const LogDrainSchema = z.object({
   sources: z.array(z.string().min(1).max(60)).min(1).max(20).optional(),
   environments: z.array(z.string().min(1).max(60)).min(1).max(20).optional(),
   source_label: z.string().trim().min(1).max(60).optional(),
+  // mold_v0-325: the drain's silence check and the A/B comparison of each deployment with the one it replaced
+  silent_hours: z.number().int().min(1).max(336).optional(),
+  compare: z.object({
+    area: lowerName,
+    previous_field: lowerName.optional(),
+    hours: z.number().int().min(1).max(2160).optional(),
+    min_requests: z.number().int().min(1).max(10_000_000).optional(),
+    min_error_points: z.number().min(0).max(100).optional(),
+    min_z: z.number().min(0).max(10).optional(),
+    p95_rise: z.number().min(0).max(100).optional(),
+    fields: z.object(Object.fromEntries(["candidate", "baseline", "verdict", "reason", "candidate_requests", "baseline_requests", "candidate_errors", "baseline_errors",
+      "candidate_error_rate", "baseline_error_rate", "error_rate_change", "candidate_p95_ms", "baseline_p95_ms", "p95_change", "z_score",
+      "candidate_from", "candidate_to", "baseline_from", "baseline_to", "compared_at"]
+      .map((k) => [k, lowerName.optional()])) as Record<string, z.ZodOptional<typeof lowerName>>).strict().optional(),
+  }).strict().optional(),
 }).strict();
 const DeveloperSurfaceSchema = z.object({
   $comment: z.string().max(2000).optional(),

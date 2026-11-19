@@ -20,7 +20,7 @@ import { recordAreas, type PackChartSpec } from '@/config/pack-nav.generated';
 import { RUN_STATUS_COLOR, type BadgeColor, type LaidOutArea } from '@/features/records/detail-layout';
 import { Skeleton } from '@/components/ui/skeleton';
 
-export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';
+export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';
 export interface MetricAnswer {
   name: string; label: string; description: string | null; unit: Unit; measure: string;
   kind: 'single' | 'groups' | 'series';
@@ -48,6 +48,8 @@ export function formatValue(v: number | null | undefined, unit: Unit, short = fa
     case 'days': return `${plain.format(Math.round(v * 10) / 10)} ${short ? 'd' : Math.round(v * 10) / 10 === 1 ? 'day' : 'days'}`;
     case 'hours': return `${plain.format(Math.round(v * 10) / 10)} ${short ? 'h' : Math.round(v * 10) / 10 === 1 ? 'hour' : 'hours'}`;
     case 'count': return v >= 10_000 || short ? compact.format(v) : Math.round(v).toLocaleString();
+    // mold_v0-325: a response time: "240 ms" under a second, then seconds with one decimal under 10.
+    case 'ms': return v < 1000 ? `${Math.round(v).toLocaleString()} ms` : `${plain.format(v < 10_000 ? Math.round(v / 100) / 10 : Math.round(v / 1000))} s`;
     default: return short ? compact.format(v) : plain.format(v);
   }
 }
@@ -146,7 +148,8 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
 }
 
 /** The table view of a chart: rows by group or bucket, a column per series. */
-function DataTable({ head, rows, unit, caption }: { head: string[]; rows: { label: string; values: (number | null)[] }[]; unit: Unit; caption: string }) {
+// mold_v0-325: `units`, a column's own unit (a table of several metrics: requests, a change in points, a share), else `unit`.
+function DataTable({ head, rows, unit, units, caption }: { head: string[]; rows: { label: string; values: (number | null)[] }[]; unit: Unit; units?: Unit[]; caption: string }) {
   return (
     <Table>
       <caption className='sr-only'>{caption}</caption>
@@ -157,7 +160,7 @@ function DataTable({ head, rows, unit, caption }: { head: string[]; rows: { labe
         {rows.map((r, i) => (
           <TableRow key={i}>
             <TableCell>{r.label}</TableCell>
-            {r.values.map((v, j) => <TableCell key={j} className='text-right tabular-nums'>{formatValue(v, unit)}</TableCell>)}
+            {r.values.map((v, j) => <TableCell key={j} className='text-right tabular-nums'>{formatValue(v, units?.[j] ?? unit)}</TableCell>)}
           </TableRow>
         ))}
       </TableBody>
@@ -168,6 +171,8 @@ function DataTable({ head, rows, unit, caption }: { head: string[]; rows: { labe
 /** A chart's data, flattened once: its categories (groups or buckets), its series and their colours. */
 interface Frame {
   unit: Unit;
+  /** mold_v0-325: each series' unit when the chart has several metrics (a table view's columns). */
+  units?: Unit[];
   categories: string[];
   series: { key: string; label: string; color: string; values: (number | null)[]; colors?: string[] }[];
   /** The x axis is time (buckets), else groups. */
@@ -185,7 +190,7 @@ function frameOf(chart: PackChartSpec, ms: MetricAnswer[]): Frame {
     const series = ms.length === 1
       ? first.series!.map((s, i, all) => ({ key: `s${i}`, label: s.label, values: s.values, color: tones?.[i] ?? (chart.palette === 'ordinal' ? step(i, all.length) : slot(i)) }))
       : ms.map((m, i) => ({ key: `s${i}`, label: m.label, values: m.series![0]!.values, color: slot(i) }));
-    return { unit, categories, series, time: true, note };
+    return { unit, ...(ms.length > 1 ? { units: ms.map((m) => m.unit) } : {}), categories, series, time: true, note };
   }
   if (first.kind === 'groups') {
     const categories = first.groups!.map((g) => g.label);
@@ -195,10 +200,10 @@ function frameOf(chart: PackChartSpec, ms: MetricAnswer[]): Frame {
       return { unit, categories, series: [{ key: 's0', label: first.label, values: first.groups!.map((g) => g.value), color: slot(0), colors }], time: false, note };
     }
     // Several metrics over the same groups: match their groups by key.
-    return { unit, categories, time: false, note,
+    return { unit, units: ms.map((m) => m.unit), categories, time: false, note,
       series: ms.map((m, i) => ({ key: `s${i}`, label: m.label, color: slot(i), values: first.groups!.map((g) => m.groups!.find((x) => x.key === g.key)?.value ?? null) })) };
   }
-  return { unit, categories: [first.label], series: ms.map((m, i) => ({ key: `s${i}`, label: m.label, color: slot(i), values: [m.value ?? null] })), time: false, note };
+  return { unit, units: ms.map((m) => m.unit), categories: [first.label], series: ms.map((m, i) => ({ key: `s${i}`, label: m.label, color: slot(i), values: [m.value ?? null] })), time: false, note };
 }
 
 /** A sentence a screen reader reads for the chart (the table view has every number). */
@@ -345,7 +350,7 @@ export function ChartBody({ chart, results }: { chart: PackChartSpec; results: M
     <div className='flex max-h-80 flex-col gap-2 overflow-y-auto overscroll-contain'>
       {f.note && <p className='text-muted-foreground text-xs'>{f.note}</p>}
       {asTable ? (
-        <DataTable caption={chart.title} unit={f.unit} head={[f.time ? 'Period' : 'Group', ...f.series.map((s) => s.label)]}
+        <DataTable caption={chart.title} unit={f.unit} units={f.units} head={[f.time ? 'Period' : 'Group', ...f.series.map((s) => s.label)]}
           rows={f.categories.map((c, i) => ({ label: c, values: f.series.map((s) => s.values[i] ?? null) }))} />
       ) : (
         <figure className='flex flex-col gap-2' role='img' aria-label={summary(chart, f)}>
@@ -381,7 +386,7 @@ export function ChartCell({ chart, results, width }: { chart: PackChartSpec; res
         : chart.type === 'number' ? <Tiles ms={ms} />
         : empty ? <p className='text-muted-foreground py-10 text-center text-sm'>Nothing to show yet.</p>
         : asTable ? (
-          <DataTable caption={chart.title} unit={frame!.unit}
+          <DataTable caption={chart.title} unit={frame!.unit} units={frame!.units}
             head={[frame!.time ? 'Period' : 'Group', ...frame!.series.map((s) => s.label)]}
             rows={frame!.categories.map((c, i) => ({ label: c, values: frame!.series.map((s) => s.values[i] ?? null) }))} />
         ) : (

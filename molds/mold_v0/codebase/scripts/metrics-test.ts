@@ -63,7 +63,8 @@ try {
       const nav100 = readFileSync(path.join(TMP, `try-${n}`, "out", "web", "src", "config", "pack-nav.generated.ts"), "utf8");
       const m100 = JSON.parse(/export const packMetrics[^=]*= ([\s\S]*?);\n/.exec(nav100)![1]!);
       assert.equal(m100.find((m: any) => m.name === "mean_cvss_open").unit, "percent_100");
-      assert.match(nav100, /unit: 'count' \| 'number' \| 'usd' \| 'percent' \| 'percent_100' \| 'days' \| 'hours';/, "the console's type knows it");
+      // mold_v0-325: and "ms", a response time.
+      assert.match(nav100, /unit: 'count' \| 'number' \| 'usd' \| 'percent' \| 'percent_100' \| 'days' \| 'hours' \| 'ms';/, "the console's type knows it");
       refused("a unit that is none", tryPacks([vulns((j) => { metricOf(j, "mean_cvss_open").unit = "percent_points"; })]), /mean_cvss_open|metrics\[\d+\]\.unit/);
     }
 

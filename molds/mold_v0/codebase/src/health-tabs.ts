@@ -189,6 +189,8 @@ export const JOB_SPECS: readonly JobSpec[] = [
   { id: "workspace_retention", label: "Workspace store retention", about: "Expires old versions of the workspaces' stored files (daily).", on: () => retentionWired(), every: () => (onVercel() ? 300 : 60) },
   { id: "run_charges", label: "Run charges", about: "Hands pending run charges to billing.", on: () => runBillingOn(), every: () => (onVercel() ? 300 : 60) },
   { id: "health_samples", label: "Health samples", about: "Samples the live checks for Health › Status's graphs every few minutes and drops samples older than 35 days.", on: () => healthSamplingOn(), every: () => (onVercel() ? 300 : 240) },
+  // mold_v0-325: a log drain gone silent, marked once per silence (src/log-drain-health.ts).
+  { id: "log_drains", label: "Log drain silence check", about: "Marks a workspace's request-log source silent, once, when nothing arrived for the receiver's silent hours.", on: () => (developerSurface()?.webhooks_in ?? []).some((r) => !!(r as { log_drain?: unknown }).log_drain), every: () => (onVercel() ? 300 : 60) },
 ];
 /** The jobs this build runs (the same conditions as the loops that start them). */
 export const enabledJobs = () => JOB_SPECS.filter((j) => { try { return j.on(); } catch { return false; } });

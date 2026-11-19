@@ -4329,6 +4329,34 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   (requests, errors, error rate, p95 and mean latency); no log line, path, address or user agent kept. Its secret and the
   provider's verify token are named by environment variable only (`secret_env`, `verify_env`), else the source's own sealed
   secret. Tests: `scripts/log-drain-test.ts`.
+- **Log-drain analytics, A/B comparisons and health** (mold_v0-325; `src/log-drain.ts`, `src/developer-inbound.ts`,
+  `src/log-drain-health.ts`, migration 0074): Vercel's `-1` statuses are read as documented (a line's own `statusCode`
+  -1, a function that crashed without answering, is a request and a server error; a `proxy.statusCode` -1, a background
+  revalidation, is no request). `log_drain.compare` `{area, previous_field ("previous"), hours (168), min_requests (1000),
+  min_error_points (0.5), min_z (1.96), p95_rise (0.2), fields}` keeps the **A/B comparison** of each deployment with the
+  one it replaced (its record's `previous_field`) as one record of `area` a candidate (key: its key), recomputed after
+  every delivery that touches either side: the candidate's report windows from its first one (at most `hours`) against
+  the baseline's windows of the same length just before it. The verdict is the only one the sample supports
+  (`compareSides`): `insufficient_data` under `min_requests` a side; `regressed` when server errors rose
+  `min_error_points` percentage points or more with a two-proportion z of `min_z` or more, or p95 rose by `p95_rise` or
+  more with `min_requests` timed requests a side; else `no_change_detected`, whose plain-words `reason` never says better.
+  Logical fields (an area's field of that name unless mapped): `candidate`, `baseline`, `verdict` (an enum holding the
+  three values, checked at build), `reason`, `candidate_`/`baseline_` `requests`, `errors`, `error_rate`, `p95_ms`,
+  `error_rate_change` (points), `p95_change` (a share), `z_score`, `candidate_from`/`_to`, `baseline_from`/`_to`,
+  `compared_at`; a field the area lacks is not written. Its numbers are pack metrics like any other (charts, cards, a
+  table of comparisons). **Health**: `log_drain.silent_hours` (default 6); a workspace's drain is `not_connected` (no
+  source), `waiting` (a source, nothing yet), `receiving` or `silent` (`GET /api/log-drains/status`, to those who may read
+  one of the areas it fills). The scheduler's `log_drains` job marks a silent source once (`webhook_sources.silent_since`,
+  set when the last delivery, or the source's creation, is `silent_hours` old) and a delivery clears it; nothing is
+  emailed. The console shows the state above every tab that reads a drain's records (an overview whose charts' metrics
+  are over one, an area tab over one: `developerConsole.drains` in the generated config): what to do when not connected
+  (add a source on Settings, Integrations, then a log drain at the provider that sends to its address), waiting, a
+  warning when silent (also at the top of the home page), else when logs last arrived. A metric `unit` may be `ms`
+  ("240 ms", then "1.2 s"). Tests: `scripts/log-drain-analytics-test.ts` (a sample in Vercel's documented format,
+  `scripts/lib/log-drain-sample.ts`, signed with a secret made at run time, sent through `POST /v1/inbound/<source>`;
+  every report, comparison and charted metric checked against the sample's own requests counted independently).
+  **Not covered:** a request whose lines a provider splits across two deliveries is counted without its duration; the
+  comparison's windows are matched by length, not by hour of day; one A/B pair a deployment (its `previous`).
 - Tests: `scripts/self-improvement-test.ts`, `scripts/nested-runs-test.ts`, `scripts/nested-runs-review-test.ts` (as root).
 
 ## Records and the runs that wrote them (mold_v0-310)

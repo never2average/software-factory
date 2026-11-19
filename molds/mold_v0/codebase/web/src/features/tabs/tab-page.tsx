@@ -46,6 +46,7 @@ import { tabCharts } from './registry';
 import { RecentRecordsCard } from './recent-records-card';
 import { RunsTable } from './runs';
 import { TabSparklines } from './sparklines';
+import { DrainStatus, drainTab, drainsInBuild } from './drain-status';
 import { FormHost, useTabAction } from './tab-action';
 import { relatedColumnsOf } from '@/features/records/related-columns';
 import { useImportAction } from '@/features/records/workspace-import';
@@ -93,8 +94,11 @@ function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?:
 /** An overview tab: its charts (one that includes setup is the home page: HomeTab). */
 function OverviewTab({ tab }: { tab: PackTabSpec }) {
   const charts = tabCharts(tab);
-  // Charts alone: every one refused is the denied status page (mold_v0-131), never an empty grid.
-  if (!tab.include?.length) return <ChartGrid charts={charts} whole />;
+  // Charts alone: every one refused is the denied status page (mold_v0-131), never an empty grid. mold_v0-325: charts
+  // over a log drain's records say the drain's state above them (not connected yet, waiting, silent).
+  if (!tab.include?.length) return drainTab(tab.pack, tab.id)
+    ? <div className='flex flex-col gap-4'><DrainStatus /><ChartGrid charts={charts} whole /></div>
+    : <ChartGrid charts={charts} whole />;
   return (
     <div className='flex flex-col gap-8'>
       {tab.include.map((x) => <DueSoonSection key={x} />)}
@@ -155,7 +159,10 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
     } else if (x.startsWith('recent:')) cards[x] = <RecentRecordsCard area={x.slice(7)} />;
   }
   // No notices section under the checklist (mold_v0-216): the Due soon card and the Notices page show them.
-  return <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined} />;
+  // mold_v0-325: a log drain silent for hours is said at the top of the home page too (never its other states).
+  const sparks = top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined;
+  const head = !drainsInBuild() ? sparks : sparks ? <div className='flex flex-col gap-4'><DrainStatus silentOnly />{sparks}</div> : <DrainStatus silentOnly />;
+  return <SetupPage rail={rail} cards={cards} top={head} />;
 }
 
 // ---------- the area views ----------
@@ -236,6 +243,8 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
     // mold_v0-256: an Add form in a panel beside the list (flag side_panel_forms), else the card in the list's place.
     // mold_v0-315: a views row above the table keeps a sections tab's strip above it (the table takes it only when first).
     <StripHandOff off={views.length > 1 || !table}><FormHost card={card} panel={panel && !imp.card}><div className='flex flex-col gap-6'>
+      {/* mold_v0-325: a list of a log drain's records says the drain's state above it. */}
+      {drainTab(tab.pack, tab.id) && <DrainStatus areas={exportAreas} />}
       {/* The views' switch, and Actions ▾ (Import, Export) and the action for the board and the timeline (the table has its own toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>

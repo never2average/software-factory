@@ -46,6 +46,10 @@ import { encryptedAreas, encryptFieldsTick, type EncryptionReport } from "./encr
 import { checkpointTick, signOn, type LedgerTick } from "./ledger.js";
 import { tracked } from "./scheduler-jobs.js";
 import { featureSetting } from "./feature-flags.js";
+import { developerSurface } from "./developer-surface.js";
+
+/** mold_v0-325: the build has a log-drain receiver (its silence check runs on the scheduler's tick). */
+const logDrainsOn = () => (developerSurface()?.webhooks_in ?? []).some((r) => !!(r as { log_drain?: unknown }).log_drain);
 
 /**
  * A pack's default schedule as rows keep it: a schedule that starts an agent session or a program (mold_v0-303) is kept
@@ -623,7 +627,7 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 // ---------- both, from the cron entry and the server's loop ----------
 
 export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; encryption?: EncryptionReport | { error: string }; retention?: RetentionReport | { error: string }; ledger?: LedgerTick | { error: string };
-  agent?: import("./harness-sessions.js").HarnessSweep | { error: string } }> {
+  agent?: import("./harness-sessions.js").HarnessSweep | { error: string }; drains?: { ran: boolean; marked: number } | { error: string } }> {
   // Each step's run is kept for the staff console's Health › Scheduled work (mold_v0-204, src/scheduler-jobs.ts), only
   // for the steps this build has: with no job kind and no due area nothing is written there either.
   const keep = schedulesWired() || dueAreas().length > 0;
@@ -639,10 +643,13 @@ export async function schedulerTick(now = clock()): Promise<{ schedules: TickRep
   // The workspace agent's sessions (mold_v0-243, src/harness-sessions.ts): requests past their window, quiet sessions
   // archived, ended ones past retention pruned, wakes nothing settled. Only with its flag on.
   const agent = agentHarnessOn() ? { agent: await tracked("harness_sessions", async () => (await import("./harness-sessions.js")).sweepHarnessSessions(now)).catch(err) } : {};
+  // A log drain gone silent (mold_v0-325, src/log-drain-health.ts): marked once per silence. Only with a log-drain receiver.
+  const drainMod = logDrainsOn() ? await import("./log-drain-health.js") : null;
+  const drains = drainMod ? { drains: await tracked("log_drains", () => drainMod.logDrainCheck(now)).catch(err) } : {};
   // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
-  if (!retentionWired()) return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent };
+  if (!retentionWired()) return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent, ...drains };
   const retention = await tracked("workspace_retention", () => retentionSweep(now)).catch(err);
-  return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent, retention };
+  return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent, ...drains, retention };
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -650,7 +657,7 @@ let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
   if (timer || (ENV.APP_SCHEDULER ?? "on").toLowerCase() === "off") return false;
-  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired() && !signOn() && !encryptedAreas().length && !agentHarnessOn()) return false;
+  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired() && !signOn() && !encryptedAreas().length && !agentHarnessOn() && !logDrainsOn()) return false;
   const run = () => {
     if (busy) return;
     busy = true;

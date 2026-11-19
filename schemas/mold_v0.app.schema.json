@@ -9401,7 +9401,8 @@
                   "percent",
                   "percent_100",
                   "days",
-                  "hours"
+                  "hours",
+                  "ms"
                 ]
               },
               "$comment": {
@@ -18046,6 +18047,139 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 60
+                      },
+                      "silent_hours": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 336
+                      },
+                      "compare": {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                          },
+                          "previous_field": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                          },
+                          "hours": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 2160
+                          },
+                          "min_requests": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000000
+                          },
+                          "min_error_points": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 100
+                          },
+                          "min_z": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10
+                          },
+                          "p95_rise": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 100
+                          },
+                          "fields": {
+                            "type": "object",
+                            "properties": {
+                              "candidate": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_requests": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_requests": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_errors": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_errors": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_error_rate": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_error_rate": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "error_rate_change": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_p95_ms": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_p95_ms": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "p95_change": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "z_score": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_from": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "candidate_to": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_from": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "baseline_to": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              },
+                              "compared_at": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "area"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [

@@ -110,7 +110,7 @@ SECONDS = {
     "test:ledger": 12,
     "test:legal": 9,
     "test:limits": 27,
-    "test:log-drain": 4,
+    "test:log-drain": 40,
     "test:mcp-domain": 11,
     "test:mcp-followups": 10,
     "test:mcp-oauth": 11,

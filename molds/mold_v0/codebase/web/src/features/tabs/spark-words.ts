@@ -1,7 +1,7 @@
 // A list tab's cards in words (mold_v0-181; ./sparklines.tsx draws them): a card's number and what its sparkline says,
 // for a screen reader. Pure, relative imports only, so a test reads it without a browser (scripts/record-pages-test.ts).
 
-export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';
+export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';
 /** How a card reads its metric (src/metric-spec.ts SparkMode): a running total, week by week, or this period's bucket. */
 export type SparkMode = 'total' | 'weekly' | 'latest';
 /** The console's number format (./charts.tsx formatValue). */

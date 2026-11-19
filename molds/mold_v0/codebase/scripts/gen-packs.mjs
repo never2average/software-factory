@@ -1535,6 +1535,20 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     rmSync(dir, { recursive: true, force: true });
   }
 }
+/**
+ * mold_v0-325: what the console shows of the log drains (src/log-drain-health.ts): the areas they fill and the tabs that
+ * read one (an overview whose charts' metrics are over one, an area tab over one), which show the drain's state above
+ * them. Nothing when the build has no log-drain receiver (the generated file is as before).
+ */
+function drainConsole() {
+  const areas = [...new Set((developerFacts?.webhooks_in ?? []).filter((r) => r.log_drain).flatMap((r) => [r.area, ...(r.log_drain.compare?.area ? [r.log_drain.compare.area] : [])]))];
+  if (!areas.length) return {};
+  const over = new Map((packViews.metrics ?? []).map((m) => [`${m.pack}/${m.name}`, m.over]));
+  const chartAreas = (pack, names) => (names ?? []).flatMap((n) => (packViews.charts ?? []).find((c) => c.pack === pack && c.name === n)?.metrics ?? []).map((m) => over.get(`${pack}/${m}`));
+  const tabs = (packViews.tabs ?? []).filter((t) => (t.kind === "overview" && !(t.include ?? []).length && chartAreas(t.pack, t.charts).some((a) => areas.includes(a)))
+    || (t.kind === "area" && (areas.includes(t.area) || (t.areas ?? []).some((a) => areas.includes(a.area))))).map((t) => `${t.pack}/${t.id}`);
+  return { drains: { areas, tabs } };
+}
 /** The build's metrics, charts and tabs (mold_v0-063, 058), as checked across every pack by src/metric-spec.ts. */
 let packViews = { problems: [], metrics: [], charts: [], tabs: [] };
 /**
@@ -2158,7 +2172,9 @@ let developerOwner = null, developerFacts = null;
     if (j.developer_surface !== undefined && FEATURE_ON.developer_surface) { // off (mold_v0-219): as if not declared
       const { $comment: _c, ...rest } = j.developer_surface;
       const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
-      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })),
+      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true,
+        enums: Object.fromEntries((a.fields ?? []).filter((f) => f.type === "enum" && Array.isArray(f.options)).map((f) => [f.name, f.options.map((o) => (typeof o === "string" ? o : o.value))])),
+        refs: Object.fromEntries((a.fields ?? []).filter((f) => f.type === "reference" && typeof f.to === "string").map((f) => [f.name, f.to])) })),
         packs.flatMap((x) => defsByPack[x.id]?.checks ?? []), packs.flatMap((x) => (defsByPack[x.id]?.kinds ?? []).map((k) => k.name)));
       for (const b of bad) fail(at, `developer_surface.${b}`);
       if (developerOwner) fail(at, `developer_surface: pack ${developerOwner} declares the developer surface too: one pack's`);
@@ -2886,7 +2902,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }\n" +
   `export const alertRules: AlertRule[] = ${json(ALERT_RULES)};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
-  `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length })};\n` +
+  `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length, ...drainConsole() })};\n` +
   // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own; a build may hide it (mold_v0-130). The staff's
   // every-workspace Activity page is gone (mold_v0-211). A host pack's mcp block (mold_v0-137: its server instructions
@@ -3137,7 +3153,7 @@ function viewsModule() {
     g.items.push({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles });
   }
   return "\n/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */\n" +
-    "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';\n  roles: string[];\n}\n" +
+    "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';\n  roles: string[];\n}\n" +
     `export const packMetrics: PackMetricSpec[] = ${json(packViews.metrics)};\n\n` +
     "/** A chart of a pack's metrics (mold_v0-063), drawn by web/src/features/tabs/charts.tsx. */\n" +
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
