@@ -553,6 +553,13 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // stdout: stream-json events.
     let buf = "";
     const queue: Promise<unknown>[] = [];
+    // One event at a time, in the order the CLI wrote them: a handler awaits (the trace, a turn's answer), and the next
+    // turn's text must never land in the turn still being answered (two turns' words joined in one message).
+    let inOrder: Promise<unknown> = Promise.resolve();
+    const handle = (e: Record<string, unknown>) => {
+      inOrder = inOrder.then(() => onEvent(e)).catch((x) => console.error(`agent ${run.id}: ${(x as Error).message}`));
+      queue.push(inOrder);
+    };
     const onEvent = async (e: Record<string, unknown>) => {
       if (typeof e.session_id === "string" && e.session_id) s.sessionId = e.session_id;
       const echoed = replayedUuid(e);
@@ -640,7 +647,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
         if (!l.trim()) continue;
         let e: Record<string, unknown>;
         try { e = JSON.parse(l); } catch { continue; }
-        queue.push(onEvent(e).catch((x) => console.error(`agent ${run.id}: ${(x as Error).message}`)));
+        handle(e);
       }
     });
     let stderrTail = "";
@@ -718,7 +725,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     try { process.kill(-proc.pid!, "SIGKILL"); } catch { /* gone */ }
     if (as) killUser(as);
     await new Promise((r) => setTimeout(r, 100));
-    if (buf.trim()) { try { queue.push(onEvent(JSON.parse(buf))); } catch { /* torn */ } }
+    if (buf.trim()) { try { handle(JSON.parse(buf)); } catch { /* torn */ } }
     await Promise.all(queue);
     await beatLoop.catch(() => {});
     await steering.catch(() => {});
