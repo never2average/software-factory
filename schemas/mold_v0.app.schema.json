@@ -6144,6 +6144,28 @@
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
                                         }
                                       },
+                                      "basic_auth": {
+                                        "type": "object",
+                                        "properties": {
+                                          "user": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                          },
+                                          "password": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                          }
+                                        },
+                                        "required": [
+                                          "user",
+                                          "password"
+                                        ],
+                                        "additionalProperties": false
+                                      },
                                       "body": {},
                                       "expect": {
                                         "type": "object",
@@ -6186,9 +6208,119 @@
                                                 "type": "null"
                                               }
                                             ]
+                                          },
+                                          "content_type": {
+                                            "type": "string",
+                                            "maxLength": 100,
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+                                          },
+                                          "hint": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400,
+                                            "pattern": "^[^\\n\\r{}<>]*$"
                                           }
                                         },
                                         "additionalProperties": false
+                                      },
+                                      "if_empty": {
+                                        "type": "object",
+                                        "properties": {
+                                          "field": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "url": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+                                          },
+                                          "expect": {
+                                            "type": "object",
+                                            "properties": {
+                                              "status": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "const": "2xx"
+                                                  },
+                                                  {
+                                                    "minItems": 1,
+                                                    "maxItems": 10,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "integer",
+                                                      "minimum": 200,
+                                                      "maximum": 299
+                                                    }
+                                                  }
+                                                ]
+                                              },
+                                              "json_path": {
+                                                "type": "string",
+                                                "pattern": "^[A-Za-z0-9_$-]{1,64}(\\.[A-Za-z0-9_$-]{1,64}){0,9}$"
+                                              },
+                                              "equals": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "maxLength": 200
+                                                  },
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "boolean"
+                                                  },
+                                                  {
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              },
+                                              "content_type": {
+                                                "type": "string",
+                                                "maxLength": 100,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+                                              },
+                                              "hint": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                                "pattern": "^[^\\n\\r{}<>]*$"
+                                              }
+                                            },
+                                            "additionalProperties": false
+                                          }
+                                        },
+                                        "required": [
+                                          "field",
+                                          "url"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "hints": {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string",
+                                          "pattern": "^[45]\\d\\d$"
+                                        },
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400,
+                                          "pattern": "^[^\\n\\r{}<>]*$"
+                                        },
+                                        "maxProperties": 8
+                                      },
+                                      "binds": {
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        }
                                       },
                                       "timeout_seconds": {
                                         "type": "integer",

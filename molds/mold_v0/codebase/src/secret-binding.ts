@@ -7,6 +7,7 @@
  *
  *   test_connection   a page action's probe (src/connection-test-config.ts): its `by` field, and each probe's field
  *                     that starts its address or sits in its host, bind the encrypted fields its headers carry;
+ *                     mold_v0-326: so do every field of the address of a probe sending a secret, and its `binds`;
  *                     mold_v0-313: a signed kind's deciding roles (an AWS region, an Azure tenant, a database's host
  *                     and port) bind the encrypted fields its roles name (keys, a client secret, a password)
  *   connection_env    a pack profile's entry (src/connection-env-config.ts): every plain field it delivers binds the
@@ -14,7 +15,7 @@
  *   object_storage    the declared storage area (mold_v0-305): its endpoint binds both keys
  *   members_field     mold_v0-322: a connection_env entry's owners-only opt-in for members' sessions (membersFlagWrite, below)
  */
-import { ConnectionTestSchema, destinationFields, probeSecrets } from "./connection-test-config.js";
+import { boundFields, ConnectionTestSchema, destinationFields, probeSecrets } from "./connection-test-config.js";
 import { ConnectionEnvSchema, envVars } from "./connection-env-config.js";
 import { ObjectStorageDeclSchema, PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
@@ -41,7 +42,8 @@ export function bindingsOf(area: AreaLike): Binding[] {
     if (!t.success) continue;
     const probes = Object.values(t.data.probes);
     const secrets = [...new Set(probes.flatMap((p) => probeSecrets(p, sealed)))];
-    const decide = [...new Set([...(t.data.by ? [t.data.by] : []), ...probes.flatMap(destinationFields)])].filter((n) => !sealed(n));
+    // mold_v0-326: and the fields bound to them besides (boundFields: every field of the address of a probe sending a secret, its binds).
+    const decide = [...new Set([...(t.data.by ? [t.data.by] : []), ...probes.flatMap(destinationFields), ...probes.flatMap((p) => boundFields(p, sealed))])].filter((n) => !sealed(n));
     if (secrets.length && decide.length) out.push({ decide, secrets });
   }
   for (const p of key) {

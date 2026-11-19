@@ -171,10 +171,18 @@ async function fillBody(v: unknown, vals: ProbeValues, secrets: string[]): Promi
 
 // ---------------------------------------------------------------- the words
 
-/** A short, safe line of what the service said: its own error message, secrets and token-shaped strings cut out. */
-export function safeSummary(body: Buffer, secrets: readonly string[]): string | null {
+/**
+ * A short, safe line of what the service said: its own error message, secrets and token-shaped strings cut out.
+ * mold_v0-326: an answer in plain text (`contentType` text/plain, as git's server answers a refused push) gives its
+ * first line.
+ */
+export function safeSummary(body: Buffer, secrets: readonly string[], contentType?: string): string | null {
   let j: unknown;
-  try { j = JSON.parse(body.toString("utf8")); } catch { return null; }
+  try { j = JSON.parse(body.toString("utf8")); } catch {
+    if (mediaType(contentType) !== "text/plain") return null;
+    const line = body.toString("utf8").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+    return line ? cleanWords(line, secrets) : null;
+  }
   const pick = (o: unknown): unknown => {
     if (!o || typeof o !== "object" || Array.isArray(o)) return Array.isArray(o) ? pick(o[0]) : null;
     const r = o as Record<string, unknown>;
@@ -188,9 +196,15 @@ export function safeSummary(body: Buffer, secrets: readonly string[]): string | 
   const s = pick(j);
   return typeof s === "string" ? cleanWords(s, secrets) : null;
 }
+/** A Content-Type's media type, lower case, without its parameters ("text/plain; charset=UTF-8" is "text/plain"). */
+export const mediaType = (v: string | undefined) => (v ?? "").split(";")[0]!.trim().toLowerCase();
+/** mold_v0-326: a secret as an answer may echo it: itself, escaped for an address, and base64 encoded (longest first). */
+export const secretForms = (x: string) => [...new Set([x, encodeURIComponent(x), Buffer.from(x, "utf8").toString("base64"), Buffer.from(x, "utf8").toString("base64").replace(/=+$/, "")])]
+  .sort((a, b) => b.length - a.length);
+const cutSecrets = (t: string, secrets: readonly string[]) =>
+  secrets.filter((x) => x.length >= 4).flatMap(secretForms).sort((a, b) => b.length - a.length).reduce((w, f) => w.split(f).join("…"), t);
 export function cleanWords(s: string, secrets: readonly string[]): string | null {
-  let t = s;
-  for (const x of secrets) if (x.length >= 4) t = t.split(x).join("…");
+  let t = cutSecrets(s, secrets);
   t = t.replace(/[A-Za-z0-9_\-+/=.]{24,}/g, "…").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").replace(/[{}<>]/g, "").trim();
   if (!t) return null;
   return t.length > SUMMARY_MAX ? `${t.slice(0, SUMMARY_MAX - 1)}…` : t;
@@ -278,15 +292,28 @@ export async function runProbe(key: string, p: ConnectionProbe, vals: ProbeValue
     ({ ok, outcome, words: cleanAnswer(words, secrets), host, status, ms: ok ? Date.now() - started : 0, probe: key });
   try {
     const allowed = probeHosts(p);
-    const raw = await fill(p.url, vals, "url", secrets);
+    // mold_v0-326: the other address (and its expect) when the record leaves its optional field empty.
+    const emptied = p.if_empty && !vals.sealed.has(p.if_empty.field) && asText(vals.plain[p.if_empty.field]) === "";
+    const url = emptied ? p.if_empty!.url : p.url;
+    // Its own expect, or a plain 2xx (the main expect reads the other address's answer). asText trims: blank is empty.
+    const expect = emptied ? (p.if_empty!.expect ?? { status: "2xx" as const }) : p.expect;
+    const raw = await fill(url, vals, "url", secrets);
     let u: URL;
-    try { u = new URL(raw); } catch { throw new ProbeError("not_ready", `the address this test makes from the record is not a web address (check ${placeholders(p.url).map(vals.label).join(", ") || "it"})`); }
+    try { u = new URL(raw); } catch { throw new ProbeError("not_ready", `the address this test makes from the record is not a web address (check ${placeholders(url).map(vals.label).join(", ") || "it"})`); }
     host = u.hostname;
     // The headers: those carrying a secret are dropped on a redirect to another host.
     const headers: Record<string, string> = {}, secretHeaders = new Set<string>();
     for (const [h, t] of Object.entries(p.headers ?? {})) {
       headers[h] = await fill(t, vals, "header", secrets);
       if (placeholders(t).some((n) => vals.sealed.has(n))) secretHeaders.add(h);
+    }
+    // mold_v0-326: Basic authentication (RFC 7617), user and password filled like a header, encoded here.
+    if (p.basic_auth) {
+      const user = await fill(p.basic_auth.user, vals, "header", secrets), password = await fill(p.basic_auth.password, vals, "header", secrets);
+      if (user.includes(":")) throw new ProbeError("not_ready", `${placeholders(p.basic_auth.user).map(vals.label).join(", ") || "the user"} holds a colon, which a sign-in's user cannot carry`);
+      const encoded = Buffer.from(`${user}:${password}`, "utf8").toString("base64");
+      if ([p.basic_auth.user, p.basic_auth.password].some((t) => placeholders(t).some((n) => vals.sealed.has(n)))) { secrets.push(encoded); secretHeaders.add("Authorization"); }
+      headers.Authorization = `Basic ${encoded}`;
     }
     let body = p.body !== undefined && p.method === "POST" ? JSON.stringify(await fillBody(p.body, vals, secrets)) : null;
     let method: string = p.method;
@@ -309,20 +336,24 @@ export async function runProbe(key: string, p: ConnectionProbe, vals: ProbeValue
     }
     status = w.status;
     const at = `${label} at ${host}`;
-    const want = p.expect?.status ?? "2xx";
+    const want = expect?.status ?? "2xx";
     const statusOk = want === "2xx" ? status >= 200 && status < 300 : want.includes(status);
     if (!statusOk) {
-      const said = status >= 400 ? safeSummary(w.body, secrets) : null;
+      const said = status >= 400 ? safeSummary(w.body, secrets, w.headers["content-type"]) : null;
+      const hint = p.hints?.[String(status)];
       return answer(false, status === 401 || status === 403 ? "refused" : "unexpected",
-        `It does not work yet: ${at} answered ${status}: ${statusWords(status)}${said ? ` (it said: "${said}")` : ""}.`);
+        `It does not work yet: ${at} answered ${status}: ${statusWords(status)}${said ? ` (it said: "${said}")` : ""}.${hint ? ` ${hint}` : ""}`);
     }
-    if (p.expect?.json_path) {
+    // mold_v0-326: a working answer of the media type the probe expects (a sign-in page is not git's answer).
+    if (expect?.content_type && mediaType(w.headers["content-type"]) !== expect.content_type.toLowerCase())
+      return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but not with the ${expect.content_type} answer this test reads.${expect.hint ? ` ${expect.hint}` : ""}`);
+    if (expect?.json_path) {
       let j: unknown;
       try { j = JSON.parse(w.body.toString("utf8")); } catch { return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but not with the JSON this test reads.`); }
-      const v = atPath(j, p.expect.json_path);
-      if (p.expect.equals !== undefined ? v !== p.expect.equals : v === undefined || v === null || v === "")
-        return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but ${p.expect.json_path} ${v === undefined ? "is not in its answer"
-          : p.expect.equals === undefined ? "is empty" : `is ${shortValue(v, secrets)}, not ${JSON.stringify(p.expect.equals)}`}.`);
+      const v = atPath(j, expect.json_path);
+      if (expect.equals !== undefined ? v !== expect.equals : v === undefined || v === null || v === "")
+        return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but ${expect.json_path} ${v === undefined ? "is not in its answer"
+          : expect.equals === undefined ? "is empty" : `is ${shortValue(v, secrets)}, not ${JSON.stringify(expect.equals)}`}.${expect.hint ? ` ${expect.hint}` : ""}`);
     }
     return answer(true, "working", `It works: ${at} answered ${status} in ${Date.now() - started} ms.`);
   } catch (e) {
@@ -337,7 +368,7 @@ const shortValue = (v: unknown, secrets: readonly string[]) => {
   return typeof v === "number" || typeof v === "boolean" ? String(v) : "another value";
 };
 /** The last guard: no secret in the words, whatever built them. */
-export const cleanAnswer = (words: string, secrets: readonly string[]) => secrets.reduce((t, x) => (x.length >= 4 ? t.split(x).join("…") : t), words);
+export const cleanAnswer = (words: string, secrets: readonly string[]) => cutSecrets(words, secrets);
 
 // ---------------------------------------------------------------- the record
 

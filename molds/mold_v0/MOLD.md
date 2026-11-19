@@ -4092,6 +4092,29 @@ production). An outside product's own API (a workspace area of the products a bu
 pack config, no mold code (mold_v0-322): a `test_connection` probe on that area, its address from the record's url field
 and its key in a header, with `hosts` naming the product's API hosts (a host nobody listed is never called, by design).
 
+**Probes that prove what a build needs (mold_v0-326)**: an HTTP probe may also declare `basic_auth: {user, password}`
+(HTTP Basic, RFC 7617: the two header templates joined and base64 encoded on the server; it is the Authorization header,
+so a probe never sets both; a sealed field in it is dropped on a cross-host redirect and its encoding is cut from the
+words like the secret), `expect.content_type` (the working answer's media type, before any `;`: for a service whose
+answer is not JSON, such as git's push discovery `info/refs?service=git-receive-pack`, which answers
+`application/x-git-receive-pack-advertisement` only to a sign-in that may push; a sign-in page's 200 fails),
+`if_empty: {field, url, expect?}` (the address, and its expect, used when that optional plain field of the record is
+empty: "the named team's own read, or the account's when none is named"; the field is in the probe's address, never in
+the other one, never a field deciding the host; both addresses are at the same host, written by the pack, so the field
+decides no host; without its own `expect` the other address is read as a plain 2xx; a blank value is empty),
+`hints: {"<4xx|5xx>": "<sentence>"}` (at most 8: the pack's own plain sentence added to the words when the service
+answers that status: what its provider's tokens need) and `expect.hint` (a sentence added when a working status's answer
+is not the one read: `limited: true` from a team API, "the token reaches this team only partly"). A refusal answered in
+plain text (`text/plain`) gives its first line, cleaned like a JSON message; every secret is also cut in its
+address-escaped and base64 forms. **Bound by default**: a probe that sends a secret (in a header or `basic_auth`) binds
+it to every field of its address (and of `if_empty`'s), and `binds: [field, ...]` adds others (a POST body's database),
+through the same rule as above (`src/connection-test-config.ts` `boundFields`, `src/secret-binding.ts`): a person who may
+edit a repository connection changes its owner or name, or a hosting account's team ID, without typing the token again,
+and the token is cleared, so Test never points the owner's token at another private repository or team. For example a
+GitHub repository probe at `https://github.com/{owner}/{repo_name}.git/...` with its token in `basic_auth` binds
+`owner` and `repo_name`; a hosting probe at `https://api.example.com/v2/teams/{account_id}` binds `account_id`. Test:
+`npx tsx scripts/connection-test-test.ts` (section 5).
+
 **Signed kinds (mold_v0-313)** (`src/connection-test-signed.ts`): a probe may name a `kind` other than the default
 `"http"`, for a building block a bearer header cannot test. The kind fixes its hosts and its call; the pack names only
 which of the record's fields fill its roles (`fields`), and the build checks each role: encrypted where it holds a

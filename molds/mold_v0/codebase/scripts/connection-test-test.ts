@@ -14,6 +14,10 @@
 //      an endpoint at an internal name refused (nothing sent there), an empty field said; status working or failing
 //      and the date written as the app's action, which a person's edit may not change
 //   4. no secret anywhere: every HTTP answer, every line printed, the record's history, the data trail, the stored row
+//   5. mold_v0-326: if_empty (another address when an optional field is empty: a personal account, or the named team
+//      read with the token, refused for a team it cannot act in), basic_auth (HTTP Basic, made on the server, dropped
+//      like a header), expect.content_type (git's push discovery: a sign-in page is not a pass), a plain-text refusal's
+//      first line, and the pack's hint for a failing status
 import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -28,7 +32,9 @@ for (const m of ["log", "error", "warn", "info"] as const) {
 const ok = (m: string) => console.log(`✓ ${m}`);
 
 const GOOD = `tok-CANARY-${randomBytes(16).toString("hex")}`, BAD = `bad-CANARY-${randomBytes(16).toString("hex")}`, DBKEY = `db-CANARY-${randomBytes(12).toString("hex")}`;
-const SECRETS = [GOOD, BAD, DBKEY];
+const READONLY = `ro-CANARY-${randomBytes(16).toString("hex")}`;
+const basic = (t: string) => `Basic ${Buffer.from(`x-access-token:${t}`).toString("base64")}`;
+const SECRETS = [GOOD, BAD, DBKEY, READONLY, basic(GOOD).slice(6), basic(READONLY).slice(6), basic(BAD).slice(6)];
 const canary = (w: string) => `${w}-CANARY-${randomBytes(10).toString("hex")}`;
 
 // ---------- the stand-in service: /<host><path> ----------
@@ -45,6 +51,26 @@ const standin = http.createServer((req, res) => {
     if (host === "api.paas.example" && path.startsWith("/v1/accounts/")) {
       if (auth === `Bearer ${GOOD}`) return json(200, { account: { id: path.split("/")[3], state: "active" } });
       return json(401, { message: `invalid token ${auth?.replace(/^Bearer /, "")}` });
+    }
+    // mold_v0-326: an account API with teams (a team read fails for a token that cannot act in it).
+    if (host === "api.paas.example" && path === "/v2/user") return auth === `Bearer ${GOOD}` ? json(200, { user: { id: "u-1" } }) : json(401, { error: { message: "invalid token" } });
+    if (host === "api.paas.example" && path.startsWith("/v2/teams/")) {
+      if (auth !== `Bearer ${GOOD}`) return json(401, { error: { message: "invalid token" } });
+      const team = path.split("/")[3];
+      if (team === "team-other") return json(403, { error: { code: "forbidden", message: "Not authorized" } });
+      return json(200, { id: team, slug: team, limited: team === "team-sso" });
+    }
+    // mold_v0-326: git's smart HTTP push discovery (info/refs?service=git-receive-pack), Basic authentication.
+    if (host === "eu.git.example") { res.writeHead(401, { "content-type": "text/plain" }); return res.end("No anonymous write access."); }
+    if (host === "git.example" && path.endsWith(".git/info/refs?service=git-receive-pack")) {
+      const text = (status: number, t: string, type = "text/plain; charset=UTF-8") => { res.writeHead(status, { "content-type": type }); res.end(t); };
+      if (path.startsWith("/acme/signin.git")) return text(200, "<html>sign in</html>", "text/html");
+      if (path.startsWith("/acme/eu.git")) { res.writeHead(302, { location: "https://eu.git.example/acme/eu.git/info/refs?service=git-receive-pack" }); return res.end(); }
+      if (path.startsWith("/acme/moved.git")) { res.writeHead(301, { location: "https://elsewhere.example/acme/app.git/info/refs?service=git-receive-pack" }); return res.end(); }
+      if (!auth) return text(401, "No anonymous write access.");
+      if (auth === basic(GOOD)) return path.startsWith("/acme/app.git") ? text(200, "001f# service=git-receive-pack\n0000", "application/x-git-receive-pack-advertisement") : text(404, "Repository not found.");
+      if (auth === basic(READONLY)) return text(403, "Write access to repository not granted.");
+      return text(401, `Invalid username or token ${auth}. Password authentication is not supported for Git operations.`);
     }
     if (host === "db.example" && path === "/v1/query") {
       const b = JSON.parse(Buffer.concat(chunks).toString() || "{}");
@@ -69,16 +95,22 @@ const PROBE = {
     paas: { label: "the hosting account's API", method: "GET", url: "https://api.paas.example/v1/accounts/{account_id}", headers: { Authorization: "Bearer {api_token}" },
       expect: { status: "2xx", json_path: "account.state", equals: "active" }, timeout_seconds: 5 },
     database: { label: "the database's HTTP API", method: "POST", url: "{endpoint}/v1/query", headers: { "X-Api-Key": "{api_token}" },
-      body: { database: "{database}", sql: "select 1" }, expect: { status: [200], json_path: "results.0.ok", equals: 1 }, timeout_seconds: 5, hosts: ["db.example"] },
+      body: { database: "{database}", sql: "select 1" }, expect: { status: [200], json_path: "results.0.ok", equals: 1 }, timeout_seconds: 5, hosts: ["db.example"], binds: ["database"] },
     network: { label: "the network API", method: "GET", url: "https://net.example/v2/networks/{account_id}", headers: { Authorization: "Bearer {api_token}" },
       expect: { json_path: "network.status", equals: "available" }, timeout_seconds: 1, hosts: ["*.net.example"] },
+    // mold_v0-326: the named team when there is one (limited: false, the token may act in it), the account otherwise.
+    team: { label: "the hosting API", method: "GET", url: "https://api.paas.example/v2/teams/{account_id}", headers: { Authorization: "Bearer {api_token}" },
+      expect: { json_path: "limited", equals: false, hint: "The token reaches this team only partly." }, if_empty: { field: "account_id", url: "https://api.paas.example/v2/user" }, timeout_seconds: 5 },
+    git: { label: "the git host's push check", method: "GET", url: "https://git.example/{account_id}/{database}.git/info/refs?service=git-receive-pack",
+      basic_auth: { user: "x-access-token", password: "{api_token}" }, expect: { status: [200], content_type: "application/x-git-receive-pack-advertisement" },
+      hints: { "403": "The token may read the repository but not push to it.", "404": "Check the owner and name." }, timeout_seconds: 5, hosts: ["*.git.example"] },
   },
   status: "status", tested: "last_tested",
 };
 const AREA = {
   name: "fx_connections", label: "Connections", role: "source", scope: "workspace",
   fields: [
-    { name: "provider", label: "Kind", type: "enum", options: ["paas", "database", "network", "other"] },
+    { name: "provider", label: "Kind", type: "enum", options: ["paas", "database", "network", "team", "git", "other"] },
     { name: "account_id", label: "Account ID", type: "text" },
     { name: "endpoint", label: "Endpoint", type: "url" },
     { name: "database", label: "Database", type: "text" },
@@ -164,6 +196,22 @@ try {
       bad((_a, p) => { p.probes.database.hosts = [w]; }, /a wildcard over a name anyone can host under/, `the wildcard ${w}`);
     assert.deepEqual(problems((_a, p) => { p.probes.database.hosts = ["my-db.vercel.app", "*.db.example.com"]; }), [], "an exact host under a shared suffix, and a wildcard of one's own: fine");
     // The lifecycle's field never decides a destination (a move changes it without the secret's binding).
+    // mold_v0-326: basic_auth, if_empty, hints and content_type are checked too.
+    bad((_a, p) => { p.probes.git.headers = { Authorization: "Bearer {api_token}" }; }, /basic_auth makes the Authorization header/, "basic_auth and an Authorization header");
+    bad((_a, p) => { p.probes.git.basic_auth.user = "{nope}"; }, /\{nope\} is not one of the area's fields/, "basic_auth naming no field");
+    bad((_a, p) => { p.probes.git.basic_auth.user = "a:b"; }, /never holds a colon/, "a colon in the Basic user");
+    bad((_a, p) => { p.probes.team.if_empty.field = "database"; }, /database is not in the probe's address/, "if_empty on a field the address lacks");
+    bad((_a, p) => { p.probes.team.if_empty.url = "https://collector.evil.example/v2/user"; }, /at the probe's own host/, "if_empty at another host");
+    bad((_a, p) => { p.probes.team.if_empty.url = "https://api.paas.example/v2/user/{account_id}"; }, /never names it/, "if_empty's address naming the empty field");
+    bad((_a, p) => { p.probes.team.if_empty.field = "api_token"; }, /encrypted: if_empty reads a plain field/, "if_empty on a secret");
+    bad((_a, p) => { p.probes.team.url = "https://{account_id}.paas.example/v2/teams"; p.probes.team.hosts = ["*.paas.example"]; }, /at the probe's own host|decides where the call goes/, "if_empty on a host label");
+    bad((_a, p) => { p.probes.git.hints = { "200": "fine" }; }, /a failing status/, "a hint for a working status");
+    bad((_a, p) => { p.probes.git.hints = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [String(400 + i), "x"])); }, /at most 8 hints/, "nine hints");
+    bad((_a, p) => { p.probes.database.binds = ["nope"]; }, /nope is not one of the area's fields/, "binds naming no field");
+    bad((_a, p) => { p.probes.database.binds = ["api_token"]; }, /encrypted: binds names the plain fields/, "binds naming a secret");
+    assert.deepEqual(problems((_a, p) => { p.probes.git.expect.content_type = "Application/X-Git-Receive-Pack-Advertisement"; }), [], "a media type in capitals");
+    bad((_a, p) => { p.probes.git.expect.content_type = "not a type"; }, /a media type/, "a content_type that is not one");
+    assert.deepEqual(problems((_a, p) => { p.probes.team.if_empty.url = "http://api.paas.example/v2/user"; }).length > 0, true, "if_empty over http");
     const lcArea = { ...structuredClone(AREA), lifecycle: { field: "provider" } } as any;
     assert.ok(connectionTestProblems(lcArea, PROBE).some((p) => /provider is the lifecycle's field: a move would change which probe runs/.test(p.message)), "by as the lifecycle's field");
     const lcArea2 = { ...structuredClone(AREA), lifecycle: { field: "endpoint" } } as any;
@@ -219,6 +267,18 @@ try {
   await add("net-rebind", { provider: "network", account_id: "x", api_token: GOOD });
   await add("paas-empty", { provider: "paas", api_token: GOOD });
   await add("other", { provider: "other", api_token: GOOD });
+  await add("team-none", { provider: "team", api_token: GOOD });
+  await add("team-ok", { provider: "team", account_id: "team-ok", api_token: GOOD });
+  await add("team-other", { provider: "team", account_id: "team-other", api_token: GOOD });
+  await add("team-sso", { provider: "team", account_id: "team-sso", api_token: GOOD });
+  await add("team-bad", { provider: "team", api_token: BAD });
+  await add("git-ok", { provider: "git", account_id: "acme", database: "app", api_token: GOOD });
+  await add("git-ro", { provider: "git", account_id: "acme", database: "app", api_token: READONLY });
+  await add("git-bad", { provider: "git", account_id: "acme", database: "app", api_token: BAD });
+  await add("git-missing", { provider: "git", account_id: "acme", database: "gone", api_token: GOOD });
+  await add("git-signin", { provider: "git", account_id: "acme", database: "signin", api_token: GOOD });
+  await add("git-eu", { provider: "git", account_id: "acme", database: "eu", api_token: GOOD });
+  await add("git-moved", { provider: "git", account_id: "acme", database: "moved", api_token: GOOD });
 
   // ---------- 3. the action ----------
   const answers: string[] = [];
@@ -361,12 +421,19 @@ try {
     assert.equal(seenOwner.ok, true, "its owner may test it");
     // L2: a value never climbs the address.
     for (const v of ["..", "."]) {
-      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "paas-good", { title: "paas-good", data: { provider: "paas", account_id: v } }));
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "paas-good", { title: "paas-good", data: { provider: "paas", account_id: v, api_token: GOOD } }));
       const r = await test("paas-good");
       assert.equal(r.body.outcome, "not_ready", `${v}: ${r.body.words}`); assert.match(r.body.words, /"Account ID" is not a value an address takes/);
     }
-    // (the account changed: not a destination of the paas probe, so its token is kept)
-    assert.ok((await storedRow("fx_connections", "paas-good")).api_token, "a path value changed: the token kept");
+    // mold_v0-326: the account changed without the token: every field of the address of a probe sending a secret is
+    // bound to it, so the token is cleared (an editor never points a kept token at another account).
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "paas-good", { title: "paas-good", data: { provider: "paas", account_id: "acc-other" } }));
+    assert.equal((await storedRow("fx_connections", "paas-good")).api_token, undefined, "a path value changed without the token: cleared");
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "paas-good", { title: "paas-good", data: { provider: "paas", account_id: "acc 42/x", api_token: GOOD } }));
+    // binds: a body's field (the database's name) bound too; the same values keep it.
+    await add("db-b", { provider: "database", endpoint: "https://db.example", database: "orders", api_token: DBKEY });
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "db-b", { title: "db-b", data: { provider: "database", endpoint: "https://db.example", database: "payroll" } }));
+    assert.equal((await storedRow("fx_connections", "db-b")).api_token, undefined, "binds: the database changed without the token: cleared");
     // L3: a token a header cannot carry: said in words, never a 500.
     await add("latin", { provider: "paas", account_id: "acc-9", api_token: "tökenvalue-1234567" });
     const r4 = await test("latin");
@@ -376,6 +443,71 @@ try {
     sent = seen.length;
     const r5 = await test("short");
     assert.match(r5.body.words, /"API token" is too short to be a secret/); assert.equal(seen.length, sent);
+    // ---------- 5. mold_v0-326 ----------
+    {
+      // if_empty: no team named, the account's own call; a team named, the team's (the token must act in it).
+      const tn = await test("team-none");
+      assert.equal(tn.body.ok, true, tn.body.words); assert.equal(seen.at(-1)!.path, "/v2/user", "no team: the account's call");
+      const tok = await test("team-ok");
+      assert.equal(tok.body.ok, true, tok.body.words); assert.equal(seen.at(-1)!.path, "/v2/teams/team-ok", "a team: the team's call");
+      const toth = await test("team-other");
+      assert.equal(toth.body.outcome, "refused");
+      assert.equal(toth.body.words, `It does not work yet: the hosting API at api.paas.example answered 403: the token is not allowed to do this (it said: "Not authorized").`);
+      const tsso = await test("team-sso");
+      assert.equal(tsso.body.ok, false);
+      assert.equal(tsso.body.words, "It does not work yet: the hosting API at api.paas.example answered 200, but limited is true, not false. The token reaches this team only partly.", "expect.hint said");
+      const tbad = await test("team-bad");
+      assert.equal(tbad.body.outcome, "refused"); assert.equal(seen.at(-1)!.path, "/v2/user");
+      // Naming a team is not a destination (the same host): the token is kept, and the next Test proves the new team.
+      // A team named without the token (an editor probing another team with the owner's token): the token is cleared.
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "team-none", { title: "team-none", data: { provider: "team", account_id: "team-other" } }));
+      assert.equal((await storedRow("fx_connections", "team-none")).api_token, undefined, "a team named without the token: cleared");
+      sent = seen.length;
+      assert.match((await test("team-none")).body.words, /"API token" is empty/); assert.equal(seen.length, sent, "nothing sent");
+      // Typed again: Test proves the token cannot act in that team.
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "team-none", { title: "team-none", data: { provider: "team", account_id: "team-other", api_token: GOOD } }));
+      assert.equal((await test("team-none")).body.outcome, "refused", "and Test proves the token cannot act in it");
+      // Blank (spaces) is empty: the account's call, read as a plain 2xx (not the team's expect).
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "team-none", { title: "team-none", data: { provider: "team", account_id: "   ", api_token: GOOD } }));
+      const tblank = await test("team-none");
+      assert.equal(tblank.body.ok, true, tblank.body.words); assert.equal(seen.at(-1)!.path, "/v2/user");
+      // The repository changed without the token: cleared (owner and name are the address of a probe sending it).
+      await add("git-move", { provider: "git", account_id: "acme", database: "app", api_token: GOOD });
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "git-move", { title: "git-move", data: { provider: "git", account_id: "acme", database: "private-other" } }));
+      assert.equal((await storedRow("fx_connections", "git-move")).api_token, undefined, "another repository without the token: cleared");
+      await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "git-move", { title: "git-move", data: { provider: "git", account_id: "acme-other", database: "app" } }));
+      assert.equal((await storedRow("fx_connections", "git-move")).api_token, undefined, "another owner without the token: cleared");
+      // L2: an answer echoing a secret escaped for an address or base64 encoded is cut too.
+      const odd = "p@ss w/rd!x";
+      const echoed = C.cleanWords(`saw ${encodeURIComponent(odd)} and ${Buffer.from(odd).toString("base64")} and ${odd}`, [odd])!;
+      assert.ok(![odd, encodeURIComponent(odd), Buffer.from(odd).toString("base64")].some((f) => echoed.includes(f)), echoed);
+      assert.equal(C.cleanAnswer(`a ${encodeURIComponent(odd)} b`, [odd]), "a … b");
+      // basic_auth: git's push discovery with the token as the password; a working answer is git's own media type.
+      const g = await test("git-ok");
+      assert.equal(g.body.ok, true, g.body.words);
+      assert.match(g.body.words, /^It works: the git host's push check at git\.example answered 200 in \d+ ms\.$/);
+      assert.deepEqual([seen.at(-1)!.path, seen.at(-1)!.auth, seen.at(-1)!.method], ["/acme/app.git/info/refs?service=git-receive-pack", basic(GOOD), "GET"]);
+      const gro = await test("git-ro");
+      assert.equal(gro.body.outcome, "refused");
+      assert.equal(gro.body.words, `It does not work yet: the git host's push check at git.example answered 403: the token is not allowed to do this (it said: "Write access to repository not granted."). The token may read the repository but not push to it.`);
+      const gbad = await test("git-bad");
+      assert.equal(gbad.body.outcome, "refused"); assert.match(gbad.body.words, /answered 401: the token was refused \(it said: "Invalid username or token Basic …/, gbad.body.words);
+      assert.ok(!gbad.body.words.includes(basic(BAD).slice(6)), "the echoed sign-in cut out");
+      const gmiss = await test("git-missing");
+      assert.match(gmiss.body.words, /answered 404: nothing was found there .*\(it said: "Repository not found\."\)\. Check the owner and name\.$/, gmiss.body.words);
+      const gsign = await test("git-signin");
+      assert.equal(gsign.body.ok, false);
+      assert.equal(gsign.body.words, "It does not work yet: the git host's push check at git.example answered 200, but not with the application/x-git-receive-pack-advertisement answer this test reads.");
+      // A redirect to another host (off the probe's hosts) is refused before the Basic sign-in goes anywhere.
+      sent = seen.length;
+      const gmov = await test("git-moved");
+      assert.equal(gmov.body.outcome, "private_address", gmov.body.words); assert.equal(seen.length, sent + 1, "only the first hop");
+      // One to another of its hosts: followed without the Basic sign-in (it carries the sealed token).
+      const geu = await test("git-eu");
+      assert.deepEqual([seen.at(-1)!.host, seen.at(-1)!.auth], ["eu.git.example", null], "the cross-host hop carries no sign-in");
+      assert.equal(geu.body.outcome, "refused");
+      ok("mold_v0-326: if_empty (the account without a team, the team's own read with one: 403 and limited said), basic_auth (made on the server, its value never in words), content_type (a sign-in page fails), a plain-text refusal's first line, the pack's hint per status and expect.hint; a blank field is empty and read as a plain 2xx; the team, repository or owner changed without the token clears it (binds too); a secret's escaped and base64 forms cut from words");
+    }
     // L1: failures carry no timing; a network failure reads the same whatever the cause.
     assert.equal(r3.body.ms, 0);
     // L1: at most 10 tests a minute per workspace.
