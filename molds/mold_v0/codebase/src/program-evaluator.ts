@@ -230,14 +230,14 @@ export class WritableSweep {
     try { const st = statSync(d, { bigint: true }); return `${st.ino}:${st.ctimeNs}:${st.mtimeNs}`; } catch { return "gone"; }
   }
   get size() { return this.stamps.size; }
-  /** Every entry of these users in a folder that changed; how many folders were read. */
-  sweep(uids: number[]): number {
+  /** Every entry of these users in a folder that changed; the folders that were read. */
+  sweep(uids: number[]): string[] {
     const who = new Set(uids), queue = [...this.stamps.keys()];
-    let read = 0;
+    const read: string[] = [];
     for (let i = 0; i < queue.length; i++) {
       const d = queue[i]!, before = this.stamps.get(d);
       if (WritableSweep.stamp(d) === before) continue;
-      read++;
+      read.push(d);
       let names: string[] = [];
       try { names = readdirSync(d); } catch { /* gone, or no longer a folder */ }
       for (const n of names) {
@@ -466,7 +466,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     clearShared = (u: RunUser) => {
       const t = Date.now();
       sweepUserFiles(u.uid, []);
-      if (shared) sweepStats.folders_read += shared.sweep([u.uid]);
+      if (shared) sweepStats.folders_read += shared.sweep([u.uid]).length;
       sweepStats.programs++; sweepStats.ms += Date.now() - t;
     };
     // Each user may pass through to its own folders (0711: never list); what is not its own it cannot open.

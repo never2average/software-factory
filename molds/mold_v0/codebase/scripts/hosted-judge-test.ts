@@ -154,7 +154,10 @@ try {
       const sweep = new WritableSweep(dirs);
       const uid = 59990;
       const t1 = Date.now();
-      assert.equal(sweep.sweep([uid]), 0, "nothing changed: no folder is read");
+      // Only the test's own folders are judged: another process on the machine may change a shared folder (/tmp) meanwhile,
+      // and the sweep then rightly reads that one too.
+      const ours = (read: string[]) => read.filter((d) => d.startsWith(load + path.sep)).sort();
+      assert.deepEqual(ours(sweep.sweep([uid])), [], "nothing changed in the test's folders: none of them is read");
       const idleMs = Date.now() - t1;
       // A program's leftovers: a file, and a folder anyone may write to with a file in it, in two shared folders.
       const as = (cmd: string) => assert.equal(spawnSync("/bin/sh", ["-c", cmd], { uid, gid: uid, stdio: "ignore" }).status, 0, cmd);
@@ -163,7 +166,7 @@ try {
       const t2 = Date.now();
       const read = sweep.sweep([uid]);
       const changedMs = Date.now() - t2;
-      assert.equal(read, 2, "only the two folders that changed are read");
+      assert.deepEqual(ours(read), [path.join(load, "shared-3"), path.join(load, "shared-9")], "of the test's folders, exactly the two that changed are read");
       assert.ok(!existsSync(path.join(load, "shared-3", "kept-for-later")) && !existsSync(path.join(load, "shared-9", "drop")), "the program's file and folder are gone");
       assert.ok(existsSync(path.join(load, "shared-3", "someone-elses")), "another's file stays");
       const t3 = Date.now();
