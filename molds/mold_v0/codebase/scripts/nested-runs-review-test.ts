@@ -4,6 +4,8 @@
 // skipped and say so.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+// mold_v0-324: the evaluator refuses to run programs as the runner itself unless a test says so (offline, no root).
+process.env.APP_TEST_UNISOLATED_EVALUATIONS = "yes";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

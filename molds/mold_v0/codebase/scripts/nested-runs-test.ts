@@ -17,6 +17,8 @@
 //     test, a person's review, rollback); 12. Staff CRUD, versions, a pack's declared programs
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+// mold_v0-324: the evaluator refuses to run programs as the runner itself unless a test says so (offline, no root).
+process.env.APP_TEST_UNISOLATED_EVALUATIONS = "yes";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";

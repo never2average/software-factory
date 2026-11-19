@@ -34,7 +34,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
-import { claimableRuns, claimRun, failUnlaunchedRun, findKind, noteRunsWaiting, queuedRunsByKind, sweepRuns, type Claim, type ClaimableRun } from "./runs.js";
+import { claimableRuns, claimRun, failQueuedEvaluations, failUnlaunchedRun, findKind, noteRunsWaiting, queuedRunsByKind, sweepRuns, type Claim, type ClaimableRun } from "./runs.js";
 import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
 import { invocationDeadline, keepAlive } from "./telemetry.js";
@@ -675,6 +675,9 @@ export class RunScaler {
       if (!l?.live) {
         const queued = await queuedRunsByKind();
         st.demand = { queued, claimable: 0 };
+        // mold_v0-324: an acceptance evaluation is never left waiting for a sandbox that is not coming: refused, nothing scored.
+        const refused = Object.keys(queued).length ? await failQueuedEvaluations(chosen.why) : [];
+        if (refused.length) { st.failed = refused; this.log(`evaluations refused, no sandbox: ${refused.join(", ")}`); }
         if (Object.keys(queued).length) await noteRunsWaiting(chosen.why);
       }
       return st;

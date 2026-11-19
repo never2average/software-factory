@@ -1305,9 +1305,10 @@ export async function nestedTick(now = new Date()): Promise<NestedSweep> {
     out.settled++;
   }
   // Evaluations whose run ended without a result, or never started: refused, never waved through.
-  const stuck = await read((q) => q.query<{ id: string; org_id: number }>(`/* tenant: platform sweep across workspaces */ SELECT e.id, e.org_id FROM harness_evaluations e LEFT JOIN runs r ON r.id = e.run_id AND r.org_id = e.org_id
+  const stuck = await read((q) => q.query<{ id: string; org_id: number; run_error: string | null; run_status: string | null }>(`/* tenant: platform sweep across workspaces */ SELECT e.id, e.org_id, r.error AS run_error, r.status AS run_status FROM harness_evaluations e LEFT JOIN runs r ON r.id = e.run_id AND r.org_id = e.org_id
      WHERE e.status <> 'decided' AND ((e.run_id IS NOT NULL AND r.status IN ('succeeded', 'failed', 'cancelled')) OR (e.run_id IS NULL AND e.created_at < $1::timestamptz - make_interval(secs => $2))) LIMIT 100`, [now, LOST_START_MS / 1000]));
-  for (const s of stuck) { await decide(s.org_id, s.id, { outcome: "refused", reasons: ["the evaluation ended without measurements"], metrics: empty(0) }, null).catch(() => {}); out.evaluations++; }
+  // mold_v0-324: a run that failed says why (no sandbox provider, a sandbox that would not start), in its own words.
+  for (const s of stuck) { await decide(s.org_id, s.id, { outcome: "refused", reasons: ["the evaluation ended without measurements", ...(s.run_status === "failed" && s.run_error ? [s.run_error.slice(0, 500)] : [])], metrics: empty(0) }, null).catch(() => {}); out.evaluations++; }
   for (const key of roots) { const [org, root] = [Number(key.split(":")[0]), key.split(":").slice(1).join(":")]; await pump(org, root).catch(() => {}); out.pumped++; }
   return out;
 }
