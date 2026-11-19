@@ -135,7 +135,7 @@
     "test:oauth-providers": "tsx scripts/oauth-providers-test.ts",
     "test:run-approvals": "tsx scripts/run-approvals-test.ts",
     "test:developer-surface": "tsx scripts/developer-surface-test.ts",
-    "test:log-drain": "tsx scripts/log-drain-test.ts",
+    "test:log-drain": "tsx scripts/log-drain-test.ts && tsx scripts/log-drain-analytics-test.ts",
     "test:developer-e2e": "tsx scripts/developer-e2e.ts",
     "test:event-outbox": "tsx scripts/event-outbox-test.ts",
     "gen:sdks": "tsx scripts/gen-sdks.ts",

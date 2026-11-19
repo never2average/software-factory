@@ -24,6 +24,20 @@
  *               deployment's window (key <deployment key>.<yyyymmddThhmmZ>) is read, merged and written again. Its
  *               latency histogram (2 significant digits a bucket, so p95 is within 5%) is kept in the area's json field
  *               mapped as `buckets`; without one, p95 covers each delivery alone.
+ *   statuses    Vercel's -1 (mold_v0-325): a line's own statusCode -1 is a function that crashed without answering,
+ *               counted as a request and a server error; a proxy statusCode -1 is a background revalidation, not a
+ *               visitor's request, and is skipped.
+ *   compare     (mold_v0-325, optional `log_drain.compare`) the A/B comparison of each deployment with the one it
+ *               replaced (the deployment record's `previous_field`), kept as one record a candidate deployment in the
+ *               compare area (key: the candidate's key), recomputed after every delivery that touches either side.
+ *               Matching windows: the candidate's report windows from its first one, at most `hours` long, against
+ *               the baseline's windows of the same length just before the candidate's first one. The verdict is the
+ *               only one the sample supports (compareSides): insufficient_data under `min_requests` a side;
+ *               regressed when the error rate rose `min_error_points` percentage points or more with a two-proportion
+ *               z of `min_z` or more, or p95 rose by `p95_rise` or more with `min_requests` timed requests a side;
+ *               else no_change_detected, which never means better. Only aggregates are read and written.
+ *   health      (mold_v0-325, src/log-drain-health.ts) a source's last delivery is its last_received_at; the scheduler
+ *               marks it silent once (silent_since) after `silent_hours` without one, and a delivery clears it.
  *
  * The pure parts (parse, verify, reduce, merge) are exported for scripts/log-drain-test.ts; the write is
  * src/developer-inbound.ts's (the source, its idempotency, the record store).
@@ -57,7 +71,27 @@ export interface LogDrainOptions {
   sources: string[] | null;
   environments: string[] | null;
   source_label: string;
+  /** mold_v0-325: the A/B comparison of a deployment with the one it replaced (null: none kept). */
+  compare: CompareOptions | null;
+  /** mold_v0-325: hours without a delivery before the source is called silent. */
+  silent_hours: number;
 }
+
+/** The comparison's logical fields (the compare area's field of that name unless mapped). */
+export const COMPARE_FIELDS = ["candidate", "baseline", "verdict", "reason", "candidate_requests", "baseline_requests", "candidate_errors", "baseline_errors",
+  "candidate_error_rate", "baseline_error_rate", "error_rate_change", "candidate_p95_ms", "baseline_p95_ms", "p95_change", "z_score",
+  "candidate_from", "candidate_to", "baseline_from", "baseline_to", "compared_at"] as const;
+export type CompareField = (typeof COMPARE_FIELDS)[number];
+export const VERDICTS = ["insufficient_data", "no_change_detected", "regressed"] as const;
+export type Verdict = (typeof VERDICTS)[number];
+export interface CompareThresholds { min_requests: number; min_error_points: number; min_z: number; p95_rise: number }
+export interface CompareOptions extends CompareThresholds {
+  area: string;
+  previous_field: string;
+  hours: number;
+  fields: Partial<Record<CompareField, string>>;
+}
+export const COMPARE_DEFAULTS: CompareThresholds & { hours: number } = { min_requests: 1000, min_error_points: 0.5, min_z: 1.96, p95_rise: 0.2, hours: 168 };
 
 const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const FIELD = /^[a-z][a-z0-9_]{0,63}$/;
@@ -94,6 +128,28 @@ export function logDrainOptions(r: unknown): LogDrainOptions | null {
     sources: strList(o.sources),
     environments: strList(o.environments),
     source_label: typeof o.source_label === "string" && o.source_label.trim() ? o.source_label.trim().slice(0, 60) : "log drain",
+    compare: compareOptions(o.compare, n),
+    silent_hours: n(o.silent_hours, 6, 1, 24 * 14),
+  };
+}
+
+function compareOptions(v: unknown, n: (v: unknown, def: number, min: number, max: number) => number): CompareOptions | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const c = v as Record<string, unknown>;
+  if (typeof c.area !== "string" || !FIELD.test(c.area)) return null;
+  const f = (v: unknown, def: number, min: number, max: number) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : def);
+  const fields: Partial<Record<CompareField, string>> = {};
+  const fm = (c.fields && typeof c.fields === "object" ? c.fields : {}) as Record<string, unknown>;
+  for (const k of COMPARE_FIELDS) if (typeof fm[k] === "string" && FIELD.test(fm[k] as string)) fields[k] = fm[k] as string;
+  return {
+    area: c.area,
+    previous_field: typeof c.previous_field === "string" && FIELD.test(c.previous_field) ? c.previous_field : "previous",
+    hours: n(c.hours, COMPARE_DEFAULTS.hours, 1, 24 * 90),
+    min_requests: n(c.min_requests, COMPARE_DEFAULTS.min_requests, 1, 10_000_000),
+    min_error_points: f(c.min_error_points, COMPARE_DEFAULTS.min_error_points, 0, 100),
+    min_z: f(c.min_z, COMPARE_DEFAULTS.min_z, 0, 10),
+    p95_rise: f(c.p95_rise, COMPARE_DEFAULTS.p95_rise, 0, 100),
+    fields,
   };
 }
 
@@ -174,7 +230,11 @@ export function requestsOf(lines: Record<string, unknown>[], o: Pick<LogDrainOpt
     if (o.sources && source && !o.sources.includes(source)) continue;
     if (o.environments && env && !o.environments.includes(env)) continue;
     const proxy = (l.proxy && typeof l.proxy === "object" ? l.proxy : {}) as Record<string, unknown>;
-    const status = num(proxy.statusCode) ?? num(l.statusCode);
+    // Vercel: a proxy status of -1 is a background revalidation (no visitor waited on it); a line's own -1 is a
+    // function that crashed without answering (a server error the visitor saw).
+    if (num(proxy.statusCode) === -1) continue;
+    const own = num(l.statusCode);
+    const status = num(proxy.statusCode) ?? (own === -1 ? 500 : own);
     let duration = num(l.durationMs) ?? num(l.duration) ?? num(proxy.durationMs) ?? num(proxy.duration);
     if (duration === undefined && typeof l.message === "string") { const m = DURATION_IN_MESSAGE.exec(l.message); if (m) duration = Number(m[1]); }
     const at = num(l.timestamp) ?? num(proxy.timestamp) ?? now;
@@ -272,4 +332,79 @@ export function serially<T>(key: string, fn: () => Promise<T>): Promise<T> {
   chains.set(key, tail);
   void tail.then(() => { if (chains.get(key) === tail) chains.delete(key); });
   return p;
+}
+
+// ---------- the A/B comparison (mold_v0-325) ----------
+
+/** One side's report rows added up: requests, server errors, the merged histogram and its timed count, p95. */
+export interface Side { requests: number; errors: number; timed: number; p95_ms: number | null; from: number | null; to: number | null }
+/** Report rows (their field values by logical name) added up into one side. */
+export function sideOf(rows: { requests?: unknown; errors?: unknown; buckets?: unknown; p95_ms?: unknown; window_start?: unknown; window_end?: unknown }[]): Side {
+  const h: Histogram = {};
+  let requests = 0, errors = 0, from: number | null = null, to: number | null = null;
+  for (const r of rows) {
+    requests += num(r.requests) ?? 0; errors += num(r.errors) ?? 0;
+    if (r.buckets && typeof r.buckets === "object" && !Array.isArray(r.buckets))
+      for (const [k, v] of Object.entries(r.buckets as Record<string, unknown>)) { const c = num(v); if (Number.isFinite(Number(k)) && c !== undefined && c > 0) h[k] = (h[k] ?? 0) + c; }
+    const s = typeof r.window_start === "string" ? Date.parse(r.window_start) : NaN, e = typeof r.window_end === "string" ? Date.parse(r.window_end) : NaN;
+    if (Number.isFinite(s)) from = from === null ? s : Math.min(from, s);
+    if (Number.isFinite(e)) to = to === null ? e : Math.max(to, e);
+  }
+  const timed = Object.values(h).reduce((a, b) => a + b, 0);
+  const single = rows.length === 1 ? num(rows[0]!.p95_ms) ?? null : null;
+  return { requests, errors, timed, p95_ms: timed ? percentile(h, 0.95) : single, from, to };
+}
+
+export interface Comparison {
+  verdict: Verdict; reason: string;
+  candidate_requests: number; baseline_requests: number; candidate_errors: number; baseline_errors: number;
+  candidate_error_rate: number | null; baseline_error_rate: number | null; error_rate_change: number | null;
+  candidate_p95_ms: number | null; baseline_p95_ms: number | null; p95_change: number | null; z: number | null; regressions: string[];
+}
+const fmt = (n: number) => n.toLocaleString("en-US");
+const pct = (r: number) => `${round(r * 100, 2)}%`;
+
+/**
+ * The only verdict two sides' numbers support (deterministic). The error rate: a rise of `min_error_points`
+ * percentage points or more and a two-proportion z of `min_z` or more. Latency: p95 up by `p95_rise` or more, with
+ * `min_requests` timed requests on each side. Fewer than `min_requests` requests on either side: insufficient data.
+ * No regression is never called an improvement.
+ */
+export function compareSides(base: Side, cand: Side, t: CompareThresholds = COMPARE_DEFAULTS): Comparison {
+  const out: Comparison = {
+    verdict: "insufficient_data", reason: "",
+    candidate_requests: cand.requests, baseline_requests: base.requests, candidate_errors: cand.errors, baseline_errors: base.errors,
+    candidate_error_rate: cand.requests ? round(cand.errors / cand.requests, 6) : null, baseline_error_rate: base.requests ? round(base.errors / base.requests, 6) : null,
+    error_rate_change: null, candidate_p95_ms: cand.p95_ms, baseline_p95_ms: base.p95_ms, p95_change: null, z: null, regressions: [],
+  };
+  if (base.p95_ms !== null && cand.p95_ms !== null && base.p95_ms > 0) out.p95_change = round((cand.p95_ms - base.p95_ms) / base.p95_ms, 4);
+  if (base.requests < t.min_requests || cand.requests < t.min_requests) {
+    out.reason = `Not enough traffic to compare yet: ${fmt(cand.requests)} requests on this deployment and ${fmt(base.requests)} on the one it replaced; each needs ${fmt(t.min_requests)}.`;
+    return out;
+  }
+  const pb = base.errors / base.requests, pc = cand.errors / cand.requests;
+  out.error_rate_change = round((pc - pb) * 100, 4);
+  const pool = (base.errors + cand.errors) / (base.requests + cand.requests);
+  const se = Math.sqrt(pool * (1 - pool) * (1 / base.requests + 1 / cand.requests));
+  out.z = se > 0 ? round((pc - pb) / se, 3) : 0;
+  if ((pc - pb) * 100 >= t.min_error_points && out.z >= t.min_z)
+    out.regressions.push(`server errors rose from ${pct(pb)} to ${pct(pc)} of requests`);
+  if (out.p95_change !== null && out.p95_change >= t.p95_rise && base.timed >= t.min_requests && cand.timed >= t.min_requests)
+    out.regressions.push(`the slowest 5% of responses took ${fmt(cand.p95_ms!)} ms or more, up from ${fmt(base.p95_ms!)} ms`);
+  if (out.regressions.length) {
+    out.verdict = "regressed";
+    out.reason = `Worse than the deployment it replaced: ${out.regressions.join("; and ")}.`;
+  } else {
+    out.verdict = "no_change_detected";
+    out.reason = `No worsening the numbers can show: server errors ${pct(pb)} before and ${pct(pc)} now` +
+      (base.p95_ms !== null && cand.p95_ms !== null ? `; slowest 5% of responses ${fmt(base.p95_ms)} ms before and ${fmt(cand.p95_ms)} ms now.` : ".");
+  }
+  return out;
+}
+
+/** The two sides' periods: the candidate's from its first window, at most `hours`; the baseline's of equal length just before it. */
+export function comparePeriods(candidateFirst: number, candidateLast: number, hours: number): { candidate: [number, number]; baseline: [number, number] } {
+  const end = Math.min(candidateLast, candidateFirst + hours * 3_600_000);
+  const len = Math.max(end - candidateFirst, 0);
+  return { candidate: [candidateFirst, end], baseline: [candidateFirst - len, candidateFirst] };
 }

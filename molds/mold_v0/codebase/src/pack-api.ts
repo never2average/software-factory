@@ -2223,7 +2223,8 @@ export const METRIC_MEASURES = ["count", "sum", "average", "rate", "duration"] a
  *             that is already 0 to 100 (an average of percentages a run measured), shown as it is
  */
 /** The units a metric is shown in (src/metric-spec.ts metricUnit; the console's formatValue). */
-export const METRIC_UNITS = ["count", "number", "usd", "percent", "percent_100", "days", "hours"] as const;
+// mold_v0-325: "ms", a duration in milliseconds (a response time): "240 ms" under a second, then "1.2 s".
+export const METRIC_UNITS = ["count", "number", "usd", "percent", "percent_100", "days", "hours", "ms"] as const;
 export type MetricUnit = (typeof METRIC_UNITS)[number];
 export const MetricSchema = z.object({
   name,

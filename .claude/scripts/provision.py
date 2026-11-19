@@ -2711,6 +2711,14 @@ GUIDE = {
     "why": "sign-in is a six-digit code sent by email, with NO fallback by design: without this key nobody can log in, including you",
     "shape": (r"^re_[A-Za-z0-9_\-]{10,}$", "starts with re_"),
   },
+  "LOG_DRAIN_SECRET": {
+    "what": "the signature secret of the hosting provider's log drain that sends this app its request logs (for its Analytics page and its A/B comparisons)",
+    "where": "vercel.com -> Team Settings -> Drains -> the drain that sends to this app -> Edit -> 'Signature Verification Secret' -> copy it "
+             "(when adding the drain, it is filled in for you on the Add Drain form: copy it before you press Create Drain)",
+    "why": "the app accepts a delivery of request logs only when it is signed with this secret, so nobody else can send it made-up numbers. "
+           "Only an app whose pack declares a Vercel log drain with secret_env LOG_DRAIN_SECRET reads it",
+    "shape": (r"^\S{16,}$", "one value, 16 characters or more, no spaces"),
+  },
   "PLATFORM_NOTIFY_FROM": {
     "what": "the address the sign-in emails come FROM",
     "where": "resend.com -> Domains -> Add Domain -> add the DNS records it shows at your registrar -> wait for 'Verified'. "

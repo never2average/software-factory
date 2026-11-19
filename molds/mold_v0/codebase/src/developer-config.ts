@@ -84,6 +84,10 @@ export interface LogDrainDeclaration {
   sources?: string[];
   environments?: string[];
   source_label?: string;
+  /** mold_v0-325: hours without a delivery before the source is called silent (default 6). */
+  silent_hours?: number;
+  /** mold_v0-325: the A/B comparison of each deployment with the one it replaced, kept as records of `area`. */
+  compare?: { area: string; previous_field?: string; hours?: number; min_requests?: number; min_error_points?: number; min_z?: number; p95_rise?: number; fields?: Partial<Record<string, string>> };
 }
 export interface DeveloperSurfaceConfig {
   events: DeveloperEvent[];
@@ -98,7 +102,9 @@ const POINTER = /^(\/([^~/]|~[01])*)*$/;
 const NAME = /^[a-z][a-z0-9_]{0,63}$/;
 
 /** A field of a record area as the check needs it. */
-export interface AreaFacts { name: string; scope: string; fields: string[]; sealed?: boolean }
+export interface AreaFacts { name: string; scope: string; fields: string[]; sealed?: boolean;
+  /** mold_v0-325: each enum field's option values, each reference field's target area (a log drain's comparisons). */
+  enums?: Record<string, string[]>; refs?: Record<string, string> }
 
 /**
  * Every problem of a declaration against the build's areas, job kinds and declarative checks (`checks`: their names;
@@ -159,7 +165,7 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
  * and verification token are environment names, its deployments area and field are the build's, and each mapped
  * report field is a field of its area. Here, not in src/log-drain.ts, because this file has no imports (gen-packs).
  */
-export function logDrainProblems(i: number, r: unknown, areas: { name: string; scope: string; fields: string[] }[]): string[] {
+export function logDrainProblems(i: number, r: unknown, areas: AreaFacts[]): string[] {
   const ld = (r as { log_drain?: unknown } | null)?.log_drain;
   if (!ld || typeof ld !== "object" || Array.isArray(ld)) return [];
   const o = ld as Record<string, unknown>;
@@ -176,6 +182,25 @@ export function logDrainProblems(i: number, r: unknown, areas: { name: string; s
   const rep = areas.find((a) => a.name === (r as { area?: string }).area);
   const fm = (o.fields && typeof o.fields === "object" ? o.fields : {}) as Record<string, unknown>;
   if (rep) for (const [k, f] of Object.entries(fm)) if (typeof f === "string" && !rep.fields.includes(f)) out.push(`${at}.fields.${k}: ${f} is not a field of ${rep.name}`);
+  // mold_v0-325: the comparisons' area, the deployments' previous field, the verdict's options.
+  const c = o.compare;
+  if (c !== undefined) {
+    const co = (c && typeof c === "object" && !Array.isArray(c) ? c : {}) as Record<string, unknown>;
+    const cmp = areas.find((a) => a.name === co.area);
+    if (!cmp) out.push(`${at}.compare.area: ${String(co.area)} is not one of the build's record areas`);
+    else if (cmp.scope !== "workspace") out.push(`${at}.compare.area: ${cmp.name} is a shared area: comparisons are a workspace's own records`);
+    const prev = typeof co.previous_field === "string" ? co.previous_field : "previous";
+    if (dep && !dep.fields.includes(prev)) out.push(`${at}.compare.previous_field: ${prev} is not a field of ${dep.name} (the deployment each one replaced)`);
+    else if (dep?.refs && dep.refs[prev] !== undefined && dep.refs[prev] !== dep.name) out.push(`${at}.compare.previous_field: ${prev} refers to ${dep.refs[prev]}, not ${dep.name}`);
+    const cf = (co.fields && typeof co.fields === "object" ? co.fields : {}) as Record<string, unknown>;
+    if (cmp) {
+      for (const [k, f] of Object.entries(cf)) if (typeof f === "string" && !cmp.fields.includes(f)) out.push(`${at}.compare.fields.${k}: ${f} is not a field of ${cmp.name}`);
+      const verdict = typeof cf.verdict === "string" ? cf.verdict : "verdict";
+      const opts = cmp.enums?.[verdict];
+      if (!cmp.fields.includes(verdict)) out.push(`${at}.compare: ${cmp.name} has no ${verdict} field for the verdict`);
+      else if (opts) for (const v of ["insufficient_data", "no_change_detected", "regressed"]) if (!opts.includes(v)) out.push(`${at}.compare: ${cmp.name}.${verdict} has no option ${v}`);
+    }
+  }
   return out;
 }
 

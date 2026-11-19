@@ -26,7 +26,7 @@ import { open, seal } from "./orgcrypto.js";
 import { asWriter, recordAreas, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { aggregate, logDrainOptions, matchValue, merge, parseLines, priorOf, reportKey, reportValues, requestsOf, serially, verifyVercel, hostOf,
-  MAX_REPORTS, type LogDrainOptions, type ReportField } from "./log-drain.js";
+  compareSides, comparePeriods, sideOf, MAX_REPORTS, type CompareField, type LogDrainOptions, type ReportField } from "./log-drain.js";
 import { RECORD_KEY, type RecordOperation, type RecordRow } from "./pack-api.js";
 
 /** The most items one payload may write. */
@@ -176,8 +176,9 @@ async function write(s: SourceRaw, raw: string) {
   await touch(s);
   return { written: results.length, area: area.name, keys: results.map((x) => x.key) };
 }
+// mold_v0-325: a delivery ends a silence (silent_since, set once by the drain's health check, src/log-drain-health.ts).
 const touch = (s: SourceRaw) => asPlatform(async () => (await getDb()).query(
-  "UPDATE webhook_sources SET last_received_at = now(), received = received + 1 WHERE org_id = $1 AND id = $2", [s.org_id, s.id]));
+  "UPDATE webhook_sources SET last_received_at = now(), received = received + 1, silent_since = NULL WHERE org_id = $1 AND id = $2", [s.org_id, s.id]));
 
 /**
  * A log drain's delivery (mold_v0-303): its requests reduced per deployment and window, each window's report record read,
@@ -214,9 +215,84 @@ async function writeDrain(s: SourceRaw, r: ReturnType<typeof receiverOf>, o: Log
     }
     if (ops.length > MAX_REPORTS) throw new ApiProblem(413, "too_large", `at most ${MAX_REPORTS} report windows a delivery`);
     const results = ops.length ? await recs.batch(ops) : [];
+    // mold_v0-325: the A/B comparisons of the deployments this delivery touched (as candidate or as baseline).
+    const compared = o.compare && results.length ? await writeComparisons(recs, area.name, depArea.name, o, fieldOf, [...new Set(ops.map((x) => String((x as { data: Record<string, unknown> }).data[fieldOf("deployment") ?? "deployment"])))]) : [];
     await touch(s);
-    return { written: results.length, area: area.name, keys: results.map((x) => x.key), requests: reqs.length, unknown };
+    return { written: results.length, area: area.name, keys: results.map((x) => x.key), requests: reqs.length, unknown, ...(o.compare ? { compared } : {}) };
   })));
+}
+
+/** The most report rows read for one side of a comparison (a page is 200). */
+const MAX_SIDE_ROWS = 2000;
+/** The most comparisons one delivery recomputes. */
+const MAX_COMPARISONS = 50;
+
+/** A deployment's report rows (by logical names), oldest first, within [from, to) when given. */
+async function reportsOf(recs: ReturnType<typeof workspaceRecords>, area: string, fieldOf: (k: ReportField) => string | null, depKey: string, from?: number, to?: number) {
+  const g = (d: Record<string, unknown>, k: ReportField) => { const f = fieldOf(k); return f ? d[f] : undefined; };
+  const rows: Record<string, unknown>[] = [];
+  let after: string | undefined;
+  do {
+    const page = await recs.list(area, { filter: { [fieldOf("deployment") ?? "deployment"]: depKey }, limit: 200, ...(after ? { after } : {}) });
+    for (const r of page.records) {
+      const row = { requests: g(r.data, "requests"), errors: g(r.data, "errors"), buckets: g(r.data, "buckets"), p95_ms: g(r.data, "p95_ms"),
+        window_start: g(r.data, "window_start"), window_end: g(r.data, "window_end") };
+      const at = typeof row.window_start === "string" ? Date.parse(row.window_start) : NaN;
+      if (from !== undefined && !(at >= from)) continue;
+      if (to !== undefined && !(at < to)) continue;
+      rows.push(row);
+    }
+    after = page.next ?? undefined;
+  } while (after && rows.length < MAX_SIDE_ROWS);
+  return rows.sort((a, b) => String(a.window_start).localeCompare(String(b.window_start)));
+}
+
+/**
+ * Recompute and write the comparison of each touched deployment with the one it replaced, and of each deployment that
+ * replaced a touched one (its baseline's numbers may have changed). One record a candidate, keyed by its key.
+ */
+async function writeComparisons(recs: ReturnType<typeof workspaceRecords>, reportArea: string, depArea: string, o: LogDrainOptions,
+  fieldOf: (k: ReportField) => string | null, touched: string[]): Promise<string[]> {
+  const c = o.compare!;
+  const cmpArea = recordAreas().find((a) => a.name === c.area);
+  if (!cmpArea) return [];
+  const cf = (k: CompareField): string | null => c.fields[k] ?? (cmpArea.fields.some((f) => f.name === k) ? k : null);
+  const candidates = new Set<string>();
+  for (const key of touched.slice(0, MAX_COMPARISONS)) {
+    candidates.add(key);
+    const next = await recs.list(depArea, { filter: { [c.previous_field]: key }, limit: 5 });
+    for (const r of next.records) candidates.add(r.key);
+  }
+  const ops: RecordOperation[] = [];
+  for (const key of [...candidates].slice(0, MAX_COMPARISONS)) {
+    const dep = await recs.get(depArea, key);
+    const prev = dep?.data[c.previous_field];
+    const baseKey = Array.isArray(prev) ? prev[0] : prev;
+    if (!dep || typeof baseKey !== "string" || !baseKey || baseKey === key) continue;
+    const candRows = await reportsOf(recs, reportArea, fieldOf, key);
+    if (!candRows.length) continue;
+    const first = Date.parse(String(candRows[0]!.window_start)), last = Math.max(...candRows.map((r) => Date.parse(String(r.window_end))).filter(Number.isFinite));
+    const p = comparePeriods(first, last, c.hours);
+    const cand = sideOf(candRows.filter((r) => Date.parse(String(r.window_start)) < p.candidate[1]));
+    const base = sideOf(await reportsOf(recs, reportArea, fieldOf, baseKey, p.baseline[0], p.baseline[1]));
+    const v = compareSides(base, cand, c);
+    const iso = (t: number) => new Date(t).toISOString();
+    const values: Record<CompareField, unknown> = {
+      candidate: key, baseline: baseKey, verdict: v.verdict, reason: v.reason,
+      candidate_requests: v.candidate_requests, baseline_requests: v.baseline_requests, candidate_errors: v.candidate_errors, baseline_errors: v.baseline_errors,
+      candidate_error_rate: v.candidate_error_rate, baseline_error_rate: v.baseline_error_rate, error_rate_change: v.error_rate_change,
+      candidate_p95_ms: v.candidate_p95_ms, baseline_p95_ms: v.baseline_p95_ms, p95_change: v.p95_change, z_score: v.z,
+      candidate_from: iso(p.candidate[0]), candidate_to: iso(p.candidate[1]), baseline_from: iso(p.baseline[0]), baseline_to: iso(p.baseline[1]),
+      compared_at: new Date().toISOString(),
+    };
+    const prior = await recs.get(c.area, key);
+    const data: Record<string, unknown> = Object.fromEntries(Object.entries(prior?.data ?? {}).filter(([, x]) => x !== "[encrypted]"));
+    for (const [k, x] of Object.entries(values)) { const f = cf(k as CompareField); if (f) { if (x === null) delete data[f]; else data[f] = x; } }
+    const baseTitle = (await recs.get(depArea, baseKey))?.title ?? baseKey;
+    ops.push({ op: "put", area: c.area, key, title: `${(dep.title ?? key).slice(0, 200)} compared with ${baseTitle.slice(0, 200)}`, data });
+  }
+  if (!ops.length) return [];
+  return (await recs.batch(ops)).map((x) => x.key);
 }
 
 /** The deployment record a drain's value names: by its key, or by the configured field (a host also as an https address). */
