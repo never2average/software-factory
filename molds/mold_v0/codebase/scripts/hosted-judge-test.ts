@@ -102,7 +102,7 @@ const TIMEOUT = 6;
 const secretEnv = () => ({ JUDGE_FAKE_SECRET: randomBytes(12).toString("hex") });
 try {
   const outside = await listen("127.0.0.1"), loop = await listen("127.0.0.1");
-  await item("1. this machine, the firewall path: scores back, every way out held, the hang cut at its limit (without setfacl: refused)", async () => {
+  await item("1. this machine, the firewall path: scores back, every way out held, the hang cut at its limit (where setfacl is missing: refused)", async () => {
     const s = setUp("fw", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT });
     const before = outside.hits();
     const out = judgeHere(s.spec({ network: "firewall" }), secretEnv());

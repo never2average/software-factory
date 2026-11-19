@@ -4375,8 +4375,9 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   the sockets are found again: one made again (a new inode, without the entry), a new one or an entry gone ends it and
   refuses the evaluation (a socket made again mid-program is reachable for at most that interval: a known gap of this path).
   **Between programs** every process of the program's user must be gone (else refused) and what it left is removed: on
-  the firewall path in every folder anyone may write to on the sandbox's file systems (found once, `find -xdev -perm
-  -0002`) and SysV IPC; the evaluation's folder is under `/var/lib/app-eval` (root's, `0711`; no folder above it writable by
+  the firewall path in every folder anyone may write to that a run user can reach, on every file system mounted (found
+  once: folders others may not search are not walked into; a walk that does not finish refuses the evaluation), and
+  SysV IPC; the evaluation's folder is under `/var/lib/app-eval` (root's, `0711`; no folder above it writable by
   a run user, else refused). The evaluation's users are leased from `APP_EVAL_UIDS` (default 60000-60999, refused when it
   overlaps `APP_RUN_UIDS`), never a run's; a user whose processes would not end keeps its firewall rules, socket entries
   and lease (quarantined). Every program runs with no_new_privs. A runner with no run users of its own refuses (only

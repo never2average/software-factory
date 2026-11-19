@@ -33,7 +33,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdtempSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { RunView } from "./pack-api.js";
@@ -164,15 +164,57 @@ export function denySockets(uids: number[], sockets: string[]): { undo: () => vo
   }
   return { undo, verify };
 }
+/** File systems no program writes a file to (the kernel's own): never walked for folders anyone may write to. */
+const PSEUDO_FS = new Set(["proc", "sysfs", "cgroup", "cgroup2", "devpts", "mqueue", "securityfs", "pstore", "bpf", "debugfs", "tracefs",
+  "configfs", "fusectl", "hugetlbfs", "autofs", "binfmt_misc", "nsfs", "efivarfs", "rpc_pipefs", "selinuxfs"]);
+/** Whether a run user can reach `dir`: every folder on the way searchable by others (a run user has a group of its own only). */
+const reachable = (dir: string) => {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    try { if (!(statSync(d).mode & 0o001)) return false; } catch { return false; }
+    if (d === path.dirname(d)) return true;
+  }
+};
 /**
- * The firewall path's shared folders (review of mold_v0-324): every folder anyone may write to on this sandbox's file
- * systems, found once; a user's files there are removed after each of its programs. The namespace path needs none (all
- * read-only but the program's own).
+ * The firewall path's shared folders (review of mold_v0-324): every folder anyone may write to that a run user can reach,
+ * on every file system mounted here, found once; a user's files there are removed after each of its programs. A folder
+ * others may not search is not walked into (nothing under it is reachable), which keeps the walk short on a big machine.
+ * Rejects when the walk does not finish in time (the evaluation is then refused, never swept by half). The namespace path needs
+ * none (all read-only but the program's own).
  */
-export function worldWritableDirs(): string[] {
-  const roots = [...new Set(["/", ...SWEPT_DIRS])].filter((d) => existsSync(d));
-  const r = spawnSync("find", [...roots, "-xdev", "-type", "d", "-perm", "-0002", "-print"], { encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
-  return [...new Set([...SWEPT_DIRS, ...(r.stdout ?? "").split("\n").filter((l) => l.startsWith("/"))])].slice(0, 5000);
+export async function worldWritableDirs(timeoutMs = 300_000): Promise<string[]> {
+  let mounts: string[] = [];
+  try {
+    mounts = readFileSync("/proc/self/mountinfo", "utf8").split("\n").map((l) => l.split(" ")).filter((c) => c.length > 8)
+      .filter((c) => !PSEUDO_FS.has(c[c.indexOf("-") + 1] ?? "")).map((c) => c[4]!.replace(/\\040/g, " "));
+  } catch { /* no mountinfo: the root and the usual folders */ }
+  const roots = [...new Set(["/", ...SWEPT_DIRS, ...mounts])].filter((d) => existsSync(d) && reachable(d)).sort();
+  // Each root's own entries walked apart, several at once (a big machine's file system takes minutes in one walk);
+  // -xdev keeps each walk on the file system it starts on (another mount is a root of its own).
+  const out = new Set<string>(SWEPT_DIRS);
+  const jobs: string[] = [];
+  for (const r of roots) {
+    let dev = -1;
+    try { const st = statSync(r); dev = st.dev; if (st.mode & 0o002) out.add(r); } catch { continue; }
+    let names: string[] = [];
+    try { names = readdirSync(r); } catch { continue; }
+    for (const n of names) {
+      const p = path.join(r, n);
+      try { const st = lstatSync(p); if (st.isDirectory() && st.dev === dev && st.mode & 0o001) jobs.push(p); else if (st.isDirectory() && st.dev === dev && st.mode & 0o002) out.add(p); } catch { /* gone */ }
+    }
+  }
+  const deadline = Date.now() + timeoutMs;
+  const walk = (dir: string) => new Promise<void>((resolve, reject) => {
+    const child = spawn("find", [dir, "-xdev", "-type", "d", "(", "!", "-perm", "-0001", "-prune", "-o", "-perm", "-0002", "-print", ")"], { stdio: ["ignore", "pipe", "ignore"] });
+    let buf = "";
+    const t = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`the folders anyone may write to could not be listed in ${Math.round(timeoutMs / 1000)} s (${dir})`)); }, Math.max(1, deadline - Date.now()));
+    child.stdout!.setEncoding("utf8").on("data", (d: string) => { buf += d; const lines = buf.split("\n"); buf = lines.pop()!; for (const l of lines) if (l.startsWith("/")) out.add(l); });
+    child.on("error", (e) => { clearTimeout(t); reject(new Error(`the folders anyone may write to could not be listed (${e.message})`)); });
+    child.on("exit", (code, sig) => { clearTimeout(t); if (buf.startsWith("/")) out.add(buf); if (sig) reject(new Error(`the folders anyone may write to could not be listed (find ended by ${sig})`)); else resolve(); });
+  });
+  const width = Math.max(2, Math.min(8, (await import("node:os")).cpus().length * 2));
+  let next = 0;
+  await Promise.all(Array.from({ length: width }, async () => { while (next < jobs.length) await walk(jobs[next++]!); }));
+  return [...out];
 }
 /** The users an evaluation leases (review of mold_v0-324): APP_EVAL_UIDS, default 60000-60999, a range runs never get. */
 export function evalUidRange() {
@@ -364,11 +406,13 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
           try { undoFirewall = shutOutUsers(users.map((u) => u.uid), run.id); }
           catch (e) { why.push(`its firewall could not shut the evaluation's users out (${(e as Error).message})`); }
           if (undoFirewall) {
-            try { socketGuard = denySockets(users.map((u) => u.uid), sockets); network = "firewall"; wrap = firewalledArgv; sweepRoots = worldWritableDirs(); }
+            try { socketGuard = denySockets(users.map((u) => u.uid), sockets); network = "firewall"; wrap = firewalledArgv; }
             catch (e) { why.push((e as Error).message); }
           }
         }
         if (!network) return finish({ cases: [], tampered: null, error: `this sandbox cannot keep the evaluation's programs off the network (${why.join("; ")}), so nothing was run or measured` }, null);
+        try { sweepRoots = await worldWritableDirs(); }
+        catch (e) { return finish({ cases: [], tampered: null, error: `${(e as Error).message}, so nothing was run or measured` }, null); }
       }
       const through = await probeShutOut(users, wrap!, sockets).catch((e: Error) => [`(${e.message.slice(0, 200)})`]);
       for (const u of users) killUntilGone(u);
