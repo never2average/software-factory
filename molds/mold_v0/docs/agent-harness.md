@@ -401,7 +401,7 @@ or invalid output gets one retry, then the failure policy.
 **Acceptance** (`src/program-acceptance.ts`) is server-owned, per program, and carried out by an `acceptance` state: no tool can
 write a decision. A candidate (`.candidate/` from a machine's step, sealed with the workspace's key) runs against the frozen
 test in a clean sandbox with trusted code (`src/program-evaluator.ts`: its own run kind `_agent/acceptance`, no model, no
-credentials; the candidate, the current best and the scorer each a run user of its own reading root-owned, read-only trees, each with a fresh HOME and environment built by the runner; the test's and the current best's files hashed before and after). It
+credentials; the candidate, the current best and the scorer each a run user of its own reading root-owned, read-only trees, each with a fresh HOME and environment built by the runner; the test's and the current best's files hashed before and after; no network for any of them: an empty namespace each, or where a sandbox cannot make one the sandbox's firewall, probed before anything runs, refused otherwise, mold_v0-324). It
 needs at least 5 cases, must beat the current best by `min_lift` (default 5%), with the 95% confidence interval's lower bound
 above zero, on every floor. Tampering, changes outside the declared `surface`, a missing metric or an evaluation that does
 not finish are refusals; a candidate that changes nothing of its target is refused; one that changes wording only

@@ -15,6 +15,8 @@
 //   wording only goes to a person
 //   deletions (mold_v0-308): a candidate's .candidate/.deleted list removes base files: the merge, the evaluator's bundle,
 //       the recipe proposal (removed) and the patch (a git deletion) all honour it; a deletion off the surface is refused
+//   no sandbox provider (mold_v0-324): the evaluation's run fails at the autoscaler's tick and the evaluation is refused
+//       in plain words, nothing run, scored or promoted (scripts/hosted-judge-test.ts proves the judge inside a sandbox)
 // The guardian runs here in-process with the evaluator's same-user mode (no root needed); scripts/nested-runs-review-test.ts
 // runs it with its three users and empty networks as root.
 import "./lib/test-world.js";
@@ -506,6 +508,29 @@ await item("integration (mold_v0-303): a person's start of a stepped program onl
   (await import("../src/program-routes.js")).programAdminRoutes(router, () => (_q, _r, next) => next(), () => "staff-1");
   const paths = (router.stack as unknown as { route?: { path: string; methods: Record<string, boolean> } }[]).flatMap((l) => (l.route ? Object.keys(l.route.methods).map((x) => `${x.toUpperCase()} ${l.route!.path}`) : []));
   for (const want of ["POST /program-champions/:id/proposal", "GET /program-champions/:id/patch"]) assert.ok(paths.includes(want), `${want}: ${paths.join(", ")}`);
+});
+
+await item("no sandbox provider (mold_v0-324): the evaluation is refused in plain words at the next tick, with nothing run or scored", async () => {
+  const files = [await upload("run.js", WEAK), await upload("lib.js", LIB)];
+  await R.createRecipe("staff-1", { id: "calc-nosbx", name: "Calc with no sandbox", files: files.map((f) => ({ id: f.id, path: f.path, executable: false })) });
+  const r = await improve("improve-recipe", { target: "calc-nosbx" }, bundle({ "run.js": USES_LIB }));
+  const ev = await evaluationOf(r.m.handle);
+  assert.ok(ev.run_id, `an evaluation run was queued (${ev.outcome}: ${ev.reasons})`);
+  // The autoscaler with no provider (on Vercel: no boat or Freestyle key, and no Docker): the evaluation's run fails at once.
+  const { RunScaler } = await import("../src/run-sandboxes.js");
+  const was = process.env.APP_AUTOSCALE;
+  process.env.APP_AUTOSCALE = "on";
+  const t = await new RunScaler({ provider: null, log: () => {} }).tick().finally(() => { if (was === undefined) delete process.env.APP_AUTOSCALE; else process.env.APP_AUTOSCALE = was; });
+  assert.ok(t.failed?.includes(ev.run_id!), `the tick failed the evaluation's run: ${JSON.stringify(t)}`);
+  const [run] = await db.query<{ status: string; error: string; started_at: Date | null }>("SELECT status, error, started_at FROM runs WHERE id = $1", [ev.run_id]);
+  assert.equal(run!.status, "failed"); assert.equal(run!.started_at, null, "never claimed: nothing of the candidate ran");
+  await N.nestedTick();
+  const d = await evaluationOf(r.m.handle);
+  assert.equal(d.outcome, "refused");
+  assert.match(d.reasons.join(" | "), /No run sandbox provider is set up to carry out the evaluation \(no provider \(test\)\), so the candidate was not run and nothing was scored\. A platform owner sets one up/);
+  assert.equal(d.cases, null, "nothing was scored");
+  assert.equal((await N.listChampions(org.orgId, { target: "calc-nosbx" })).length, 0, "nothing promoted");
+  await finish(r.root.c, "parked");
 });
 
 console.log(`\nself-improvement: ${ran - failed} of ${ran} passed`);

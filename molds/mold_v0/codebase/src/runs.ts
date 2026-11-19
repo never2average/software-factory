@@ -499,6 +499,23 @@ export async function failUnlaunchedRun(runId: string, reason: string): Promise<
 }
 
 /**
+ * mold_v0-324: the acceptance evaluator's queued runs fail at once when no sandbox provider can carry them out (they
+ * never run anywhere else): the guardian then refuses the evaluation with this run's error, in plain words, with
+ * nothing scored, instead of the evaluation waiting for a sandbox that is not coming. Returns the runs failed.
+ */
+export async function failQueuedEvaluations(why: string, limit = 100): Promise<string[]> {
+  const rows = await asPlatform(async () => (await getDb()).query<{ id: string }>(
+    `/* tenant: internal: the autoscaler's queued evaluation runs across workspaces, by id */ SELECT id FROM runs
+      WHERE status = 'queued' AND runner_location = 'hosted' AND spec->>'runner' = 'program-evaluation' ORDER BY created_at LIMIT $1`, [limit]));
+  const out: string[] = [];
+  for (const r of rows) if (await failUnlaunchedRun(r.id, evaluationUnsandboxedText(why))) out.push(r.id);
+  return out;
+}
+/** The words an evaluation that found no sandbox is refused with (mold_v0-324). */
+export const evaluationUnsandboxedText = (why: string) =>
+  `No run sandbox provider is set up to carry out the evaluation (${why.replace(/\.$/, "")}), so the candidate was not run and nothing was scored. A platform owner sets one up (Freestyle or boat.dev in Admin › Key vault, or this server's Docker), then the improvement can be tried again.`.slice(0, 2000);
+
+/**
  * Say once on each queued run why it waits (mold_v0-055): no sandbox to run it in. A `waiting` event with the reason,
  * written only when the run's last such event gave another reason (or none was written). Returns how many were noted.
  */

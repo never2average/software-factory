@@ -4330,6 +4330,20 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   provider's verify token are named by environment variable only (`secret_env`, `verify_env`), else the source's own sealed
   secret. Tests: `scripts/log-drain-test.ts`.
 - Tests: `scripts/self-improvement-test.ts`, `scripts/nested-runs-test.ts`, `scripts/nested-runs-review-test.ts` (as root).
+- **The judge in a hosted sandbox** (mold_v0-324): the acceptance evaluator is a run (`_agent/acceptance`), so on a hosted
+  deployment (Vercel: no Docker) it runs in a run sandbox from the deployment's provider (Freestyle, boat or a server's
+  Docker), never in the app. Its three users get an empty network namespace each where the sandbox can make one (a VM);
+  where it cannot (a run container: no `CAP_SYS_ADMIN`) the sandbox's own firewall drops every packet they send (a table
+  `app_eval_<run>`, nft, else iptables with ip6tables; loopback and IPv6 included). Before anything runs a probe as each
+  user must fail to reach a loopback listener of the runner's; else, or with neither, the evaluation is refused with
+  nothing run or measured. The run's event `evaluation_isolation` says which. Limits: the test's `timeout_seconds` per
+  program cut to the run's own deadline less a minute (past it: refused, nothing scored), 4 MB of output a program,
+  bundles of 128 MB, test files of 64 MB, 2000 cases. No provider: the autoscaler's tick fails the queued evaluation run
+  and the guardian refuses it in plain words ("No run sandbox provider is set up ... nothing was scored"), never waiting.
+  Proof: `npm run test:hosted-judge` (as root; `JUDGE_RUN_IMAGE=<runner image>` adds the run-container items): a hostile
+  candidate's probes of the outside, loopback, DNS, the expected answers, the baseline's files and the runner's secret
+  all held, scores back, a hang cut at its limit, the run's deadline enforced, a container without `NET_ADMIN` refused.
+  `npx tsx scripts/judge-sandbox.ts <spec.json> [--container <image>]` measures a pack's own frozen test the same way.
 
 ## Records and the runs that wrote them (mold_v0-310)
 

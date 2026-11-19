@@ -388,6 +388,13 @@ export interface HarnessOptions {
    */
   noNewPrivs?: boolean;
   /**
+   * The acceptance evaluator (mold_v0-324, src/program-evaluator.ts): how its three users are kept off every network.
+   * "auto" (the default): an empty network namespace each where the sandbox can make one, else the sandbox's own
+   * firewall shuts the three users out; "firewall": the firewall even where a namespace could be made (tests prove that
+   * path on a machine that has both).
+   */
+  evaluationNetwork?: "auto" | "firewall";
+  /**
    * mold_v0-014: how often, while the run goes, the harness checks its short-lived credentials (a GitHub App's or an
    * OAuth connection's tokens, delivered with expires_at): once one has less than src/clock.ts REFRESH_MARGIN_MS left it
    * asks for the run's credentials again and rewrites the credential files and git's token files in place, so a program
