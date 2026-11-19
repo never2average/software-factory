@@ -31,7 +31,7 @@ process.stdin.on("end", async () => {
   };
   // Unix sockets: a local resolver or the system bus would resolve a name for it (DNS out); the driver's planted one.
   const unix = async () => {
-    const paths = ["/run/systemd/resolve/io.systemd.Resolve", "/run/dbus/system_bus_socket", "/run/systemd/journal/stdout", "/run/nscd/socket", ...(i.plant_socket ? [i.plant_socket] : [])];
+    const paths = ["/run/systemd/resolve/io.systemd.Resolve", "/run/dbus/system_bus_socket", "/run/systemd/journal/stdout", "/run/nscd/socket", ...(i.plant_sockets || [])];
     for (const p of paths) {
       const got = await new Promise((res) => {
         const s = net.connect({ path: p });
@@ -50,6 +50,8 @@ process.stdin.on("end", async () => {
     put("/tmp/node_modules/judge-plant/index.js", "require('fs').writeFileSync('/tmp/judge-plant-ran', 'x'); module.exports = 'planted';\n");
     put("/tmp/package.json", JSON.stringify({ type: "module" }));
     put("/dev/shm/judge-plant", "x"); put("/var/tmp/judge-plant", "x");
+    // A folder anyone may write to beyond the usual ones (as /var/crash is): a later run's user must find nothing there.
+    if (i.ww_dir) put(path.join(i.ww_dir, "judge-plant"), "held-out inputs, kept for later");
     for (const d of [path.resolve(".."), path.resolve("../..")]) put(path.join(d, "node_modules", "judge-plant", "index.js"), "module.exports = 'planted';\n");
   };
   plant();

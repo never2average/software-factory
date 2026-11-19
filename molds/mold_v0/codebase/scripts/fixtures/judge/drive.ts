@@ -5,14 +5,15 @@
 //   node --import tsx scripts/fixtures/judge/drive.ts <spec.json>
 // spec: {test_dir, cases_path, candidate_command, scorer_command, timeout_seconds, candidate_dir, champion_dir?, metric,
 //        floors, deadline_seconds?, network?: "auto"|"firewall", egress?: "system"|"off", uids: {first, last}, uid_dir,
-//        control?: {host, port}, plant_socket?, out?}
-// plant_socket: a unix socket this runner (root) listens on, connectable by anyone (as a local resolver's is): the
-// evaluation's users must not reach it.
+//        control?: {host, port}, plant_sockets?: [{path, recreate?}], world_writable_dir?, out?}
+// plant_sockets: unix sockets this runner (root) listens on, connectable by anyone (as a local resolver's is): the
+// evaluation's users must not reach one. `recreate`: deleted and made again every 200 ms from 4 s in (a resolver
+// restarting while the evaluation runs). world_writable_dir: a folder anyone may write to (as /var/crash is), made for the evaluation.
 // It writes {control, result, events, completion} to spec.out (else stdout). `control`: whether this runner (root) reaches
 // the outside listener itself, so a "blocked" seen by the evaluation's users means the rules, not a dead address.
 // Imports only runner code (what a run sandbox gets) and node's own modules.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { runWorkspaceHarness, type RunnerClient } from "../../../src/run-harness.js";
@@ -32,12 +33,19 @@ const control = spec.control ? await new Promise<string>((res) => {
   s.on("error", () => { clearTimeout(t); res("unreachable"); });
 }) : "untested";
 
-let planted: net.Server | null = null;
-if (spec.plant_socket) {
-  rmSync(spec.plant_socket, { force: true });
-  planted = await new Promise<net.Server>((res, rej) => { const s = net.createServer((c) => { c.end("planted\n"); }); s.once("error", rej); s.listen(spec.plant_socket, () => res(s)); });
-  chmodSync(spec.plant_socket, 0o666);
-}
+const plants: { path: string; recreate?: boolean }[] = spec.plant_sockets ?? [];
+const servers = new Map<string, net.Server>();
+const plantOne = async (p: string) => {
+  servers.get(p)?.close();
+  rmSync(p, { force: true });
+  servers.set(p, await new Promise<net.Server>((res, rej) => { const s = net.createServer((c) => { c.on("error", () => {}); c.end("planted\n"); }); s.once("error", rej); s.listen(p, () => res(s)); }));
+  chmodSync(p, 0o666);
+};
+for (const p of plants) await plantOne(p.path);
+// From 4 s in (after the isolation probe, so it is the check before each program that must see it), every 200 ms.
+let again: NodeJS.Timeout | null = null;
+const starts = plants.some((p) => p.recreate) ? setTimeout(() => { again = setInterval(() => { for (const p of plants) if (p.recreate) void plantOne(p.path).catch(() => {}); }, 200); }, 4000) : null;
+if (spec.world_writable_dir) { mkdirSync(spec.world_writable_dir, { recursive: true }); chmodSync(spec.world_writable_dir, 0o1777); }
 const events: { type: string; data?: Record<string, unknown> }[] = [];
 let result: EvaluationResult | null = null, completion: unknown = null;
 const runId = `run_judge${randomBytes(4).toString("hex")}`, lease = `orl_${randomBytes(8).toString("hex")}`;
@@ -63,8 +71,11 @@ const claim = {
 } as never;
 const t0 = Date.now();
 await runWorkspaceHarness(client, claim, { runUsers: spec.uids, runUidDir: spec.uid_dir, egress: spec.egress ?? "off", noNewPrivs: true, evaluationNetwork: spec.network ?? "auto" });
-planted?.close();
-if (spec.plant_socket) rmSync(spec.plant_socket, { force: true });
-const out = JSON.stringify({ control, result, events, completion, ms: Date.now() - t0 });
+if (starts) clearTimeout(starts);
+if (again) clearInterval(again);
+for (const [p, s] of servers) { s.close(); rmSync(p, { force: true }); }
+const leftInWorldWritable = spec.world_writable_dir ? readdirSync(spec.world_writable_dir) : [];
+if (spec.world_writable_dir) rmSync(spec.world_writable_dir, { recursive: true, force: true });
+const out = JSON.stringify({ control, result, events, completion, ms: Date.now() - t0, left_in_world_writable: leftInWorldWritable });
 if (spec.out) writeFileSync(spec.out, out); else process.stdout.write(out);
 process.exit(0);

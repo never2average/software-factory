@@ -40,7 +40,7 @@ import type { RunView } from "./pack-api.js";
 import type { Claim } from "./runs.js";
 import type { HarnessOptions, RunnerClient } from "./run-harness.js";
 import { runIsolation } from "./run-harness.js";
-import { killUntilGone, leaseRunUser, runUidRange, sweepUserFiles, type RunUser } from "./run-users.js";
+import { killUntilGone, leaseRunUser, runUidRange, sweepUserFiles, SWEPT_DIRS, type RunUser } from "./run-users.js";
 import { unpackBundle } from "./workspace-bundle.js";
 import type { AcceptanceTest } from "./program-spec.js";
 import { builtinScore } from "./program-scorers.js";
@@ -90,43 +90,98 @@ export function openUnixSockets(): string[] {
   return [...out].sort();
 }
 /**
- * One program as one user with no network (mold_v0-324): made as root in new network, mount and IPC namespaces, where
- * every open unix socket is covered by /dev/null and /tmp, /var/tmp and /dev/shm are an empty tmpfs of the program's
- * own, then root drops to the user, its one group, no other, with no_new_privs. A mount that fails ends it (exit 97).
+ * One program as one user with no network (mold_v0-324): made as root in new network, mount and IPC namespaces, then root
+ * drops to the user, its one group, no other, with no_new_privs. In its mount namespace (review of mold_v0-324):
+ *   - every open unix socket outside /run is covered by /dev/null (found again for every program);
+ *   - every mount is made read-only, so no folder anywhere (/var/crash, a world-writable one a host has) takes a file;
+ *   - its own work folder alone is writable, bound over itself;
+ *   - /run (and /var/run when it is a folder of its own), /tmp, /var/tmp and /dev/shm are an empty tmpfs of its own: a
+ *     socket there (a resolver, the bus, the journal), even one made again after this program started, is not reachable;
+ *   - then no mount may be writable but those (/proc and /sys aside), or it does not start.
+ * A step that fails writes why to fd 3 (a pipe only the runner reads; closed before the program starts) and ends it
+ * (exit 97): the evaluation is then refused, never scored as the program's own failure. Nothing is held open for writing
+ * on a file system (a mount with a writer cannot be made read-only).
  */
-const NETNS_SH = 'while [ "$1" != "--" ]; do mount --bind /dev/null "$1" || exit 97; shift; done; shift; '
-  + 'for d in /tmp /var/tmp /dev/shm; do [ -d "$d" ] && { mount -t tmpfs -o mode=1777,size=64m,nosuid,nodev tmpfs "$d" || exit 97; }; done; exec "$@"';
-const netlessArgv = (sockets: string[]) => (argv: string[], u: { uid: number; gid: number }) =>
-  [UNSHARE, "--net", "--mount", "--ipc", "--propagation", "private", "--", "/bin/sh", "-c", NETNS_SH, "judge", ...sockets, "--", ...firewalledArgv(argv, u)];
+const NETNS_SH = [
+  'work=$1; shift',
+  'fail() { printf "%s\\n" "$1" >&3; exit 97; }',
+  'while [ "$1" != "--" ]; do mount --bind /dev/null "$1" || fail "could not cover the socket $1"; shift; done; shift',
+  'for mp in $(cut -d" " -f5 /proc/self/mountinfo | sort -u); do mount -o remount,bind,ro "$mp" 2>/dev/null; done',
+  'if [ -n "$work" ]; then { mount --bind "$work" "$work" && mount -o remount,bind,rw "$work"; } || fail "could not give the program its work folder"; fi',
+  'for d in /run /var/run /tmp /var/tmp /dev/shm; do if [ -d "$d" ] && [ ! -L "$d" ]; then mount -t tmpfs -o mode=1777,size=64m,nosuid,nodev tmpfs "$d" || fail "could not mount an empty $d"; fi; done',
+  'rw=$(awk -v w="$work" \'$6 !~ /^ro/ && $5 != w && $5 != "/run" && $5 != "/var/run" && $5 != "/tmp" && $5 != "/var/tmp" && $5 != "/dev/shm" && $5 !~ /^\\/(proc|sys)(\\/|$)/ { print $5 }\' /proc/self/mountinfo | head -3)',
+  '[ -z "$rw" ] || fail "these mounts stayed writable: $rw"',
+  'exec 3>&-',
+  'exec "$@"',
+].join("\n");
+/** Paths a program's own tmpfs mounts cover (NETNS_SH): a socket under one needs no cover of its own. */
+const COVERED = ["/run/", "/var/run/", "/tmp/", "/var/tmp/", "/dev/shm/"];
+const netlessArgv = (argv: string[], u: { uid: number; gid: number }, work = "") =>
+  [UNSHARE, "--net", "--mount", "--ipc", "--propagation", "private", "--", "/bin/sh", "-c", NETNS_SH, "judge", work,
+    ...openUnixSockets().filter((p) => !COVERED.some((c) => p.startsWith(c))), "--", ...firewalledArgv(argv, u)];
 /** One program as one user the firewall has shut out (no namespace): root drops to the user, its one group, no other, no_new_privs. */
-const firewalledArgv = (argv: string[], u: { uid: number; gid: number }) => [SETPRIV, "--no-new-privs", `--reuid=${u.uid}`, `--regid=${u.gid}`, "--clear-groups", "--", ...argv];
+const firewalledArgv = (argv: string[], u: { uid: number; gid: number }, _work = "") => [SETPRIV, "--no-new-privs", `--reuid=${u.uid}`, `--regid=${u.gid}`, "--clear-groups", "--", ...argv];
 
 /** How the evaluation's programs are kept off every network (mold_v0-324). */
 export type EvaluationNetwork = "netns" | "firewall";
 export const canUnshareNet = () => existsSync(UNSHARE) && spawnSync(UNSHARE, ["--net", "--mount", "--ipc", "--propagation", "private", "/bin/sh", "-c", "mount -t tmpfs tmpfs /tmp"], { stdio: "ignore", timeout: 10_000 }).status === 0;
 /**
- * The firewall path's unix sockets (mold_v0-324): an ACL entry denying each user each socket. Returns how to take back
- * only the entries added here (an entry already there, the run's own lockdown's, stays); throws when a socket exists and
- * cannot be denied (no setfacl, or it fails): the evaluation is then refused.
+ * The firewall path's unix sockets (mold_v0-324): an ACL entry denying each user each socket. `undo` takes back only what
+ * was done here (an entry already there, the run's own lockdown's, gets its old permissions back); `verify` (before every
+ * program) finds the sockets again and says what changed: a socket made again (a new inode, without the entry), a new
+ * one, or an entry gone. Throws when a socket exists and cannot be denied (no setfacl, or it fails): the evaluation is then
+ * refused.
  */
-export function denySockets(uids: number[], sockets: string[]): () => void {
-  if (!sockets.length) return () => {};
+export function denySockets(uids: number[], sockets: string[]): { undo: () => void; verify: () => string | null } {
   const setfacl = sbin("setfacl"), getfacl = sbin("getfacl");
+  const ident = (p: string) => { try { const st = statSync(p); return st.isSocket() ? `${st.dev}:${st.ino}` : "gone"; } catch { return "gone"; } };
+  const seen = new Map(sockets.map((p) => [p, ident(p)]));
+  const acl = (p: string) => (getfacl ? spawnSync(getfacl, ["-n", "-p", "--omit-header", p], { encoding: "utf8", timeout: 10_000 }).stdout ?? "" : "");
+  const verify = () => {
+    const now = openUnixSockets();
+    const added = now.filter((p) => !seen.has(p));
+    if (added.length) return `a local socket appeared: ${added.slice(0, 3).join(", ")}`;
+    for (const [p, id] of seen) {
+      if (ident(p) !== id) return `the local socket ${p} was made again`;
+      const a = acl(p);
+      for (const uid of uids) if (!new RegExp(`^user:${uid}:---`, "m").test(a)) return `the local socket ${p} lost its deny entry for uid ${uid}`;
+    }
+    return null;
+  };
+  if (!sockets.length) return { undo: () => {}, verify };
   if (!setfacl || !getfacl) throw new Error(`setfacl is not installed, so the local sockets ${sockets.slice(0, 3).join(", ")} cannot be denied`);
-  const added: [number, string][] = [];
-  const undo = () => { for (const [uid, p] of added) spawnSync(setfacl, ["-x", `u:${uid}`, p], { stdio: "ignore", timeout: 10_000 }); };
+  const done: [number, string, string | null][] = [];
+  const undo = () => {
+    for (const [uid, p, old] of done) spawnSync(setfacl, old ? ["-m", `u:${uid}:${old}`, p] : ["-x", `u:${uid}`, p], { stdio: "ignore", timeout: 10_000 });
+  };
   for (const p of sockets) {
-    const had = spawnSync(getfacl, ["-n", "-p", "--omit-header", p], { encoding: "utf8", timeout: 10_000 }).stdout ?? "";
+    const had = acl(p);
     for (const uid of uids) {
-      const before = new RegExp(`^user:${uid}:`, "m").test(had);
+      const old = new RegExp(`^user:${uid}:([rwx-]{3})`, "m").exec(had)?.[1] ?? null;
       if (spawnSync(setfacl, ["-m", `u:${uid}:---`, p], { stdio: "ignore", timeout: 10_000 }).status !== 0) { undo(); throw new Error(`setfacl could not deny ${p}`); }
-      if (!before) added.push([uid, p]);
+      done.push([uid, p, old]);
     }
   }
-  return undo;
+  return { undo, verify };
+}
+/**
+ * The firewall path's shared folders (review of mold_v0-324): every folder anyone may write to on this sandbox's file
+ * systems, found once; a user's files there are removed after each of its programs. The namespace path needs none (all
+ * read-only but the program's own).
+ */
+export function worldWritableDirs(): string[] {
+  const roots = [...new Set(["/", ...SWEPT_DIRS])].filter((d) => existsSync(d));
+  const r = spawnSync("find", [...roots, "-xdev", "-type", "d", "-perm", "-0002", "-print"], { encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+  return [...new Set([...SWEPT_DIRS, ...(r.stdout ?? "").split("\n").filter((l) => l.startsWith("/"))])].slice(0, 5000);
+}
+/** The users an evaluation leases (review of mold_v0-324): APP_EVAL_UIDS, default 60000-60999, a range runs never get. */
+export function evalUidRange() {
+  const e = runUidRange(ENV.APP_EVAL_UIDS || "60000-60999"), r = runUidRange();
+  if (e.first <= r.last && r.first <= e.last) throw new Error(`APP_EVAL_UIDS (${e.first}-${e.last}) overlaps the runs' range (${r.first}-${r.last}): choose one that does not`);
+  return e;
 }
 /** The folder evaluations are made in (mold_v0-324): root's, never writable by a run user, nor is any folder above it. */
-export const EVAL_ROOT = "/run/app-eval";
+export const EVAL_ROOT = "/var/lib/app-eval";
 export function safeAncestry(dir: string): string | null {
   for (let d = path.resolve(dir); ; d = path.dirname(d)) {
     const st = statSync(d);
@@ -172,7 +227,7 @@ export function shutOutUsers(uids: number[], tag: string): () => void {
  * is one) and every open unix socket: none may get through. Resolves to what got through (nothing, when isolated), or
  * throws when the probe itself could not run.
  */
-export async function probeShutOut(users: { uid: number; gid: number }[], wrap: (argv: string[], u: { uid: number; gid: number }) => string[], sockets: string[]): Promise<string[]> {
+export async function probeShutOut(users: { uid: number; gid: number }[], wrap: (argv: string[], u: { uid: number; gid: number }, work?: string) => string[], sockets: string[]): Promise<string[]> {
   const net = await import("node:net");
   let reached = 0;
   const servers: import("node:net").Server[] = [];
@@ -191,7 +246,7 @@ Promise.all([tcp("127.0.0.1",${v4}),tcp("::1",${v6 ?? 0})]).then(()=>{process.st
     const out = await Promise.all(users.map((u) => runProgram(wrap([process.execPath, "-e", probe, ...sockets], u), { cwd: "/", input: "", timeoutMs: 15_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" } })));
     const through: string[] = [];
     out.forEach((o, i) => {
-      if (!o.ok) throw new Error(`the isolation probe as uid ${users[i]!.uid} did not run: ${o.why}`);
+      if (!o.ok) throw new Error(`the isolation probe as uid ${users[i]!.uid} did not run: ${o.why}${o.isolation ? ` (${o.isolation.slice(0, 200)})` : ""}`);
       for (const w of JSON.parse(o.stdout) as string[]) through.push(`uid ${users[i]!.uid}: ${w}`);
     });
     if (reached && !through.length) through.push("a loopback listener was reached");
@@ -200,12 +255,17 @@ Promise.all([tcp("127.0.0.1",${v4}),tcp("::1",${v6 ?? 0})]).then(()=>{process.st
 }
 
 /** A program run with a time limit: its stdout (bounded), and whether it exited cleanly. */
-function runProgram(argv: string[], o: { cwd: string; input: string; timeoutMs: number; env: Record<string, string> }): Promise<{ ok: boolean; stdout: string; why: string | null }> {
+/** `isolation`: what the namespace wrapper said on fd 3 when it could not make the program's isolation (NETNS_SH). */
+type ProgramRun = { ok: boolean; stdout: string; why: string | null; isolation?: string | null };
+function runProgram(argv: string[], o: { cwd: string; input: string; timeoutMs: number; env: Record<string, string>; watch?: () => string | null }): Promise<ProgramRun> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
-    const child = spawn(cmd!, args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], detached: true });
-    let out = "", over = false, settled = false;
-    const finish = (r: { ok: boolean; stdout: string; why: string | null }) => { if (settled) return; settled = true; clearTimeout(timer); resolve(r); };
+    const child = spawn(cmd!, args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore", "pipe"], detached: true });
+    let out = "", over = false, settled = false, iso = "";
+    (child.stdio[3] as import("node:stream").Readable).setEncoding("utf8").on("data", (d: string) => { if (iso.length < 2000) iso += d; }).on("error", () => {});
+    const finish = (r0: ProgramRun) => { if (settled) return; settled = true; clearTimeout(timer); if (watcher) clearInterval(watcher); setTimeout(() => resolve({ ...r0, isolation: iso.trim() || null }), 50); };
+    // The firewall path's sockets, checked while it runs too (a socket made again mid-program): ended at once, refused.
+    const watcher = o.watch ? setInterval(() => { const w = o.watch!(); if (w) { iso += `${w}\n`; try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } finish({ ok: false, stdout: "", why: w }); } }, 250) : null;
     const timer = setTimeout(() => { try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } finish({ ok: false, stdout: "", why: "it ran past the test's time limit" }); }, o.timeoutMs);
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (d: string) => { if (out.length < MAX_OUTPUT) out += d; else over = true; });
@@ -255,7 +315,8 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
   const iso = runIsolation(opts);
   const owned: RunUser[] = [];
   let candidateUser: RunUser | null = null, championUser: RunUser | null = null, scorerUser: RunUser | null = null;
-  let undoFirewall: (() => void) | null = null, undoSockets: (() => void) | null = null;
+  let undoFirewall: (() => void) | null = null, socketGuard: ReturnType<typeof denySockets> | null = null;
+  let sweepRoots: string[] = SWEPT_DIRS;
   // mold_v0-324: the run's own deadline bounds the whole evaluation (less a margin to report what it measured).
   const deadline = (Number.isFinite(Date.parse(claim.deadline_at)) ? Date.parse(claim.deadline_at) : Date.now() + 3600_000) - EVAL_LIMITS.reportMarginMs;
   // mold_v0-324: with run users, the folder is made under one only root may write, as is every folder above it: nothing a
@@ -275,7 +336,8 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
   try {
     if (unsafe) return finish({ cases: [], tampered: null, error: `the evaluation's folder is under ${unsafe}, which a run user could write to, so nothing was run or measured` }, null);
     if (iso) {
-      const range = iso.mode === "pool" ? iso.range : (opts.runUsers ?? runUidRange());
+      // A range of its own (review of mold_v0-324): nothing an evaluation's user leaves is ever a run's next user's.
+      const range = opts.runUsers ?? evalUidRange();
       const lease3 = async (role: string) => { const u = await leaseRunUser(`${run.id}:${role}`, { range, dir: opts.runUidDir }); owned.push(u); return u; };
       if (iso.mode === "given") candidateUser = iso.user;
       else if (iso.mode === "fixed") { candidateUser = await leaseRunUser(run.id, { fixed: { uid: iso.uid, gid: iso.gid }, dir: opts.runUidDir }); owned.push(candidateUser); }
@@ -285,15 +347,15 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     }
     const isolated = !!(candidateUser && championUser && scorerUser);
     // mold_v0-324: a runner with no run users runs the programs as itself: only offline tests may ask for that.
-    if (!isolated && ENV.APP_TEST_UNISOLATED_EVALUATIONS !== "yes") return finish({ cases: [], tampered: null, error: "this runner has no run users of its own to run the evaluation's programs as, so nothing was run or measured" }, null);
+    if (!isolated && (ENV.APP_TEST_UNISOLATED_EVALUATIONS !== "yes" || process.env.NODE_ENV === "production")) return finish({ cases: [], tampered: null, error: "this runner has no run users of its own to run the evaluation's programs as, so nothing was run or measured" }, null);
     // mold_v0-324: an empty network namespace each where one can be made, else the sandbox's firewall shuts the three out;
     // the unix sockets any user could connect to covered (a namespace) or denied (ACLs) on either path.
     let network: EvaluationNetwork | null = null;
-    let wrap: ((argv: string[], u: { uid: number; gid: number }) => string[]) | null = null;
+    let wrap: ((argv: string[], u: { uid: number; gid: number }, work?: string) => string[]) | null = null;
     if (isolated) {
       const users = [candidateUser!, championUser!, scorerUser!];
       const sockets = openUnixSockets();
-      if (opts.evaluationNetwork !== "firewall" && canUnshareNet()) { network = "netns"; wrap = netlessArgv(sockets); }
+      if (opts.evaluationNetwork !== "firewall" && canUnshareNet()) { network = "netns"; wrap = netlessArgv; }
       else {
         const why: string[] = [];
         if (opts.evaluationNetwork !== "firewall") why.push("no network namespace can be made here");
@@ -302,7 +364,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
           try { undoFirewall = shutOutUsers(users.map((u) => u.uid), run.id); }
           catch (e) { why.push(`its firewall could not shut the evaluation's users out (${(e as Error).message})`); }
           if (undoFirewall) {
-            try { undoSockets = denySockets(users.map((u) => u.uid), sockets); network = "firewall"; wrap = firewalledArgv; }
+            try { socketGuard = denySockets(users.map((u) => u.uid), sockets); network = "firewall"; wrap = firewalledArgv; sweepRoots = worldWritableDirs(); }
             catch (e) { why.push((e as Error).message); }
           }
         }
@@ -365,13 +427,22 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     /** Each program gets the test's time limit, cut to what is left of the run's (mold_v0-324); none left: refused. */
     const timeoutMs = () => Math.min(testTimeoutMs, deadline - Date.now());
     const results: CaseMeasurement[] = [];
-    const command = (argv: string[], u: RunUser | null) => (u ? wrap!(argv, u) : argv);
+    const watch = () => { const c = socketGuard?.verify(); return c ? `${c} during the evaluation` : null; };
+    const command = (argv: string[], u: RunUser | null, work: string) => {
+      if (!u) return argv;
+      // Firewall path: the sockets as denied at the start, none new (review of mold_v0-324): else refused.
+      const changed = socketGuard?.verify();
+      if (changed) throw Object.assign(new Error(`${changed} during the evaluation, so nothing was scored`), { refuse: true });
+      return wrap!(argv, u, work);
+    };
     /** After every program (mold_v0-324): every process of its user gone (else refused) and what it left in the shared folders and IPC. */
     const clearUser = (u: RunUser | null) => {
       if (!u) return;
       if (!killUntilGone(u)) throw Object.assign(new Error(`a program's processes (uid ${u.uid}) would not end, so nothing was scored`), { refuse: true });
-      sweepUserFiles(u.uid);
+      sweepUserFiles(u.uid, sweepRoots);
     };
+    /** A program whose isolation could not be made (the wrapper's word on fd 3): refused, never scored as its failure. */
+    const madeAsItMust = (r: ProgramRun) => { if (r.isolation) throw Object.assign(new Error(`a program's isolation could not be made (${r.isolation.slice(0, 300)}), so nothing was scored`), { refuse: true }); };
     const outOfTime = () => finish({ cases: [], tampered: null, error: `the evaluation ran past its run's time limit after ${results.length} of ${cases.length} cases, so nothing was scored` }, null);
     const builtinFile = start.test.candidate_command[0] === "builtin:file" ? start.test.candidate_command[1]! : null;
     const runOne = async (dir: string, user: RunUser | null, name: string, c: EvalCase): Promise<{ output: string | null; why: string | null }> => {
@@ -383,8 +454,9 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       }
       // It gets the input only: never the expected answer, the test's folder, the other's, or the runner's own user.
       const work = freshWork(name, user);
-      const r = await runProgram(command(start.test.candidate_command, user), { cwd: dir, input: JSON.stringify({ id: c.id, input: c.input }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: work, TMPDIR: work, EVAL: "1" } });
+      const r = await runProgram(command(start.test.candidate_command, user, work), { cwd: dir, input: JSON.stringify({ id: c.id, input: c.input }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: work, TMPDIR: work, EVAL: "1" }, ...(socketGuard ? { watch } : {}) });
       clearUser(user);
+      madeAsItMust(r);
       return r.ok ? { output: r.stdout, why: null } : { output: null, why: r.why };
     };
     const builtinScorer = start.test.scorer_command[0]?.startsWith("builtin:") ? start.test.scorer_command[0] : null;
@@ -392,8 +464,9 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       if (output === null) return {};
       if (builtinScorer) return builtinScore(builtinScorer, c, output);
       const work = freshWork("scorer", scorerUser);
-      const s = await runProgram(command(start.test.scorer_command, scorerUser), { cwd: testDir, input: JSON.stringify({ id: c.id, input: c.input, expected: c.expected, output }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: scorerHome, TMPDIR: work } });
+      const s = await runProgram(command(start.test.scorer_command, scorerUser, work), { cwd: testDir, input: JSON.stringify({ id: c.id, input: c.input, expected: c.expected, output }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: scorerHome, TMPDIR: work }, ...(socketGuard ? { watch } : {}) });
       clearUser(scorerUser);
+      madeAsItMust(s);
       if (!s.ok) return {};
       try { const v = JSON.parse(s.stdout) as Record<string, unknown>; return Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]))); }
       catch { return {}; }
@@ -422,11 +495,16 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     return finish({ cases: [], tampered: null, error: `the evaluation failed: ${(e as Error).message}`.slice(0, 500) }, (e as Error).message);
   } finally {
     clearInterval(beat);
-    // Every process of the three gone first (mold_v0-324): only then are the sockets and the network given back.
-    for (const u of [candidateUser, championUser, scorerUser]) if (u) { killUntilGone(u); sweepUserFiles(u.uid); }
-    try { undoSockets?.(); } catch { /* the sandbox goes with its entries */ }
-    try { undoFirewall?.(); } catch { /* the sandbox goes with its rules */ }
-    for (const u of owned) await u.release().catch(() => false);
+    // Every process of the three gone first (mold_v0-324): only then are the sockets and the network given back. A user
+    // whose processes would not end keeps them shut out (rules and entries stay) and its lease is kept (quarantined).
+    const stuck = new Set<number>();
+    for (const u of [candidateUser, championUser, scorerUser]) if (u) { if (!killUntilGone(u)) stuck.add(u.uid); sweepUserFiles(u.uid, sweepRoots); }
+    if (stuck.size) console.error(`evaluation ${run.id}: processes of uid ${[...stuck].join(", ")} would not end: their firewall rules, socket entries and leases are kept`);
+    else {
+      try { socketGuard?.undo(); } catch { /* the sandbox goes with its entries */ }
+      try { undoFirewall?.(); } catch { /* the sandbox goes with its rules */ }
+    }
+    for (const u of owned) if (!stuck.has(u.uid)) await u.release().catch(() => false);
     rmSync(scratch, { recursive: true, force: true });
   }
 }

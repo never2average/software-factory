@@ -18,13 +18,16 @@ export interface JudgeSpec {
   candidate_command: string[]; scorer_command: string[]; timeout_seconds: number; metric: string; floors: string[];
   /** "auto": a namespace each where one can be made, else the firewall; "firewall": the firewall always. */
   network?: "auto" | "firewall"; deadline_seconds?: number; control?: { host: string; port: number };
-  /** A unix socket the runner listens on, connectable by anyone: the evaluation's users must not reach it (tests). */
-  plant_socket?: string;
+  /** Unix sockets the runner listens on, connectable by anyone (`recreate`: made again every 200 ms): never reached (tests). */
+  plant_sockets?: { path: string; recreate?: boolean }[];
+  /** A folder anyone may write to, made for the evaluation (tests): nothing of a program's may be left in it. */
+  world_writable_dir?: string;
 }
 export interface JudgeOut {
   control: string;
   result: { cases: { id: string; candidate: number | null; baseline: number | null; floors: Record<string, number | null> }[]; tampered: string | null; error?: string | null } | null;
   events: { type: string; data?: Record<string, unknown> }[]; completion: { outcome: string; error?: string } | null; ms: number;
+  left_in_world_writable?: string[];
 }
 
 /** A folder only root reads, holding a copy of the inputs at test/, candidate/, champion/: what the run users never see. */

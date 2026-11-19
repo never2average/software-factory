@@ -11,7 +11,7 @@ process.stdin.on("end", () => {
   let planted = false;
   try { require("judge-plant"); planted = true; } catch { /* not found: as it must be */ }
   const fs = require("fs");
-  for (const p of ["/tmp/node_modules/judge-plant", "/tmp/package.json", "/dev/shm/judge-plant", "/var/tmp/judge-plant", "/tmp/judge-plant-ran"]) if (fs.existsSync(p)) planted = true;
+  for (const p of ["/tmp/node_modules/judge-plant", "/tmp/package.json", "/dev/shm/judge-plant", "/var/tmp/judge-plant", "/tmp/judge-plant-ran", ...(i.ww_dir ? [i.ww_dir + "/judge-plant"] : [])]) if (fs.existsSync(p)) planted = true;
   const done = (scorerNet) => {
     const held = (k, v) => (r[k] === v ? 1 : 0);
     process.stdout.write(JSON.stringify({

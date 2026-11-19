@@ -19,6 +19,11 @@
 //     no namespace can be made there (no CAP_SYS_ADMIN), so the firewall path is taken, and holds.
 //  4. The same container without NET_ADMIN: neither a namespace nor the firewall: refused, with nothing run or measured.
 //  5. The run's own deadline: an evaluation that would outlast it is refused with nothing scored.
+//  6. A run container where a local socket is deleted and made again while the evaluation runs (a resolver restarting):
+//     a new inode without the deny entry, found before the next program: refused, nothing scored.
+// Each run also plants a socket outside /run and a folder anyone may write to (as /var/crash is): on the namespace path
+// the file systems are read-only to the programs but their own work folder and private tmpfs mounts (/run among them, so
+// a socket made again there is out of reach too); on the firewall path what a user left there is swept after each program.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -51,12 +56,16 @@ const listen = (host: string) => new Promise<{ port: number; hits: () => number 
 
 const FLOORS = ["net_blocked", "loopback_blocked", "dns_blocked", "expected_hidden", "scratch_hidden", "champion_hidden", "test_unwritable", "secret_absent", "unix_blocked", "plant_absent", "scorer_net_blocked"];
 /** One evaluation's folder: the test (cases and scorer), the candidate (mult 2) and the baseline (mult 1, with a file of its own). */
-function setUp(name: string, o: { outside: { host: string; port: number }; loopback: number; specDir?: string; timeout: number }) {
+function setUp(name: string, o: { outside: { host: string; port: number }; loopback: number; specDir?: string; timeout: number; recreate?: boolean; hangFirst?: boolean }) {
+  // A socket under /run made again every 200 ms (a resolver restarting), one outside /run, and a folder anyone may write to.
+  const plants = [{ path: `/run/judge-plant-${name}.sock`, recreate: !!o.recreate }, { path: `/var/lib/judge-plant-${name}.sock` }];
+  const ww = `/var/lib/judge-ww-${name}`;
   const dir = path.join(work, name);
   for (const d of ["test", "candidate", "champion"]) mkdirSync(path.join(dir, d), { recursive: true });
   copyFileSync(path.join(FIX, "test", "score.cjs"), path.join(dir, "test", "score.cjs"));
-  const input = (x: number, mode?: string) => ({ x, ...(mode ? { mode } : {}), outside: o.outside, loopback: o.loopback, cases_path: "cases.json", spec_cases: path.join(o.specDir ?? dir, "test", "cases.json"), secret_name: "JUDGE_FAKE_SECRET", plant_socket: `/run/judge-plant-${name}.sock` });
-  const cases = [1, 2, 3, 4, 5].map((x) => ({ id: `c${x}`, input: input(x), expected: 2 * x })).concat([{ id: "hang", input: input(6, "sleep"), expected: 12 }]);
+  const input = (x: number, mode?: string) => ({ x, ...(mode ? { mode } : {}), outside: o.outside, loopback: o.loopback, cases_path: "cases.json", spec_cases: path.join(o.specDir ?? dir, "test", "cases.json"), secret_name: "JUDGE_FAKE_SECRET", plant_sockets: plants.map((p) => p.path), ww_dir: ww });
+  const answered = [1, 2, 3, 4, 5].map((x) => ({ id: `c${x}`, input: input(x), expected: 2 * x })), hang = { id: "hang", input: input(6, "sleep"), expected: 12 };
+  const cases = o.hangFirst ? [hang, ...answered] : [...answered, hang];
   writeFileSync(path.join(dir, "test", "cases.json"), JSON.stringify({ cases }));
   for (const d of ["candidate", "champion"]) copyFileSync(path.join(FIX, "candidate", "run.cjs"), path.join(dir, d, "run.cjs"));
   writeFileSync(path.join(dir, "candidate", "lib.json"), JSON.stringify({ mult: 2 }));
@@ -65,7 +74,7 @@ function setUp(name: string, o: { outside: { host: string; port: number }; loopb
   const spec = (extra: Partial<JudgeSpec> = {}): JudgeSpec => ({
     test_dir: path.join(dir, "test"), candidate_dir: path.join(dir, "candidate"), champion_dir: path.join(dir, "champion"), cases_path: "cases.json",
     candidate_command: ["node", "run.cjs"], scorer_command: ["node", "score.cjs"], timeout_seconds: o.timeout, metric: "score", floors: FLOORS,
-    control: o.outside, plant_socket: `/run/judge-plant-${name}.sock`, ...extra });
+    control: o.outside, plant_sockets: plants, world_writable_dir: ww, ...extra });
   return { dir, spec };
 }
 type Out = JudgeOut;
@@ -76,11 +85,12 @@ function holds(out: Out, network: string, timeout: number) {
   assert.ok(out.result && !out.result.error && !out.result.tampered, JSON.stringify(out.result));
   const iso = out.events.find((e) => e.type === "evaluation_isolation");
   assert.equal(iso?.data?.network, network, "the isolation used is the run's event"); assert.equal(iso?.data?.users, 3);
-  assert.ok(Number(iso?.data?.sockets_denied) >= 1, "the planted socket (at least) was covered or denied");
+  assert.ok(Number(iso?.data?.sockets_denied) >= 2, "the planted sockets (at least) were covered or denied");
+  assert.deepEqual(out.left_in_world_writable, [], "nothing a program wrote is left in a folder anyone may write to");
   const byId = Object.fromEntries(out.result!.cases.map((c) => [c.id, c]));
   for (const x of [1, 2, 3, 4, 5]) {
     const c = byId[`c${x}`]!;
-    assert.equal(c.candidate, 1, `c${x}: the candidate's score came back`); assert.equal(c.baseline, 0, `c${x}: the baseline's score came back`);
+    assert.equal(c.candidate, 1, `c${x}: the candidate's score came back (${JSON.stringify(c)})`); assert.equal(c.baseline, 0, `c${x}: the baseline's score came back (${JSON.stringify(c)})`);
     for (const f of FLOORS) assert.equal(c.floors[f], 1, `c${x}: ${f} held (${JSON.stringify(c.floors)})`);
   }
   assert.equal(byId.hang!.candidate, null, "the hung candidate scored nothing"); assert.equal(byId.hang!.baseline, null);
@@ -108,14 +118,15 @@ try {
     assert.equal(outside.hits() - before, 1, "only the runner's own control connection arrived");
     assert.equal(spawnSync("sh", ["-c", "nft list tables 2>/dev/null | grep -c app_eval_"], { encoding: "utf8" }).stdout.trim(), "0", "the evaluation's firewall table is gone after it");
   });
-  await item("2. this machine, the namespace path: the same, each program in an empty network", async () => {
-    const s = setUp("ns", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT });
+  await item("2. this machine, the namespace path: the same, each program in an empty network, the file systems read-only but its own (a socket made again meanwhile out of reach too)", async () => {
+    const s = setUp("ns", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT, recreate: true });
     holds(judgeHere(s.spec({ network: "auto" }), secretEnv()), "netns", TIMEOUT);
   });
   await item("5. the run's own deadline: an evaluation that would outlast it is refused, nothing scored", async () => {
-    const s = setUp("late", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT });
-    // A minute and a half: past the minute kept to report, about 30 s to measure in, less than the cases take.
-    const out = judgeHere(s.spec({ network: "auto", deadline_seconds: 75 }), secretEnv());
+    // The hung case first, with 5 s to measure in (the deadline less the minute kept to report): the run's deadline, not
+    // the test's 6 s limit, cuts it, whatever the machine's speed.
+    const s = setUp("late", { outside: { host: "127.0.0.1", port: outside.port }, loopback: loop.port, timeout: TIMEOUT, hangFirst: true });
+    const out = judgeHere(s.spec({ network: "auto", deadline_seconds: 65 }), secretEnv());
     assert.equal(out.completion?.outcome, "succeeded", "the run itself ends; the API refuses the evaluation");
     assert.deepEqual(out.result?.cases, []);
     assert.match(out.result?.error ?? "", /ran past its run's time limit after \d of 6 cases, so nothing was scored/);
@@ -125,19 +136,29 @@ try {
   const sock = dockerSocket();
   const image = process.env.JUDGE_RUN_IMAGE || "";
   const why = !existsSync(sock) ? "no Docker socket" : !image ? "JUDGE_RUN_IMAGE names no runner image (one built from this codebase's Dockerfile)" : null;
-  const inContainer = async (name: string, drop: string[] = []): Promise<Out | string> => {
+  const inContainer = async (name: string, drop: string[] = [], recreate = false): Promise<Out | string> => {
     if (why) return why;
     const gw = await bridgeGateway(sock);
     if (!gw) return "the Docker bridge network has no gateway address";
     const out = await listen(gw);
     const lo = 45000 + Math.floor(Math.random() * 1000); // a port inside the container; nothing listens there: blocked either way
-    const s = setUp(name, { outside: { host: gw, port: out.port }, loopback: lo, specDir: "/spec", timeout: TIMEOUT });
+    const s = setUp(name, { outside: { host: gw, port: out.port }, loopback: lo, specDir: "/spec", timeout: TIMEOUT, recreate });
     return judgeInContainer(s.spec(), { image, drop, sock, ttlSeconds: 300, env: { ...secretEnv(), APP_WORKER_TOKEN: `fake-${randomBytes(8).toString("hex")}` } });
   };
   await item("3. a run container: no namespace can be made, the firewall path holds", async () => {
     const out = await inContainer("ctr");
     if (typeof out === "string") return out;
     holds(out, "firewall", TIMEOUT);
+  });
+  await item("6. a run container where a local socket is made again during the evaluation: refused, nothing scored", async () => {
+    const out = await inContainer("again", [], true);
+    if (typeof out === "string") return out;
+    assert.equal(out.completion?.outcome, "succeeded", "the run ends; the API refuses the evaluation");
+    assert.deepEqual(out.result?.cases, []);
+    console.log(`    (refused: ${out.result?.error})`);
+    // Usually found before or while a program runs ("was made again"); made again in the moment the sockets were first denied, refused then.
+    assert.match(out.result?.error ?? "", /\/run\/judge-plant-again\.sock/);
+    assert.match(out.result?.error ?? "", /(was made again|lost its deny entry for uid \d+|appeared: [^,]*) during the evaluation\)?, so nothing was scored$|setfacl could not deny .+ so nothing was run or measured$|a probe got through, uid \d+: \/run\/judge-plant-again\.sock.+so nothing was run or measured$/);
   });
   await item("4. a run container without NET_ADMIN: neither a namespace nor the firewall: refused, nothing run or measured", async () => {
     const out = await inContainer("nocap", ["NET_ADMIN"]);
