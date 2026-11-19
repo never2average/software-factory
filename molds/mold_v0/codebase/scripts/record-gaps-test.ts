@@ -222,8 +222,8 @@ try {
     for (const e of sent) {
       assert.doesNotMatch(e.text + e.subject, /Finding g|B's b1|B's g2/, "a sealed title never goes in an email");
       const inA = new RegExp(`^owner\\+${A.orgId}-`).test(e.to[0]);
-      if (inA) { assert.match(e.text, /\(g5\): due 2026-10-22/); assert.match(e.text, /\(g2\): due 2026-10-25/); assert.doesNotMatch(e.text, /b1/); }
-      else { assert.match(e.text, /\(b1\): due 2026-10-23/); assert.doesNotMatch(e.text, /g5|g2/); }
+      if (inA) { assert.match(e.text, /\(g5\): due 2026-10-22/); assert.match(e.text, /\(g2\): due 2026-10-25/); assert.doesNotMatch(e.text, /\bb1\b/); }
+      else { assert.match(e.text, /\(b1\): due 2026-10-23/); assert.doesNotMatch(e.text, /\bg5\b|\bg2\b/); } // whole words: the workspace names are random
     }
     // Over HTTP, A's owner sees A's notices with their titles; B's owner B's.
     const tok = await http.signIn(A, "owner");
