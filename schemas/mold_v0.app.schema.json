@@ -6212,7 +6212,13 @@
                                           "content_type": {
                                             "type": "string",
                                             "maxLength": 100,
-                                            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*\\/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+                                          },
+                                          "hint": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400,
+                                            "pattern": "^[^\\n\\r{}<>]*$"
                                           }
                                         },
                                         "additionalProperties": false
@@ -6275,7 +6281,13 @@
                                               "content_type": {
                                                 "type": "string",
                                                 "maxLength": 100,
-                                                "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*\\/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+                                              },
+                                              "hint": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 400,
+                                                "pattern": "^[^\\n\\r{}<>]*$"
                                               }
                                             },
                                             "additionalProperties": false
@@ -6290,13 +6302,24 @@
                                       "hints": {
                                         "type": "object",
                                         "propertyNames": {
-                                          "type": "string"
+                                          "type": "string",
+                                          "pattern": "^[45]\\d\\d$"
                                         },
                                         "additionalProperties": {
                                           "type": "string",
                                           "minLength": 1,
                                           "maxLength": 400,
                                           "pattern": "^[^\\n\\r{}<>]*$"
+                                        },
+                                        "maxProperties": 8
+                                      },
+                                      "binds": {
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
                                         }
                                       },
                                       "timeout_seconds": {

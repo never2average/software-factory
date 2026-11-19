@@ -4101,10 +4101,19 @@ answer is not JSON, such as git's push discovery `info/refs?service=git-receive-
 `if_empty: {field, url, expect?}` (the address, and its expect, used when that optional plain field of the record is
 empty: "the named team's own read, or the account's when none is named"; the field is in the probe's address, never in
 the other one, never a field deciding the host; both addresses are at the same host, written by the pack, so the field
-decides no destination and binds no secret) and `hints: {"<4xx|5xx>": "<sentence>"}` (the pack's own plain sentence
-added to the words when the service answers that status: what its provider's tokens need). A refusal answered in plain
-text (`text/plain`) gives its first line, cleaned like a JSON message. Test: `npx tsx scripts/connection-test-test.ts`
-(section 5).
+decides no host; without its own `expect` the other address is read as a plain 2xx; a blank value is empty),
+`hints: {"<4xx|5xx>": "<sentence>"}` (at most 8: the pack's own plain sentence added to the words when the service
+answers that status: what its provider's tokens need) and `expect.hint` (a sentence added when a working status's answer
+is not the one read: `limited: true` from a team API, "the token reaches this team only partly"). A refusal answered in
+plain text (`text/plain`) gives its first line, cleaned like a JSON message; every secret is also cut in its
+address-escaped and base64 forms. **Bound by default**: a probe that sends a secret (in a header or `basic_auth`) binds
+it to every field of its address (and of `if_empty`'s), and `binds: [field, ...]` adds others (a POST body's database),
+through the same rule as above (`src/connection-test-config.ts` `boundFields`, `src/secret-binding.ts`): a person who may
+edit a repository connection changes its owner or name, or a hosting account's team ID, without typing the token again,
+and the token is cleared, so Test never points the owner's token at another private repository or team. For example a
+GitHub repository probe at `https://github.com/{owner}/{repo_name}.git/...` with its token in `basic_auth` binds
+`owner` and `repo_name`; a hosting probe at `https://api.example.com/v2/teams/{account_id}` binds `account_id`. Test:
+`npx tsx scripts/connection-test-test.ts` (section 5).
 
 **Signed kinds (mold_v0-313)** (`src/connection-test-signed.ts`): a probe may name a `kind` other than the default
 `"http"`, for a building block a bearer header cannot test. The kind fixes its hosts and its call; the pack names only

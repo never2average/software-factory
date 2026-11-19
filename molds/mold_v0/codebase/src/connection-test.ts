@@ -198,9 +198,13 @@ export function safeSummary(body: Buffer, secrets: readonly string[], contentTyp
 }
 /** A Content-Type's media type, lower case, without its parameters ("text/plain; charset=UTF-8" is "text/plain"). */
 export const mediaType = (v: string | undefined) => (v ?? "").split(";")[0]!.trim().toLowerCase();
+/** mold_v0-326: a secret as an answer may echo it: itself, escaped for an address, and base64 encoded (longest first). */
+export const secretForms = (x: string) => [...new Set([x, encodeURIComponent(x), Buffer.from(x, "utf8").toString("base64"), Buffer.from(x, "utf8").toString("base64").replace(/=+$/, "")])]
+  .sort((a, b) => b.length - a.length);
+const cutSecrets = (t: string, secrets: readonly string[]) =>
+  secrets.filter((x) => x.length >= 4).flatMap(secretForms).sort((a, b) => b.length - a.length).reduce((w, f) => w.split(f).join("…"), t);
 export function cleanWords(s: string, secrets: readonly string[]): string | null {
-  let t = s;
-  for (const x of secrets) if (x.length >= 4) t = t.split(x).join("…");
+  let t = cutSecrets(s, secrets);
   t = t.replace(/[A-Za-z0-9_\-+/=.]{24,}/g, "…").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").replace(/[{}<>]/g, "").trim();
   if (!t) return null;
   return t.length > SUMMARY_MAX ? `${t.slice(0, SUMMARY_MAX - 1)}…` : t;
@@ -291,7 +295,8 @@ export async function runProbe(key: string, p: ConnectionProbe, vals: ProbeValue
     // mold_v0-326: the other address (and its expect) when the record leaves its optional field empty.
     const emptied = p.if_empty && !vals.sealed.has(p.if_empty.field) && asText(vals.plain[p.if_empty.field]) === "";
     const url = emptied ? p.if_empty!.url : p.url;
-    const expect = emptied ? (p.if_empty!.expect ?? p.expect) : p.expect;
+    // Its own expect, or a plain 2xx (the main expect reads the other address's answer). asText trims: blank is empty.
+    const expect = emptied ? (p.if_empty!.expect ?? { status: "2xx" as const }) : p.expect;
     const raw = await fill(url, vals, "url", secrets);
     let u: URL;
     try { u = new URL(raw); } catch { throw new ProbeError("not_ready", `the address this test makes from the record is not a web address (check ${placeholders(url).map(vals.label).join(", ") || "it"})`); }
@@ -341,14 +346,14 @@ export async function runProbe(key: string, p: ConnectionProbe, vals: ProbeValue
     }
     // mold_v0-326: a working answer of the media type the probe expects (a sign-in page is not git's answer).
     if (expect?.content_type && mediaType(w.headers["content-type"]) !== expect.content_type.toLowerCase())
-      return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but not with the ${expect.content_type} answer this test reads.`);
+      return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but not with the ${expect.content_type} answer this test reads.${expect.hint ? ` ${expect.hint}` : ""}`);
     if (expect?.json_path) {
       let j: unknown;
       try { j = JSON.parse(w.body.toString("utf8")); } catch { return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but not with the JSON this test reads.`); }
       const v = atPath(j, expect.json_path);
       if (expect.equals !== undefined ? v !== expect.equals : v === undefined || v === null || v === "")
         return answer(false, "unexpected", `It does not work yet: ${at} answered ${status}, but ${expect.json_path} ${v === undefined ? "is not in its answer"
-          : expect.equals === undefined ? "is empty" : `is ${shortValue(v, secrets)}, not ${JSON.stringify(expect.equals)}`}.`);
+          : expect.equals === undefined ? "is empty" : `is ${shortValue(v, secrets)}, not ${JSON.stringify(expect.equals)}`}.${expect.hint ? ` ${expect.hint}` : ""}`);
     }
     return answer(true, "working", `It works: ${at} answered ${status} in ${Date.now() - started} ms.`);
   } catch (e) {
@@ -363,7 +368,7 @@ const shortValue = (v: unknown, secrets: readonly string[]) => {
   return typeof v === "number" || typeof v === "boolean" ? String(v) : "another value";
 };
 /** The last guard: no secret in the words, whatever built them. */
-export const cleanAnswer = (words: string, secrets: readonly string[]) => secrets.reduce((t, x) => (x.length >= 4 ? t.split(x).join("…") : t), words);
+export const cleanAnswer = (words: string, secrets: readonly string[]) => cutSecrets(words, secrets);
 
 // ---------------------------------------------------------------- the record
 
