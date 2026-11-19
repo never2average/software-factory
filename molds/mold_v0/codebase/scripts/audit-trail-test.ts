@@ -103,6 +103,21 @@ async function words() {
   assert.equal(R.looksSecret(dashKey), true, "a key whose public six hold - and _: still a secret in a body");
   assert.equal(R.maskHeader("authorization", `Bearer ${dashKey}`), `Bearer oct_a-b_cd${M}`, "and its public prefix kept in Authorization");
   assert.equal(R.maskHeader("authorization", `Bearer ${["ab", "_", "Zx9-Qw", "0123456789abcdefgh"].join("")}`), `Bearer ${M}`, "an unknown prefix: masked whole");
+  // mold_v0-323: every prefix the app issues is a key (admin and agent tool tokens among them), in a body as anywhere;
+  // a key in the address (/mcp/<key>, the journeys webhook's /nudges/<secret>) is masked with its listed prefix kept,
+  // in the request's path and the trail's path column (maskPath); a word with a generic prefix is kept, a key is not.
+  const rnd = (n: number) => `Qz7${"aB3-x_Y9".repeat(4)}`.slice(0, n);
+  const adm = ["ad", "m_", rnd(30)].join(""), hst = ["hs", "t_", rnd(26)].join(""), ogw = ["og", "w_", rnd(30)].join("");
+  const ab = R.maskBody({ a: adm, h: hst, g: ogw, note: "app_settings_dashboard", policy: "key_rotation_policy_2024", dev: ["s", "k_", rnd(30)].join("") }) as any;
+  assert.deepEqual(ab, { a: M, h: M, g: M, note: "app_settings_dashboard", policy: "key_rotation_policy_2024", dev: M },
+    "adm_, hst_ and ogw_ tokens masked in a body; a real-shaped sk_ key masked; words with a generic prefix kept");
+  assert.equal(R.looksSecret("app_settings_dashboard"), false); assert.equal(R.looksSecret("key_rotation_policy_2024"), false);
+  const routeKey = ["oct", "_", "R_7k-Z", rnd(26)].join("");
+  assert.equal(R.maskPath(`/mcp/${routeKey}`), `/mcp/oct_R_7k-Z${M}`, "/mcp/<key>: masked, its listed prefix kept");
+  assert.equal(R.maskPath("/api/journeys/nudges/plain-shared-secret"), `/api/journeys/nudges/${M}`, "the webhook's secret in its address: masked whole");
+  assert.equal(R.maskPath("/api/data/app_settings_dashboard/x"), "/api/data/app_settings_dashboard/x", "an ordinary route kept");
+  assert.equal(R.maskPath(`/api/data/notes/${adm}`), `/api/data/notes/adm_${rnd(6)}${M}`, "a key-shaped segment anywhere: masked, prefix kept");
+  assert.equal(R.captureRequest({ method: "POST", path: `/mcp/${routeKey}`, headers: {}, body: undefined }).path, `/mcp/oct_R_7k-Z${M}`, "the kept request's path too");
   assert.equal(h.headers["proxy-authorization"], `Basic ${M}`);
   assert.equal(h.headers.cookie, M); assert.equal(h.headers["set-cookie"], M);
   assert.equal(h.headers["x-api-key"], `sk_live01${M}`, "X-Api-Key: its prefix kept");

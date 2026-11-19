@@ -17,7 +17,11 @@
  *             contents (base64, data: addresses, long opaque strings); and any value that looks like a credential
  *             whatever its name (a bearer token, a JWT, a PEM block, a prefixed key). A process's first request,
  *             before the areas are loaded, has every body value masked.
+ *   route     a credential in the address (the legacy /mcp/<key>, /api/journeys/nudges/<secret>, any segment shaped
+ *             like one), its public prefix kept: in the request's path and the platform trail's path column (maskPath)
  */
+
+import { prefixedKey } from "./key-shapes.js";
 
 export const MASK = "••••";
 /** Each entry's request is at most this many bytes of JSON; a longer one keeps its headers and the body's first part. */
@@ -53,10 +57,25 @@ export function secretName(name: string): boolean {
 const DROPPED_HEADER = /^(x-forwarded-for|x-real-ip|forwarded|cf-connecting-ip|true-client-ip|x-client-ip|x-vercel-forwarded-for|x-vercel-proxied-for|x-vercel-ip-.*|cf-ipcountry|x-vercel-ip)$/i;
 
 /** A key's public prefix: a known key prefix and six more, as the key list shows it (src/auth.ts createApiKey). Keys are
- *  base64url, so the six may hold - and _; only known prefixes count, so a random token is never kept in part. */
-const KEY_PREFIXES = "oct|sk|pk|rk|whsec|oma|omr|omc|cs|ore|orr|ghp|gho|ghs|ghu|github_pat|glpat|re|app|key";
-const PREFIXED_KEY = new RegExp(`^((?:${KEY_PREFIXES})_)([A-Za-z0-9_-]{6})[A-Za-z0-9_-]{8,}$`, "i");
-const keepPrefix = (v: string) => { const m = PREFIXED_KEY.exec(v); return m ? `${m[1]}${m[2]}${MASK}` : MASK; };
+ *  base64url, so the six may hold - and _; only known prefixes count, so a random token is never kept in part. Which
+ *  prefixes, and when a generic one (sk_, app_, ...) is a key and not a word: src/key-shapes.ts (mold_v0-323), shared
+ *  with the audit key scan. */
+const keepPrefix = (v: string) => { const m = prefixedKey(v); return m ? `${m.prefix}${m.six}${MASK}` : MASK; };
+
+/** Routes whose address carries a credential: the legacy /mcp/<key> and the journeys webhook's /nudges/<secret>. */
+const SECRET_IN_PATH = [/^(\/mcp\/)([^/\s]+)/, /^(\/api\/journeys\/nudges\/)([^/\s]+)/];
+/**
+ * A route as kept (mold_v0-323): a credential in it masked, its public prefix kept as the key list shows it
+ * ("/mcp/oct_ab12cd••••"). The credential routes' own segment always; any other segment that looks like a credential.
+ * Used for the request's path and for the platform trail's path column.
+ */
+export function maskPath(path: string): string {
+  for (const rx of SECRET_IN_PATH) {
+    const m = rx.exec(path);
+    if (m) path = `${m[1]}${keepPrefix(m[2]!)}${path.slice(m[0].length)}`;
+  }
+  return path.split("/").map((p) => (p !== MASK && !p.endsWith(MASK) && looksSecret(p) ? keepPrefix(p) : p)).join("/");
+}
 
 /** One header's value as kept. */
 export function maskHeader(name: string, value: string): string {
@@ -76,7 +95,7 @@ export function looksSecret(v: string): boolean {
   if (/^bearer\s+\S{8,}/i.test(s) || /^basic\s+[A-Za-z0-9+/=]{8,}$/i.test(s)) return true;
   if (/^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$/.test(s)) return true; // a JWT
   if (/-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----/.test(s)) return true;
-  if (PREFIXED_KEY.test(s)) return true;
+  if (prefixedKey(s)) return true;
   if (/^xox[abpr]-[A-Za-z0-9-]{10,}$/.test(s)) return true; // a Slack token
   if (/^(sk-|AKIA|ASIA|AIza)[A-Za-z0-9_-]{12,}$/.test(s)) return true;
   if (/^data:[\w/+.-]+;base64,/i.test(s)) return true; // file contents
@@ -158,7 +177,7 @@ export function captureRequest(r: { method: string; path: string; headers: Recor
       : maskBody(r.body, { areas: masking, maskAll: maskAll || credentialPath(r.path) });
   }
   const tools = mcp ? mcpTools(r.body, masking).map((t) => (maskAll ? { ...t, arguments: maskBody(t.arguments, { maskAll: true }) } : t)) : null;
-  const out: AuditRequest = { method: r.method.slice(0, 16), path: r.path.slice(0, 300), headers, body, ...(tools ? { tools } : {}) };
+  const out: AuditRequest = { method: r.method.slice(0, 16), path: maskPath(r.path).slice(0, 300), headers, body, ...(tools ? { tools } : {}) };
   return capRequest(out);
 }
 

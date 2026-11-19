@@ -69,6 +69,7 @@ SECONDS = {
     "test:agent-icon": 4,
     "test:agent-runner": 33,
     "test:agent-steps": 36,
+    "test:audit-key-scan": 10,
     "test:audit-trail": 18,
     "test:checks": 14,
     "test:clerk-azp": 1,
