@@ -43,7 +43,7 @@ const HOST = ["db", "internal", "acme", "net"].join("."); // joined at run time:
 const CONN = `postgres://app:${PASS}@${HOST}:5432/app`;
 const CONN_MASKED = `postgres://app:••••@${HOST}:5432/app`;
 const SECRETS = [KEY_DASH, KEY_PLAIN, KEY_ROUTE, DEV_KEY, GH, SLACK, PASS];
-const HARMLESS = ["app_settings_dashboard", "key_rotation_policy_2024", `${OCT}ab12cd••••`, "Bearer ••••", "Please look at the quarterly numbers again",
+const HARMLESS = ["app_settings_dashboard", "key_rotation_policy_2024", `${OCT}ab12cd••••`, "Bearer ••••", `Bearer ${OCT}Ab-9xY••••`, `Bearer ${OCT}a1b2c3••••`, "Please look at the quarterly numbers again",
   "https://example.com/docs/getting-started", sha("x"), "re_run_the_import_tomorrow_please"];
 
 try {

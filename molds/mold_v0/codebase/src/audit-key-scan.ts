@@ -145,7 +145,7 @@ export function credentialsIn(s: string): Hit[] {
     add({ start: a, end: a + cred.length, kind: m[1]!.toLowerCase() === "basic" ? "basic credentials" : "bearer token", prefix: null, secret: cred, mask: [a, a + cred.length] });
   }
   // looksSecret's own rule, for the rest (a data: address, a long opaque value, a bearer word).
-  if (!hits.length && looksSecret(s)) {
+  if (!hits.length && looksSecret(s) && !s.includes(MASK)) { // a value already masked ("Bearer oct_ab12cd••••") is not a finding
     const t = s.trim();
     const kind = /^data:/i.test(t) ? "file contents (a data: address)" : /-----BEGIN [A-Z ]*CERTIFICATE-----/.test(t) ? "certificate (PEM)"
       : /^bearer\s/i.test(t) ? "bearer token" : /^basic\s/i.test(t) ? "basic credentials" : t.length >= 256 ? "long opaque value (file contents or a key)" : "credential-shaped value";
