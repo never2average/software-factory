@@ -4424,6 +4424,13 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   afterwards); where one exists and `setfacl` is missing or fails, refused; before and every 250 ms while each program runs
   the sockets are found again: one made again (a new inode, without the entry), a new one or an entry gone ends it and
   refuses the evaluation (a socket made again mid-program is reachable for at most that interval: a known gap of this path).
+  mold_v0-330: the check while a program runs spawns nothing (each socket's inode and ctime, which an ACL change moves,
+  against stamps taken after the entries were set; the full check with getfacl only when one moved, and before each
+  program): the full check every 250 ms held the runner's event loop for most of each interval on a machine with many
+  sockets. A program's result is taken once it has exited and its output has been read to the end, and a program that
+  had already ended when its time limit's timer fired is not cut. Why a program measured nothing (the hung one's "it ran
+  past the test's time limit", a non-zero exit, output that is not JSON) is the run's `evaluation_unscored` event, and
+  the slowest program of each kind that ended by itself, against the limit, is `evaluation_timing`.
   **Between programs** every process of the program's user must be gone (else refused) and what it left is removed: on
   the firewall path in every folder anyone may write to that a run user can reach, on every file system mounted (listed
   once at the start: folders others may not search are not walked into; a walk that does not finish refuses the

@@ -56,18 +56,22 @@ process.stdin.on("end", async () => {
   };
   plant();
   const up = path.resolve("..");
+  // The ways out that wait (a dropped packet is only known by its time-out) are tried at once, not one after another
+  // (mold_v0-330): a run takes about one time-out, far inside the test's limit, on a slow machine too.
+  const [net_, loopback_, dns_, unix_] = await Promise.all([
+    i.outside ? tcp(i.outside.host, i.outside.port) : "untested", i.loopback ? tcp("127.0.0.1", i.loopback) : "untested", lookup(), unix()]);
   const report = {
     answer: (Number(i.x) || 0) * JSON.parse(fs.readFileSync("lib.json", "utf8")).mult,
     uid: process.getuid(),
-    net: i.outside ? await tcp(i.outside.host, i.outside.port) : "untested",
-    loopback: i.loopback ? await tcp("127.0.0.1", i.loopback) : "untested",
-    dns: await lookup(),
+    net: net_,
+    loopback: loopback_,
+    dns: dns_,
     expected: [canRead(path.join(up, "test", i.cases_path || "cases.json")), ...(i.spec_cases ? [canRead(i.spec_cases)] : [])].includes("read") ? "read" : "denied",
     scratch: canList(up),
     champion: canRead(path.join(up, "champion", "champion-only.txt")),
     write_test: canWrite(path.join(up, "test", "planted.txt")),
     secret: secretSeen(),
-    unix: await unix(),
+    unix: unix_,
   };
   process.stdout.write(JSON.stringify(report));
   process.exit(0);
