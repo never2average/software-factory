@@ -120,12 +120,14 @@ export function DateText({ v }: { v: unknown }) {
 }
 
 /** A field's value on the laid-out page: by its type, an enum as its badge, a date and a number in words, the rest as everywhere. */
-function LaidOutValue({ area, base, layout, f, v, recordKey, fact = false, unit, titles }: {
+function LaidOutValue({ area, base, layout, f, v, recordKey, fact = false, unit, titles, linkText }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; f: RecordFieldSpec; v: unknown; recordKey: string;
   /** A header fact's value (an address wraps at its slashes). */
   fact?: boolean; unit?: string;
   /** mold_v0-262: a reference's records' titles (the record's ref_titles of this field). */
   titles?: Record<string, string>;
+  /** mold_v0-329: a fact's words for its web address (link_text). */
+  linkText?: string;
 }) {
   if (isEmptyValue(v)) return <span className='text-muted-foreground'>—</span>;
   if (f.encrypted) return <FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} />;
@@ -141,7 +143,7 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, fact = false, unit,
     ? <span className='tabular-nums' title={`${numberWords(v)} ${unit}`}>{numberWords(v, unit)}</span>
     : <span className='tabular-nums'>{numberWords(v, unit)}</span>;
   // mold_v0-256: an address in a fact wraps at its slashes (never inside a word), a piece too long for its box truncated.
-  if (fact && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
+  if (fact && f.type === 'url' && typeof v === 'string') return <LinkText href={v} text={linkText} />;
   // mold_v0-298: a block (FieldValue may draw a log's table), still inline-sized beside a fact's label.
   return <span className='block whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
 }
@@ -150,11 +152,11 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, fact = false, unit,
  * A web address in a header fact (mold_v0-256): its pieces (after each /, ?, & and =) each kept whole, so it wraps only
  * between them; a piece longer than the fact's box is cut with an ellipsis, the whole address on hover and focus.
  */
-export function LinkText({ href }: { href: string }) {
+export function LinkText({ href, text }: { href: string; /** mold_v0-329: words in place of the address (the address on hover). */ text?: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<a href={href} target='_blank' rel='noopener noreferrer nofollow' className='inline max-w-full underline-offset-4 hover:underline [overflow-wrap:normal] [word-break:normal]' data-link-text='' />}>
-        {linkPieces(href).map((p, i) => <span key={i} className='inline-block max-w-full truncate align-bottom'>{p}</span>)}
+      <TooltipTrigger render={<a href={href} target='_blank' rel='noopener noreferrer nofollow' className={cn('inline max-w-full underline-offset-4 hover:underline [overflow-wrap:normal] [word-break:normal]', text && 'underline')} data-link-text='' />}>
+        {text ?? linkPieces(href).map((p, i) => <span key={i} className='inline-block max-w-full truncate align-bottom'>{p}</span>)}
       </TooltipTrigger>
       <TooltipContent className='max-w-96 break-all'>{href}</TooltipContent>
     </Tooltip>
@@ -696,7 +698,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
                 </FieldCell>
               ) : (
                 <FieldCell key={x.field} label={x.label ?? x.f!.label} copy={copyOf(x.f!, record.data[x.field!])}>
-                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} fact unit={x.unit} titles={record.ref_titles?.[x.field!]} /></span>
+                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} fact unit={x.unit} titles={record.ref_titles?.[x.field!]} linkText={x.link_text} /></span>
                 </FieldCell>
               ))}
             </dl>

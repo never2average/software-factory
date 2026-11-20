@@ -15,6 +15,7 @@
 - A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`: the host packs' tools, then every pack's, `src/server.ts`), per-organisation API keys (hashed) and per-member keys (header-only, expiring, with the member's role; mold_v0-007), sign-in (built-in emailed code and Google, or Clerk; mold_v0-004), client install guides, onboarding, usage analytics, billing and email.
 - An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
 - A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people. Its top bar (both areas, every app; mold_v0-177): search, Docs (and admin's MCP) at one height, the search box's (44px icon buttons on a phone), and a Light / Dark / System theme switcher kept per browser; System follows the device live. Dark is the default, what every console showed before; the pages outside the console stay dark. An inline script in `<head>` (`web/src/components/themes/color-mode.ts`) puts the mode on `<html>` before the first paint.
+  One way to write things (mold_v0-329): a date is "20 Nov 2026", with its time "20 Nov 2026, 11:54 UTC" (seconds in logs; `web/src/lib/display-format.ts` `dayText`, `dateTimeText`, as a record's dates), words such as "3 minutes ago" only where a page means them (`<When>`); an empty list is the one dashed empty state (`features/status/empty-state.tsx`, RecordView and the staff DataList alike); a finished setup checklist folds to "Setup done (N steps)" with Show steps; an in-page tab is never named like the sidebar entry it sits in (staff Accounts: All accounts | Admins; Access requests: Received | Early access form; `gen-packs` warns on a pack's). The account sidebar's last heading is Operations (was Operational: a host pack's `before`/`into` naming it still places there), its entry Connected agents (`/app/connected-apps`).
 - Postgres with versioned migrations (`sql/migrations/NNNN_*.sql`, `src/migrate.ts`, `npm run db:migrate`; proven by `npm run test:migrations`) and row-level security on every tenant table (`sql/migrations/0003_row_level_security.sql`, `src/rls.ts`; proven by `npm run check:rls`), plus optional analytics and archive stores.
 - Two ways to run: its own server (Docker Compose with HTTPS) and Vercel.
 
@@ -418,7 +419,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   dismisses it) and Credentials (a workspace credential per row, opening its details and its Set, Replace or Clear as a full card in the list's place; mold_v0-239) all draw
   `RecordView`, with the page's own empty state guiding the person (a tab's `empty`) and nothing linking to a staff page.
   Boards and timelines stay as they were. Pages a build's original look gives a look of their own (API keys, Usage,
-  Activity, Connected apps, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
+  Activity, Connected agents, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
   workspace sample rows of its own (`testing/console/seed.mts`): every stored workspace area a few records made from its
   fields (an enum through its options, dates around today, a reference to a record the world has) and a few runs of the
   build's job kinds (finished, failed, running; over an asset record when the kind reads one; with results against the
@@ -2560,14 +2561,14 @@ console): the entry whose page it is, its query a subset of the page's (an in-pa
 the page is under (`/admin/accounts/<slug>` under Accounts); the area's home only on itself, or, with no entry of its
 own, the sidebar's first. A record's own page (`/app/records/<area>/<key>`) lights the tab that lists its area (its own
 unfiltered tab first, then a filtered one, then one that merges it; an in-page tab's page), and a few pages outside the
-sidebar light the page they are reached from (`PORTAL_HOMES`, `ADMIN_HOMES`: Journeys the home page, Connected apps
+sidebar light the page they are reached from (`PORTAL_HOMES`, `ADMIN_HOMES`: Journeys the home page, Connected agents
 Profile, Schedules a tab sidebar's runs tab). The footer's API keys and Profile count as entries, lit only when the
 groups have none of their own. A collapsible entry holding the active one opens on load, and the active entry stands
 out: the brand's colour behind it and in its words, and a bar at its edge, in either theme, also in the phone's sheet.
 `npm run test:console-sidebar` walks every console route of a tab build and of a zero-pack build (pages a build lacks
 without a feature, and Docs, excepted) and asserts exactly one entry lit, the right one.
 
-**Connected apps (mold_v0-087).** `/app/connected-apps`: each person's own AI apps signed in to `/mcp`. Under the built-in
+**Connected agents (mold_v0-087; named Connected apps until mold_v0-329).** `/app/connected-apps`: each person's own agents signed in to `/mcp`. Under the built-in
 sign-in (the server is the authorization server, mold_v0-013) it lists every connected app across the person's
 workspaces (`GET /api/oauth/grants`: the app, a metadata-document client by its verified address and a registered one
 marked not verified, the workspace it acts in, when it was allowed, when it was last used: at token issue and, at most
@@ -2577,7 +2578,7 @@ consents or grants (checked against Clerk's OpenAPI specs, 2026-08-20: `/oauth_a
 `revoke_token` needs the token itself; the Frontend API's `/v1/me/oauth/consent/{client_id}` reads one app's scopes for a
 consent screen), so the page says the connections are managed by the sign-in provider, links to the person's Account
 Portal page (derived from the publishable key; else the profile) and says how to disconnect an app from the app. It is an
-optional shell entry: in the shell's own sidebar (Operational), in a declared sidebar as `connected-apps`, hidden with
+optional shell entry: in the shell's own sidebar (Operations), in a declared sidebar as `connected-apps`, hidden with
 `console.hide`. Built-in OAuth also lets a refresh **narrow** its scope (RFC 6749 section 6, migration 0022): the access
 token carries only the scopes asked for, the refresh token keeps its own, never wider (a refused scope leaves the
 refresh token usable). `npm run test:mcp-oauth`,
@@ -3020,7 +3021,7 @@ needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platfor
 **Access** (Credentials, API keys, Allowed origins, Teams), **Connections** (Email, Webhooks, Integrations), **Automation**
 (Alerts), **Data & trust** (Signing), each followed by the packs' own: a workspace record area declared
 `"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
-table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operational. The sidebar follows the
+table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operations. The sidebar follows the
 tab count (`web/src/config/settings.ts`): **0** no Settings entry (Octillion); **1** one entry, `/app/settings` that table
 alone with no strip; **2 to 5** one entry directly below Overview, one in-page strip (the audit app: Credentials | Email); **past
 5** a collapsible Settings entry with one item per group that has a tab, each `/app/settings/<group>` (`access`,

@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { developerConsole } from '@/config/pack-nav.generated';
 import { useOrgLoad } from '@/features/portal/shared';
+import { dateTimeText } from '@/lib/display-format';
 
 type DrainState = 'not_connected' | 'waiting' | 'receiving' | 'silent';
 export interface Drain { receiver: string; areas: string[]; state: DrainState; sources: number; last_received_at: string | null; silent_hours: number; hours_since: number | null }
@@ -23,7 +24,7 @@ async function load(): Promise<Drain[]> {
   return ((await res.json().catch(() => ({}))) as { drains?: Drain[] }).drains ?? [];
 }
 
-const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const when = (iso: string) => dateTimeText(iso);
 const ago = (h: number | null, iso: string | null) => {
   if (!iso) return '';
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));

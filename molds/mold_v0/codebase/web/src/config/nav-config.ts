@@ -117,12 +117,13 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
       ]
     },
     {
-      label: 'Operational',
+      // mold_v0-329: the staff sidebar's word for the same kind of pages (was "Operational"; host-nav.ts still places by it).
+      label: 'Operations',
       items: [
         { title: 'Billing', url: '/app/billing', icon: 'billing', shortcut: ['g', 'b'], items: [] },
         { title: 'Profile', url: '/app/profile', icon: 'account', items: [] },
         // The agents each person signed in to /mcp, with Revoke (mold_v0-087); hideable (console.hide: connected-apps).
-        { title: 'Connected apps', url: '/app/connected-apps', icon: 'plug', items: [] }
+        { title: 'Connected agents', url: '/app/connected-apps', icon: 'plug', items: [] }
       ]
     }
   ]),

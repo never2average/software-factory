@@ -25,7 +25,7 @@ export interface ConnectedApp {
 /** One agent seen connecting (GET /api/app/setup `clients`: its name as it introduced itself, and when last seen). */
 export interface SeenApp { client: string; last: string }
 
-export const PAGE_TITLE = 'Connected apps';
+export const PAGE_TITLE = 'Connected agents';
 export const PAGE_URL = '/app/connected-apps';
 /**
  * mold_v0-298: where the setup steps for connecting an agent are: the home page's connection card (the Setup page, or

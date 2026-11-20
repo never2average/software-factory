@@ -83,7 +83,9 @@ export interface DetailFact { field?: string; label?: string; unit?: string; com
   /** mold_v0-309: left out while it has no value (else "—"). */
   hide_empty?: boolean;
   /** mold_v0-309: shown only while this condition holds on the record. */
-  when?: DetailCondition }
+  when?: DetailCondition;
+  /** mold_v0-329: a url field's fact shown as these words, linked. */
+  link_text?: string }
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
 /** An area's page layout as the build passes it on (pack.json record_areas[].detail). */
 export interface DetailLayout {

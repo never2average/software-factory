@@ -24,6 +24,15 @@ export interface HostNav {
 }
 
 const navs = HOST_NAV as readonly HostNav[];
+/**
+ * A group's former name (mold_v0-329: the account sidebar's "Operational" became "Operations"): a placement written
+ * before still finds it, when no group carries the old name.
+ */
+const FORMER_GROUP: Record<string, string> = { Operational: 'Operations' };
+const groupIndex = (groups: NavGroup[], label: string) => {
+  const i = groups.findIndex((g) => g.label === label);
+  return i >= 0 || !FORMER_GROUP[label] ? i : groups.findIndex((g) => g.label === FORMER_GROUP[label]);
+};
 /** Whether a host pack serves one of the shell's console components (the shell's own pages show it only then). */
 export const hostFeature = (f: string) => navs.some((n) => n.components?.includes(f));
 
@@ -34,15 +43,16 @@ export function placeNav(groups: NavGroup[], placements: readonly HostNavPlaceme
     const items: NavItem[] = p.items.map((i) => ({ title: i.title, url: i.url, icon: i.icon, ...(i.shortcut ? { shortcut: [i.shortcut[0], i.shortcut[1]] as [string, string] } : {}), items: [] }));
     const anchor = p.after ?? p.before;
     if (p.into !== undefined) {
+      const target = out[groupIndex(out, p.into)]?.label;
       out = out.map((g) => {
-        if (g.label !== p.into) return g;
+        if (target === undefined || g.label !== target) return g;
         const i = anchor === undefined ? -1 : g.items.findIndex((x) => x.url === anchor);
         const at = i < 0 ? g.items.length : p.after !== undefined ? i + 1 : i;
         return { ...g, items: [...g.items.slice(0, at), ...items, ...g.items.slice(at)] };
       });
       continue;
     }
-    const i = anchor === undefined ? -1 : out.findIndex((g) => g.label === anchor);
+    const i = anchor === undefined ? -1 : groupIndex(out, anchor);
     const at = i < 0 ? out.length : p.after !== undefined ? i + 1 : i;
     out = [...out.slice(0, at), { label: p.label ?? '', items }, ...out.slice(at)];
   }

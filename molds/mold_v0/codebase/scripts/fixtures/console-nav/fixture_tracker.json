@@ -33,7 +33,7 @@
    ]
   },
   {
-   "label": "Operational",
+   "label": "Operations",
    "items": [
     {
      "title": "Billing",
@@ -52,7 +52,7 @@
      "items": []
     },
     {
-     "title": "Connected apps",
+     "title": "Connected agents",
      "url": "/app/connected-apps",
      "icon": "plug",
      "items": []

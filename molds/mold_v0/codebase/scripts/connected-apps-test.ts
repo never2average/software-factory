@@ -293,7 +293,7 @@ async function browserChecks(w: World) {
     await p.locator(ready).first().waitFor({ timeout: 20000 });
     return { c, p, status: res?.status() ?? 0, asked };
   };
-  /** The trail at the top starts at the sidebar group and ends at "Connected apps" (web/src/hooks/use-breadcrumbs.tsx, mold_v0-298), not the address. */
+  /** The trail at the top starts at the sidebar group and ends at "Connected agents" (web/src/hooks/use-breadcrumbs.tsx, mold_v0-298), not the address. */
   const trail = async (p: any) => (await p.locator("[data-slot='breadcrumb-page']").first().innerText()).trim();
 
   // ---------- 5. axe, light and dark; two widths ----------
@@ -349,7 +349,7 @@ async function browserChecks(w: World) {
       assert.ok((await seen.locator("table").count()) > 0 || /No agents seen yet/.test(seenText), `the agents seen, or the empty note: ${seenText.slice(0, 300)}`);
       assert.equal(await r.p.getByRole("button", { name: /^Revoke/ }).count(), 0, "no Revoke");
       assert.deepEqual(r.asked, [], "the page never asks the built-in list");
-      assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
+      assert.equal(await trail(r.p), "Connected agents", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
     } finally { await r.c.close(); }
     ok("the page (clerk): the managed-by-the-service-you-sign-in-with note, the link to the person's sign-in account and their profile; the agents seen, no Revoke, and the built-in list never asked");
@@ -363,7 +363,7 @@ async function browserChecks(w: World) {
       assert.match(text, /Example App/); assert.match(text, /Verified:\s*app\.example\.com/); assert.match(text, /Test Connector/); assert.match(text, /Not verified/);
       assert.ok(text.includes(w.names.a) && text.includes(w.names.b), "each app's workspace");
       assert.equal(await r.p.getByRole("link", { name: "app.example.com" }).getAttribute("href"), "https://app.example.com/oauth/client.json");
-      assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
+      assert.equal(await trail(r.p), "Connected agents", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
       // Revoke asks first; Cancel changes nothing.
       // mold_v0-298: rows are the standard list's; Revoke is in the row's ⋯ menu.

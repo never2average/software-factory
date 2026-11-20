@@ -24,6 +24,7 @@ import { relative } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import type { Subscription } from './lib';
 import { ApiErrorStatus, isStatusError } from '@/features/status/from-error';
+import { EmptyNotice, emptyNoteOf } from '@/features/status/empty-state';
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'info' | 'neutral';
 const TONES: Record<Tone, string> = {
@@ -140,7 +141,8 @@ export function DataList<T>({ cols, rows, empty, onRow, minWidth = 640, noun, he
         </TableBody>
       </Table>
     </div>
-    {none && <div role='status' className='text-muted-foreground border-b px-4 py-10 text-center text-sm'>{empty}</div>}
+    {/* mold_v0-329: words are the console's one empty state for lists (features/status/empty-state.tsx), as RecordView's. */}
+    {none && <div role='status' className='flex justify-center border-b px-4 py-10'>{typeof empty === 'string' ? <EmptyNotice className='w-full max-w-xl' note={emptyNoteOf(empty)} /> : empty}</div>}
     <TablePager p={p} noun={noun} />
     </div>
   );

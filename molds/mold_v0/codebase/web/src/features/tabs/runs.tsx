@@ -128,7 +128,9 @@ export function RunsTable({ tab, reports, summary }: {
   const deep = featureOn('record_pages') ? { openKey: runParam, onOpenChange: (k: string | null) => void setRunParam(k, { history: 'replace' }) } : {};
   if (card) return card;
   if (error) return <ErrorState error={error} />;
-  const noun = lowerFirst(tab.label);
+  // mold_v0-329: the list's own word (the build's word for a run, or reports), never the tab's label, which now says what
+  // the tab lists ("History"), not what one row is.
+  const noun = reports ? 'reports' : fill('{runs}');
   return (
     <RecordView<Run>
       id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}

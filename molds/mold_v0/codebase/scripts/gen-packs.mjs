@@ -1675,7 +1675,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     const at = `packs/${p.id}/pack.json`;
     if ((t.rail ?? []).length > 2) fail(at, `tabs[${i}].rail: Too big: a home tab's rail takes at most 2 cards (4 with features.overview_cards)`);
     else for (const x of t.rail ?? []) if (x === "recent_runs" || x === "attention") fail(at, `tabs[${i}].rail: ${x} is a card of features.overview_cards, which is off`);
-    if ((t.sparklines ?? []).length > 4) fail(at, `tabs[${i}].sparklines: exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab (5 with features.overview_cards)`);
+    if ((t.sparklines ?? []).length > 4) fail(at, `tabs[${i}].sparklines: 1 to 4 metric names on a list tab (its cards), up to 4 on a home tab (5 with features.overview_cards)`);
   }
   // mold_v0-282: a repository or database field with record_resources off would be a field nothing checks or creates.
   if (!FEATURE_SETTING.record_resources && FEATURE_REQUESTED.record_resources)
@@ -2529,7 +2529,7 @@ const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports", "sections"]
 const SHELL_SIDEBAR = { setup: { label: "Setup", icon: "rocket" }, usage: { label: "Activity", icon: "chartLine" }, billing: { label: "Billing", icon: "billing" },
   profile: { label: "Profile", icon: "account" }, team: { label: "Team", icon: "teams" }, keys: { label: "API keys", icon: "lock" },
   credentials: { label: "Settings", icon: "settings" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" },
-  "connected-apps": { label: "Connected apps", icon: "plug" } };
+  "connected-apps": { label: "Connected agents", icon: "plug" } };
 {
   // API keys need member keys (mold_v0-133). (Two packs' tabs that open one shell page are one sidebar entry: below.)
   for (const t of shownTabs())
@@ -3297,6 +3297,11 @@ if (sidebars && !sidebars.error) {
     }
   }
   if (children.length) console.log(`gen-packs: warning: ${children.length} child area tab(s) beside their parent's in the sidebar (each belongs inside a sections tab with the parent):\n  ${children.join("\n  ")}`);
+  // Warned (mold_v0-329): an in-page tab named like the sidebar entry it sits in ("Audits" inside Audits): the tab strip
+  // repeats the sidebar right above it. Name it by what it lists ("History", "All", "Published").
+  const echoes = shown.filter((t) => sectionParent(t) && String(t.label ?? "").trim().toLowerCase() === String(sectionParent(t).label ?? "").trim().toLowerCase())
+    .map((t) => `${t.pack}/${t.id} (${JSON.stringify(t.label)}) inside ${sectionParent(t).pack}/${sectionParent(t).id}`);
+  if (echoes.length) console.log(`gen-packs: warning: ${echoes.length} in-page tab(s) named like the sidebar entry they sit in (name each by what it lists):\n  ${echoes.join("\n  ")}`);
 }
 refuse();
 // --sidebar (mold_v0-279): the resolved sidebars only, as plain text, for the operator's agreed plan; nothing is written.

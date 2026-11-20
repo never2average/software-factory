@@ -22,6 +22,7 @@ import { EmptyState } from '@/features/tabs/empty';
 import { httpError } from '@/features/status/from-error';
 import { fill } from '@/lib/vocabulary';
 import { cn } from '@/lib/utils';
+import { dateTimeText } from '@/lib/display-format';
 
 interface Retention { keep_last: number | null; keep_days: number | null; source: 'pack' | 'platform' }
 interface Store { store: string; label: string; retention: Retention }
@@ -67,7 +68,7 @@ const writerOf = (v: Version, store: string) => {
  */
 function versionNames(versions: readonly Version[], store: string): Map<number, string> {
   const when = (v: Version, seconds: boolean) => v.committed_at
-    ? new Date(v.committed_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: seconds ? 'medium' : 'short' })
+    ? dateTimeText(v.committed_at, { seconds })
     : 'Not finished';
   const short = versions.map((v) => `${when(v, false)} · ${writerOf(v, store)}`);
   const long = versions.map((v, i) => (short.filter((s) => s === short[i]).length > 1 ? `${when(v, true)} · ${writerOf(v, store)}` : short[i]));
@@ -126,7 +127,7 @@ function StoreView({ store, stores, onPick }: { store: Store; stores: Store[]; o
       key: 'saved', label: 'Saved', title: true, keep: true, type: 'date', value: (v) => v.committed_at,
       render: (v) => (
         <span className='flex items-center gap-2'>
-          <span>{v.committed_at ? new Date(v.committed_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Not finished'}</span>
+          <span>{v.committed_at ? dateTimeText(v.committed_at) : 'Not finished'}</span>
           {v.version === latest && <Badge variant='secondary'>Latest</Badge>}
         </span>
       )

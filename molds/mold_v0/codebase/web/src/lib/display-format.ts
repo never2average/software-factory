@@ -6,6 +6,31 @@ export const num = (n: unknown) => Number(n || 0).toLocaleString();
 // Dropdown options read as their label only: item counts are off app-wide (callers still pass the count).
 export const counted = (label: string, _n?: number | null) => label;
 
+/**
+ * The console's one written date (mold_v0-329), as a record's dates read (features/records/detail-layout.ts dateWords):
+ * "20 Nov 2026", and with its time "20 Nov 2026, 11:54 UTC" (seconds where a list tells apart events in one minute:
+ * "20 Nov 2026, 11:54:07 UTC"). Lists, logs and pages use these; a near date stays in words only where a page means it
+ * ("3 minutes ago", <When>). '' for nothing or a value that is no date.
+ */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const timeOf = (v: string | number | Date | null | undefined) => {
+  if (v == null || v === '') return null;
+  const t = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00Z` : v);
+  return Number.isFinite(t) ? t : null;
+};
+export function dayText(v: string | number | Date | null | undefined): string {
+  const t = timeOf(v);
+  if (t == null) return '';
+  const d = new Date(t);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+export function dateTimeText(v: string | number | Date | null | undefined, opts: { seconds?: boolean } = {}): string {
+  const t = timeOf(v);
+  if (t == null) return '';
+  const d = new Date(t), two = (n: number) => String(n).padStart(2, '0');
+  return `${dayText(t)}, ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}${opts.seconds ? `:${two(d.getUTCSeconds())}` : ''} UTC`;
+}
+
 /** "3h ago"; pair with title={new Date(d).toLocaleString()} for the exact time. */
 export function relative(d: string | Date | null | undefined) {
   if (!d) return 'never';

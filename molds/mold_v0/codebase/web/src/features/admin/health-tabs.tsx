@@ -25,7 +25,7 @@ import { Box } from '@/components/layout/chart-grid';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
 import { developerConsole, settingsPage } from '@/config/pack-nav.generated';
 import { W } from '@/lib/vocabulary';
-import { num, usd } from '@/lib/display-format';
+import { dateTimeText, num, usd } from '@/lib/display-format';
 import { useAdmin } from './lib';
 import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
@@ -584,7 +584,7 @@ function DeployDetails({ r }: { r: StatusData['release'] | undefined }) {
       {row('Commit', r.commit ? <Mono>{r.commit}</Mono> : '—')}
       {row('Mold', <><Mono>{r.mold.schema ?? '—'}</Mono>{r.mold.package ? ` (package ${r.mold.package})` : ''}</>)}
       {row('Last migration', r.last_migration ? <Mono>{`${r.last_migration.version} ${r.last_migration.name}`}</Mono> : '—')}
-      {row('Instance up since', new Date(r.instance_started_at).toLocaleString())}
+      {row('Instance up since', dateTimeText(r.instance_started_at))}
       {row('Runtime', r.runtime)}
     </dl>
   );
