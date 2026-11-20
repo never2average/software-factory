@@ -167,8 +167,9 @@ export function WorkspaceActivityPage() {
       {/* mold_v0-298 (finding A5): the console's standard loading and error states. */}
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards /> : nothing ? (
         <EmptyState id='activity-empty' empty={{
-          title: 'No activity in this period',
-          text: `Activity shows here once an agent connects to this ${data.words.workspace} or someone starts a ${data.words.run}. Setup shows how to connect one; or pick a longer period above.`,
+          // The page is Usage in the sidebar and the trail: the same word here, and the button says where Setup is.
+          title: 'No usage in this period',
+          text: `Usage shows once an agent connects or someone starts a ${data.words.run}. Pick a longer period above, or connect an agent.`,
           cta: { label: 'Go to Setup', href: '/app' }
         }} />
       ) : (

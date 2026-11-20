@@ -70,7 +70,8 @@ async function getJson<T>(url: string): Promise<T> {
 
 // A json value (mold_v0-240, ./json-text.ts): one readable line, never raw JSON.
 const cell = (v: unknown, recordKey?: string) => (v == null ? '' : isDocument(v) ? jsonLine(v, recordKey) : Array.isArray(v) ? v.join(', ') : String(v));
-const where = (area: RecordAreaSpec) => (area.scope === 'platform' ? 'Shared by every workspace (read only)' : "This workspace's own");
+// mold_v0-328: inside a workspace its own records need no saying; only a shared (platform) area says where it lives.
+const where = (area: RecordAreaSpec) => (area.scope === 'platform' ? 'Shared by every workspace (read only)' : '');
 
 /** How many records the list reads in one go (pages of 200, the API's most): search, sort and filter run on these. */
 export const LIST_MAX = 2000;
@@ -524,7 +525,7 @@ export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { a
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (<div className='flex w-full flex-col gap-6'>
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
-            <CardDescription>{area.label} · {where(area)}</CardDescription>
+            <CardDescription>{area.label}{where(area) && <> · {where(area)}</>}</CardDescription>
             <CardTitle className='text-lg leading-snug break-words'>{data.record.title || recordKey}</CardTitle>
           </CardHeader>
           <CardContent className='flex flex-col gap-6 py-2'>

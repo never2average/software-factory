@@ -21,7 +21,7 @@ type BreadcrumbItem = {
 const TITLES: Record<string, string> = {
   admin: 'Admin', app: 'Account', requests: 'Access requests', keys: 'Key vault', agents: 'Harness mix', configuration: 'Agent configuration', 'agent-profiles': 'Agent profiles', accounts: 'Accounts',
   analytics: 'Analytics', health: 'Health', usage: 'Usage', context: 'Context', limits: 'Limits', team: 'Team', billing: 'Billing', profile: 'Profile', company: 'Company', users: 'Users', adoption: 'Adoption', products: 'Products', docs: 'Docs',
-  'connected-apps': 'Connected apps', agent: 'Agents', settings: 'Settings', 'run-analytics': 'Run analytics'
+  'connected-apps': 'Connected apps', agent: 'Agents', finops: 'FinOps', settings: 'Settings', 'run-analytics': 'Run analytics'
 };
 const routeMapping: Record<string, BreadcrumbItem[]> = {};
 
@@ -108,12 +108,16 @@ export function useBreadcrumbs(search = '') {
       const inPage = IN_PAGE_AREAS.get(path);
       if (inPage) return inPage;
       // mold_v0-259: a team's page (/app/settings/teams/<id>): Teams is Settings' tab (no page of its own), the team by its id.
+      // The account's own keys page is API keys (its footer link); 'keys' alone is staff's Key vault.
+      if (path === '/app/keys') return [{ title: 'API keys', link: path }];
       if (path === '/app/settings/teams') return [{ title: 'Teams', link: settingsTabUrl('teams') ?? '/app/settings' }];
       if (path.startsWith('/app/settings/teams/') && index === 3) return [{ title: `Team ${decode(segment)}`, link: path }];
       // A record's key (/admin/records/<area>/<key>) reads as it is written, never capitalised or encoded.
       if (segments[index - 2] === 'records' && index === 3) return [{ title: decode(segment), link: path }];
       // A doc's slug (/admin/docs/budget-rules-spec) reads as words.
-      const name = segments[index - 1] === 'docs' ? segment.replace(/-/g, ' ') : segment;
+      // So does any other page's name made of words (/admin/access-log reads "Access log", never "Access-log"); an id
+      // with digits or capitals in it stays as written.
+      const name = segments[index - 1] === 'docs' || /^[a-z]+(-[a-z]+)+$/.test(segment) ? segment.replace(/-/g, ' ') : segment;
       return [{
         title: PACK_TITLES.get(path) ?? TITLES[segment] ?? name.charAt(0).toUpperCase() + name.slice(1),
         link: path

@@ -70,7 +70,7 @@ function BuiltinConnectedApps() {
   };
   const cols = useMemo<RecordCol<ConnectedApp>[]>(() => [
     // data-connected-app: one per app listed (scripts/connected-apps-test.ts counts them).
-    { key: 'app', label: 'App', title: true, keep: true, type: 'text', className: 'max-w-72', value: (g) => appName(g),
+    { key: 'app', label: 'Agent', title: true, keep: true, type: 'text', className: 'max-w-72', value: (g) => appName(g),
       render: (g) => (
         <span data-connected-app={g.id} className='flex min-w-0 flex-col gap-1'>
           <span className='font-medium'>{appName(g)}</span>
@@ -89,8 +89,8 @@ function BuiltinConnectedApps() {
     // mold_v0-298: 'list' or 'empty' only once the grants arrived (the browser test waits on either as "ready").
     <div data-connected-apps={!data ? 'loading' : grants.length ? 'list' : 'empty'}>
       <RecordView<ConnectedApp>
-        id='app-connected-apps' noun='apps' rows={grants} rowKey={(g) => g.id} cols={cols} loading={!data} exportName='connected-apps'
-        searchText={(g) => `${appName(g)} ${g.client.id_host ?? ''} ${g.workspace.name}`} searchPlaceholder='Search connected apps'
+        id='app-connected-apps' noun='agents' rows={grants} rowKey={(g) => g.id} cols={cols} loading={!data} exportName='connected-apps'
+        searchText={(g) => `${appName(g)} ${g.client.id_host ?? ''} ${g.workspace.name}`} searchPlaceholder='Search agents'
         toolbarAction={<ConnectButton />}
         actions={(g) => [revokeItem(g)]}
         detailTitle={(g) => appName(g)}
@@ -109,7 +109,7 @@ function BuiltinConnectedApps() {
             </Button>
           </div>
         )}
-        empty={{ title: EMPTY.title, text: EMPTY.text, action: EMPTY.cta }}
+        empty={{ title: EMPTY.title, text: EMPTY.text }}
       />
       <AlertDialog open={!!ask} onOpenChange={(o) => !o && setAsk(null)}>
         <AlertDialogContent>
@@ -149,7 +149,7 @@ function HostedConnectedApps() {
   const q = ask ? forgetQuestion(ask.client) : null;
   const link = clerkAccountLink(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const cols = useMemo<RecordCol<SeenApp>[]>(() => [
-    { key: 'client', label: 'App', title: true, keep: true, type: 'text', value: (c) => c.client, render: (c) => <span className='font-medium'>{c.client}</span> },
+    { key: 'client', label: 'Agent', title: true, keep: true, type: 'text', value: (c) => c.client, render: (c) => <span className='font-medium'>{c.client}</span> },
     { key: 'last', label: 'Last seen', type: 'date', value: (c) => c.last, render: (c) => <When d={c.last} /> },
   ], []);
   return (
@@ -172,8 +172,8 @@ function HostedConnectedApps() {
       {error ? <ErrorState error={error} /> : (
         <div data-connected-apps-seen=''>
           <RecordView<SeenApp>
-            id='app-connected-apps-seen' compact noun='apps' rows={clients} rowKey={(c) => c.client} cols={cols} loading={!data} exportName='connected-apps'
-            searchText={(c) => c.client} searchPlaceholder='Search apps'
+            id='app-connected-apps-seen' compact noun='agents' rows={clients} rowKey={(c) => c.client} cols={cols} loading={!data} exportName='connected-apps'
+            searchText={(c) => c.client} searchPlaceholder='Search agents'
             toolbarAction={<ConnectButton />}
             actions={(c) => [{ label: 'Remove from this list', icon: <Icons.trash />, destructive: true, disabled: busy === c.client, onSelect: () => setAsk(c) }]}
             detailTitle={(c) => c.client}
@@ -193,7 +193,7 @@ function HostedConnectedApps() {
                 </Button>
               </div>
             )}
-            empty={{ title: SEEN_EMPTY.title, text: SEEN_EMPTY.text, action: SEEN_EMPTY.cta }}
+            empty={{ title: SEEN_EMPTY.title, text: SEEN_EMPTY.text }}
           />
           {partial && <p className='text-muted-foreground mt-2 text-xs' data-connected-apps-partial=''>{partial}</p>}
         </div>

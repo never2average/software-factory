@@ -28,6 +28,7 @@ import { ErrorState, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { cronInWords, cronOf, cronWords, planOf, zoneName } from './cron-words';
 import { WhenPicker } from './when-picker';
 import { httpError } from '@/features/status/from-error';
+import { fill } from '@/lib/vocabulary';
 
 interface Schedule {
   id: string; pack: string; name: string; label: string | null; job_kind: string; cron: string;
@@ -51,7 +52,8 @@ async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
 }
 
 const keysOf = (text: string) => text.split(/[\s,]+/).map((k) => k.trim()).filter(Boolean);
-const assetWords = (s: Schedule) => (!s.assets ? 'the workspace' : s.assets.keys ? `${s.assets.area}: ${s.assets.keys.join(', ')}` : `every ${s.assets.area} record`);
+// mold_v0-328: "all applications", not "every applications record"; the build's own word for a workspace.
+const assetWords = (s: Schedule) => (!s.assets ? fill('the {workspace}') : s.assets.keys ? `${s.assets.area}: ${s.assets.keys.join(', ')}` : `all ${s.assets.area}`);
 
 export function SchedulesPage() {
   return (

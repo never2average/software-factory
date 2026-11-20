@@ -217,7 +217,7 @@ function UsersPicker({ p, facets }: { p: ReturnType<typeof useReportParams>; fac
   const opts = facetOptions(facets).user, value = p.filters.user;
   const [q, setQ] = useState('');
   const shown = opts.filter((o) => !q || o.label.toLowerCase().includes(q.toLowerCase()));
-  const label = !value.length ? 'All users' : value.length === 1 ? (opts.find((o) => o.value === value[0])?.label.split(' · ')[0] ?? '1 user') : `${value.length} users`;
+  const label = !value.length ? 'Everyone' : value.length === 1 ? (opts.find((o) => o.value === value[0])?.label.split(' · ')[0] ?? '1 person') : `${value.length} people`;
   return (
     <Popover>
       <PopoverTrigger render={<Button variant='outline' className={cn('max-w-56 justify-start', value.length && 'text-primary')} />}>
@@ -783,7 +783,7 @@ function GrowthRows({ g }: { g: Growth }) {
             </ChartContainer>
           ) : <Empty>No tool calls in these weeks.</Empty>}
         </Box>
-        <Box title='Client mix over time' description="Tool calls per week by the agent of the caller's latest connection; the top five, the rest as Other.">
+        <Box title='Agent mix over time' description="Tool calls per week by the agent of the caller's latest connection; the top five, the rest as Other.">
           {g.client_mix.clients.length ? (
             <ChartContainer config={mixConfig} className='aspect-auto h-[240px] w-full'>
               <BarChart data={weekly} margin={{ left: 0, right: 8, top: 8 }}>
