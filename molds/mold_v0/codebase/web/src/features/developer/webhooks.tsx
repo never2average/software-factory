@@ -21,6 +21,7 @@ import { ErrorState, FormRow, When, fail, useOrgLoad } from '@/features/portal/s
 import { dev, type Delivery, type Endpoint, type Offer } from './api';
 import { OnceDialog, type Once } from './once';
 import { perDay, redacted } from './words';
+import { dateTimeText } from '@/lib/display-format';
 
 const DSTATUS: Record<Delivery['status'], { label: string; variant: 'secondary' | 'outline' | 'destructive' }> = {
   succeeded: { label: 'Delivered', variant: 'secondary' }, pending: { label: 'Retrying', variant: 'outline' }, failed: { label: 'Failed', variant: 'destructive' }
@@ -209,7 +210,7 @@ function DeliveryLog({ e, onBack }: { e: Endpoint; onBack: () => void }) {
   const { data, error, reload } = useOrgLoad(() => loadDeliveries(e.id), [e.id]);
   const rows = data?.rows ?? [];
   const cols = useMemo<RecordCol<Delivery>[]>(() => [
-    { key: 'at', label: 'When', title: true, keep: true, type: 'date', value: (d) => d.created_at, render: (d) => new Date(d.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' }) },
+    { key: 'at', label: 'When', title: true, keep: true, type: 'date', value: (d) => d.created_at, render: (d) => dateTimeText(d.created_at, { seconds: true }) },
     { key: 'event', label: 'Event', type: 'select', value: (d) => d.event_type, render: (d) => <span className='font-mono text-xs'>{d.event_type}</span> },
     { key: 'status', label: 'Status', type: 'select', keep: true, value: (d) => d.status, options: (['succeeded', 'pending', 'failed'] as const).map((v) => ({ value: v, label: DSTATUS[v].label })),
       render: (d) => <Badge variant={DSTATUS[d.status].variant}>{DSTATUS[d.status].label}</Badge> },
@@ -258,7 +259,7 @@ function DeliveryLog({ e, onBack }: { e: Endpoint; onBack: () => void }) {
                   {d.attempt_log.map((a, i) => (
                     <li key={i} className='flex flex-wrap gap-x-3'>
                       <span className='text-muted-foreground'>{i + 1}.</span>
-                      <span>{new Date(a.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' })}</span>
+                      <span>{dateTimeText(a.at, { seconds: true })}</span>
                       <span className={a.error ? 'text-destructive' : ''}>{a.status ?? 'no answer'}{a.error ? `: ${a.error}` : ''}</span>
                       <span className='text-muted-foreground'>{a.ms} ms</span>
                     </li>

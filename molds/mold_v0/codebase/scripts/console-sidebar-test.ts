@@ -94,7 +94,7 @@ const T = (id: string, group: 'access' | 'connections' | 'automation' | 'data_tr
 const FIVE = [T('credentials', 'access'), T('api_keys', 'access'), T('email', 'connections'), T('webhooks', 'connections'), T('alerts', 'automation')];
 const SEVEN = [...FIVE.slice(0, 2), T('allowed_origins', 'access'), ...FIVE.slice(2), T('signing', 'data_trust')];
 const home = { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }, { title: 'Usage', url: '/app/usage', items: [] }] };
-const ops = { label: 'Operational', items: [{ title: 'Billing', url: '/app/billing', items: [] }] };
+const ops = { label: 'Operations', items: [{ title: 'Billing', url: '/app/billing', items: [] }] };
 const own = { label: 'Company', items: [{ title: 'Credentials', url: '/app/settings', items: [], roles: ['member', 'owner'] }] };
 const settings = {
   email: withSettings([home, ops], [T('email', 'connections')]),
@@ -113,7 +113,7 @@ const layout = {
 };
 const merged = mergeNav([
   { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }] },
-  { label: 'Operational', items: [{ title: 'Billing', url: '/app/billing', items: [] }] },
+  { label: 'Operations', items: [{ title: 'Billing', url: '/app/billing', items: [] }] },
   { label: 'Get started', items: [{ title: 'Guide', url: '/app/guide', items: [] }, { title: 'Setup again', url: '/app', items: [] }] },
   { label: 'Extra', items: [{ title: 'Billing again', url: '/app/billing', items: [] }] },
 ]);
@@ -160,10 +160,10 @@ try {
     console.log("✓ zero packs: a declared sidebar of the shell's pages");
     // Connected apps (mold_v0-087): where the declared sidebar puts it; left out when it is not listed; refused when hidden.
     const c = probe(built("zero-connected", [], () => {}, { console: { sidebar: [{ label: "", items: ["setup"] }, { label: "You", items: ["profile", "connected-apps"] }] } }));
-    assert.deepEqual(lines(c.portalNav), [": Setup /app", "You: Profile /app/profile", "You: Connected apps /app/connected-apps"], "listed: where the profile puts it");
+    assert.deepEqual(lines(c.portalNav), [": Setup /app", "You: Profile /app/profile", "You: Connected agents /app/connected-apps"], "listed: where the profile puts it");
     assert.ok(!lines(p.portalNav).some((x) => x.endsWith(" /app/connected-apps")), "a declared sidebar that does not list it has no entry for it");
     const shell = probe(built("zero-shell", []));
-    assert.ok(lines(shell.portalNav).includes("Operational: Connected apps /app/connected-apps"), `the shell's own sidebar has it: ${lines(shell.portalNav).join(", ")}`);
+    assert.ok(lines(shell.portalNav).includes("Operations: Connected agents /app/connected-apps"), `the shell's own sidebar has it: ${lines(shell.portalNav).join(", ")}`);
     const hid = buildCopy("zero-connected-hidden", [], () => {}, { console: { hide: ["connected-apps"], sidebar: [{ label: "", items: ["setup", "connected-apps"] }] } });
     assert.notEqual(hid.status, 0, "a hidden page cannot be listed");
     assert.match(hid.out, /items\[1\] "connected-apps": the build hides that page \(console\.hide\)/);
@@ -208,7 +208,7 @@ try {
   // ---------- 5. the shell's own sidebar never repeats a group or a page ----------
   {
     const p = probe(built("shell", ["fixture_tracker"]));
-    assert.deepEqual(lines(p.merged), ["Get started: Setup /app", "Get started: Guide /app/guide", "Operational: Billing /app/billing"],
+    assert.deepEqual(lines(p.merged), ["Get started: Setup /app", "Get started: Guide /app/guide", "Operations: Billing /app/billing"],
       "a group named like an earlier one joins it; a page already listed is left out; a group left empty goes");
     const labels = p.portalNav.map((g) => g.label), urls = lines(p.portalNav).map((x) => x.split(" ").at(-1));
     assert.equal(new Set(labels).size, labels.length, `one group per heading: ${labels.join(", ")}`);
@@ -220,15 +220,15 @@ try {
     const shell = probe(built("zero-settings", []));
     const s = shell.settings;
     assert.deepEqual(shell.layout.counts, ["none", "single", "strip", "strip", "groups"], "0 tabs none, 1 one table, 2 to 5 one strip, past 5 a page per group (mold_v0-219)");
-    assert.deepEqual(lines(s.email), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "1 tab (Email alone): Settings directly below the home page, opening that table");
-    assert.deepEqual(lines(s.moved), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "a credentials entry elsewhere moves below Overview, its group left out when empty");
+    assert.deepEqual(lines(s.email), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operations: Billing /app/billing"], "1 tab (Email alone): Settings directly below the home page, opening that table");
+    assert.deepEqual(lines(s.moved), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operations: Billing /app/billing"], "a credentials entry elsewhere moves below Overview, its group left out when empty");
     assert.deepEqual(s.moved[0].items[1].roles, ["member", "owner"], "its roles kept");
-    assert.deepEqual(lines(s.none), ["Get started: Setup /app", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "neither Credentials nor Email: no Settings entry");
-    assert.deepEqual(lines(s.noHome), ["Operational: Settings /app/settings", "Operational: Billing /app/billing"], "no Overview: first");
-    assert.deepEqual(lines(s.five), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "5 tabs: still one entry");
+    assert.deepEqual(lines(s.none), ["Get started: Setup /app", "Get started: Usage /app/usage", "Operations: Billing /app/billing"], "neither Credentials nor Email: no Settings entry");
+    assert.deepEqual(lines(s.noHome), ["Operations: Settings /app/settings", "Operations: Billing /app/billing"], "no Overview: first");
+    assert.deepEqual(lines(s.five), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operations: Billing /app/billing"], "5 tabs: still one entry");
     assert.deepEqual(s.five[0].items[1].items, [], "5 tabs: no sub-entries");
     assert.deepEqual(shell.layout.fiveUrls, ["/app/settings", "/app/settings?tab=api_keys", "/app/settings?tab=email", "/app/settings?tab=webhooks", "/app/settings?tab=alerts"], "up to 5: ?tab= on /app/settings, the first bare");
-    assert.deepEqual(lines(s.seven), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "past 5: Settings below Overview (/app/settings leads to its first group)");
+    assert.deepEqual(lines(s.seven), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operations: Billing /app/billing"], "past 5: Settings below Overview (/app/settings leads to its first group)");
     assert.deepEqual(s.seven[0].items[1].items.map((i: any) => `${i.title} ${i.url}`), ["Access /app/settings/access", "Connections /app/settings/connections", "Automation /app/settings/automation", "Data & trust /app/settings/data-trust"],
       "past 5: a collapsible Settings entry, one item per group that has a tab, in the fixed order");
     assert.deepEqual(shell.layout.sevenUrls, ["/app/settings/access", "/app/settings/access?tab=api_keys", "/app/settings/access?tab=allowed_origins", "/app/settings/connections",

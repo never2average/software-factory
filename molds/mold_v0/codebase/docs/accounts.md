@@ -134,13 +134,13 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     or a blank one, is all of it.
     Revocation: `/oauth/revoke` (RFC 7009) for the client; `GET /api/oauth/grants` and
     `POST /api/oauth/grants/<id>/revoke` for the person; signing out everywhere signs every connected app out too.
-  - **Connected apps** (`/app/connected-apps`, mold_v0-087): each person's own connected apps, across their workspaces:
+  - **Connected agents** (`/app/connected-apps`, mold_v0-087): each person's own connected agents, across their workspaces:
     the app (a metadata-document client by its verified address, a registered one by the name it gave, marked not
     verified), the workspace it acts in, when it was allowed and when it was last used (set when it gets tokens and, at
     most once a minute, when it calls `/mcp`), with **Revoke** (every token of it ends on its next request). It is in the
     shell's own sidebar; an app whose profile declares the sidebar (`console.sidebar`) lists it as `connected-apps`, and
     `console.hide: ["connected-apps"]` hides it (its address then leads to `/app`).
-  - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below. The Connected apps page
+  - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below. The Connected agents page
     says so: Clerk's Backend API has no list of a person's OAuth consents or grants (its OAuth applications endpoints
     are the instance's apps, and a token is revoked only by presenting it), so the page names the sign-in provider,
     links to the person's account there (Clerk's Account Portal, from the publishable key) and says how to disconnect an

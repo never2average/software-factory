@@ -25,6 +25,7 @@ import { EmptyState } from '@/features/tabs/empty';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { useAccountRole } from '@/features/portal/role';
 import { dataTrailOn, platformTrailOn } from './config';
+import { dateTimeText } from '@/lib/display-format';
 
 interface Who { label: string; name: string | null; email: string | null }
 interface Plain { who?: Who; what?: string; result?: string; workspace_name?: string | null; has_request?: boolean }
@@ -53,7 +54,7 @@ async function loadAll<T>(url: string, row: (e: T) => RecordRow): Promise<{ reco
   }
 }
 
-const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
+const when = (iso: string) => dateTimeText(iso, { seconds: true });
 const opts = (xs: string[]) => xs.map((value) => ({ value }));
 const f = (name: string, label: string, type: string, extra: Partial<RecordFieldSpec> = {}): RecordFieldSpec => ({ name, label, type, ...extra });
 const RESULTS = opts(['OK', 'Refused', 'Failed', 'Not found']);

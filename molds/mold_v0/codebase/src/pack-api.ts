@@ -1023,8 +1023,8 @@ export function contractProblems(a: {
 export const BADGE_COLORS = ["neutral", "info", "success", "warning", "danger", "viz-1", "viz-2", "viz-3", "viz-4", "viz-5", "viz-6", "viz-7", "viz-8"] as const;
 /** A notice's tones (mold_v0-253): a banner's colour and icon. */
 export const NOTICE_TONES = ["info", "success", "warning", "danger"] as const;
-/** The most facts a record's header shows (mold_v0-253): two rows of four on a desktop. */
-export const DETAIL_FACTS_MAX = 8;
+/** The most facts a record's header shows (mold_v0-253; 10 since mold_v0-329, was 8): rows of four on a desktop. */
+export const DETAIL_FACTS_MAX = 10;
 const plainWords = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets");
 const scalar = z.union([z.string().min(1).max(200), z.number().finite(), z.boolean()]);
 /** A field group: a few of the section's fields under an optional heading, laid out in the section's columns. */
@@ -1378,8 +1378,10 @@ export const RecordDetailSchema = z.object({
     // mold_v0-256: a fact may be computed from related records (DetailComputedSchema) in place of a field of the record.
     facts: z.array(z.object({ field: name.optional(), label: plainWords(40).optional(), unit: plainWords(12).optional(), computed: DetailComputedSchema.optional(),
       // mold_v0-309: left out while it has no value (a count of 0, a latest with none), never a "—"; or shown only while `when` holds.
-      hide_empty: z.boolean().optional(), when: DetailConditionSchema.optional() }).strict())
-      .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows two rows of four`).optional(),
+      hide_empty: z.boolean().optional(), when: DetailConditionSchema.optional(),
+      // mold_v0-329: a web address fact (a url field) shown as these words, linked ("Open docs"), not as the address.
+      link_text: plainWords(40).optional() }).strict())
+      .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows them in rows of four`).optional(),
   }).strict().optional(),
   notices: z.array(DetailNoticeSchema).max(6).optional(),
   tabs: z.array(DetailTabSchema).min(1, "a layout has at least one tab").max(8),
@@ -1445,6 +1447,7 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if (x.computed) {
       const c = x.computed;
       if (x.field !== undefined) bad("a computed fact has no field of its own: it reads the related records' (computed.field)", "header", "facts", i, "field");
+      if (x.link_text !== undefined) bad("link_text is for a fact of a url field of the record, not a computed one", "header", "facts", i, "link_text");
       if (x.label === undefined) bad("a computed fact names itself (label): the page cannot take it from a field", "header", "facts", i, "label");
       if (c.op === "latest" && !c.field) bad("a latest fact names the field it shows of the newest related record (computed.field)", "header", "facts", i, "computed", "field");
       if (c.op === "count" && c.field !== undefined) bad("a count fact counts records: it names no field", "header", "facts", i, "computed", "field");
@@ -1456,6 +1459,7 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     const f = shown(x.field, "a fact", "header", "facts", i, "field");
     if (f?.type === "json") bad(`${x.field} is a json field: a fact is one short value`, "header", "facts", i, "field");
     if (x.unit !== undefined && f && f.type !== "number") bad(`a unit is for a number field (${x.field} is ${f.type})`, "header", "facts", i, "unit");
+    if (x.link_text !== undefined && f && f.type !== "url") bad(`link_text is for a web address (a url field; ${x.field} is ${f.type})`, "header", "facts", i, "link_text");
     if ((h?.facts ?? []).findIndex((y) => y.field === x.field) !== i) bad(`${x.field} is a fact twice`, "header", "facts", i, "field");
   }
   for (const [i, n] of (d.notices ?? []).entries()) condition(n.when, "notices", i, "when");
@@ -2584,12 +2588,12 @@ export const TabSchema = z.object({
   /** mold_v0-260: up to 8 (6 before). */
   sections: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a tab id of this pack")).min(2).max(SECTIONS_MAX).optional(),
   /**
-   * The four cards below a list's toolbar (mold_v0-181): exactly 4 of the pack's metrics, each a label, its value and a
+   * The cards below a list's toolbar (mold_v0-181): 1 to 4 of the pack's metrics (exactly 4 before mold_v0-329), each a label, its value and a
    * sparkline of its last SPARK_WEEKS weeks (src/sparklines.ts). Absent: the shell's four for the tab's kind.
    * On a home tab (mold_v0-203): 1 to 4 of them, the headline row above its columns. Absent there: no row.
    */
   // mold_v0-260 (flag overview_cards): a home tab may name a fifth, its headline row's fifth number.
-  sparklines: z.array(name).min(1, "1 to 4 metric names").max(5, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab (5 with overview_cards)").optional(),
+  sparklines: z.array(name).min(1, "1 to 4 metric names").max(5, "1 to 4 metric names on a list tab (its cards), up to 4 on a home tab (5 with overview_cards)").optional(),
   /** A home tab's heading above its charts (mold_v0-175); accepted, not drawn since mold_v0-207 (no charts on the home page). */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
@@ -2642,7 +2646,8 @@ export const TabSchema = z.object({
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   const home = t.kind === "overview" && (t.include ?? []).includes("setup");
   if (t.sparklines && !home && !(SPARK_KINDS as readonly string[]).includes(t.kind)) bad(`sparklines are for a list tab: ${SPARK_KINDS.join(", ")}, or a home tab (an overview that includes setup)`, "sparklines");
-  else if (t.sparklines && !home && t.sparklines.length !== 4) bad("exactly 4 metric names: the tab's four cards", "sparklines");
+  // mold_v0-329: 1 to 4 on a list tab (was exactly 4), so a card that repeats another can go; the row adapts.
+  else if (t.sparklines && !home && t.sparklines.length > 4) bad("1 to 4 metric names: the tab's cards", "sparklines");
   if (t.rail?.some((x) => (HOME_CARDS as readonly string[]).includes(x)) && !home) bad("recent_runs and attention are a home tab's cards", "rail");
   if (t.sparklines && new Set(t.sparklines).size !== t.sparklines.length) bad("a metric is listed twice", "sparklines");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");

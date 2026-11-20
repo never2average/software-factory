@@ -16,6 +16,7 @@ import { When } from '@/features/portal/shared';
 import { sizeWords } from './composer/use-attachments';
 import { AgentName } from './agent-name';
 import type { AgentLabel } from '@/lib/agent-purpose';
+import { dateTimeText } from '@/lib/display-format';
 
 export type TraceKind = 'sandbox' | 'wake' | 'model' | 'tool' | 'command' | 'approval' | 'budget' | 'note' | 'message';
 export interface TraceStep {
@@ -265,7 +266,7 @@ function StepDetails({ s, call, sessionId }: { s: TraceStep; call: Call; session
     if (!s.more) return;
     call<{ step: { data: typeof data } }>('GET', `/${sessionId}/trace/${encodeURIComponent(s.id)}`).then((r) => setData(r.step.data), () => setFailed(true));
   }, [call, s.id, s.more, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const fact = [s.wake ? `Run ${s.wake}` : null, new Date(s.at).toLocaleString(), s.duration_ms !== undefined ? `took ${formatDuration(s.duration_ms)}` : null, s.http_status !== undefined ? `status ${s.http_status}` : null].filter(Boolean).join(' · ');
+  const fact = [s.wake ? `Run ${s.wake}` : null, dateTimeText(s.at, { seconds: true }), s.duration_ms !== undefined ? `took ${formatDuration(s.duration_ms)}` : null, s.http_status !== undefined ? `status ${s.http_status}` : null].filter(Boolean).join(' · ');
   const call_ = data?.agent_tool_call, result = data?.agent_tool_result;
   return (
     <div className='border-muted mb-2 ml-3 flex flex-col gap-2 border-l pb-1 pl-4 text-xs' data-trace-detail=''>
