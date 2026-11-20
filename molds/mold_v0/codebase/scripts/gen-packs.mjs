@@ -1621,8 +1621,9 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
   }
   const asks = {
     always: () => true,
-    // mold_v0-271: the staff Records group lists the recipes page (a pack's or the profile's console.admin_records).
-    recipes: () => adminRecordsMembers(declaredAdminRecords().entries).includes("recipes"),
+    // mold_v0-271: the staff Records group lists the recipes page (a pack's or the profile's console.admin_records);
+    // mold_v0-327: or a pack declares recipes of its own (src/features.ts and lib/features.py say the same).
+    recipes: () => adminRecordsMembers(declaredAdminRecords().entries).includes("recipes") || packs.some((p) => (defsByPack[p.id]?.recipes ?? p.json?.recipes ?? []).length > 0),
     // mold_v0-282: a shared area declares a repository or a database field (src/features.ts and lib/features.py say the same).
     resources: () => areas.some((a) => a.scope === "platform" && (a.fields ?? []).some((x) => x.type === "repository" || x.type === "database")),
     // mold_v0-305: a pack declares object_storage (src/features.ts and lib/features.py say the same).

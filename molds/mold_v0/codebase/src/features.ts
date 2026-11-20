@@ -71,8 +71,9 @@ export function featureRequested(id: FeatureId): boolean {
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
     case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true || f.display === "chips"))
       || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
-    // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs).
-    case "recipes": return adminRecordsShown().includes("recipes");
+    // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs);
+    // mold_v0-327: or a pack declares recipes of its own (its agent profiles' sessions receive them).
+    case "recipes": return adminRecordsShown().includes("recipes") || defs().some((d) => (d.recipes ?? []).length > 0);
     // mold_v0-282: a shared area declares a repository or a database field (src/record-resources.ts).
     case "resources": return defs().some((d) => areasOf(d).some((a) => a.scope === "platform" && (a.fields ?? []).some((f) => f.type === "repository" || f.type === "database")));
     // mold_v0-305: a pack declares object_storage (the workspace area its storage connections are kept in).
