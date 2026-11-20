@@ -1,0 +1,229 @@
+{
+  "$schema": "../../../packs/pack.schema.json",
+  "$comment": "A test fixture only (mold_v0-327; scripts/build-rehearsal-test.ts), never shipped: a small declarative pack whose owners add four connections (object storage, a hosting account, a code repository, a database), press Test on each, mark them Use in builds, add an application and press Start build. The build profile's recipe (build-steps) is the files under recipe/, which the test adds as the recipe's files at load (a pack.json carries them inline). Every host is a stand-in's: example.com names, called through APP_CONNECTION_TEST_STANDIN in a test world only.",
+  "id": "fixture_build",
+  "name": "Fixture build",
+  "version": "1.0.0",
+  "description": "Applications built by the workspace agent from the workspace's own connections (a test fixture).",
+  "mcp": { "prefix": "ex" },
+  "object_storage": {
+    "area": "storage_connections",
+    "fields": { "bucket": "bucket", "endpoint": "endpoint", "access_key_id": "access_key_id", "secret_access_key": "secret_access_key", "use": "use_for_files", "status": "status", "tested": "tested" }
+  },
+  "record_areas": [
+    {
+      "name": "storage_connections",
+      "label": "Storage",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per bucket (key: its name)",
+      "fields": [
+        { "name": "bucket", "label": "Bucket", "type": "text", "required": true, "max_length": 63 },
+        { "name": "endpoint", "label": "Endpoint", "type": "url", "required": true },
+        { "name": "region", "label": "Region", "type": "text", "max_length": 40 },
+        { "name": "access_key_id", "label": "Access key ID", "type": "text", "required": true, "max_length": 256, "encrypted": true },
+        { "name": "secret_access_key", "label": "Secret access key", "type": "text", "required": true, "max_length": 1024, "encrypted": true },
+        { "name": "use_for_files", "label": "In use", "type": "boolean" },
+        { "name": "use_for_builds", "label": "Use in builds", "type": "boolean" },
+        { "name": "members_may_use", "label": "Members' builds may use its keys", "type": "boolean" },
+        { "name": "status", "label": "Last test", "type": "enum", "set_by": "action", "options": ["untested", "working", "failing"] },
+        { "name": "tested", "label": "Tested on", "type": "date", "set_by": "action" }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["owner"], "update": ["owner"], "delete": ["owner"] },
+      "contract": {
+        "provenance": ["people"],
+        "actions": { "read": ["viewer", "member", "billing", "owner"], "export": { "none": "it holds keys" }, "create": ["owner"], "update": ["owner"], "move": { "none": "no lifecycle" }, "delete": ["owner"],
+          "reveal": { "none": "keys are never shown again once saved" }, "import": { "none": "keys are typed" } },
+        "primary_action": "create_record"
+      },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Bucket", "fields": ["bucket", "endpoint", "region", "use_for_files", "use_for_builds", "members_may_use", "status", "tested"] }, { "title": "Changes", "history": { "limit": 20 } }] }],
+        "actions": [{ "kind": "test_storage", "place": "primary", "label": "Test", "roles": ["owner"] }, { "kind": "edit", "place": "secondary", "roles": ["owner"] }]
+      }
+    },
+    {
+      "name": "hosting_accounts",
+      "label": "Hosting",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per hosting account",
+      "fields": [
+        { "name": "provider", "label": "Provider", "type": "enum", "required": true, "options": ["example-hosting"] },
+        { "name": "account_id", "label": "Team or account ID", "type": "text", "required": true, "max_length": 200 },
+        { "name": "api_token", "label": "API token", "type": "text", "required": true, "max_length": 2000, "encrypted": true },
+        { "name": "use_for_builds", "label": "Use in builds", "type": "boolean" },
+        { "name": "members_may_use", "label": "Members' builds may use its keys", "type": "boolean" },
+        { "name": "status", "label": "Last test", "type": "enum", "set_by": "action", "options": ["untested", "working", "failing"] },
+        { "name": "tested", "label": "Tested on", "type": "date", "set_by": "action" }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["owner"], "update": ["owner"], "delete": ["owner"] },
+      "contract": {
+        "provenance": ["people"],
+        "actions": { "read": ["viewer", "member", "billing", "owner"], "export": { "none": "it holds keys" }, "create": ["owner"], "update": ["owner"], "move": { "none": "no lifecycle" }, "delete": ["owner"],
+          "reveal": { "none": "keys are never shown again once saved" }, "import": { "none": "keys are typed" } },
+        "primary_action": "create_record"
+      },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Account", "fields": ["provider", "account_id", "use_for_builds", "members_may_use", "status", "tested"] }, { "title": "Changes", "history": { "limit": 20 } }] }],
+        "actions": [
+          { "kind": "test_connection", "place": "primary", "label": "Test", "roles": ["owner"], "probe": { "by": "provider", "probes": {
+            "example-hosting": { "label": "The hosting API", "method": "GET", "url": "https://api.hosting.example.com/v2/teams/{account_id}", "headers": { "Authorization": "Bearer {api_token}" },
+              "expect": { "status": "2xx", "json_path": "id" }, "timeout_seconds": 10 } }, "status": "status", "tested": "tested" } },
+          { "kind": "edit", "place": "secondary", "roles": ["owner"] }
+        ]
+      }
+    },
+    {
+      "name": "repositories",
+      "label": "Repositories",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per repository",
+      "fields": [
+        { "name": "provider", "label": "Provider", "type": "enum", "required": true, "options": ["example-git"] },
+        { "name": "owner", "label": "Owner", "type": "text", "required": true, "max_length": 100 },
+        { "name": "repo_name", "label": "Repository name", "type": "text", "required": true, "max_length": 100 },
+        { "name": "token", "label": "Access token", "type": "text", "required": true, "max_length": 2000, "encrypted": true },
+        { "name": "use_for_builds", "label": "Use in builds", "type": "boolean" },
+        { "name": "members_may_use", "label": "Members' builds may use its keys", "type": "boolean" },
+        { "name": "status", "label": "Last test", "type": "enum", "set_by": "action", "options": ["untested", "working", "failing"] },
+        { "name": "tested", "label": "Tested on", "type": "date", "set_by": "action" }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["owner"], "update": ["owner"], "delete": ["owner"] },
+      "contract": {
+        "provenance": ["people"],
+        "actions": { "read": ["viewer", "member", "billing", "owner"], "export": { "none": "it holds keys" }, "create": ["owner"], "update": ["owner"], "move": { "none": "no lifecycle" }, "delete": ["owner"],
+          "reveal": { "none": "keys are never shown again once saved" }, "import": { "none": "keys are typed" } },
+        "primary_action": "create_record"
+      },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Repository", "fields": ["provider", "owner", "repo_name", "use_for_builds", "members_may_use", "status", "tested"] }, { "title": "Changes", "history": { "limit": 20 } }] }],
+        "actions": [
+          { "kind": "test_connection", "place": "primary", "label": "Test", "roles": ["owner"], "probe": { "by": "provider", "probes": {
+            "example-git": { "label": "The repository's push check", "method": "GET", "url": "https://git.example.com/{owner}/{repo_name}.git/info/refs?service=git-receive-pack",
+              "basic_auth": { "user": "x-access-token", "password": "{token}" },
+              "expect": { "status": [200], "content_type": "application/x-git-receive-pack-advertisement" }, "timeout_seconds": 10 } }, "status": "status", "tested": "tested" } },
+          { "kind": "edit", "place": "secondary", "roles": ["owner"] }
+        ]
+      }
+    },
+    {
+      "name": "databases",
+      "label": "Databases",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per database",
+      "fields": [
+        { "name": "kind", "label": "Kind", "type": "enum", "required": true, "options": ["postgres"] },
+        { "name": "url", "label": "Connection string", "type": "text", "required": true, "max_length": 4000, "encrypted": true },
+        { "name": "use_for_builds", "label": "Use in builds", "type": "boolean" },
+        { "name": "members_may_use", "label": "Members' builds may use its keys", "type": "boolean" },
+        { "name": "status", "label": "Last test", "type": "enum", "set_by": "action", "options": ["untested", "working", "failing"] },
+        { "name": "tested", "label": "Tested on", "type": "date", "set_by": "action" }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["owner"], "update": ["owner"], "delete": ["owner"] },
+      "contract": {
+        "provenance": ["people"],
+        "actions": { "read": ["viewer", "member", "billing", "owner"], "export": { "none": "it holds keys" }, "create": ["owner"], "update": ["owner"], "move": { "none": "no lifecycle" }, "delete": ["owner"],
+          "reveal": { "none": "keys are never shown again once saved" }, "import": { "none": "keys are typed" } },
+        "primary_action": "create_record"
+      },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Database", "fields": ["kind", "use_for_builds", "members_may_use", "status", "tested"] }, { "title": "Changes", "history": { "limit": 20 } }] }],
+        "actions": [
+          { "kind": "test_connection", "place": "primary", "label": "Test", "roles": ["owner"], "probe": { "by": "kind", "probes": {
+            "postgres": { "kind": "postgres", "label": "The database", "fields": { "url": "url" }, "hosts": ["pg.example.com"], "ports": [5432], "timeout_seconds": 10 } }, "status": "status", "tested": "tested" } },
+          { "kind": "edit", "place": "secondary", "roles": ["owner"] }
+        ]
+      }
+    },
+    {
+      "name": "applications",
+      "label": "Applications",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per application",
+      "fields": [
+        { "name": "summary", "label": "Summary", "type": "text", "max_length": 400 },
+        { "name": "repository", "label": "Repository", "type": "reference", "to": "repositories" },
+        { "name": "brief", "label": "Brief", "type": "text", "max_length": 4000 }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["member", "owner"], "update": ["member", "owner"], "delete": ["owner"] },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Application", "fields": ["summary", "repository", "brief"] }] }],
+        "actions": [
+          { "kind": "start_agent", "place": "primary", "label": "Start build", "roles": ["member", "owner"], "profile": "builder",
+            "first_message": "Build the application {{title}} ({{key}}).\nRepository: {{repository}}.\nWhat it is: {{summary}}" },
+          { "kind": "edit", "place": "secondary" }
+        ]
+      }
+    },
+    {
+      "name": "builds",
+      "label": "Builds",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per build",
+      "fields": [
+        { "name": "application", "label": "Application", "type": "reference", "to": "applications", "required": true },
+        { "name": "status", "label": "Status", "type": "enum", "options": ["queued", "running", "deploying", "succeeded", "failed"] },
+        { "name": "deployment_url", "label": "Deployment", "type": "url" },
+        { "name": "outcome", "label": "Outcome", "type": "text", "max_length": 2000 }
+      ],
+      "lifecycle": { "field": "status", "initial": "queued", "transitions": [
+        { "from": ["queued"], "to": "running", "label": "Start" },
+        { "from": ["running"], "to": "deploying", "label": "Deploy" },
+        { "from": ["deploying"], "to": "succeeded", "label": "Mark succeeded" },
+        { "from": ["queued", "running", "deploying"], "to": "failed", "label": "Mark failed" }
+      ] },
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["member", "owner"], "update": ["member", "owner"], "delete": ["owner"] },
+      "detail": {
+        "tabs": [{ "label": "Details", "sections": [{ "title": "Build", "fields": ["application", "status", "deployment_url", "outcome"] }, { "title": "Changes", "history": { "limit": 20 } }] }],
+        "actions": [{ "kind": "open_url", "place": "primary", "field": "deployment_url", "label": "Open deployment" }]
+      }
+    },
+    {
+      "name": "deployments",
+      "label": "Deployments",
+      "role": "source",
+      "scope": "workspace",
+      "rows": "one per deployment (key: <build>:<environment>)",
+      "fields": [
+        { "name": "build", "label": "Build", "type": "reference", "to": "builds", "required": true },
+        { "name": "application", "label": "Application", "type": "reference", "to": "applications", "required": true },
+        { "name": "hosting_deployment_id", "label": "Hosting deployment id", "type": "text", "max_length": 120 },
+        { "name": "deployment_url", "label": "Address", "type": "url" },
+        { "name": "state", "label": "State", "type": "enum", "options": ["BUILDING", "READY", "ERROR"] }
+      ],
+      "permissions": { "read": ["viewer", "member", "billing", "owner"], "create": ["member", "owner"], "update": ["member", "owner"], "delete": ["owner"] }
+    }
+  ],
+  "recipes": [
+    { "id": "build-steps", "name": "Build steps", "description": "The build's own scripts: the blocks wiring check, the hosting deploy (variables by name) and the repository push (the token through a credential helper, never saved).",
+      "files": [] }
+  ],
+  "agent_profiles": [
+    {
+      "id": "builder",
+      "name": "Build an application",
+      "description": "Started with Start build on an application: writes it, checks its wiring, pushes it, deploys it and records the build and its deployment.",
+      "recipes": [{ "id": "build-steps" }],
+      "governance": {
+        "web": { "enabled": false, "web_search_enabled": false, "web_fetch_enabled": false, "web_fetch_allowed_domains": [], "max_calls": 0 },
+        "egress_approvals": false,
+        "tools": { "allowed": ["ex_get_applications", "ex_list_applications", "ex_list_hosting_accounts", "ex_list_storage_connections", "ex_list_repositories", "ex_list_databases",
+          "ex_create_builds", "ex_get_builds", "ex_move_builds", "ex_update_builds", "ex_create_deployments", "ex_get_deployments"], "max_calls": 200 }
+      },
+      "connection_env": [
+        { "area": "hosting_accounts", "use": "use_for_builds", "prefix": "HOSTING_", "roles": ["owner"], "members_field": "members_may_use",
+          "fields": { "PROVIDER": "provider", "ACCOUNT_ID": "account_id", "API_TOKEN": "api_token" } },
+        { "area": "storage_connections", "use": "use_for_builds", "prefix": "STORAGE_", "roles": ["owner"], "members_field": "members_may_use",
+          "fields": { "BUCKET": "bucket", "ENDPOINT": "endpoint", "REGION": "region", "ACCESS_KEY_ID": "access_key_id", "SECRET_ACCESS_KEY": "secret_access_key" } },
+        { "area": "repositories", "use": "use_for_builds", "prefix": "REPO_", "roles": ["owner"], "members_field": "members_may_use",
+          "fields": { "PROVIDER": "provider", "OWNER": "owner", "NAME": "repo_name", "TOKEN": "token" } },
+        { "area": "databases", "use": "use_for_builds", "prefix": "SYSTEM_", "roles": ["owner"], "members_field": "members_may_use",
+          "fields": { "KIND": "kind", "URL": "url" } }
+      ]
+    }
+  ]
+}
