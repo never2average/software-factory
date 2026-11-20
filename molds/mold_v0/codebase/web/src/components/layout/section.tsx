@@ -36,8 +36,11 @@ export function StatStrip({ items, className, quad }: {
     said?: string;
   }[]; className?: string; quad?: boolean;
 }) {
+  // mold_v0-329: a list tab may have 1 to 4 cards; the row takes as many columns as it has (one on a phone for one card).
+  const n = items.length;
+  const cols = n <= 1 ? 'grid-cols-1' : n === 2 ? 'grid-cols-2' : n === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4';
   return (
-    <dl className={cn(quad ? 'grid grid-cols-2 border-y lg:grid-cols-4' : 'grid grid-cols-2 border-y sm:flex sm:divide-x', className)}>
+    <dl className={cn(quad ? (n >= 4 ? 'grid grid-cols-2 border-y lg:grid-cols-4' : cn('grid border-y', cols)) : 'grid grid-cols-2 border-y sm:flex sm:divide-x', className)}>
       {items.map((it, i) => {
         const body = (
           <>
@@ -57,7 +60,8 @@ export function StatStrip({ items, className, quad }: {
         // keeps that shape: the link is the label, stretched over the whole cell so the cell is still one tap target.
         return (
           <div key={i} className={cn(quad
-            ? 'min-w-0 px-4 py-3 max-lg:odd:pl-0 max-lg:even:border-l max-lg:[&:nth-child(-n+2)]:border-b lg:first:pl-0 lg:not-first:border-l'
+            ? (n > 2 ? 'min-w-0 px-4 py-3 max-lg:odd:pl-0 max-lg:even:border-l max-lg:[&:nth-child(-n+2)]:border-b lg:first:pl-0 lg:not-first:border-l'
+              : 'min-w-0 px-4 py-3 max-lg:odd:pl-0 max-lg:even:border-l lg:first:pl-0 lg:not-first:border-l')
             : 'min-w-0 flex-1 px-4 py-3 first:pl-0 max-sm:border-b max-sm:odd:pl-0 max-sm:even:border-l', it.href && 'group relative has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring')}>
             {body}
           </div>

@@ -454,16 +454,31 @@ interface TimelineItem { id: string; label: string; done: boolean; body: React.R
  * node, tinted body); done items show a check. One component, so every journey looks exactly like Get set up. Every
  * item says what it is and, while open, what to type (mold_v0-172: a home tab's checklist is this one too).
  */
-function TimelineSection({ title, done, total, noun, items, footer }: {
+function TimelineSection({ title, done, total, noun, items, footer, foldWhenDone = false }: {
   title: React.ReactNode; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
+  /** mold_v0-329: once every counted step is done, one line ("Setup done (4 steps)") and a toggle to show the steps. */
+  foldWhenDone?: boolean;
 }) {
   const pct = Math.round((done / Math.max(1, total)) * 100);
   const current = items.find((x) => !x.done)?.id;
   const uid = useId();
+  const finished = foldWhenDone && total > 0 && done >= total;
+  const [shown, setShown] = useState(false);
+  if (finished && !shown) {
+    return (
+      <Section title={title}>
+        <div className='flex flex-wrap items-center justify-between gap-2' data-setup-folded=''>
+          <p className='flex items-center gap-2 text-sm'><Icons.check aria-hidden='true' className='text-primary size-4' />Setup done ({total} {noun})</p>
+          <Button type='button' variant='outline' size='sm' aria-expanded={false} aria-controls={`${uid}-steps`} onClick={() => setShown(true)}>Show {noun}</Button>
+        </div>
+      </Section>
+    );
+  }
   return (
-    <Section title={title} description={`${done} of ${total} ${noun} done.`}>
+    <Section title={title} description={finished ? `Setup done (${total} ${noun})` : `${done} of ${total} ${noun} done.`}
+      action={finished ? <Button type='button' variant='outline' size='sm' aria-expanded aria-controls={`${uid}-steps`} onClick={() => setShown(false)}>Hide {noun}</Button> : undefined}>
       <div className='bg-muted h-1.5 overflow-hidden rounded-full'><div className='bg-primary h-full rounded-full transition-all' style={{ width: `${pct}%` }} /></div>
-      <ol className='mt-3'>
+      <ol className='mt-3' id={`${uid}-steps`}>
         {items.map((x, i) => {
           const cur = current === x.id;
           const last = i === items.length - 1;
@@ -526,7 +541,7 @@ function Checklist({ steps, title, anchored }: {
     body: x.pack && !x.help && !x.prompt ? null : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
   const { done, total } = stepProgress(steps);
   // No caption under the steps (mold_v0-216): they tick themselves, and Journeys is in the selector above.
-  return <TimelineSection title={title} done={done} total={total} noun='steps' items={items} footer={null} />;
+  return <TimelineSection title={title} done={done} total={total} noun='steps' items={items} footer={null} foldWhenDone />;
 }
 
 function TipsSection() {

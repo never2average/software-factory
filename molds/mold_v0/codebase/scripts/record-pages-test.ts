@@ -53,7 +53,7 @@
 //      mapping); one line in a list's cell and a board's card; drawn by a record's page, an open row's card and a staff
 //      record's page, never as raw JSON.
 //  14. A record's page, laid out (mold_v0-253, flag record_pages): the area's `detail` declared and refused (a field the
-//      area lacks, a ninth fact, an empty tab, a badge colour outside the theme's tokens, ...), its badges, facts by
+//      area lacks, an eleventh fact, an empty tab, a badge colour outside the theme's tokens, ...), its badges, facts by
 //      type, notices, tabs and sections, copy (id, link, copyable fields; toasts), the build over the fixture
 //      scripts/fixtures/packs/fixture_pages (off: the generated files as before the flag; on: the layouts), and the page
 //      drawn in a headless browser.
@@ -586,7 +586,13 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   has(withDetail((d) => { d.header.facts[0].field = "ghost"; }), /^detail\.header\.facts\.0\.field: ghost is not one of the area's fields$/, "a fact naming one");
   has(withDetail((d) => { d.header.subtitle = "ghost"; }), /^detail\.header\.subtitle: ghost is not one/, "the subtitle naming one");
   has(withDetail((d) => { d.notices[0].when.field = "ghost"; }), /^detail\.notices\.0\.when\.field: ghost is not one/, "a notice testing one");
-  has(withDetail((d) => { d.header.facts.push({ field: "tests_passed" }); }), new RegExp(`^detail\\.header\\.facts: at most ${DETAIL_FACTS_MAX} facts`), "a ninth fact");
+  // mold_v0-329: up to 10 facts (was 8); an eleventh is refused.
+  assert.equal(DETAIL_FACTS_MAX, 10, "ten facts at most");
+  assert.deepEqual(withDetail((d) => { d.header.facts.push({ field: "tests_passed" }, { field: "tests_failed" }); }), [], "a ninth and a tenth fact");
+  has(withDetail((d) => { d.header.facts.push({ field: "tests_passed" }, { field: "tests_failed" }, { field: "approver" }); }), new RegExp(`^detail\\.header\\.facts: at most ${DETAIL_FACTS_MAX} facts`), "an eleventh fact");
+  // mold_v0-329: a web address fact may show words (link_text), linked; only a url field's.
+  assert.deepEqual(withDetail((d) => { d.header.facts[7].link_text = "Open artifact"; }), [], "link_text on a url fact");
+  has(withDetail((d) => { d.header.facts[2].link_text = "Open"; }), /^detail\.header\.facts\.2\.link_text: link_text is for a web address/, "link_text on a text fact");
   has(withDetail((d) => { d.tabs[1].sections = []; }), /^detail\.tabs\.1\.sections: tab Logs is empty: a tab has at least one section$/, "an empty tab");
   has(withDetail((d) => { d.tabs = []; }), /^detail\.tabs: a layout has at least one tab$/, "no tab at all");
   has(withDetail((d) => { d.tabs[0].sections[0].fields = []; }), /^detail\.tabs\.0\.sections\.0: section Source lists no fields$/, "a section without fields");
@@ -605,7 +611,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   has(withDetail((d) => { d.tabs[0].sections[0].columns = 4; }), /^detail\.tabs\.0\.sections\.0\.columns/, "four columns");
   has(withDetail((_d, a) => { a.fields.find((f: any) => f.name === "config").copyable = true; }), /^fields\.18\.copyable: copyable is for a value the page shows in full/, "copyable on a json field");
   assert.deepEqual([...NOTICE_TONES], ["info", "success", "warning", "danger"]);
-  ok("a record page's layout (mold_v0-253): the fixture's projects, environments and builds take; refused: a field the area lacks (a section, a fact, the subtitle, a notice), a ninth fact, an empty tab or none, a section without fields, a badge colour outside the theme's tokens or for a value the field lacks, a badge on a text field, a unit on a text field, a notice with two tests or an unknown value or tone, two tabs with one address, fields with groups, a field twice, a fact on an encrypted field, four columns, copyable on a json field");
+  ok("a record page's layout (mold_v0-253): the fixture's projects, environments and builds take; refused: a field the area lacks (a section, a fact, the subtitle, a notice), an eleventh fact, an empty tab or none, a section without fields, a badge colour outside the theme's tokens or for a value the field lacks, a badge on a text field, a unit on a text field, a notice with two tests or an unknown value or tone, two tabs with one address, fields with groups, a field twice, a fact on an encrypted field, four columns, copyable on a json field");
 
   // b. Badges: the console's tokens are the schema's, each a class of theme variables (no raw colour).
   assert.deepEqual([...L.BADGE_COLORS], [...SERVER_COLORS], "one list of badge tokens, server and console");
@@ -741,7 +747,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
       ["no-kind", (j: any) => { j.record_areas[2].detail.actions[0].job_kind = "deploy"; }, /record area builds's page: action start_run\.deploy: deploy is not a job kind of pack fixture_pages/],
       ["no-transition", (j: any) => { j.record_areas[2].detail.actions.push({ kind: "move", to: "archived" }); }, /detail\.actions\[6\]\.to: no transition of the lifecycle goes to archived/],
       ["two-primaries", (j: any) => { j.record_areas[2].detail.actions[1].place = "primary"; }, /detail\.actions\[1\]\.place: 2 actions are primary: a record's page has one primary action/],
-      ["facts", (j: any) => { j.record_areas[2].detail.header.facts.push({ field: "tests_passed" }); }, /at most 8 facts/],
+      ["facts", (j: any) => { j.record_areas[2].detail.header.facts.push({ field: "tests_passed" }, { field: "tests_failed" }, { field: "approver" }); }, /at most 10 facts/],
       ["empty-tab", (j: any) => { j.record_areas[2].detail.tabs[1].sections = []; }, /tab Logs is empty/],
       ["colour", (j: any) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; }, /crimson is not a badge colour/],
     ] as const) {
@@ -751,7 +757,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     }
     const offBroken = copyOf("refused-off", (j) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; });
     assert.notEqual(offBroken.status, 0, "a broken layout is refused with the flag off too (declared and checked either way)");
-    ok("the build: off, no layout, copyable or flag in the console's files, which are those of the same pack without its layouts; on, the layouts and copyable fields reach the registry (an area without one has none); refused at build, on or off: a field the area lacks, a ninth fact, an empty tab, a colour outside the tokens; mold_v0-254: a related list whose area has no link back, an action naming a job kind or a transition that does not exist, two primary actions");
+    ok("the build: off, no layout, copyable or flag in the console's files, which are those of the same pack without its layouts; on, the layouts and copyable fields reach the registry (an area without one has none); refused at build, on or off: a field the area lacks, an eleventh fact, an empty tab, a colour outside the tokens; mold_v0-254: a related list whose area has no link back, an action naming a job kind or a transition that does not exist, two primary actions");
 
     // h. Drawn in a headless browser (the console's own components, bundled): a failed build, a running one on its Logs tab, a project.
     const findChrome = () => {

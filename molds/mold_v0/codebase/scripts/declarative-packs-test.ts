@@ -445,14 +445,16 @@ try {
       j.tabs = tabs;
     });
     const findings = (x: Record<string, unknown> = {}) => ({ id: "findings", kind: "area", area: "tracker_findings", label: "Findings", ...x });
-    no("three cards", cards([findings({ sparklines: four.slice(0, 3) })]), /tabs\[0\]\.sparklines: exactly 4 metric names/);
-    no("five cards", cards([findings({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: exactly 4 metric names/);
+    // mold_v0-329: 1 to 4 cards on a list tab (was exactly 4); five refused.
+    no("five cards", cards([findings({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: 1 to 4 metric names/);
     no("a metric twice", cards([findings({ sparklines: ["open_count", "open_count", "score_avg", "fix_share"] })]), /tabs\[0\]\.sparklines: a metric is listed twice/);
     no("a name that is not a plain word", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "x'); --"] })]), /tabs\[0\]\.sparklines\[3\]: lowercase letters/);
     no("cards on an overview", cards([{ id: "over", kind: "overview", charts: ["severity"], sparklines: four }]), /tabs\[0\]\.sparklines: sparklines are for a list tab: area, runs, reports, schedules/);
     no("an undeclared metric", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "nope"] })]), /tab findings: sparklines names metric nope, which this pack does not declare/);
     no("a grouped metric", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "open_by_severity"] })]), /tab findings: sparklines: metric open_by_severity: a card shows one number, and a metric with group_by shows one per group/);
     no("the shell's cards under a filter they cannot apply", cards([findings({ filter: { title: { prefix: "Leak" } } })]), /tab findings: the shell's cards would count rows its filter hides \(title prefix has no metric equivalent\): declare its sparklines/);
+    const few = tryPack(cards([findings({ sparklines: four.slice(0, 1) }), { id: "scans", kind: "runs", label: "Scans", sparklines: four.slice(0, 3) }]));
+    assert.equal(few.r.status, 0, `one card, and three, build (mold_v0-329): ${few.r.stderr}`); m++;
     const ok = tryPack(cards([findings({ sparklines: four }), { id: "open", kind: "area", area: "tracker_findings", label: "Open", filter: { state: { in: ["open", "triaged"] } } },
       { id: "scans", kind: "runs", label: "Scans", sparklines: four }, { id: "plan", kind: "schedules", label: "Schedule" }]));
     assert.equal(ok.r.status, 0, `cards build (declared, and the shell's under a filter they apply): ${ok.r.stderr}`);
@@ -461,7 +463,7 @@ try {
     // A home tab's headline row (mold_v0-203): 1 to 4 of the pack's metrics, the same checks; carried in the registry
     // as `headline` (the page draws the row and leaves those numbers out of its number charts); absent: nothing.
     const home = (x: Record<string, unknown>) => ({ id: "home", kind: "overview", label: "Overview", include: ["setup"], ...x });
-    no("five on a home tab", cards([home({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: exactly 4 metric names on a list tab \(its four cards\), up to 4 on a home tab/);
+    no("five on a home tab", cards([home({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: 1 to 4 metric names on a list tab \(its cards\), up to 4 on a home tab/);
     no("none on a home tab", cards([home({ sparklines: [] })]), /tabs\[0\]\.sparklines: 1 to 4 metric names/);
     no("on an overview that is not the home tab", cards([home({ include: ["notices"], sparklines: four.slice(0, 2) })]), /tabs\[0\]\.sparklines: sparklines are for a list tab: area, runs, reports, schedules, or a home tab/);
     no("an undeclared metric on a home tab", cards([home({ sparklines: ["open_count", "nope"] })]), /tab home: sparklines names metric nope, which this pack does not declare/);

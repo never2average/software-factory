@@ -20,6 +20,7 @@ import { GridCell } from '@/features/portal/grid-cell';
 import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
 import { relativeDue } from '@/features/records/due-soon-card';
+import { dayText } from '@/lib/display-format';
 
 interface Notice {
   id: string; kind: 'due' | 'clock'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
@@ -40,7 +41,7 @@ async function call<T>(method: string, path = ''): Promise<T> {
 /** Today's date as the server writes a due date (YYYY-MM-DD), in the person's own calendar. */
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 /** A due date (YYYY-MM-DD) as the person reads it: the full date. */
-const dueDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const dueDate = (iso: string) => dayText(iso);
 /** mold_v0-298: a due date in words ("tomorrow", "in 3 days", "2 days ago"), the full date on hover; as Posted reads. */
 function DueWhen({ on, className }: { on: string; className?: string }) {
   const iso = on.slice(0, 10);

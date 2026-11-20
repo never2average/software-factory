@@ -4,6 +4,7 @@
 // imports only.
 import { JOB_KINDS } from '../../config/build-facts.generated';
 import { recordAreas } from '../../config/pack-nav.generated';
+import { dateTimeText } from '../../lib/display-format';
 
 export { JOB_KINDS };
 
@@ -51,7 +52,7 @@ export const runSeconds = (r: Pick<Run, 'started_at' | 'ended_at' | 'status'>, n
   return end === null ? null : Math.max(0, Math.round((end - Date.parse(r.started_at)) / 1000));
 };
 export const duration = (s: number | null) => (s == null ? '' : s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`);
-export const when = (d: string | null) => (d ? new Date(d).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
+export const when = (d: string | null) => (d ? dateTimeText(d) : '');
 
 /** "Applications" -> "Application": a column of one record each reads in the singular. */
 export const singular = (label: string) =>

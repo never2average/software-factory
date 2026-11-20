@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
-import { money, num, usd } from '@/lib/display-format';
+import { dayText, money, num, usd } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { WorkspaceAccessLog } from '@/features/audit/access-log';
@@ -214,7 +214,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
           {!b.enabled || (b.budget_source === 'override' && !s) ? null : <>
             <span className='font-medium'>{s?.plan ?? 'No plan'}</span>
             {s && <Badge variant={STATUS[s.status] ?? 'outline'}>{s.status.replace('_', ' ')}</Badge>}
-            {s?.renews_at && <span className='text-muted-foreground'>{s.cancel_at_period_end ? 'ends' : 'renews'} {new Date(s.renews_at).toLocaleDateString()}</span>}
+            {s?.renews_at && <span className='text-muted-foreground'>{s.cancel_at_period_end ? 'ends' : 'renews'} {dayText(s.renews_at)}</span>}
           </>}
         </span>
       </div>
@@ -275,7 +275,7 @@ function ContributionCredits({ c }: { c: Contributions }) {
         {c.credits.map((x) => (
           <li key={x.id} className='flex items-center gap-3 py-2 leading-none'>
             <span className='min-w-0 flex-1 truncate'>{x.description ?? 'Library contribution'}</span>
-            <span className='text-muted-foreground text-xs'>{new Date(x.created).toLocaleDateString()}</span>
+            <span className='text-muted-foreground text-xs'>{dayText(x.created)}</span>
             <span className='w-20 text-right tabular-nums'>{usd(x.amount_usd)}</span>
           </li>
         ))}
@@ -310,7 +310,7 @@ function RunChargesList({ c }: { c: RunCharges }) {
         {c.recent.map((x) => (
           <li key={x.id} className={cn('flex items-center gap-3 py-2 leading-none', x.amount === 0 && 'text-muted-foreground')}>
             <span className='min-w-0 flex-1 truncate' title={x.run_id}>{x.kind === 'credit' ? 'Credit: ' : ''}{x.job_kind}{x.reason ? <span className='text-muted-foreground'> · {x.reason}</span> : null}</span>
-            <span className='text-muted-foreground text-xs'>{new Date(x.created_at).toLocaleDateString()}</span>
+            <span className='text-muted-foreground text-xs'>{dayText(x.created_at)}</span>
             <span className='w-24 text-right tabular-nums'>{fmt(x.amount, x.currency)}</span>
           </li>
         ))}

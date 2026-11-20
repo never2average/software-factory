@@ -6,7 +6,8 @@ import { UrlTabs } from './compute-common';
 import { AdminAccounts } from './accounts';
 import { AdminAdmins } from './admins';
 
-export const ACCOUNTS_TABS = [['accounts', 'Accounts'], ['admins', 'Admins']] as const;
+// mold_v0-329: the first tab says what it lists, never the sidebar entry's own name again.
+export const ACCOUNTS_TABS = [['accounts', 'All accounts'], ['admins', 'Admins']] as const;
 
 export function AccountsPage({ section }: { section: string | null }) {
   const tab = section === 'admins' ? 'admins' : 'accounts';

@@ -43,6 +43,7 @@ import { W } from '@/lib/vocabulary';
 import { kindLabel, packRuns, sessionEngine } from './engine';
 import { PackRunKinds } from './compute-runs';
 import { text } from '@/lib/texts';
+import { dateTimeText } from '@/lib/display-format';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -926,7 +927,7 @@ function ChargesTab({ data, loading, bar, off }: TabProps<RunCharges> & { off: b
   const mixed = (data?.totals.length ?? 0) > 1 ? <span className={cn('text-sm', AMBER)}>Charges in {data!.totals.map((x) => x.currency).join(', ').toUpperCase()}: the cards show {t?.currency.toUpperCase()}.</span> : null;
   const owed = t && t.pending ? <span className={cn('text-sm', t.failed ? AMBER : 'text-muted-foreground')}>{t.pending} pending{t.failed ? `, ${t.failed} failing (see each row)` : ''}</span> : null;
   const cols: RecordCol<ChargeRow>[] = [
-    { key: 'when', label: 'When', keep: true, type: 'date', value: (r) => r.created_at, render: (r) => num(new Date(r.created_at).toLocaleString()) },
+    { key: 'when', label: 'When', keep: true, type: 'date', value: (r) => r.created_at, render: (r) => num(dateTimeText(r.created_at)) },
     { key: 'account', label: 'Account', title: true, type: 'select', value: (r) => r.account.name ?? r.account.slug, render: (r) => (
       <a className='hover:underline' href={accountHref(r.account.slug)}>{r.account.name ?? r.account.slug}</a>) },
     { key: 'kind', label: 'Run kind', type: 'select', value: (r) => `${r.pack}/${r.job_kind}`, render: (r) => (

@@ -16,9 +16,10 @@ import { Icons } from '@/components/icons';
 import { ErrorState } from '@/features/portal/shared';
 import { CardForm, ToolbarAction, useActionOpen } from '@/features/tabs/tab-action';
 import { personWords, sendJson, useTeams, type TeamSummary } from './visibility';
+import { dayText } from '@/lib/display-format';
 
 export const teamUrl = (id: number) => `/app/settings/teams/${id}`;
-const dateText = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const dateText = (iso: string) => dayText(iso);
 
 export function TeamsTab() {
   const { data, error, reload } = useTeams();

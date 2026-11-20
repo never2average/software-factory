@@ -130,7 +130,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(edited("projects", (d) => { delete facts(d)[3].computed.field; }), /a latest fact names the field it shows/, "a latest fact without its field");
   has(edited("projects", (d) => { facts(d)[4].computed.field = "status"; }), /a count fact counts records: it names no field/, "a count with a field");
   has(edited("projects", (d) => { facts(d).push({ label: "Odd" }); }), /a fact names a field of the record, or is computed from related records/, "a fact with neither");
-  has(edited("projects", (d) => { facts(d).push({ label: "A" }, { label: "B" }); }), /at most 8 facts/, "a ninth fact (computed ones count)");
+  has(edited("projects", (d) => { facts(d).push({ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }); }), /at most 10 facts/, "an eleventh fact (computed ones count; mold_v0-329: 10 at most)");
   const add = (d: any) => d.actions.find((x: any) => x.kind === "create_record");
   has(edited("projects", (d) => { delete add(d).area; }), /a create_record action names the area it adds a record to/, "Add without its area");
   has(edited("projects", (d) => { d.actions[0].area = "builds"; }), /area is for a create_record action, not start_run/, "an area on a run");
@@ -156,7 +156,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(edited("releases", (d) => { d.actions[0].target.via = "owner"; }), /owner is not a link or reference field of the area: a run's target is the record one names/, "a target through a text field");
   void rel;
   ok("the second batch, in the area (mold_v0-256): refused: a date test on a text field, two date tests, a clock the area lacks, a clock's test with a field, all beside a test, all and any together, a tone outside info, success, warning and danger, a target on a link action, a target through a text field");
-  ok("in the area and the tab (mold_v0-256): the fixture takes; refused: a log of a number or file field or with fields, two kinds in one section, a code view of a file field or in another language, a table of a text field or of nine columns, history of a field the area lacks or past 100, a file browser of a text field or on an area without files, a computed fact with a field or without its label, a latest without its field, a count with one, a where of two tests, a fact with neither, a ninth fact, Add without its area, an area on a run, an input from a field the record lacks or not a field, a viewer's Add, a related column showing a sum, twice or on a merged tab");
+  ok("in the area and the tab (mold_v0-256): the fixture takes; refused: a log of a number or file field or with fields, two kinds in one section, a code view of a file field or in another language, a table of a text field or of nine columns, history of a field the area lacks or past 100, a file browser of a text field or on an area without files, a computed fact with a field or without its label, a latest without its field, a count with one, a where of two tests, a fact with neither, an eleventh fact, Add without its area, an area on a run, an input from a field the record lacks or not a field, a viewer's Add, a related column showing a sum, twice or on a merged tab");
 
   const build = (edit?: (j: any) => void) => { const j = clone(FIXTURE); edit?.(j); return checkViews(viewsOf([{ id: "fixture_pages", definition: compileDeclarations(j) as never }])); };
   assert.deepEqual(build(), [], "the fixture's build: no problem");
@@ -296,7 +296,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   const rp = strip(src("features/runs/run-page.tsx")), cv = strip(src("features/records/code-view.tsx")), hs = strip(src("features/records/history-section.tsx")), fb = strip(src("features/records/file-browser.tsx"));
   assert.doesNotMatch(dp, /data-section-count|relatedCountWords|runsCountWords|First \$\{|Latest \$\{/, "no count beside a section's title");
   assert.match(dp, /const unit = f\.type === 'number' \? columnUnit\(target, f\.name\) : undefined;/, "a related list's number with its unit");
-  assert.match(dp, /if \(fact && f\.type === 'url' && typeof v === 'string'\) return <LinkText href=\{v\} \/>;/, "a fact's address through LinkText");
+  assert.match(dp, /if \(fact && f\.type === 'url' && typeof v === 'string'\) return <LinkText href=\{v\} text=\{linkText\} \/>;/, "a fact's address through LinkText (mold_v0-329: or its link_text, linked)");
   assert.match(dp, /linkPieces\(href\)\.map\(\(p, i\) => <span key=\{i\} className='inline-block max-w-full truncate align-bottom'>/, "each piece whole, a long one truncated");
   assert.match(dp, /\[overflow-wrap:normal\] \[word-break:normal\]/, "never broken inside a word");
   assert.doesNotMatch((/export function LinkText\b[\s\S]*?\n\}\n/.exec(dp)?.[0] ?? "").replace(/<TooltipContent[^>]*>/, ""), /break-all|break-words/, "no breaking inside a word on a fact's address (its tooltip shows it whole)");

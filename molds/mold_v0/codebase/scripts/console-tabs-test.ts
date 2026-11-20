@@ -493,7 +493,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(open, /role="radiogroup"|aria-haspopup="listbox"/, "a rail without journeys: no journey selector, a plain heading");
       assert.doesNotMatch(open, /<h1/, "no page title: the Setup page has none");
       const setup = open.slice(order[1]!, order[2]!);
-      assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
+      assert.equal([...setup.matchAll(/<ol class="mt-3"[ >]/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
       assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
       const order146 = ["Join your team", "Add the connector to your agent", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
       assert.ok(order146.every((x, i) => x >= 0 && (i === 0 || x > order146[i - 1]!)), `the shell's steps, then the pack's: ${order146}`);
@@ -516,11 +516,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(notices, /Show all 7/, "and a button for the rest");
       assert.doesNotMatch(open, /data-home-section="notices"/, "the notices are a card, not also a section");
       assert.doesNotMatch(open, /Found and fixed per week|Open by regulator/, "none of the charts");
-      // Every step done: the same page (the original's never folds), every step a check, no prompt left to copy.
-      assert.match(done, /5 of 5 steps done\./, "all done");
+      // Every step done (mold_v0-329, operator 2026-11-20): the checklist folds to one line and a toggle; the steps stay
+      // a click away. The connection card stays.
+      assert.match(done, /data-setup-folded=""[\s\S]*Setup done \(5 steps\)[\s\S]*Show steps/, "all done: one line, Setup done (5 steps), and Show steps");
+      assert.doesNotMatch(done, /5 of 5 steps done\./, "no progress line once folded");
       assert.match(done, /Connect your agent[\s\S]*Test my connection/, "the connection card stays");
       assert.equal([...done.matchAll(/Copy prompt/g)].length, 0, "no prompt for a done step");
-      assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 5, "every step checked");
+      assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 0, "folded: no step drawn until Show steps");
       console.log("✓ rendered home tab: the Setup page's layout: one checklist (shell steps then the pack's, one count, every step described, a Copy prompt on each open one with a prompt), the connection card, the number card with a link to Dashboard, five of seven notices with Show all, no charts grid (mold_v0-207); all done, the same page with every step checked");
       // mold_v0-231: a list tab (an area's table, runs, reports), drawn by the same TabPage: no title or description
       // (no h1 or h2) above its four cards; the cards, then its search row.

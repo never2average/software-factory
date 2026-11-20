@@ -29,7 +29,8 @@ import { useAdmin } from './lib';
 import { Gate } from './role';
 import { ACCESS_PAGES_KEY } from './access-pages-keys';
 
-export const REQUEST_TABS = [['requests', 'Requests'], ['form', 'Early access form']] as const;
+// mold_v0-329: the first tab says what it lists (the requests received), never the sidebar entry's name again.
+export const REQUEST_TABS = [['requests', 'Received'], ['form', 'Early access form']] as const;
 
 export function AccessRequestsPage({ section }: { section: string | null }) {
   // An old ?section=sign-in (the sign-in editor is gone) is the Requests tab.

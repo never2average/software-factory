@@ -30,6 +30,7 @@ import { httpError } from '@/features/status/from-error';
 import { settingsTabUrl } from '@/config/settings';
 import { personWords, sendJson, type Person, type TeamSummary } from './visibility';
 import { IdentityName } from '@/components/identity-avatar';
+import { dateTimeText, dayText } from '@/lib/display-format';
 
 interface TeamPerson { user_id: string; role: 'member' | 'lead'; added_at: string; added_by: string | null; name: string | null; email: string | null;
   /** mold_v0-262: the role in the app's words. */
@@ -52,8 +53,8 @@ async function getJson<T>(url: string): Promise<T> {
   if (!res.ok) throw httpError(res.status, body);
   return body;
 }
-const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-const day = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const when = (iso: string) => dateTimeText(iso);
+const day = (iso: string) => dayText(iso);
 const TABS = [{ id: 'people', label: 'People' }, { id: 'records', label: 'Records' }, { id: 'history', label: 'History' }] as const;
 
 /** A change in words: "added Ana as a lead", "renamed it (from Design)". */
