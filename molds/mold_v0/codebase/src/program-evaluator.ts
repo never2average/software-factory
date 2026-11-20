@@ -132,7 +132,7 @@ export const canUnshareNet = () => existsSync(UNSHARE) && spawnSync(UNSHARE, ["-
  * one, or an entry gone. Throws when a socket exists and cannot be denied (no setfacl, or it fails): the evaluation is then
  * refused.
  */
-export function denySockets(uids: number[], sockets: string[]): { undo: () => void; verify: () => string | null } {
+export function denySockets(uids: number[], sockets: string[]): { undo: () => void; verify: () => string | null; quick: () => string | null } {
   const setfacl = sbin("setfacl"), getfacl = sbin("getfacl");
   const ident = (p: string) => { try { const st = statSync(p); return st.isSocket() ? `${st.dev}:${st.ino}` : "gone"; } catch { return "gone"; } };
   const seen = new Map(sockets.map((p) => [p, ident(p)]));
@@ -146,9 +146,24 @@ export function denySockets(uids: number[], sockets: string[]): { undo: () => vo
       const a = acl(p);
       for (const uid of uids) if (!new RegExp(`^user:${uid}:---`, "m").test(a)) return `the local socket ${p} lost its deny entry for uid ${uid}`;
     }
+    refreshStamps();
     return null;
   };
-  if (!sockets.length) return { undo: () => {}, verify };
+  /**
+   * mold_v0-330: the check while a program runs (every 250 ms), with nothing spawned: an ACL change, like any change of a
+   * socket's inode, moves its ctime, so the stamps (inode and ctime) taken after the entries were set say whether
+   * anything moved; only then is the full check (getfacl) run. The full check spawned getfacl for every socket every
+   * 250 ms: with 78 sockets it held the runner's event loop about 580 ms in every 250, so a program's exit was seen late.
+   */
+  const stampOf = (p: string) => { try { const st = statSync(p, { bigint: true }); return `${st.ino}:${st.ctimeNs}`; } catch { return "gone"; } };
+  const stamps = new Map<string, string>();
+  const refreshStamps = () => { for (const p of seen.keys()) stamps.set(p, stampOf(p)); };
+  const quick = () => {
+    if (openUnixSockets().some((p) => !seen.has(p))) return verify();
+    for (const [p, st] of stamps) if (stampOf(p) !== st) return verify();
+    return null;
+  };
+  if (!sockets.length) return { undo: () => {}, verify, quick };
   if (!setfacl || !getfacl) throw new Error(`setfacl is not installed, so the local sockets ${sockets.slice(0, 3).join(", ")} cannot be denied`);
   const done: [number, string, string | null][] = [];
   const undo = () => {
@@ -162,7 +177,8 @@ export function denySockets(uids: number[], sockets: string[]): { undo: () => vo
       done.push([uid, p, old]);
     }
   }
-  return { undo, verify };
+  refreshStamps();
+  return { undo, verify, quick };
 }
 /** File systems no program writes a file to (the kernel's own): never walked for folders anyone may write to. */
 const PSEUDO_FS = new Set(["proc", "sysfs", "cgroup", "cgroup2", "devpts", "mqueue", "securityfs", "pstore", "bpf", "debugfs", "tracefs",
@@ -334,21 +350,55 @@ Promise.all([tcp("127.0.0.1",${v4}),tcp("::1",${v6 ?? 0})]).then(()=>{process.st
 
 /** A program run with a time limit: its stdout (bounded), and whether it exited cleanly. */
 /** `isolation`: what the namespace wrapper said on fd 3 when it could not make the program's isolation (NETNS_SH). */
-type ProgramRun = { ok: boolean; stdout: string; why: string | null; isolation?: string | null };
+type ProgramRun = { ok: boolean; stdout: string; why: string | null; isolation?: string | null; ms?: number };
+/** Whether a process has ended (a zombie not reaped yet, or gone): its exit is on its way to this runner. */
+const ended = (pid: number | undefined) => { if (!pid) return true; try { return readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /s, "").startsWith("Z"); } catch { return true; } };
+/**
+ * A program run with a time limit: its stdout (bounded), and whether it exited cleanly (mold_v0-330):
+ *   - its result is taken once it has exited AND its output has been read to the end (a short grace after the exit for
+ *     a pipe still held by a process it left): never from what had arrived when the exit was seen;
+ *   - the time limit is its own: when the limit's timer fires and the program has in fact already ended (its exit not yet
+ *     seen by a busy runner), it is not cut, its exit is taken.
+ */
 function runProgram(argv: string[], o: { cwd: string; input: string; timeoutMs: number; env: Record<string, string>; watch?: () => string | null }): Promise<ProgramRun> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
+    const t0 = Date.now();
     const child = spawn(cmd!, args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore", "pipe"], detached: true });
-    let out = "", over = false, settled = false, iso = "";
-    (child.stdio[3] as import("node:stream").Readable).setEncoding("utf8").on("data", (d: string) => { if (iso.length < 2000) iso += d; }).on("error", () => {});
-    const finish = (r0: ProgramRun) => { if (settled) return; settled = true; clearTimeout(timer); if (watcher) clearInterval(watcher); setTimeout(() => resolve({ ...r0, isolation: iso.trim() || null }), 50); };
+    let out = "", over = false, settled = false, iso = "", outEnded = false, isoEnded = false;
+    let exited: { code: number | null; sig: string | null } | null = null, grace: NodeJS.Timeout | null = null;
+    const finish = (r0: ProgramRun) => {
+      if (settled) return; settled = true; clearTimeout(timer); if (timerAgain) clearTimeout(timerAgain); if (grace) clearTimeout(grace); if (watcher) clearInterval(watcher);
+      resolve({ ...r0, isolation: iso.trim() || null, ms: Date.now() - t0 });
+    };
+    const done = () => {
+      if (!exited) return;
+      if (over) return finish({ ok: false, stdout: "", why: "it printed too much" });
+      const { code, sig } = exited;
+      finish({ ok: code === 0, stdout: out, why: code === 0 ? null : `it exited ${code ?? sig}` });
+    };
+    const fd3 = child.stdio[3] as import("node:stream").Readable;
+    fd3.setEncoding("utf8").on("data", (d: string) => { if (iso.length < 2000) iso += d; }).on("end", () => { isoEnded = true; if (exited && outEnded) done(); }).on("error", () => { isoEnded = true; });
     // The firewall path's sockets, checked while it runs too (a socket made again mid-program): ended at once, refused.
     const watcher = o.watch ? setInterval(() => { const w = o.watch!(); if (w) { iso += `${w}\n`; try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } finish({ ok: false, stdout: "", why: w }); } }, 250) : null;
-    const timer = setTimeout(() => { try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } finish({ ok: false, stdout: "", why: "it ran past the test's time limit" }); }, o.timeoutMs);
+    const cut = () => { try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } finish({ ok: false, stdout: "", why: "it ran past the test's time limit" }); };
+    const timer = setTimeout(function limit() {
+      // Ended already (a busy runner has not seen its exit yet): wait for it, a little; else cut it.
+      if (!exited && ended(child.pid)) { timerAgain = setTimeout(() => { if (!exited) cut(); }, 2000); return; }
+      if (!exited) cut();
+    }, o.timeoutMs);
+    let timerAgain: NodeJS.Timeout | null = null;
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (d: string) => { if (out.length < MAX_OUTPUT) out += d; else over = true; });
+    child.stdout!.on("end", () => { outEnded = true; if (exited && isoEnded) done(); });
     child.on("error", (e) => finish({ ok: false, stdout: "", why: `it could not start: ${e.message}`.slice(0, 200) }));
-    child.on("exit", (code, sig) => { if (over) return finish({ ok: false, stdout: "", why: "it printed too much" }); finish({ ok: code === 0, stdout: out, why: code === 0 ? null : `it exited ${code ?? sig}` }); });
+    child.on("exit", (code, sig) => {
+      exited = { code, sig };
+      if (timerAgain) clearTimeout(timerAgain);
+      // Its output read to the end first; a pipe held by a process it left (killed after it) gets 2 s.
+      if (outEnded && isoEnded) return done();
+      grace = setTimeout(done, 2000);
+    });
     child.stdin!.on("error", () => {});
     child.stdin!.end(o.input);
   });
@@ -521,7 +571,7 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     /** Each program gets the test's time limit, cut to what is left of the run's (mold_v0-324); none left: refused. */
     const timeoutMs = () => Math.min(testTimeoutMs, deadline - Date.now());
     const results: CaseMeasurement[] = [];
-    const watch = () => { const c = socketGuard?.verify(); return c ? `${c} during the evaluation` : null; };
+    const watch = () => { const c = socketGuard?.quick(); return c ? `${c} during the evaluation` : null; };
     const command = (argv: string[], u: RunUser | null, work: string) => {
       if (!u) return argv;
       // Firewall path: the sockets as denied at the start, none new (review of mold_v0-324): else refused.
@@ -540,6 +590,13 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
     const madeAsItMust = (r: ProgramRun) => { if (r.isolation) throw Object.assign(new Error(`a program's isolation could not be made (${r.isolation.slice(0, 300)}), so nothing was scored`), { refuse: true }); };
     const outOfTime = () => finish({ cases: [], tampered: null, error: `the evaluation ran past its run's time limit after ${results.length} of ${cases.length} cases, so nothing was scored` }, null);
     const builtinFile = start.test.candidate_command[0] === "builtin:file" ? start.test.candidate_command[1]! : null;
+    // mold_v0-330: why a program measured nothing (it ran past the test's limit, exited non-zero, printed too much):
+    // the run's `evaluation_unscored` event, so a case scored null says why, never silently.
+    const unscored: { case: string; program: string; why: string }[] = [];
+    // The slowest program of each kind that ended by itself, against the test's limit (mold_v0-330): how close a run came.
+    const slowest: Record<string, { case: string; ms: number }> = {};
+    const timed = (c: EvalCase, program: string, r: ProgramRun) => { if (r.ms !== undefined && r.why !== "it ran past the test's time limit" && (slowest[program]?.ms ?? -1) < r.ms) slowest[program] = { case: c.id, ms: r.ms }; };
+    const noteUnscored = (c: EvalCase, program: string, why: string | null) => { if (unscored.length < 200) unscored.push({ case: c.id, program, why: (why ?? "no output").slice(0, 200) }); };
     const runOne = async (dir: string, user: RunUser | null, name: string, c: EvalCase): Promise<{ output: string | null; why: string | null }> => {
       // mold_v0-303: a built-in candidate is a file of its tree (protectTree left only plain files and folders), read here.
       if (builtinFile) {
@@ -552,6 +609,8 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       const r = await runProgram(command(start.test.candidate_command, user, work), { cwd: dir, input: JSON.stringify({ id: c.id, input: c.input }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: work, TMPDIR: work, EVAL: "1" }, ...(socketGuard ? { watch } : {}) });
       clearUser(user);
       madeAsItMust(r);
+      timed(c, name, r);
+      if (!r.ok) noteUnscored(c, name, r.why);
       return r.ok ? { output: r.stdout, why: null } : { output: null, why: r.why };
     };
     const builtinScorer = start.test.scorer_command[0]?.startsWith("builtin:") ? start.test.scorer_command[0] : null;
@@ -562,9 +621,10 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       const s = await runProgram(command(start.test.scorer_command, scorerUser, work), { cwd: testDir, input: JSON.stringify({ id: c.id, input: c.input, expected: c.expected, output }), timeoutMs: Math.max(1, timeoutMs()), env: { ...clean, HOME: scorerHome, TMPDIR: work }, ...(socketGuard ? { watch } : {}) });
       clearUser(scorerUser);
       madeAsItMust(s);
-      if (!s.ok) return {};
+      timed(c, "scorer", s);
+      if (!s.ok) { noteUnscored(c, "scorer", s.why); return {}; }
       try { const v = JSON.parse(s.stdout) as Record<string, unknown>; return Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]))); }
-      catch { return {}; }
+      catch { noteUnscored(c, "scorer", "its output is not JSON"); return {}; }
     };
     const changedBetween = (was: Record<string, string>, now: Record<string, string>) => [...new Set([...Object.keys(was), ...Object.keys(now)])].filter((p) => was[p] !== now[p]);
     for (const c of cases) {
@@ -584,6 +644,8 @@ export async function runProgramEvaluation(client: RunnerClient, claim: Claim, o
       if (changed.length) return finish({ cases: [], tampered: `the test's files changed while it ran: ${changed.slice(0, 5).join(", ")}` }, null);
     }
     if (shared) await client.events(run.id, lease, [{ type: "evaluation_sweep", data: sweepStats }]).catch(() => {});
+    if (unscored.length) await client.events(run.id, lease, [{ type: "evaluation_unscored", data: { programs: unscored } }]).catch(() => {});
+    await client.events(run.id, lease, [{ type: "evaluation_timing", data: { limit_ms: testTimeoutMs, slowest } }]).catch(() => {});
     return finish({ cases: results, tampered: null }, null);
   } catch (e) {
     if ((e as { tamper?: boolean }).tamper) return finish({ cases: [], tampered: (e as Error).message.slice(0, 300) }, null);

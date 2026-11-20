@@ -90,6 +90,9 @@ function holds(out: Out, network: string, timeout: number) {
   assert.ok(Number(iso?.data?.sockets_denied) >= 2, "the planted sockets (at least) were covered or denied");
   assert.deepEqual(out.left_in_world_writable, [], "nothing a program wrote is left in a folder anyone may write to");
   const byId = Object.fromEntries(out.result!.cases.map((c) => [c.id, c]));
+  // Why a program measured nothing (mold_v0-330): only the hung case's two programs may be in it.
+  const unscored = (out.events.find((e) => e.type === "evaluation_unscored")?.data?.programs ?? []) as { case: string; program: string; why: string }[];
+  assert.deepEqual(unscored.filter((u) => u.case !== "hang"), [], `only the hung case is unscored: ${JSON.stringify(unscored)}`);
   for (const x of [1, 2, 3, 4, 5]) {
     const c = byId[`c${x}`]!;
     assert.equal(c.candidate, 1, `c${x}: the candidate's score came back (${JSON.stringify(c)})`); assert.equal(c.baseline, 0, `c${x}: the baseline's score came back (${JSON.stringify(c)})`);
@@ -97,9 +100,14 @@ function holds(out: Out, network: string, timeout: number) {
   }
   assert.equal(byId.hang!.candidate, null, "the hung candidate scored nothing"); assert.equal(byId.hang!.baseline, null);
   // Cases 1-5: four programs each, the probes' 1.5 s timeouts at most a few times; the hung case: two programs cut at the limit.
-  assert.ok(out.ms < 2 * timeout * 1000 + 5 * 4 * 12_000, `it took ${out.ms} ms`);
+  // The start-time listing of the shared folders (the firewall path: minutes on a big build machine) is its own cost,
+  // reported in evaluation_sweep, not the cases' (mold_v0-330).
+  const listed = Number((out.events.find((e) => e.type === "evaluation_sweep")?.data as { listed_ms?: number } | undefined)?.listed_ms ?? 0);
+  assert.ok(out.ms - listed < 2 * timeout * 1000 + 5 * 4 * 12_000, `it took ${out.ms} ms, ${listed} ms of it listing the shared folders`);
 }
-const TIMEOUT = 6;
+// Each program's limit: the hostile candidate takes about one of its 1.5 s probe time-outs; 10 s leaves a slow, busy
+// build machine room (mold_v0-330: 6 s once cut a candidate's first case on one), and the hung case is still cut at it.
+const TIMEOUT = 10;
 /** The runner's fake secret: in its environment (the container's), never in any program's. */
 const secretEnv = () => ({ JUDGE_FAKE_SECRET: randomBytes(12).toString("hex") });
 try {
@@ -116,7 +124,7 @@ try {
       assert.equal(outside.hits() - before, 1, "nothing but the runner's own control connection arrived");
       return;
     }
-    console.log(`    (${out.ms} ms; the shared folders' sweep: ${JSON.stringify(out.events.find((e) => e.type === "evaluation_sweep")?.data ?? null)})`);
+    console.log(`    (${out.ms} ms; the shared folders' sweep: ${JSON.stringify(out.events.find((e) => e.type === "evaluation_sweep")?.data ?? null)}; slowest: ${JSON.stringify(out.events.find((e) => e.type === "evaluation_timing")?.data ?? null)})`);
     holds(out, "firewall", TIMEOUT);
     assert.equal(outside.hits() - before, 1, "only the runner's own control connection arrived");
     assert.equal(spawnSync("sh", ["-c", "nft list tables 2>/dev/null | grep -c app_eval_"], { encoding: "utf8" }).stdout.trim(), "0", "the evaluation's firewall table is gone after it");
