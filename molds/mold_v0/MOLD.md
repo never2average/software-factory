@@ -3929,7 +3929,8 @@ self-tests.
   (staff read no workspace's records there); runs and history sections stay a workspace's. `npm run test:shared-records`.
 - **The agent's dock and Active runs** (flag `nested_runs`; mold_v0-292, mold_v0-295, mold_v0-296; `sql/migrations/0069_agent_dock.sql` with its rollback; docs/agent-harness.md "The agent's dock"): in the session's top bar, its sections as grouped tabs (Think, Measure, Ship by default; a program's `dock.group`), each a menu of its sections (two lines, a dot while one works or needs a person, no counts), any section opening in a large modal over the full-width conversation (a breadcrumb over the groups and sections as tabs; `?section=<id>` in the address); each agent named with its purpose's icon (`src/agent-purpose.ts`: declared on a profile or program, else read from it); its panels (results, changes, a 3D climb, a run's tree and step graph, version timeline, forks from a checkpoint); a phone's one button and sheet. A tab of kind `agent_runs` lists the active runs; a record section `versions` lists a record's runs and versions. The sections' words are each program's `dock`. Proof: `npm run test:agent-dock`.
 - **Nested runs and Programs** (flag `nested_runs`, default off, needs `agent_harness`; mold_v0-291; `sql/migrations/0066_nested_runs.sql` with its rollback; docs/agent-harness.md): a running agent session spawns children in sandboxes of their own (depth, child and concurrency limits, budgets carved from the parent's and enforced at the gateway, every policy the intersection with the parent's), typed versioned Programs (staff at `/admin/programs`, shell page id `programs`, or a pack.json's `programs`), and a server-owned acceptance rule that fails closed and promotes versions a person can roll back. Proof: `npm run test:nested-runs`.
-- **Workspace recipes** (flag `workspace_recipes`, default on, asked for when the staff Records group lists `recipes`,
+- **Workspace recipes** (flag `workspace_recipes`, default on, asked for when the staff Records group lists `recipes`
+  or, since mold_v0-327, when a pack declares recipes of its own (its profiles' sessions receive them),
   needs `agent_harness`; `src/recipes.ts`, `src/recipe-routes.ts`, `web/src/features/agent/recipes-page.tsx`,
   `sql/migrations/0060_workspace_recipes.sql` with its rollback): reusable bundles of files and runtime binaries an agent
   works with. Staff keep them at `/admin/recipes` (the standard list under the proposals waiting; a row opens the recipe in the panel beside the list, mold_v0-278, and its own page with
@@ -4324,6 +4325,26 @@ receive this record's values". Example: `{"area": "build_connections", "use": "u
 - Everything else holds: all or nothing per entry, the binding, redaction on every instance, never shown in the console,
   the chat or a log, and whoever starts the session can read every value delivered (so turn it on only for keys members
   may hold). Test: `npx tsx scripts/connection-env-test.ts` (sections 1 and 5).
+
+## A build, end to end, as a test (mold_v0-327)
+
+`npm run test:build-rehearsal` (`scripts/build-rehearsal-test.ts`, about a minute, offline) runs one application build
+through the real app with a neutral fixture pack (`scripts/fixtures/build-rehearsal/pack.json`: four connection areas, an
+applications area with Start build, builds and deployments, a build profile with `connection_env` and a recipe whose
+files are `scripts/fixtures/build-rehearsal/recipe/`). An owner adds the four connections over HTTP (object storage, a
+hosting account, a code repository, a Postgres database), presses Test on each (the mold's S3 stand-in checking SigV4;
+one HTTP stand-in through `APP_CONNECTION_TEST_STANDIN` for the hosting API and the git host, whose git half is a real
+`git http-backend` over a bare repository checking the token; a TLS Postgres stand-in), marks them "Use in builds", adds
+an application and presses Start build. The stand-in agent CLI then builds as a model would: the session's MCP tools,
+the recipe's wiring check, a write to the bucket with the delivered keys, a push (the token through a credential helper
+for that one command, never in `.git/config`), a deploy that sets the application's variables on the hosting project by
+name, and the build and deployment records moved through their statuses. It asserts exactly the 14 expected variable
+names (frozen and in the sandbox), what each stand-in received, a printed token redacted, a member's Start build without
+an owner's opt-in receiving none, and no fake secret in any HTTP answer, line printed, database table, the trace or the
+pushed repository. Needs `git`, `openssl` and `python3` on the machine; nothing of it needs root. Found and fixed: a pack
+that declared recipes for its profiles without listing the Recipes page left `workspace_recipes` off, so Start build
+was refused at run time (409) though the build passed; a pack's own recipes now ask for the flag (`src/features.ts`,
+`scripts/gen-packs.mjs`, `.claude/scripts/lib/features.py`).
 
 ## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
 

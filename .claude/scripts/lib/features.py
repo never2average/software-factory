@@ -61,7 +61,9 @@ def requested(flag, docs, settings_on=None, kind=None):
     by = flag.get("requested_by")
     if by == "always": return True
     # mold_v0-271: the staff Records group (a pack's console.admin_records; the app's profile says it in its own console) lists the recipes page
-    if by == "recipes": return any("recipes" in [x if isinstance(x, str) else (x or {}).get("id") for x in (((d.get("console") or {}).get("admin_records") or {}).get("show") or [])] for d in docs)
+    # mold_v0-327: or a pack declares recipes of its own (its agent profiles' sessions receive them)
+    if by == "recipes": return any("recipes" in [x if isinstance(x, str) else (x or {}).get("id") for x in (((d.get("console") or {}).get("admin_records") or {}).get("show") or [])] for d in docs) \
+        or any(len(d.get("recipes") or []) > 0 for d in docs)
     # mold_v0-282: a shared area declares a repository or a database field (the shell's src/features.ts and gen-packs say the same)
     if by == "resources": return any(a.get("scope") == "platform" and any(isinstance(f, dict) and f.get("type") in ("repository", "database") for f in a.get("fields") or []) for a in _areas(docs))
     # mold_v0-305: a pack declares object_storage (the shell's src/features.ts and gen-packs say the same)
@@ -216,6 +218,8 @@ def self_test(root):
     ok("recipes" not in words(effective({"features": {"agent_harness": True}}, [], root)) and "recipes" in words(effective({"features": {"agent_harness": True}}, listed, root))
        and "recipes" in words(effective({"features": {"agent_harness": True}, "console": {"admin_records": {"show": ["recipes"]}}}, [], root)),
        "workspace recipes: on when the staff Records group lists them, a pack's or the profile's (mold_v0-271)")
+    declares = [{"id": "m", "recipes": [{"id": "steps", "name": "Steps", "files": [{"path": "BUILD.md", "content": "x"}]}]}]
+    ok("recipes" in words(effective({"features": {"agent_harness": True}}, declares, root)), "workspace recipes: on when a pack declares recipes of its own (mold_v0-327)")
     ok(any("needs agent_harness" in e for e in problems({}, listed, root)) and not problems({"features": {"agent_harness": True}}, listed, root), "workspace recipes need the workspace agent")
     # mold_v0-316: the agent's examples and quick commands come with the agent, on unless the profile turns them off
     q = lambda prof: next(x for x in effective(prof, [], root) if x["id"] == "agent_quick_commands")["on"]

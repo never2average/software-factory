@@ -71,6 +71,7 @@ SECONDS = {
     "test:agent-steps": 36,
     "test:audit-key-scan": 10,
     "test:audit-trail": 18,
+    "test:build-rehearsal": 70,
     "test:checks": 14,
     "test:clerk-azp": 1,
     "test:client-skill": 12,

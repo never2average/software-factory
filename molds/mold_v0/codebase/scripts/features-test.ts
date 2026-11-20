@@ -97,7 +97,7 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    assert.equal(F.featureSpec("workspace_recipes").quiet_off, true, "workspace_recipes: quiet while off (asked for only by the staff Records group)");
+    assert.equal(F.featureSpec("workspace_recipes").quiet_off, true, "workspace_recipes: quiet while off (asked for only by the staff Records group or a pack's own recipes)");
     assert.equal(F.featureSpec("record_resources").quiet_off, true, "record_resources: quiet while off (asked for only by a shared area's repository or database field)");
     assert.equal(F.featureSpec("workspace_storage").quiet_off, true, "workspace_storage: quiet while off (asked for only by a pack's object_storage)");
     console.log("✓ the registry: 30 flags, each documented with a default; profile.features over the legacy key over the default");

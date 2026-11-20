@@ -301,7 +301,7 @@
       "default": true,
       "quiet_off": true,
       "requested_by": "recipes",
-      "requested_words": "the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json)",
+      "requested_words": "the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json), or a pack declares recipes of its own (mold_v0-327)",
       "requires": ["agent_harness"],
       "since": "mold_v0-271",
       "about": "Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline.",
