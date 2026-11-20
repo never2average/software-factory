@@ -24,7 +24,7 @@ import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
 import { RunLinkText } from './run-link';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -176,12 +176,24 @@ function FieldCell({ label, children, copy, className, labelHidden = false }: { 
 }
 const copyOf = (f: RecordFieldSpec, v: unknown) => ((f as LaidOutField).copyable && !isEmptyValue(v) ? { text: copyText(v), what: f.label } : null);
 
+/**
+ * mold_v0-328: a record tab holding one section whose title is the tab's own name (Builds › Builds) draws no visible
+ * card title: the tab strip already says it. The title stays for screen readers (the card is named by it). Not on the
+ * first tab, where the record's other cards (Other details, Linked records) follow it.
+ */
+const SoleSectionTab = createContext<string | null>(null);
+function useRepeatsTab(title: string) {
+  const tab = useContext(SoleSectionTab);
+  return tab != null && tab.trim().toLowerCase() === title.trim().toLowerCase();
+}
+
 /** A section: a full-width card, its groups of fields in its columns, or its empty state. */
 function SectionCard({ s, area, base, layout, record, id, labels = 'auto' }: { s: DetailSection; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; id: string; labels?: 'auto' | 'always' }) {
   const empty = sectionEmpty(s, record.data);
+  const repeatsTab = useRepeatsTab(s.title);
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} aria-labelledby={`${id}-title`} role='region'>
-      <CardHeader className='border-b py-3.5 [.border-b]:pb-3.5'>
+      <CardHeader className={repeatsTab ? 'sr-only' : 'border-b py-3.5 [.border-b]:pb-3.5'} data-title-repeats-tab={repeatsTab ? '' : undefined}>
         <CardTitle id={`${id}-title`} className='text-sm font-semibold'>{s.title}</CardTitle>
       </CardHeader>
       <CardContent className='py-4'>
@@ -284,10 +296,12 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
  * beside the title (the list says what it holds; Show all stays a button).
  */
 function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' }) {
+  const repeatsTab = useRepeatsTab(title);
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} data-section-kind={kind} aria-labelledby={`${id}-title`} role='region'>
-      <CardHeader className='flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-3 [.border-b]:pb-3'>
-        <CardTitle id={`${id}-title`} className='text-sm font-semibold'>{title}</CardTitle>
+      <CardHeader className={repeatsTab && !link ? 'sr-only' : cn('flex flex-row flex-wrap items-center gap-x-4 gap-y-2 border-b py-3 [.border-b]:pb-3', repeatsTab ? 'justify-end' : 'justify-between')}
+        data-title-repeats-tab={repeatsTab ? '' : undefined}>
+        <CardTitle id={`${id}-title`} className={repeatsTab ? 'sr-only' : 'text-sm font-semibold'}>{title}</CardTitle>
         {link}
       </CardHeader>
       <CardContent className='px-0 py-0'>{children}</CardContent>
@@ -645,7 +659,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
         <CardContent className='flex flex-col gap-5 py-5'>
           <div className={cn('flex flex-col gap-4', !inRecordPanel && 'sm:flex-row sm:items-start sm:justify-between')}>
             <div className='flex min-w-0 flex-1 flex-col gap-2'>
-              <p className='text-muted-foreground text-xs'>{area.label} · {where}</p>
+              <p className='text-muted-foreground text-xs'>{area.label}{where && <> · {where}</>}</p>
               {!inRecordPanel && <h1 className='text-xl leading-tight font-semibold tracking-tight break-words md:text-2xl'>{title}</h1>}
               {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
                 <p className='text-muted-foreground max-w-prose text-sm leading-relaxed break-words' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
@@ -716,7 +730,9 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
         <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
           <RecordTabStrip tabs={tabs} open={tabId(tab.label)} />
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>
-            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+            <SoleSectionTab.Provider value={tab.sections.length === 1 && !first ? tab.label : null}>
+              {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+            </SoleSectionTab.Provider>
             {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
           </TabsContent>
         </Tabs>

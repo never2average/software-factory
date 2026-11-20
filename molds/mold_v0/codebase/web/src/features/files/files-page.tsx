@@ -148,7 +148,7 @@ function StoreView({ store, stores, onPick }: { store: Store; stores: Store[]; o
       ) : undefined}
       empty={{
         title: 'No files saved yet.',
-        text: fill('Each time a {run} finishes, the files it keeps are saved here as a new version. Start a {run} and its files show up here.'),
+        text: fill('Each time a {run} finishes, the files it keeps are saved here as a new version.'),
         action: runs ? { label: fill('Go to {runs}'), href: runs.url } : undefined
       }}
       panelKind='editor'

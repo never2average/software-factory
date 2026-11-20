@@ -210,11 +210,11 @@ function AgentList({ area }: { area: Area }) {
           {mayRun && programs.length > 0 && <Button type='button' variant='outline' onClick={() => setRunning(true)} aria-label='Run a program' title='Run a program' data-agent-run-program=''>
             <Icons.sparkles /><span className='sm:hidden'>Run</span><span className='hidden sm:inline'>Run a program</span></Button>}
           <StartButton onClick={() => setStarting(true)} /></div> : undefined}
-        // mold_v0-298: the shell's empty state (a title, a sentence) with the way to start one inside it, where this person may.
+        // mold_v0-298: the shell's empty state (a title, a sentence). The toolbar's Start a session is the way to start one
+        // (mold_v0-328: never a second button for the same thing inside the empty state).
         empty={<EmptyState id={`${area}-agent-empty`} empty={{ title: 'No sessions yet', cta: null,
-            text: area === 'app' ? (data?.can_start ? 'A session is the agent working on one task you give it. Start one and tell it what to do.' : 'A session is the agent working on one task. A member of this workspace who may use the agent can start one.')
-              : 'No workspace has started a session yet. Sessions show here once someone starts one.' }}
-          action={area === 'app' && data?.can_start ? <Button size='sm' onClick={() => setStarting(true)} data-agent-empty-start=''><Icons.add />Start a session</Button> : undefined} />}
+            text: area === 'app' ? (data?.can_start ? 'A session is the agent working on one task you give it.' : 'A session is the agent working on one task. A member of this workspace who may use the agent can start one.')
+              : 'Sessions show here once someone in a workspace starts one.' }} />}
         detail={() => null}
         actions={(s) => budget.items(s)}
       />

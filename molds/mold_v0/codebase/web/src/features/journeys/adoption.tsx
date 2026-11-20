@@ -433,7 +433,7 @@ function Client({ name, at }: { name: string; at: string }) {
     <dl>
       <Field label='Agent'>{name}</Field>
       <Field label='Last connected'><When d={at} /></Field>
-      <Field label='Add another'><Link className='text-primary underline-offset-4 hover:underline' href='/app'>Connection string on Setup & training</Link></Field>
+      <Field label='Add another'><Link className='text-primary underline-offset-4 hover:underline' href='/app'>Connect your agent on Setup & training</Link></Field>
     </dl>
   );
 }

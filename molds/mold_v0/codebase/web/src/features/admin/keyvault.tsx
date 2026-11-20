@@ -118,7 +118,8 @@ export function AdminKeyVault() {
       render: (p) => <span className='tabular-nums'>{keysOf(p).reduce((t, c) => t + c.uses, 0).toLocaleString()}</span> },
     { key: 'last', label: 'Last used', type: 'date', value: (p) => p.last_used_at ?? undefined, render: (p) => p.slug === GITHUB_APP ? (p.last_used_at ? <When d={p.last_used_at} /> : <span className='text-muted-foreground'>—</span>) : (
       <span className='flex flex-col gap-0.5'>{p.last_used_at ? <When d={p.last_used_at} /> : <span className='text-muted-foreground'>never</span>}
-        <span className='text-muted-foreground text-xs tabular-nums'>{COMPACT.format(keysOf(p).reduce((t, c) => t + c.uses, 0))} uses</span></span>
+        {/* "never" already says no use: the count only once there is one. */}
+        {p.last_used_at && <span className='text-muted-foreground text-xs tabular-nums'>{COMPACT.format(keysOf(p).reduce((t, c) => t + c.uses, 0))} uses</span>}</span>
     ) },
     { key: 'on', label: 'On', className: 'w-16 text-right', keep: true,
       render: (p) => p.slug === GITHUB_APP ? null : <span onClick={(e) => e.stopPropagation()}><Gate need='keys'><Switch aria-label={`${p.slug} on`} checked={p.enabled} disabled={provOn.isPending} onCheckedChange={(c) => provOn.mutate({ slug: p.slug, enabled: c })} /></Gate></span> }

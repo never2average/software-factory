@@ -34,7 +34,7 @@ export const PAGE_URL = '/app/connected-apps';
 export const CONNECT_URL = '/app#connect';
 export const DESCRIPTION = fill('Agents you connected and signed in with, such as a chat assistant or a code editor. Each acts as you, with your role, in the {workspace} you chose. Revoke one to sign it out at once.');
 export const EMPTY = {
-  title: 'No apps connected',
+  title: 'No agents connected',
   text: fill('When you connect an agent and sign in, it shows here, with the {workspace} it acts in.'),
   cta: { label: 'Connect an agent', href: CONNECT_URL },
 };
@@ -71,8 +71,8 @@ export const revokeQuestion = (a: ConnectedApp) => ({
 // The words claim only what holds: a connection is ended in the agent itself; signing out here does not end it.
 export const CLERK_NOTE = {
   title: 'Managed by the service you sign in with',
-  text: fill('Your agents sign in through the same service you use to sign in here, and that service keeps the connections. So this page shows the agents most recently seen working in this {workspace} as you, and when each was last seen.'),
-  disconnect: 'To disconnect an app, open that app and remove this connection in its settings, or sign out of it there. Signing out of this page does not disconnect your agents.',
+  text: fill('Your agents sign in through the service you use to sign in here, and it keeps the connections. This list shows the agents last seen working in this {workspace} as you.'),
+  disconnect: 'To disconnect an agent, remove the connection in that agent\'s own settings. Signing out here does not disconnect it.',
 };
 
 /**
@@ -91,7 +91,7 @@ export const forgetQuestion = (name: string) => ({
 
 export const SEEN_EMPTY = {
   title: 'No agents seen yet',
-  text: fill('Once you connect an agent and it works in this {workspace} as you, it shows here with when it was last seen.'),
+  text: fill('An agent shows here once it works in this {workspace} as you.'),
   cta: { label: 'Connect an agent', href: CONNECT_URL },
 };
 

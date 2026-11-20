@@ -223,9 +223,9 @@ function RunTick({ s }: { s: Summary }) {
 function Freshness({ s }: { s: Summary }) {
   useNow();
   const age = ageOf(s.tick.at);
-  const tone = age == null || age > 600 ? 'red' : age > 3 * s.tick.tick_seconds ? 'amber' : null;
+  const tone = age == null ? null : age > 600 ? 'red' : age > 3 * s.tick.tick_seconds ? 'amber' : null;
   const runtime = s.runtime === 'vercel' ? 'Vercel' : 'VM';
-  const text = age == null ? 'Has not checked yet' : `Checked ${dur(age)} ago`;
+  const text = age == null ? 'Not checked yet' : `Checked ${dur(age)} ago`;
   const title = [s.tick.at && `Last autoscaler tick ${new Date(s.tick.at).toLocaleString()}${s.tick.holder ? ` by ${s.tick.holder}` : ''}`,
     tone === 'red' && s.runtime === 'vercel' && 'On Vercel, ticks only happen when something happens; queued work may wait for the next 5-minute cron.',
     `Runtime ${runtime} · data as of ${new Date(s.at).toLocaleTimeString()}`].filter(Boolean).join('\n');
@@ -511,7 +511,8 @@ function Environment({ s, boat, onTest, testing }: { s: Summary; boat: boolean; 
     { key: 'value', label: 'Value', type: 'text', value: (r) => r.value, render: (r) => <span>{r.value}</span> },
     { key: 'source', label: 'Set by', type: 'select', value: (r) => r.sourceText, render: (r) => <span className='text-xs'>{r.source}</span> },
     { key: 'name', label: 'Variable', hidden: true, type: 'text', value: (r) => r.name, render: (r) => <Mono>{r.name}</Mono> },
-    { key: 'meaning', label: 'Meaning', className: 'min-w-80', type: 'text', value: (r) => r.meaningText, render: (r) => <span className='text-muted-foreground text-xs whitespace-normal'>{r.meaning}</span> }
+    // The same words as the first column: offered in the columns menu only, never shown twice by default.
+    { key: 'meaning-detail', label: 'Meaning', hidden: true, className: 'min-w-80', type: 'text', value: (r) => r.meaningText, render: (r) => <span className='text-muted-foreground text-xs whitespace-normal'>{r.meaning}</span> }
   ];
   const cards = <Cards items={[
       { label: 'Autoscaler ticks, 24 h', spark: t('ticks'), value: total(t('ticks')) ?? '—' },

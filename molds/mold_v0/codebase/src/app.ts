@@ -124,7 +124,7 @@ async function setup(s: Session, since?: string) {
   const steps: Step[] = [
     { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },
     { id: "connected", ...shellWords("connected", `Add the ${P} connector to your agent`,
-      `${P} runs inside the agent you already use. Pick your agent under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
+      `Choose your agent in Connect your agent, follow its one step, then press Test my connection.`), done: Boolean(m.connected), at: m.connected },
     { id: "tools", ...shellWords("tools", `Switch the ${P} tools on`,
       `Your agent has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other agents, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
     { id: "first_call", ...shellWords("first_call", `Ask ${P} something`, `Your first question checks everything works end to end. Type: "What can ${P} do?"`), done: Boolean(m.first_call), at: m.first_call },
