@@ -14,6 +14,7 @@
 // Pure decisions (the steps' states, the header's line, a link row's words) are in ./detail-layout.ts.
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { STEP_WORD, stepMark, type DotTone, type StepState } from './detail-layout';
 
@@ -23,7 +24,7 @@ const TEXT_LINK = 'text-primary inline-flex items-center gap-1 rounded-sm text-[
 export function TextLink({ label, href, onClick, ariaLabel, className, ...rest }: { label: ReactNode; href?: string; onClick?: () => void; ariaLabel?: string; className?: string; [data: `data-${string}`]: string | undefined }) {
   return href
     ? <Link href={href} className={cn(TEXT_LINK, className)} aria-label={ariaLabel} {...rest}>{label}</Link>
-    : <button type='button' onClick={onClick} className={cn(TEXT_LINK, className)} aria-label={ariaLabel} {...rest}>{label}</button>;
+    : <Button type='button' variant='ghost' size='xs' onClick={onClick} className={cn(TEXT_LINK, 'hover:text-primary', className)} aria-label={ariaLabel} {...rest}>{label}</Button>;
 }
 
 /** A value's Copy: says "Copied" for a moment (the copy itself, with its toast, is the caller's). */
@@ -157,7 +158,7 @@ export function RailHeading({ title, tone, status, context, trailing, level }: {
     <div className='@container/rail-head min-w-0' data-rail-header=''>
       <div className='flex min-w-0 flex-wrap items-center gap-x-[7px] gap-y-1 @[34rem]/rail-head:flex-nowrap'>
         {tone && <span className={cn('size-[7px] shrink-0 rounded-full', DOT[tone])} data-status-dot={tone} title={status ?? undefined} aria-hidden />}
-        <H className='m-0 min-w-0 shrink grow basis-[calc(100%-14px)] truncate text-base leading-tight font-semibold tracking-tight @[34rem]/rail-head:basis-auto @[34rem]/rail-head:[flex:0_1_auto]' data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
+        <H className={cn('m-0 min-w-0 shrink grow truncate text-base leading-tight font-semibold tracking-tight @[34rem]/rail-head:basis-auto @[34rem]/rail-head:[flex:0_1_auto]', tone ? 'basis-[calc(100%-14px)]' : 'basis-full')} data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
         {context && <span className={cn('text-muted-foreground min-w-0 flex-1 truncate text-[13px] @[34rem]/rail-head:flex-none @[34rem]/rail-head:[flex:0_100000_auto]', tone && 'pl-[14px] @[34rem]/rail-head:pl-0')} title={context} data-rail-context=''>{context}</span>}
         <span className='hidden min-w-1 flex-1 @[34rem]/rail-head:block' aria-hidden />
         {trailing && <span className={cn('ml-auto flex shrink-0 items-center gap-2', !context && tone && 'pl-[14px]')}>{trailing}</span>}

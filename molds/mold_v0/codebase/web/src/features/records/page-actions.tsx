@@ -419,7 +419,7 @@ function RecordRunForm({ host, a, onDone }: { host: ActionHost; a: PageAction; o
  */
 export interface RailActions { main: ReactNode; dialog: ReactNode; menu: (extra: readonly RowAction[], name: string) => ReactNode }
 
-const RAIL_LINK = 'text-primary inline-flex items-center gap-1 rounded-sm text-[13px] whitespace-nowrap hover:underline focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-[13px]';
+const RAIL_LINK = 'text-primary hover:text-primary inline-flex items-center gap-1 text-[13px] whitespace-nowrap hover:underline focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-[13px]';
 
 /** The primary action as a text link; a disabled one keeps its focus and says why on hover and focus. */
 function RailMain({ a, busy, take }: { a: PageAction; busy: boolean; take: (a: PageAction, to?: string) => void }) {
@@ -427,18 +427,18 @@ function RailMain({ a, busy, take }: { a: PageAction; busy: boolean; take: (a: P
   const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
   if (a.kind === 'move' && !a.disabled && !one && (a.moves?.length ?? 0) > 0) return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<button type='button' className={RAIL_LINK} data-page-action={a.id} data-primary='' data-rail-main='' />}>
+      <DropdownMenuTrigger render={<Button type='button' variant='ghost' size='xs' className={RAIL_LINK} data-page-action={a.id} data-primary='' data-rail-main='' />}>
         {ICON.move}{a.label}<Icons.chevronDown aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-64'><MoveItems a={a} take={take} /></DropdownMenuContent>
     </DropdownMenu>
   );
   const link = (
-    <button type='button' className={cn(RAIL_LINK, (a.disabled || busy) && 'text-muted-foreground cursor-not-allowed hover:no-underline')} data-page-action={a.id} data-primary='' data-rail-main=''
+    <Button type='button' variant='ghost' size='xs' className={cn(RAIL_LINK, (a.disabled || busy) && 'text-muted-foreground cursor-not-allowed hover:no-underline')} data-page-action={a.id} data-primary='' data-rail-main=''
       {...(one ? { 'data-move-to': one.to } : {})} aria-disabled={a.disabled || busy ? true : undefined} aria-describedby={a.disabled ? why : undefined}
       onClick={() => { if (!a.disabled && !busy) take(a, one?.to); }}>
       {ICON[a.kind]}{one ? one.label : a.label}
-    </button>
+    </Button>
   );
   if (!a.disabled) return link;
   return (
