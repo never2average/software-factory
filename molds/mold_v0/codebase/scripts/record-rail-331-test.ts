@@ -74,9 +74,11 @@ const issues = (a: unknown) => {
   assert.equal(L.isRail(layout), false);
   assert.equal(L.isRail({ ...layout, style: "rail" }), true);
   const path = ["queued", "running", "passed"];
-  assert.deepEqual(L.stepRows(path, "running"), { steps: [{ value: "queued", state: "done" }, { value: "running", state: "now" }, { value: "passed", state: "todo" }], off: null });
+  assert.deepEqual(L.stepRows(path, "running"), { steps: [{ value: "queued", state: "done" }, { value: "running", state: "now" }, { value: "passed", state: "todo" }], off: null, stopped: null });
   assert.deepEqual(L.stepRows(path, "passed").steps.map((x: { state: string }) => x.state), ["done", "done", "now"]);
-  assert.deepEqual(L.stepRows(path, "failed"), { steps: path.map((value) => ({ value, state: "todo" })), off: "failed" }, "a state off the path: every step to do, the state said apart");
+  assert.deepEqual(L.stepRows(path, "failed"), { steps: path.map((value) => ({ value, state: "todo" })), off: "failed", stopped: null }, "a state off the path with no stage or times known: every step to do, the state said apart");
+  // mold_v0-333: with its stage (or the state times), where it stopped (scripts/build-lifecycle-333-test.ts has the rest).
+  assert.deepEqual(L.stepRows(path, "failed", { stage: "running" }).steps.map((x: { state: string }) => x.state), ["done", "failed", "todo"]);
   assert.deepEqual(L.stepRows(path, null).off, null, "no state yet: all to do, nothing apart");
   assert.deepEqual([L.stepMark("done", 0), L.stepMark("now", 1), L.stepMark("todo", 2)], ["✓", "2", "3"]);
   assert.deepEqual([L.relatedRowWords(0, false, "Builds"), L.relatedRowWords(1, false, "Builds"), L.relatedRowWords(3, false, "Repositories"), L.relatedRowWords(5, true, "Builds")],

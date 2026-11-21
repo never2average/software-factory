@@ -27,7 +27,7 @@ import { getDb, type Db, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { optionValues, PackError, type Clock, type PackTool, type RecordRow, type Workspace } from "./pack-api.js";
-import { asWriter, getFor, isSealedArea, may, recordAreas, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { asWriter, getFor, isSealedArea, may, recordAreas, shellMove, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { featureOn, featureSetting } from "./features.js";
 
@@ -114,6 +114,13 @@ export function stepWords(area: RecordArea, clock: string, step: string, detail:
   const ch = (k: "reassigned" | "raised") => detail[k] as { field?: string; to?: unknown } | undefined;
   if (ch("reassigned")) parts.push(`reassigned ${fieldLabel(ch("reassigned")!.field)}`);
   if (ch("raised")) parts.push(`raised ${fieldLabel(ch("raised")!.field)} to ${String(ch("raised")!.to)}`);
+  // mold_v0-333: a step that moved the record along its lifecycle.
+  const moved = detail.moved as { to?: unknown } | undefined;
+  if (moved) {
+    const lf = area.lifecycle ? area.fields.find((f) => f.name === area.lifecycle!.field) : undefined;
+    const o = lf?.options?.find((x) => (typeof x === "string" ? x : x.value) === moved.to);
+    parts.push(`moved to ${o && typeof o !== "string" ? o.label ?? o.value : String(moved.to)}`);
+  }
   if (detail.skipped) parts.push(`not sent (${String(detail.skipped)})`);
   return parts.join("; ");
 }
@@ -243,7 +250,7 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
     const tells = s.id === latest.id;
     // What the step changes (reassign, raise) is worked out first and recorded with it: the event is the step's one record.
     const detail: Record<string, unknown> = tells ? { told: notify } : { told: [], skipped: "a later step was due" };
-    const plan = s.kind === "escalate" ? await planAction(orgId, area, row.key, c.escalate![s.index]!, detail) : null;
+    const plan = s.kind === "escalate" ? await planAction(orgId, area, row.key, c.escalate![s.index]!, detail, c) : null;
     // Each step once per record and deadline (the event's unique key: two checks at once do it once, its changes too).
     const [ev] = await db.query<{ id: string }>(
       `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -252,7 +259,19 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
     if (!ev) continue; // done before
     report.steps++;
     if (plan) {
-      try { await plan(); report.actions++; }
+      try {
+        const did = await plan();
+        report.actions++;
+        // mold_v0-333: a move made: said in its own event (the step's says only what it meant to do), its children closed.
+        const moved = (did as { moved?: unknown } | undefined)?.moved;
+        if (moved) {
+          await db.query(
+            `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
+            [orgId, area.pack, area.name, row.key, c.name, `${s.id}:moved`, v.due_at, v.due_at, JSON.stringify({ moved }), now]);
+          await (await import("./session-records.js")).closeChildrenFor(orgId, area.name, row.key).catch((err) => console.error(`${area.name}/${row.key}: children not closed: ${(err as Error).message}`));
+        }
+      }
       catch (err) {
         // Refused by the record store (a field's rule, the vault locked): recorded beside the step, never retried.
         await db.query(
@@ -275,10 +294,25 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
  * An escalation step's changes to the record (reassign, raise), worked out from the record as it is: written into
  * `detail`, and returned as the write to make (through the record store, as the shell), or null when nothing changes.
  */
-async function planAction(orgId: number, area: ClockArea, key: string, e: NonNullable<Clock["escalate"]>[number], detail: Record<string, unknown>): Promise<(() => Promise<unknown>) | null> {
-  if (!e.reassign && !e.raise) return null;
+async function planAction(orgId: number, area: ClockArea, key: string, e: NonNullable<Clock["escalate"]>[number], detail: Record<string, unknown>, c?: Clock): Promise<(() => Promise<unknown>) | null> {
+  if (!e.reassign && !e.raise && !e.move_to) return null;
   const rec = await getFor(orgId, area.name, key);
   if (!rec) return null;
+  // mold_v0-333: a step that moves the record (a time limit): only while it is in a state the step covers (move_from,
+  // else the one its clock started on), checked again in the move itself, by a transition naming that state, as the
+  // shell. The step's event says what it means to do; a ":moved" event says it did (a refusal is ":failed").
+  if (e.move_to && area.lifecycle) {
+    const from = String(rec.data[area.lifecycle.field] ?? area.lifecycle.initial);
+    const covers = e.move_from ?? (c && "state" in c.starts ? [c.starts.state] : []);
+    if (!covers.includes(from) || from === e.move_to) return null;
+    detail.move_to = e.move_to;
+    return async () => {
+      // Any state the step covers (a running build that reached deploying meanwhile still times out), read in the move.
+      await asWriter({ by: "shell", id: "clock" }, () => shellMove(orgId, area.pack, area.name, key, covers.filter((x) => x !== e.move_to), e.move_to!));
+      return { moved: { field: area.lifecycle!.field, from, to: e.move_to } };
+    };
+  }
+  if (!e.reassign && !e.raise) return null;
   const data = { ...rec.data };
   if (e.reassign) {
     const to = data[e.reassign.from_field];
