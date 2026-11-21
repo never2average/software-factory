@@ -46,7 +46,7 @@ import { CopyLink, LinkRow, NoticeLine, RailEmpty, RailFields, RailHeading, Rail
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
-  addedByWords, BADGE_CLASS, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
+  addedByWords, BADGE_CLASS, staleWords, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
@@ -868,8 +868,10 @@ function RailBody({ area, base, layout, record, links, clockEvents, where, crede
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const statusField = field(h.status);
   const sv = statusField ? record.data[statusField.name] : undefined;
-  const status = statusField && !isEmptyValue(sv) ? optionWords(statusField, sv) : null;
-  const tone = statusField && !isEmptyValue(sv) ? dotTone(badgeColor(layout, statusField.name, sv)) : null;
+  // mold_v0-332: a working test older than its pack's stale_after_days reads "Tested N days ago", neutral.
+  const stale = statusField && record.health?.field === statusField.name ? staleWords(record.health) : null;
+  const status = stale ?? (statusField && !isEmptyValue(sv) ? optionWords(statusField, sv) : null);
+  const tone = stale ? 'neutral' : statusField && !isEmptyValue(sv) ? dotTone(badgeColor(layout, statusField.name, sv)) : null;
   const context = headerContext(status, (h.context ?? []).map((n) => { const f = field(n), v = f ? record.data[n] : undefined;
     return f && !isEmptyValue(v) ? (refTarget(area, f) && record.ref_titles?.[n] ? refWords(v, record.ref_titles[n]) : fieldText(f, v, record.key)) : null; }));
   const slots = usePanelHeaderSlots();

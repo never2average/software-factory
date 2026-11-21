@@ -514,6 +514,11 @@ export function linkedShown(layout: DetailLayout, fields: string[]): string[] {
 export const isRail = (layout: DetailLayout | null | undefined) => layout?.style === 'rail';
 
 /** The status dot's tone, from the badge colour the layout gives that value (the dot's colour is the badge's). */
+/** mold_v0-332: a connection's health as the server read it now (src/connection-test-health.ts; never stored). */
+export type HealthView = { field?: string; state: string | null; tested_at?: string; days?: number; stale?: true; attention: boolean; reasons: string[] };
+/** mold_v0-332: a working status older than its test's stale_after_days, in words ("Tested 47 days ago"), else null. */
+export const staleWords = (h: HealthView | undefined): string | null =>
+  h?.stale && h.days !== undefined ? `Tested ${h.days} day${h.days === 1 ? '' : 's'} ago` : null;
 export type DotTone = 'good' | 'warn' | 'bad' | 'info' | 'neutral';
 export function dotTone(color: BadgeColor): DotTone {
   return color === 'success' ? 'good' : color === 'warning' ? 'warn' : color === 'danger' ? 'bad' : color === 'info' ? 'info' : 'neutral';
