@@ -15,7 +15,8 @@
  *                work yet: ... answered 401: the token was refused"); never a secret, never the answer's body beyond a
  *                short summary of its own error message, with any secret and anything shaped like a token cut out. The
  *                address's path is never returned (it may hold an account's id): only its host.
- *   the record   the probe's status (working or failing) and tested date, written as the app's own action
+ *   the record   the probe's status (working or failing; mold_v0-332: could not test, needs its key) and tested date (and
+ *                the declared tested_at, result, failing_since and failures: src/connection-test-health.ts), written as the app's own action
  *                (src/record-areas.ts asAction: fields set_by "action"), through the record store (its history and data
  *                trail say what changed: never a secret). The record's read is the person's (its own trail line).
  *
@@ -30,7 +31,8 @@ import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { ANY_PROBE, hostListed, isHttpProbe, localName, placeholders, PLACEHOLDER, PROBE_TIMEOUT_DEFAULT, probeHosts, type ConnectionProbe, type ConnectionTest } from "./connection-test-config.js";
+import { ANY_PROBE, hostListed, isHttpProbe, localName, placeholders, PLACEHOLDER, PROBE_TIMEOUT_DEFAULT, probeHosts, probeSecrets, type ConnectionProbe, type ConnectionTest } from "./connection-test-config.js";
+import { testOutcome } from "./connection-test-health.js";
 import { privateAddress } from "./egress-hosts.js";
 import { ENV } from "./env-names.js";
 import { PackError } from "./pack-api.js";
@@ -391,7 +393,7 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
   const label = (n: string) => `"${fieldOf(n)?.label ?? n}"`;
   const choice = test.by ? row.data[test.by] : undefined;
   const pk = test.by && typeof choice === "string" && Object.prototype.hasOwnProperty.call(test.probes, choice) ? choice : Object.prototype.hasOwnProperty.call(test.probes, ANY_PROBE) ? ANY_PROBE : null;
-  let result: ConnectionTestAnswer;
+  let result: ConnectionTestAnswer, keyEmpty = false;
   if (!pk) {
     result = { ok: false, outcome: "not_ready", host: null, status: null, ms: 0, probe: null,
       words: test.by && (choice === undefined || choice === null || choice === "") ? `It can't be tested yet: ${label(test.by)} is empty.` : `It can't be tested yet: this app has no test for ${test.by ? `${label(test.by)} ${String(choice)}` : "this record"}.` };
@@ -410,10 +412,11 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
     };
     const plain = Object.fromEntries(Object.entries(row.data).filter(([k]) => !sealed.has(k)));
     result = await runProbe(pk, test.probes[pk]!, { plain, sealed, open, label });
+    // mold_v0-332: could not test because a key it sends is empty: the record needs its key (not "failing").
+    if (result.outcome === "not_ready") keyEmpty = probeSecrets(test.probes[pk]!, (n) => sealed.has(n)).some((n) => (row.data[n] === undefined || row.data[n] === null || row.data[n] === "") && result.words.includes(`${label(n)} is empty`));
   }
-  const extra: Record<string, unknown> = {};
-  if (test.status) extra[test.status] = statusValue(fieldOf(test.status), result.ok);
-  if (test.tested) extra[test.tested] = new Date().toISOString().slice(0, 10);
+  // mold_v0-332: the outcome (working, failing, could not test, needs its key), its time, words and streak.
+  const extra = testOutcome(area, row.data, { ...result, keyEmpty });
   if (Object.keys(extra).length) {
     // The masked record written back: a masked field keeps its stored value (src/encrypted-fields.ts).
     const shown = await getFor(orgId, area.name, key, actor);
@@ -446,14 +449,6 @@ async function takeTest(orgId: number) {
  * never counted here, sees) the shared one.
  */
 export const resetTestRateForTest = (opts: { processOnly?: boolean } = {}) => { recent.clear(); if (!opts.processOnly) round++; };
-/** The status written: "working" or "failing", or the enum's option whose value or label says so. */
-function statusValue(f: { type?: string; options?: readonly (string | { value: string; label?: string })[] } | undefined, ok: boolean): string {
-  const want = ok ? "working" : "failing";
-  if (f?.type !== "enum") return want;
-  const opts = (f.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value }));
-  return (opts.find((o) => o.value === want) ?? opts.find((o) => o.label.toLowerCase() === want) ?? { value: want }).value;
-}
-
 /** Tests only: the connection's own lookup (it refuses a private address at connect time), and whether the stand-in is on. */
 export const publicLookupForTest = (host: string, options: object, cb: (e: Error | null, a?: unknown, f?: number) => void) => publicLookup(host, options as never, cb as never);
 export const standinActiveForTest = () => standin() !== null;

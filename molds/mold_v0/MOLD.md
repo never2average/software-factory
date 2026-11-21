@@ -4363,6 +4363,62 @@ receive this record's values". Example: `{"area": "build_connections", "use": "u
   the chat or a log, and whoever starts the session can read every value delivered (so turn it on only for keys members
   may hold). Test: `npx tsx scripts/connection-env-test.ts` (sections 1 and 5).
 
+## Connection health (mold_v0-332)
+
+What a workspace's connection record says about itself stays true when its keys or its target change, when a test
+could not run, as time passes and when a build uses it (`src/connection-test-health.ts`; the declaration's checks in
+`src/connection-test-config.ts` healthProblems). Pack config only, every key optional; a pack that declares none keeps
+working as before, except that a test that could not run is no longer written as failing.
+
+- **Declared** on a `test_connection` probe beside `status` and `tested` (and on `object_storage`: the field keys in
+  its `fields`, `outcomes` and `stale_after_days` beside them): `tested_at` (a date field, set_by "action": the time of
+  the last test, an ISO time), `result` (a text field, set_by "action": the test's own words, secret-free, at most 300
+  characters), `failing_since` (a date field, set_by "action"), `failures` (a number field, set_by "action": failing
+  tests in a row), `expires_on` (a date field people set: when the key expires), `outcomes` (`{working, failing,
+  cannot_test, needs_key, untested}`: each the status enum's option value; absent, the option named so, `cant_test` or
+  `not_tested`, or a label saying it) and `stale_after_days` (1 to 3650). Example: `{"by": "provider", "probes": {...},
+  "status": "health", "tested": "tested_on", "tested_at": "tested_at", "result": "result", "failing_since":
+  "failing_since", "failures": "failures", "expires_on": "expires_on", "outcomes": {"untested": "not_tested",
+  "cannot_test": "cant_test"}, "stale_after_days": 30}` with `health` an enum of not_tested, working, failing,
+  cant_test, needs_key. The build refuses a field the area lacks, of another type, encrypted, one an action does not
+  set (expires_on: one an action sets), one field for two keys, an outcome that is not an option, two outcomes on one
+  option, and outcomes or stale_after_days without a status.
+- **The test writes** working or failing from the service's answer (failing: refused, unexpected, a timeout, an
+  unreachable or private address); **could not test** (`cannot_test`) when nothing was asked of it: the vault locked,
+  a field empty, no test for this provider, a key that does not open with the workspace's key, a value no address or
+  header takes (Test storage: keys that do not open or a setting refused before any call); **needs_key** when a key it
+  sends is empty (no such option: could not test). With no could-not-test option the status and the tested day stay as
+  they were: a test never blames the account for the app's own state. `result` is always written; working sets
+  `failures` 0 and clears `failing_since`; failing counts `failures` up from a failing status and keeps `failing_since`.
+- **Reset, in the same write, whoever writes** (`healthWrite`, in the record store's write `src/record-areas.ts`
+  putWorkspaceNow, so a person, an import, an agent's tool, a run and a page action alike): a write that types or clears
+  a key, or changes a field the test reads (a probe's `by`, its templates' fields, a signed kind's roles, `binds`; the
+  object storage's bucket, endpoint and keys) or that a key is bound to (`src/secret-binding.ts`), sets the status to
+  untested, or needs_key when it emptied a key (the binding's clearing included), and clears tested, tested_at,
+  result, failing_since and failures, overriding what the write said. A new record without a status starts untested.
+- **One marked at a time**: a `connection_env` entry's `only_one: true` (it needs `use`) refuses, on save (the record
+  store's save checks: every door, an import's preview too), a record turned on (or into its `where`) while another of
+  the workspace has it on: `Build connections: "main" is already marked "Use in builds", and only one may be: turn
+  it off there first` (a record the writer may not read: "another record"). A record already on saves as it is; two
+  marked before the rule both need attention, and a session's start still refuses them.
+- **Read now, never stored** (`withHealth`, on every list and get of such an area): each record's `health` is
+  `{field, state, tested_at, days, stale, attention, reasons}`. A working status whose last test (tested_at, else
+  tested) is older than `stale_after_days` is stale: the console's record header and list cell show "Tested N days
+  ago", neutral, in place of its badge. **Needs attention**: failing, could not test, needs its key, stale, `expires_on`
+  within 14 days (or past), or more than one record marked where only one may be (untested alone does not). The
+  console's lists of a tested area have a filter-only column "Needs attention" (Filter: Needs attention is Yes), and a
+  metric `"needs_attention": true` over such an area counts those records (counted in code, like a clock's).
+- **Last used**: an entry's `last_used` (a date field, set_by "action", none of its `use`, `where`, `members_field` or
+  delivered fields) is set to the time a wake's delivery gave the record's values, at most once an hour per record (in
+  the process, and in the database: a newer value is left as it is). A stamp of the app's own: no history line, the
+  record's updated time and the session's frozen version unchanged (a sealed or chained area is never stamped).
+- **A session told**: a record given at a session's start whose status is failing, could not test or needs its key is
+  named in its first system message with its status's label and the test's own words: `Warning: Build connections
+  "main" is given to this session, but its status is "Failing": It does not work yet: ... answered 401: the token
+  was refused. What uses it may not work.` Its values are still given (a warning, not a block).
+- Tests: `npx tsx scripts/connection-test-test.ts` (section 6), `scripts/connection-env-test.ts` (section 6),
+  `scripts/signed-probes-test.ts`, `scripts/workspace-storage-test.ts`.
+
 ## A build, end to end, as a test (mold_v0-327)
 
 `npm run test:build-rehearsal` (`scripts/build-rehearsal-test.ts`, about a minute, offline) runs one application build

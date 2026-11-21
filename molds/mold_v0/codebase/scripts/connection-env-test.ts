@@ -18,6 +18,9 @@
 //      owner's session; a member's edit of where its secrets go turns it off; turning it off after a session started
 //      does not reach that session (documented: the record is frozen with its version) but does the next; each change a
 //      grant or revoke line in the data trail; what a member's session receives is redacted like any other
+//   6. mold_v0-332: only_one refuses a save that marks a second record (naming the first), a legacy second one needs
+//      attention; a session given a connection whose status is failing is warned in its first message; a wake's
+//      delivery stamps the entry's last_used at most once an hour, without the record's updated time or version moving
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -84,9 +87,21 @@ const TARGETS = { name: "deploy_targets", label: "Deploy targets", role: "source
 const BUILDER_ENV = [
   { area: "build_connections", use: "use_in_builds", prefix: "BUILD_", members_field: "members_may_use", fields: { HOST: "host", TOKEN: "api_token" } },
   { area: "deploy_targets", prefix: "TARGET_", members_field: "members_may_use", fields: { REGION: "region" } }];
-const PACK = { id: "fixture_conn_env", name: "Fixture connection env", version: "1", record_areas: [STORAGE, COMPUTE, NETWORK, BUILD, TARGETS],
+// mold_v0-332: one marked at a time (only_one), its health, when a session last received it.
+const KEYS = { name: "deploy_keys", label: "Deploy keys", role: "source", scope: "workspace",
+  fields: [{ name: "host", label: "Host", type: "text" }, { name: "api_token", label: "API token", type: "text", encrypted: true },
+    { name: "use_in_builds", label: "Use in builds", type: "boolean" },
+    { name: "health", label: "Health", type: "enum", options: [{ value: "untested", label: "Not tested yet" }, { value: "working", label: "Working" }, { value: "failing", label: "Failing" }], set_by: "action" },
+    { name: "result", label: "Last result", type: "text", set_by: "action" },
+    { name: "last_used", label: "Last used", type: "date", set_by: "action" }],
+  permissions: { read: ALL, create: ["owner"], update: ["owner"], delete: ["owner"] }, contract,
+  detail: { tabs: [{ label: "Details", sections: [{ title: "Where", fields: ["host", "use_in_builds"] }] }],
+    actions: [{ kind: "test_connection", place: "primary", label: "Test", roles: ["owner"], probe: { probes: { "*": { method: "GET", url: "https://api.keys.example/v1/{host}", headers: { Authorization: "Bearer {api_token}" } } }, status: "health", result: "result" } },
+      { kind: "edit", place: "secondary" }] } };
+const KEEPER_ENV = [{ area: "deploy_keys", use: "use_in_builds", only_one: true, last_used: "last_used", prefix: "KEEP_", fields: { HOST: "host", TOKEN: "api_token" } }];
+const PACK = { id: "fixture_conn_env", name: "Fixture connection env", version: "1", record_areas: [STORAGE, COMPUTE, NETWORK, BUILD, TARGETS, KEYS],
   agent_profiles: [{ id: "deployer", name: "Deploy an application", connection_env: CONNECTION_ENV }, { id: "plain-agent", name: "No connections" },
-    { id: "builder", name: "Builder", connection_env: BUILDER_ENV },
+    { id: "builder", name: "Builder", connection_env: BUILDER_ENV }, { id: "keeper", name: "Keeper", connection_env: KEEPER_ENV },
     // mold_v0-321: one area split by `where` (as a network per cloud), and two entries of one area naming a flag no record has on.
     { id: "split", name: "Split entries", connection_env: [
       { area: "compute_connections", where: { provider: "paas" }, prefix: "COMPUTE_", fields: { API_TOKEN: "api_token" } },
@@ -571,6 +586,72 @@ try {
     assert.ok(of?.includes("members_may_use"), `an owner's edit form has it: ${JSON.stringify(of)}`);
     assert.ok(mf && !mf.includes("members_may_use") && mf.includes("host"), `a member's does not: ${JSON.stringify(mf)}`);
     ok("mold_v0-322: a member's new host, own token or change of the entry's use turns it off (a revoke line each); an owner's edit keeps it; a member's form leaves it out");
+  }
+
+  // ---------- 6. mold_v0-332: one marked, health at start, last used ----------
+  {
+    assert.deepEqual(connectionEnvProblems(KEEPER_ENV, [KEYS]), [], "the keeper fixture");
+    const badK = (patch: (c: any, areas: any[]) => void, re: RegExp, what: string) => {
+      const c = structuredClone(KEEPER_ENV) as any, areas = structuredClone([KEYS]) as any[]; patch(c, areas);
+      const p = connectionEnvProblems(c, areas);
+      assert.ok(p.some((m) => re.test(m)), `${what}: ${JSON.stringify(p)}`);
+    };
+    badK((c) => { delete c[0].use; }, /only_one: keeps one record marked: name the flag it reads/, "only_one without use");
+    badK((_c, a) => { delete a[0].fields[5].set_by; }, /last_used: last_used is written by the app only/, "a last used people set");
+    badK((_c, a) => { a[0].fields[5].type = "text"; }, /last_used: last_used is a plain date field/, "a last used as text");
+    badK((c) => { c[0].fields.WHEN = "last_used"; }, /last_used: last_used is also the entry's use, where, members_field or a delivered field/, "a delivered last used");
+    const own = { role: "owner" as const, userId: "user_owner" };
+    const keys = ra.workspaceRecords(PACK.id, A.orgId, own);
+    const put = (key: string, data: Record<string, unknown>, mode: "create" | "update" = "create") => ra.asWriter({ by: "people", id: "owner" }, () => keys[mode]("deploy_keys", key, { title: key, data }));
+    await put("k1", { host: "one", api_token: canary("k1"), use_in_builds: true });
+    await assert.rejects(put("k2", { host: "two", api_token: canary("k2"), use_in_builds: true }), /Deploy keys: "k1" is already marked "Use in builds", and only one may be: turn it off there first/, "a second marked: refused, naming the first");
+    await put("k2", { host: "two", api_token: canary("k2"), use_in_builds: false });
+    await assert.rejects(put("k2", { host: "two", use_in_builds: true }, "update"), /"k1" is already marked "Use in builds"/, "turning a second on: refused");
+    await put("k1", { host: "one", use_in_builds: true, }, "update"); // the one already marked: saved as it is
+    await put("k1", { host: "one", use_in_builds: false }, "update");
+    await put("k2", { host: "two", use_in_builds: true }, "update");
+    await put("k2", { host: "two", use_in_builds: false }, "update");
+    await put("k1", { host: "one", use_in_builds: true }, "update");
+    // A second one marked before the rule (written around the store): both need attention, and the start still refuses.
+    const { withTenant } = await import("../src/tenant-scope.js");
+    const mark = (key: string, on: boolean) => withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{use_in_builds}', $1::jsonb) WHERE org_id = $2 AND area = 'deploy_keys' AND key = $3", [JSON.stringify(on), A.orgId, key]));
+    await mark("k2", true);
+    const both = await ra.listFor(A.orgId, "deploy_keys", { limit: 10 }, own);
+    assert.ok(both.records.every((r) => r.health?.reasons.includes("more_than_one") && r.health.attention), `both need attention: ${JSON.stringify(both.records.map((r) => r.health))}`);
+    await assert.rejects(H.startSession(A.orgId, ownerA, { message: "x", profile: "keeper" }), /Deploy keys has more than one record marked "Use in builds"/);
+    await mark("k2", false);
+    assert.equal((await ra.getFor(A.orgId, "deploy_keys", "k1", own))!.health?.attention, false, "one marked again: no attention");
+    // Its last test failed: the session is given it and told so in its first message.
+    await ra.asAction(() => keys.update("deploy_keys", "k1", { title: "k1", data: { host: "one", use_in_builds: true, health: "failing", result: "It does not work yet: api.keys.example answered 401: the token was refused." } }));
+    const CE = await import("../src/connection-env.js");
+    const profile = { id: "keeper", source: `pack:${PACK.id}` };
+    const start = await CE.connectionEnvForStart(A.orgId, profile, ownerA);
+    assert.deepEqual(start.frozen.map((f) => [f.key, f.last_used]), [["k1", "last_used"]], "frozen with its last_used field");
+    assert.match(CE.connectionEnvWords(start) ?? "", /Warning: Deploy keys "k1" is given to this session, but its status is "Failing": It does not work yet: api\.keys\.example answered 401: the token was refused\.\. What uses it may not work\./);
+    // Working: no warning.
+    await ra.asAction(() => keys.update("deploy_keys", "k1", { title: "k1", data: { host: "one", use_in_builds: true, health: "working", result: "It works." } }));
+    assert.ok(!/Warning:/.test(CE.connectionEnvWords(await CE.connectionEnvForStart(A.orgId, profile, ownerA)) ?? ""), "a working one: no warning");
+    // A delivery stamps last_used, at most once an hour, without moving the record's updated time or frozen version.
+    const H2 = await import("../src/connection-test-health.js");
+    H2.resetLastUsedForTest();
+    const stored = async () => (await db.query<{ data: any; updated_at: Date }>("SELECT data, updated_at FROM workspace_records WHERE org_id = $1 AND area = 'deploy_keys' AND key = 'k1'", [A.orgId]))[0]!;
+    const before = await stored();
+    const got = await CE.connectionEnvValues(A.orgId, start.frozen, { audit: true });
+    assert.ok(got.delivered.some((x) => x.env === "KEEP_TOKEN"), JSON.stringify(got.missing));
+    const s1 = await stored();
+    assert.match(String(s1.data.last_used), /^\d{4}-\d{2}-\d{2}T/, "last used: a time");
+    assert.equal(s1.updated_at.getTime(), before.updated_at.getTime(), "the record's updated time kept");
+    H2.resetLastUsedForTest();
+    await CE.connectionEnvValues(A.orgId, start.frozen, { audit: true });
+    assert.equal((await stored()).data.last_used, s1.data.last_used, "within the hour (another instance's stamp): kept");
+    const hours2 = new Date(Date.now() - 2 * 3600_000).toISOString();
+    await withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{last_used}', to_jsonb($1::text)) WHERE org_id = $2 AND area = 'deploy_keys' AND key = 'k1'", [hours2, A.orgId]));
+    H2.resetLastUsedForTest();
+    const again = await CE.connectionEnvValues(A.orgId, start.frozen, { audit: true });
+    assert.ok(again.delivered.length && !again.changed.length, "the frozen version still matches (last_used is no field it reads)");
+    assert.ok(String((await stored()).data.last_used) > hours2, "two hours later: stamped again");
+    assert.equal((await CE.connectionEnvValues(A.orgId, start.frozen, { audit: false })).delivered.length > 0, true);
+    ok("mold_v0-332: only_one refuses a second marked record on save (naming the first), a legacy second needs attention; a failing connection given to a session is said in its first message; last used stamped at most hourly, the updated time and version kept");
   }
 
   // ---------- 4. no secret anywhere ----------

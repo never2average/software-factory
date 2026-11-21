@@ -18,6 +18,12 @@
 //      read with the token, refused for a team it cannot act in), basic_auth (HTTP Basic, made on the server, dropped
 //      like a header), expect.content_type (git's push discovery: a sign-in page is not a pass), a plain-text refusal's
 //      first line, and the pack's hint for a failing status
+//   6. mold_v0-332, truthful health: a declaration's tested_at, result, failing_since, failures, expires_on, outcomes
+//      and stale_after_days checked; a new record starts untested; working, failing (its streak and since when), could
+//      not test (no probe: never "failing"), needs its key (the key empty); a key typed again, a field the test reads
+//      changed (a person's or a run's write) resets the status and clears the tested and result fields in the same
+//      write, a key the binding clears resets to needs_key; a stale working test and an expiring key need attention
+//      (worked out on read, never stored); a metric counts the records needing attention
 import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -134,7 +140,32 @@ const STORAGE = { name: "fx_storage", label: "Storage", role: "source", scope: "
   permissions: { read: ALL, create: ["owner"], update: ["owner", "member"], delete: ["owner"] },
   contract: { provenance: ["people"], actions: { read: ALL, export: { none: "keys" }, create: ["owner"], update: ["owner", "member"], move: { none: "no lifecycle" }, delete: ["owner"],
     reveal: { none: "keys" }, import: { none: "keys" } }, primary_action: "create_record" } };
-const PACK = { id: "fixture_connections", name: "Fixture connections", version: "1", record_areas: [AREA, STORAGE],
+// mold_v0-332: an area with every health key.
+const HPROBE = {
+  by: "provider", probes: { paas: PROBE.probes.paas },
+  status: "health", tested: "tested_on", tested_at: "tested_at", result: "result", failing_since: "failing_since", failures: "failures", expires_on: "expires_on",
+  outcomes: { untested: "not_tested", cannot_test: "cant_test" }, stale_after_days: 30,
+};
+const HEALTH = {
+  ...structuredClone(AREA), name: "fx_health", label: "Health connections",
+  fields: [
+    { name: "provider", label: "Kind", type: "enum", options: ["paas", "other"] },
+    { name: "account_id", label: "Account ID", type: "text" },
+    { name: "notes", label: "Notes", type: "text" },
+    { name: "api_token", label: "API token", type: "text", encrypted: true },
+    { name: "health", label: "Health", type: "enum", options: [{ value: "not_tested", label: "Not tested yet" }, { value: "working", label: "Working" }, { value: "failing", label: "Failing" },
+      { value: "cant_test", label: "Can't be tested" }, { value: "needs_key", label: "Needs its key" }], set_by: "action" },
+    { name: "tested_on", label: "Tested on", type: "date", set_by: "action" },
+    { name: "tested_at", label: "Tested at", type: "date", set_by: "action" },
+    { name: "result", label: "Last result", type: "text", set_by: "action" },
+    { name: "failing_since", label: "Failing since", type: "date", set_by: "action" },
+    { name: "failures", label: "Failures in a row", type: "number", set_by: "action" },
+    { name: "expires_on", label: "Key expires", type: "date" },
+  ],
+  detail: { tabs: [{ label: "Details", sections: [{ title: "Where", fields: ["provider", "account_id"] }] }],
+    actions: [{ kind: "test_connection", place: "primary", label: "Test connection", roles: ["owner"], probe: HPROBE }, { kind: "edit", place: "secondary" }] },
+};
+const PACK = { id: "fixture_connections", name: "Fixture connections", version: "1", record_areas: [AREA, STORAGE, HEALTH],
   object_storage: { area: "fx_storage", fields: { bucket: "bucket", endpoint: "endpoint", access_key_id: "access_key_id", secret_access_key: "secret_access_key", use: "use_for_files" } } };
 
 try {
@@ -527,6 +558,122 @@ try {
     ok("mold_v0-320: the 10 a minute holds across instances: counted in the database, a second instance's 11th test is refused in the same plain words");
     ok("the attacks: an endpoint or kind changed without the token clears it (an owner's edit, a member's API write, storage's keys too), so Test sends nothing; a host off the probe's list refused on every hop, a cross-host hop without the token; '.' and '..', a non-header character and a short secret said in words; failures without timing; 10 tests a minute");
     ok("the action: an owner's only; works (200 in N ms), 401 refused with its echo cut out, a POST read at json_path, an internal endpoint and a private redirect refused (nothing sent), a timeout, an empty field said; status and date written as the action, never by a person's edit");
+  }
+
+  // ---------- 6. mold_v0-332: truthful health ----------
+  {
+    const H = await import("../src/connection-test-health.js");
+    const CT = await import("../src/connection-test.js");
+    const hp = (patch: (a: any, p: any) => void) => { const a = structuredClone(HEALTH) as any; patch(a, a.detail.actions[0].probe); return connectionTestProblems(a, a.detail.actions[0].probe).map((x) => `${x.path.join(".")}: ${x.message}`); };
+    assert.deepEqual(hp(() => {}), [], "the health fixture");
+    const hbad = (patch: (a: any, p: any) => void, re: RegExp, what: string) => { const p = hp(patch); assert.ok(p.some((m) => re.test(m)), `${what}: ${JSON.stringify(p)}`); };
+    hbad((a) => { a.fields[7].type = "date"; }, /probe\.result: result is a text field/, "result as a date");
+    hbad((a) => { delete a.fields[9].set_by; }, /probe\.failures: failures is written by the test only/, "failures a person sets");
+    hbad((a) => { a.fields[10].set_by = "action"; }, /probe\.expires_on: expires_on is set by the workspace's people/, "an expiry the app sets");
+    hbad((_a, p) => { p.outcomes.cannot_test = "broken"; }, /cannot_test is "broken", which is not one of health's options/, "an outcome that is not an option");
+    hbad((_a, p) => { p.outcomes.cannot_test = "failing"; }, /failing and cannot_test are both "failing"|cannot_test and failing/, "two outcomes, one option");
+    hbad((_a, p) => { delete p.status; }, /declare the status field it reads/, "outcomes without a status");
+    hbad((_a, p) => { p.result = "tested_at"; }, /tested_at is also/, "one field for two keys");
+    hbad((_a, p) => { p.stale_after_days = 0; }, /stale_after_days/, "stale after 0 days");
+    hbad((_a, p) => { p.tested_at = "nope"; }, /nope is not one of the area's fields/, "an unknown field");
+
+    const area = ra.findArea("fx_health")!;
+    const addH = (key: string, data: Record<string, unknown>) => ra.asWriter({ by: "people", id: "owner" }, () => recA.create("fx_health", key, { title: key, data }));
+    const editH = (key: string, data: Record<string, unknown>) => ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_health", key, { title: key, data }));
+    const row = async (key: string) => (await ra.workspaceStored(A.orgId, area, [key])).get(key)!.data;
+    const storedRow = async (a: string, key: string) => (await ra.workspaceStored(A.orgId, ra.findArea(a)!, [key])).get(key)!.data;
+    const testH = (key: string) => { C.resetTestRateForTest(); return ra.asAction(() => CT.testConnectionRecord(A.orgId, area, key, HPROBE as never, owner)); };
+    const cleared = (d: Record<string, unknown>) => ["tested_on", "tested_at", "result", "failing_since", "failures"].every((k) => d[k] === undefined || d[k] === null);
+
+    // A new record starts untested (the declared value), whoever adds it.
+    await addH("h1", { provider: "paas", account_id: "acc-1", api_token: GOOD });
+    assert.equal((await row("h1")).health, "not_tested", "a new record: untested");
+    // Working: the time, its own words, no failures.
+    const w1 = await testH("h1");
+    assert.equal(w1.ok, true, w1.words);
+    let d = await row("h1");
+    assert.equal(d.health, "working"); assert.match(String(d.tested_at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, "tested_at is a time");
+    assert.equal(d.result, w1.words); assert.equal(d.failures, 0); assert.ok(d.failing_since === null || d.failing_since === undefined);
+    // A key typed again (a person's edit): the status resets and the result is cleared, in the same write.
+    await editH("h1", { provider: "paas", account_id: "acc-1", api_token: BAD });
+    d = await row("h1");
+    assert.equal(d.health, "not_tested", "a new key: untested"); assert.ok(cleared(d), `the test's fields cleared: ${JSON.stringify(d)}`);
+    // Failing twice: the streak counts, failing since the first.
+    const f1 = await testH("h1"); assert.equal(f1.ok, false);
+    const d1 = await row("h1");
+    assert.equal(d1.health, "failing"); assert.equal(d1.failures, 1); assert.ok(d1.failing_since, "failing since");
+    assert.match(String(d1.result), /^It does not work yet: .* answered 401/, "the result is the test's own words");
+    assert.ok(!SECRETS.some((x) => String(d1.result).includes(x)), "the result carries no secret");
+    await new Promise((r) => setTimeout(r, 5));
+    await testH("h1");
+    const d2 = await row("h1");
+    assert.equal(d2.failures, 2, "two in a row"); assert.equal(d2.failing_since, d1.failing_since, "failing since the first");
+    // An edit that changes nothing the test reads keeps it all (the notes).
+    await editH("h1", { provider: "paas", account_id: "acc-1", notes: "the team's account" });
+    assert.equal((await row("h1")).failures, 2, "a note keeps the test's result");
+    // A person may not set the health fields by hand.
+    await assert.rejects(editH("h1", { provider: "paas", account_id: "acc-1", result: "It works." }), /set by the app's own actions/);
+    // The token typed again and working: the streak ends.
+    await editH("h1", { provider: "paas", account_id: "acc-1", api_token: GOOD });
+    await testH("h1");
+    d = await row("h1");
+    assert.deepEqual([d.health, d.failures], ["working", 0]); assert.ok(d.failing_since === null || d.failing_since === undefined, "no longer failing");
+    // The account changed without the token: the binding clears the token, so the record needs its key.
+    await editH("h1", { provider: "paas", account_id: "acc-2" });
+    d = await row("h1");
+    assert.equal(d.api_token, undefined, "the token cleared"); assert.equal(d.health, "needs_key", "a key cleared: needs its key"); assert.ok(cleared(d));
+    // Tested now: the key is empty, so it needs its key (not failing), and the test's words say why.
+    const nk = await testH("h1");
+    assert.equal(nk.outcome, "not_ready"); d = await row("h1");
+    assert.equal(d.health, "needs_key"); assert.match(String(d.result), /"API token" is empty/); assert.ok(d.tested_at, "the test ran");
+    // A kind with no test: could not test, never failing.
+    await addH("h-other", { provider: "other", api_token: GOOD });
+    const no = await testH("h-other");
+    assert.equal(no.outcome, "not_ready"); d = await row("h-other");
+    assert.equal(d.health, "cant_test", "no test for its provider: could not test"); assert.equal(d.failures, undefined, "no failure counted");
+    // An undeclared could-not-test (the first area: no such option) leaves the status as it was.
+    await add("ct-keep", { provider: "paas", account_id: "acc-9", api_token: GOOD });
+    assert.equal((await storedRow("fx_connections", "ct-keep")).status, "untested", "a new record of the first area: its untested option");
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_connections", "ct-keep", { title: "ct-keep", data: { provider: "other", api_token: GOOD } }));
+    C.resetTestRateForTest();
+    await ra.asAction(() => CT.testConnectionRecord(A.orgId, ra.findArea("fx_connections")!, "ct-keep", PROBE as never, owner));
+    assert.equal((await storedRow("fx_connections", "ct-keep")).status, "untested", "could not test, with no such option: the status kept, never failing");
+    assert.equal((await storedRow("fx_connections", "ct-keep")).last_tested, undefined, "nor a tested day");
+    // Whoever writes: a run's write that types a key and says "working" is reset too.
+    await editH("h1", { provider: "paas", account_id: "acc-1", api_token: GOOD });
+    await testH("h1");
+    assert.equal((await row("h1")).health, "working");
+    await ra.asWriter({ by: "run", id: "run-1" }, () => ra.workspaceRecords("fixture_connections", A.orgId, { role: null, userId: null }).update("fx_health", "h1",
+      { title: "h1", data: { provider: "paas", account_id: "acc-1", api_token: BAD, health: "working", result: "It works." } }));
+    d = await row("h1");
+    assert.equal(d.health, "not_tested", "a run's new key: untested, whatever it said"); assert.ok(cleared(d));
+    await editH("h1", { provider: "paas", account_id: "acc-1", api_token: GOOD });
+    await testH("h1");
+
+    // Read now: fresh, then stale (an old test), then expiring; worked out on read, nothing stored.
+    let rec = (await ra.getFor(A.orgId, "fx_health", "h1", owner))!;
+    assert.deepEqual([rec.health?.state, rec.health?.stale, rec.health?.attention], ["working", undefined, false], JSON.stringify(rec.health));
+    const { withTenant } = await import("../src/tenant-scope.js");
+    const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    await withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{tested_at}', to_jsonb($1::text)) WHERE org_id = $2 AND area = 'fx_health' AND key = 'h1'", [old, A.orgId]));
+    rec = (await ra.getFor(A.orgId, "fx_health", "h1", owner))!;
+    assert.deepEqual([rec.health?.state, rec.health?.stale, rec.health?.days, rec.health?.attention, rec.health?.reasons], ["working", true, 40, true, ["stale"]], JSON.stringify(rec.health));
+    assert.equal(rec.data.health, "working", "stale is a view: the stored status is unchanged");
+    const soon = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+    await addH("h-exp", { provider: "paas", account_id: "acc-1", api_token: GOOD, expires_on: soon });
+    await testH("h-exp");
+    const listed = await ra.listFor(A.orgId, "fx_health", { limit: 50 }, owner);
+    const by = new Map(listed.records.map((r) => [r.key, r.health]));
+    assert.deepEqual(by.get("h-exp")?.reasons, ["expiring"], `the key expires in 5 days: ${JSON.stringify(by.get("h-exp"))}`);
+    assert.deepEqual(by.get("h-other")?.reasons, ["cannot_test"]);
+    assert.ok(listed.records.every((r) => r.health), "every record of a tested area carries its health on a list");
+    assert.equal(H.healthView(area as never, { health: "failing" }, new Date(), false)?.attention, true, "failing needs attention");
+    assert.equal(H.healthView(area as never, { health: "not_tested" }, new Date(), false)?.attention, false, "untested alone does not");
+    // A metric of the records needing attention (h1 stale, h-exp expiring, h-other could not test).
+    const M = await import("../src/metrics.js");
+    const m = await M.computeSpec(A.orgId, { name: "fx_attention", label: "Need attention", over: "fx_health", measure: "count", needs_attention: true, limit: 12, pack: "fixture_connections" } as never, { role: null, userId: null } as never);
+    assert.equal((m as { value: number }).value, 3, JSON.stringify(m));
+    ok("mold_v0-332: health keys checked; a new record untested; working, failing (streak, since), could not test (never failing; kept when undeclared), needs its key; a key typed again or a field the test reads changed resets it in the same write (a person's or a run's), a key the binding clears resets to needs its key; stale and expiring need attention on read; a metric counts them");
   }
 
   // ---------- 4. no secret anywhere ----------

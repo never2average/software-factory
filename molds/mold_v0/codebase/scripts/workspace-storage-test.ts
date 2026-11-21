@@ -59,6 +59,8 @@ const PACK = {
       { name: "status", label: "Last test", type: "enum", options: ["untested", "working", "failing"] },
       { name: "tested", label: "Tested on", type: "date" },
       { name: "use_in_builds", label: "Use in builds", type: "boolean" },
+      { name: "result", label: "Last result", type: "text", set_by: "action" },
+      { name: "failures", label: "Failures in a row", type: "number", set_by: "action" },
     ],
     permissions: { read: ALL, create: ["owner"], update: ["owner"], delete: ["owner"] },
     contract: { provenance: ["people"], actions: { read: ALL, export: { none: "keys" }, create: ["owner"], update: ["owner"], move: { none: "no lifecycle" }, delete: ["owner"],
@@ -68,7 +70,8 @@ const PACK = {
   }],
   // mold_v0-322: the same area given to agent sessions by another flag: its Test names both.
   agent_profiles: [{ id: "builder", name: "Builder", connection_env: [{ area: "fx_storage", use: "use_in_builds", prefix: "STORE_", fields: { BUCKET: "bucket", SECRET: "secret_access_key" } }] }],
-  object_storage: { area: "fx_storage", fields: { bucket: "bucket", endpoint: "endpoint", access_key_id: "access_key_id", secret_access_key: "secret_access_key", use: "use_for_files", status: "status", tested: "tested" } },
+  object_storage: { area: "fx_storage", fields: { bucket: "bucket", endpoint: "endpoint", access_key_id: "access_key_id", secret_access_key: "secret_access_key", use: "use_for_files", status: "status", tested: "tested", result: "result", failures: "failures" },
+    outcomes: { untested: "untested" }, stale_after_days: 30 },
 };
 
 try {
@@ -103,6 +106,10 @@ try {
     bad((_a, d) => { d.area = "elsewhere"; }, /declares no record area elsewhere/, "an area the pack lacks");
     bad((_a, d) => { d.region = "x"; }, /region|Unrecognized/i, "an unknown key");
     bad((a) => { a.fields[5].options = ["a", "b"]; }, /options working and failing/, "a status without working and failing");
+    // mold_v0-332: the test's health fields.
+    bad((a) => { a.fields[8].type = "date"; }, /object_storage\.fields\.result: result is a text field/, "a result as a date");
+    bad((a) => { delete a.fields[9].set_by; }, /object_storage\.fields\.failures: failures is written by the test only/, "failures people set");
+    bad((_a, d) => { d.outcomes = { untested: "nope" }; }, /object_storage\.outcomes: untested is "nope", which is not one of status's options/, "an outcome that is not an option");
     setPacksForTest([{ manifest: { id: "fixture_storage", name: "x", version: "1", entry: null, migrations: null, words: {}, dir: TMP }, declared: compileDeclarations(PACK) } as never]);
     assert.equal(F.featureRequested("workspace_storage"), true, "asked for by object_storage");
     assert.equal(F.featureOn("workspace_storage"), true, "on by default once asked for");
@@ -238,6 +245,22 @@ try {
       assert.equal(r.body.ok, false, key); assert.match(r.body.words, /^It does not work yet: /); assert.match(r.body.words, re, `${key}: ${r.body.words}`);
       assert.equal((await ra.getFor(A.orgId, "fx_storage", key, owner))!.data.status, "failing", `${key}: status failing`);
     }
+    // mold_v0-332: a record whose keys are missing could not be tested: never "failing" (no such option: kept untested),
+    // its words kept; a failing one's streak counts; the bucket changed resets it (untested, the result cleared).
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.create("fx_storage", "no-keys", { title: "no-keys", data: { bucket: "ws-a-files", endpoint: s3.url, use_for_files: false } }));
+    assert.equal((await ra.getFor(A.orgId, "fx_storage", "no-keys", owner))!.data.status, "untested", "a new record: untested");
+    const nk = await call("POST", ownerTok, "/api/records/_page/fx_storage/no-keys/actions/test_storage");
+    assert.equal(nk.body.ok, false); assert.match(nk.body.words, /^It can't be tested yet: /, nk.body.words);
+    const nkd = (await ra.getFor(A.orgId, "fx_storage", "no-keys", owner))!.data;
+    assert.deepEqual([nkd.status, nkd.tested], ["untested", undefined], "could not test: never failing, no tested day");
+    assert.equal(nkd.result, nk.body.words, "the test's words kept");
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.delete("fx_storage", "no-keys"));
+    await call("POST", ownerTok, "/api/records/_page/fx_storage/wrong-secret/actions/test_storage");
+    assert.equal((await ra.getFor(A.orgId, "fx_storage", "wrong-secret", owner))!.data.failures, 2, "failing twice in a row");
+    await ra.asWriter({ by: "people", id: "owner" }, () => recA.update("fx_storage", "wrong-secret", { title: "wrong-secret", data: { ...good, use_for_files: false, secret_access_key: WRONG, bucket: "other-bucket" } }));
+    const ws = (await ra.getFor(A.orgId, "fx_storage", "wrong-secret", owner))!;
+    assert.deepEqual([ws.data.status, ws.data.result, ws.data.failures, ws.data.tested], ["untested", undefined, undefined, undefined], `the bucket changed: reset ${JSON.stringify(ws.data)}`);
+    assert.equal(ws.health?.attention, false, "untested: no attention");
     // An edit with the keys left empty keeps them (the Test still works).
     const edit = await call("POST", ownerTok, "/api/records/_page/fx_storage/a-files/actions/edit", { title: "A files", data: { bucket: "ws-a-files", endpoint: s3.url, access_key_id: "", secret_access_key: "", use_for_files: true, status: "working" } });
     assert.equal(edit.status, 200, JSON.stringify(edit.body));

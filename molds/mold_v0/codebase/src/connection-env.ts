@@ -34,7 +34,9 @@ export interface FrozenConnectionEnv { pack: string; area: string; key: string;
    * honoured): an owner turning it off, a demotion or the record made private reaches the next wake of a session
    * already started, which is told so.
    */
-  members?: true; members_field?: string; starter?: string; roles?: string[] }
+  members?: true; members_field?: string; starter?: string; roles?: string[];
+  /** mold_v0-332: the entry's date field each delivery stamps with the time (at most hourly). */
+  last_used?: string }
 
 /** The pack declaration of a pack profile's connection_env (its row's source is "pack:<id>"), or []. */
 export async function declaredConnectionEnv(profile: { id: string; source: string }): Promise<{ pack: string; list: ConnectionEnv[] }> {
@@ -66,7 +68,9 @@ export async function connectionEnvFlags(area: { pack: string; name: string }): 
  */
 export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: string[]; unmarked?: { area: string; flag: string }[];
   /** mold_v0-322: areas whose record a member's session would use, its owners' opt-in off (named by its label). */
-  owners?: { area: string; flag: string }[] }
+  owners?: { area: string; flag: string }[];
+  /** mold_v0-332: the records given whose last test failed, could not test, or that need their key (names and the test's own words only). */
+  unhealthy?: { area: string; record: string; state: string; status: string; result: string | null }[] }
 
 /**
  * The entries a session started by `actor` in workspace `orgId` receives (frozen into its policy): each whose `roles`
@@ -77,7 +81,7 @@ export interface ConnectionEnvStart { frozen: FrozenConnectionEnv[]; none: strin
  */
 export async function connectionEnvForStart(orgId: number, profile: { id: string; source: string }, actor: { kind: string; role: AccountRole | null; user?: string | null }): Promise<ConnectionEnvStart> {
   const { pack, list } = await declaredConnectionEnv(profile);
-  const out: ConnectionEnvStart = { frozen: [], none: [], unmarked: [], owners: [] };
+  const out: ConnectionEnvStart = { frozen: [], none: [], unmarked: [], owners: [], unhealthy: [] };
   if (!list.length || actor.kind !== "person" || !actor.role) return out;
   const { findArea, may, listFor } = await import("./record-areas.js");
   const { PackError } = await import("./pack-api.js");
@@ -105,7 +109,16 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
     }
     const version = await versionOf(orgId, area, hits[0]!.key, { where: c.where, use: c.use, vars: envVars(c) });
     out.frozen.push({ pack, area: c.area, key: hits[0]!.key, ...(version ? { version } : {}), ...(c.where ? { where: c.where } : {}), ...(c.use ? { use: c.use } : {}), vars: envVars(c),
-      ...(byConsent ? { members: true as const, members_field: c.members_field!, starter: actor.user ?? "", roles: c.roles ?? ["owner"] } : {}) });
+      ...(byConsent ? { members: true as const, members_field: c.members_field!, starter: actor.user ?? "", roles: c.roles ?? ["owner"] } : {}),
+      ...(c.last_used ? { last_used: c.last_used } : {}) });
+    // mold_v0-332: given, but its last test said it does not work (or could not say): the session is told.
+    const hv = hits[0]!.health;
+    if (hv?.field && (hv.state === "failing" || hv.state === "cannot_test" || hv.state === "needs_key") && !out.unhealthy!.some((u) => u.area === area.label && u.record === (hits[0]!.title || hits[0]!.key))) {
+      const sf = area.fields.find((f) => f.name === hv.field), v = hits[0]!.data[hv.field];
+      const opt = (sf?.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })).find((o) => o.value === v);
+      const rf = (await import("./connection-test-health.js")).healthOf(area)?.decl.result, said = rf ? hits[0]!.data[rf] : null;
+      out.unhealthy!.push({ area: area.label, record: hits[0]!.title || hits[0]!.key, state: hv.state, status: opt?.label ?? String(v), result: typeof said === "string" && said ? said.slice(0, 300) : null });
+    }
   }
   // mold_v0-321: an area named once, and not at all when another of its entries gave a record (a network split by
   // provider with `where`: the marked one is on Google Cloud, so the AWS and Azure entries find none, which is no news).
@@ -129,6 +142,9 @@ export function connectionEnvWords(start: ConnectionEnvStart): string | null {
   for (const [flag, list] of byFlag) parts.push(`No record of ${list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list.at(-1)}` : list[0]} is marked "${flag}": ${list.length > 1 ? "their" : "its"} variables are not set.`);
   // mold_v0-322: a member's session, the record's owners' opt-in off: who can turn it on, and its name.
   for (const o of start.owners ?? []) parts.push(`${o.area}: a workspace owner has not turned on "${o.flag}" for the record in use, so its variables are not set for sessions members start.`);
+  // mold_v0-332: a connection given whose last test failed, could not test, or that needs its key.
+  for (const u of start.unhealthy ?? []) parts.push(`Warning: ${u.area} "${u.record}" is given to this session, but its status is "${u.status}"${
+    u.state === "needs_key" ? " (its key is empty: type it again on its record)" : u.state === "cannot_test" ? " (it could not be tested)" : ""}${u.result ? `: ${u.result}` : ""}. What uses it may not work.`);
   return parts.length ? parts.join(" ") : null;
 }
 
@@ -224,7 +240,11 @@ export async function connectionEnvValues(orgId: number, list: readonly FrozenCo
       // A plain field (a bucket's name, an endpoint) is no secret: it is not redacted from what the agent writes.
       mine.push({ name: nameOf(v.env), env: v.env, value, ...(encrypted ? {} : { plain: true }) });
     }
-    if (whole) out.delivered.push(...mine); else none();
+    if (whole) {
+      out.delivered.push(...mine);
+      // mold_v0-332: when a session last received it (at most hourly per record).
+      if (opts.audit && c.last_used) await (await import("./connection-test-health.js")).stampLastUsed(orgId, c.area, c.key, c.last_used);
+    } else none();
   }
   return out;
 }

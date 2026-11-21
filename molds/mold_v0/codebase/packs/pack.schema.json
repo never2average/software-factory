@@ -5200,6 +5200,62 @@
                         "tested": {
                           "type": "string",
                           "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "tested_at": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "result": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "failing_since": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "failures": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "expires_on": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "outcomes": {
+                          "type": "object",
+                          "properties": {
+                            "working": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "failing": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "cannot_test": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "needs_key": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "untested": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "stale_after_days": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 3650
                         }
                       },
                       "required": [
@@ -8001,6 +8057,10 @@
             ],
             "additionalProperties": false
           },
+          "needs_attention": {
+            "type": "boolean",
+            "const": true
+          },
           "group_by": {
             "anyOf": [
               {
@@ -10305,6 +10365,13 @@
                   "type": "string",
                   "pattern": "^[a-z][a-z0-9_]{1,62}$"
                 },
+                "only_one": {
+                  "type": "boolean"
+                },
+                "last_used": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
                 "fields": {
                   "type": "object",
                   "propertyNames": {
@@ -10555,6 +10622,26 @@
             "tested": {
               "type": "string",
               "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "tested_at": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "result": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "failing_since": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "failures": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            },
+            "expires_on": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
             }
           },
           "required": [
@@ -10565,6 +10652,42 @@
             "use"
           ],
           "additionalProperties": false
+        },
+        "outcomes": {
+          "type": "object",
+          "properties": {
+            "working": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "failing": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "cannot_test": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "needs_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "untested": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "additionalProperties": false
+        },
+        "stale_after_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
         },
         "$comment": {
           "type": "string",

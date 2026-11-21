@@ -24,7 +24,8 @@
  *                (workspacesWithStorage), and restores from both.
  *   Test         the record page's `test_storage` action (src/record-page-routes.ts): writes, reads and deletes one small
  *                object with the record's own settings (src/storage.ts testBucket, the Key vault's Test), says what went
- *                wrong in plain words (never a key), and writes the declared status (working, failing) and tested date.
+ *                wrong in plain words (never a key), and writes the declared status (working, failing; mold_v0-332: could
+ *                not test, needs its key: src/connection-test-health.ts) and tested date, and its declared health fields.
  *
  * The keys are opened only here, on the server, for the storage client; nothing returns them.
  */
@@ -201,9 +202,12 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
     result = { ok: false, bucket: plain(row.data[d.fields.bucket]), endpoint: plain(row.data[d.fields.endpoint]) || null, ms: 0, steps: [], error: (e as Error).message, in_use: inUseNow,
       words: `It can't be tested yet: ${(e as Error).message}.` };
   }
-  const extra: Record<string, unknown> = {};
-  if (d.fields.status) extra[d.fields.status] = statusValue(area, d.fields.status, result.ok);
-  if (d.fields.tested) extra[d.fields.tested] = new Date().toISOString().slice(0, 10);
+  // mold_v0-332: a bucket that answered (or did not) is working or failing; keys that could not be opened, or were
+  // refused before any call, could not be tested (needs its key when one is empty): never blamed on the bucket.
+  const asked = result.ok || result.steps.length > 0;
+  const keyEmpty = [d.fields.access_key_id, d.fields.secret_access_key].some((f) => row.data[f] === undefined || row.data[f] === null || row.data[f] === "");
+  const { testOutcome } = await import("./connection-test-health.js");
+  const extra = testOutcome(area, row.data, { ok: result.ok, outcome: asked ? (result.ok ? "working" : "unexpected") : "not_ready", words: result.words, keyEmpty: !asked && keyEmpty });
   if (Object.keys(extra).length) {
     // The masked record written back: a masked field keeps its stored value (src/encrypted-fields.ts).
     const shown = await getFor(orgId, area.name, key, actor);
@@ -214,11 +218,3 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   return result;
 }
 const fieldLabel = (area: { fields: readonly { name: string; label: string }[] }, name: string) => `"${area.fields.find((f) => f.name === name)?.label ?? name}"`;
-/** The status written: "working" or "failing", or the enum's option whose value or label says so. */
-function statusValue(area: { fields: readonly { name: string; type: string; options?: readonly (string | { value: string; label?: string })[] }[] }, name: string, ok: boolean): string {
-  const want = ok ? "working" : "failing";
-  const f = area.fields.find((x) => x.name === name);
-  if (f?.type !== "enum") return want;
-  const opts = (f.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value }));
-  return (opts.find((o) => o.value === want) ?? opts.find((o) => o.label.toLowerCase() === want) ?? { value: want }).value;
-}

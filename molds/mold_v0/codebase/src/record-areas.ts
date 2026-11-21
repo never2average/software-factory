@@ -42,6 +42,7 @@ import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
 import { membersFlagWrite, secretsToClear } from "./secret-binding.js";
+import * as health from "./connection-test-health.js";
 import { asViewerOf, mayShare, VISIBILITY_COLUMNS, visibilityForWrite, visibilityOf, visibilityShown, type StoredVisibility, type VisibilityWrite } from "./visibility.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -551,7 +552,8 @@ const listForNow = async (orgId: number, name: string, opts: RecordQuery | { lim
   assertMay(a, "read", actor);
   if (a.scope === "platform") return listPlatform(a, opts);
   const page = await listWorkspace(orgId, a, opts);
-  return hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
+  const withClocks = hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
+  return { ...withClocks, records: await health.withHealth(orgId, a, withClocks.records) }; // mold_v0-332: each record's health now
 };
 export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> =>
   asViewerOf(actor, () => getForNow(orgId, name, key, actor));
@@ -560,7 +562,8 @@ const getForNow = async (orgId: number, name: string, key: string, actor: Actor)
   assertMay(a, "read", actor);
   if (a.scope === "platform") return getPlatform(a, key);
   const r = await getWorkspace(orgId, a, key);
-  return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
+  const c = r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
+  return c ? (await health.withHealth(orgId, a, [c]))[0]! : c; // mold_v0-332: its health now
 };
 // ---------- who sees a record: Share (mold_v0-259, flag teams; src/visibility.ts) ----------
 
@@ -1011,6 +1014,7 @@ const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } 
 export async function onSaveChecks(orgId: number, area: RecordArea, key: string, title: string | null, data: Record<string, unknown>, op: "create" | "update", actor: Actor) {
   // mold_v0-305 (flag workspace_storage): a workspace's own object storage names a bucket and an endpoint a service takes.
   await (await import("./workspace-storage.js")).checkStorageRecord(area.name, data);
+  await health.checkOnlyOne(orgId, area, key, data, actor); // mold_v0-332: one record marked, where only one may be
   const rules = (area as { on_save?: { check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] }[] }).on_save;
   if (!rules?.length || !featureSetting("record_rules")) return;
   const { answerCheck } = await import("./checks.js");
@@ -1073,8 +1077,9 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   // mold_v0-322: a connection's opt-in for members' sessions is an owner's, set by hand; another's write keeps it as
   // stored, refused when it gives another value, and turns it off when it changes where the secrets go.
   const members = membersFlagWrite(area, consentWriter(actor, meta), prev?.opened ?? null, own.input);
-  const given = members.input;
   Object.assign(carried, members.carried);
+  // mold_v0-332: a key typed or cleared, or what the test reads changed: the test's status resets, in this same write.
+  const given = health.healthWrite(area, prev?.opened ?? null, members.input, carried);
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
