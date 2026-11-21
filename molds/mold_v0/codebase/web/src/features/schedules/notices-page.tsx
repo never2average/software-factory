@@ -23,7 +23,7 @@ import { relativeDue } from '@/features/records/due-soon-card';
 import { dayText } from '@/lib/display-format';
 
 interface Notice {
-  id: string; kind: 'due' | 'clock'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
+  id: string; kind: 'due' | 'clock' | 'run'; href?: string; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
   /** A clock's notice (mold_v0-191): its latest step in words. */
   what?: string;
 }
@@ -47,7 +47,8 @@ function DueWhen({ on, className }: { on: string; className?: string }) {
   const iso = on.slice(0, 10);
   return <time className={cn('whitespace-nowrap', className)} dateTime={iso} title={dueDate(iso)}>{relativeDue(iso, todayIso())}</time>;
 }
-const recordHref = (n: Notice) => `/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`;
+// mold_v0-334: a run's notice opens its run.
+const recordHref = (n: Notice) => n.href ?? `/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`;
 
 const DESCRIPTION = 'Records due soon in this workspace. Checked once a day; owners also get them by email.';
 
@@ -162,7 +163,7 @@ function NoticeDetail({ n, onDismiss }: { n: Notice; onDismiss: () => void }) {
         <Field label='Email'>{n.emailed ? 'Sent in the daily email about records due soon.' : 'Not emailed yet.'}</Field>
       </dl>
       <div className='flex flex-wrap items-center gap-2'>
-        <Button size='sm' nativeButton={false} render={<a href={recordHref(n)} />}>Open record<span className='sr-only'> {name}</span></Button>
+        <Button size='sm' nativeButton={false} render={<a href={recordHref(n)} />}>{n.kind === 'run' ? 'Open run' : 'Open record'}<span className='sr-only'> {name}</span></Button>
         <Button variant='outline' size='sm' onClick={onDismiss}>Dismiss<span className='sr-only'> {name}</span></Button>
       </div>
       <p className='text-muted-foreground text-xs'>Dismissing hides this notice for everyone in the workspace; the record itself is not changed.</p>

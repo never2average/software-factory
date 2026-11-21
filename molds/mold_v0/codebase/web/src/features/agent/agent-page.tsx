@@ -15,6 +15,7 @@
 // which profile and version it runs with, and the record it was started from. mold_v0-303 (flag nested_runs): Run a
 // program beside it, a modal too: the programs this person may start (GET /api/agent/programs, src/program-start.ts),
 // the chosen one's inputs as a form (its inputs schema), Run, then the session that runs it.
+import { RUN_STATUSES, RUN_STATUS_WORDS, runStatusOf, STATUS_TONE } from '@/lib/run-status';
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tokens, TraceStream, useTrace } from './session-trace';
 import { AgentComposer } from './composer/agent-composer';
@@ -99,10 +100,10 @@ function api(area: Area) {
   };
 }
 
-export const PHASE_WORDS: Record<Phase, string> = {
-  starting: 'Starting', working: 'Working', waiting: 'Waiting for you', parked: 'Parked', waking: 'Waking up', paused: 'Paused',
-  awaiting_approval: 'Needs a decision', stopped: 'Stopped', failed: 'Failed', archived: 'Archived'
-};
+// mold_v0-334: a session's phase in the one run vocabulary (web/src/lib/run-status.ts): its turn waiting on you or a
+// decision it asks for is "Needs you", parked or paused "Paused", starting "Waiting to start", waking "Working".
+export const PHASE_WORDS: Record<Phase, string> = Object.fromEntries(
+  (['starting', 'working', 'waiting', 'parked', 'waking', 'paused', 'awaiting_approval', 'stopped', 'failed', 'archived'] as Phase[]).map((p) => [p, RUN_STATUS_WORDS[runStatusOf(p)]])) as Record<Phase, string>;
 const LIVE: Phase[] = ['starting', 'working', 'waiting', 'waking'];
 const usd = (n: number) => `$${n.toFixed(2)}`;
 /** What a workspace tool call wanted to send, as indented JSON when it is JSON. */
@@ -111,10 +112,9 @@ const askWords = (r: Request) => r.kind === 'web' ? `Reach ${r.subject}` : r.kin
 
 function PhaseBadge({ s }: { s: Pick<Session, 'phase' | 'pause_requested' | 'stop_requested'> }) {
   const words = s.stop_requested && LIVE.includes(s.phase) ? 'Stopping' : s.pause_requested && LIVE.includes(s.phase) ? 'Pausing' : PHASE_WORDS[s.phase];
-  const tone = s.phase === 'awaiting_approval' ? 'border-amber-500/50 text-amber-700 dark:text-amber-300' : s.phase === 'failed' ? 'border-destructive/50 text-destructive'
-    : s.phase === 'working' || s.phase === 'waking' || s.phase === 'starting' ? 'border-emerald-500/50 text-emerald-700 dark:text-emerald-300' : '';
-  return <Badge variant='outline' className={cn('gap-1.5 font-normal', tone)} data-phase={s.phase}>
-    {(s.phase === 'working' || s.phase === 'waking' || s.phase === 'starting') && <span className='size-1.5 motion-safe:animate-pulse rounded-full bg-current' aria-hidden />}{words}
+  const status = runStatusOf(s.phase);
+  return <Badge variant='outline' className={cn('gap-1.5 font-normal', STATUS_TONE[status])} data-phase={s.phase} data-run-status={status}>
+    {status === 'running' && <span className='size-1.5 motion-safe:animate-pulse rounded-full bg-current' aria-hidden />}{words}
   </Badge>;
 }
 
@@ -181,7 +181,8 @@ function AgentList({ area }: { area: Area }) {
     { key: 'ref', label: 'Number', type: 'text', className: 'max-sm:hidden', value: (s) => s.ref, render: (s) => <span className='font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span> },
     { key: 'title', label: 'Session', title: true, type: 'text', className: 'min-w-40 sm:min-w-56', value: (s) => s.title,
       render: (s) => <span className='leading-snug font-medium'>{s.title}</span> },
-    { key: 'phase', label: 'Status', type: 'select', options: Object.entries(PHASE_WORDS).map(([value, label]) => ({ value, label })), value: (s) => s.phase, render: (s) => <PhaseBadge s={s} /> },
+    // mold_v0-334: filtered by the one status (each word once), drawn with the session's own phase (Stopping, Pausing).
+    { key: 'phase', label: 'Status', type: 'select', options: RUN_STATUSES.map((value) => ({ value, label: RUN_STATUS_WORDS[value] })), value: (s) => runStatusOf(s.phase), render: (s) => <PhaseBadge s={s} /> },
     ...(area === 'admin' ? [{ key: 'workspace', label: 'Workspace', type: 'text' as const, className: 'max-sm:hidden', value: (s: Session) => s.workspace?.slug ?? '', render: (s: Session) => <span className='font-mono text-xs'>{s.workspace?.slug}</span> }] : []),
     { key: 'started_by', label: 'Started by', type: 'text', className: 'max-sm:hidden', value: (s) => s.started_by ?? '', render: (s) => <span className='break-all'>{s.mine ? 'You' : s.started_by}</span> },
     { key: 'waiting_on', label: 'Waiting on', type: 'text', className: 'max-sm:hidden', value: (s) => (s.pending_request ? askWords(s.pending_request) : ''),
@@ -199,9 +200,9 @@ function AgentList({ area }: { area: Area }) {
         rows={rows} rowKey={(s) => s.id} cols={cols} openKey={open} onOpenChange={setOpen}
         defaultSort={[{ key: 'activity', dir: 'desc' }]}
         summary={<StatStrip quad items={[
-          { label: 'Working now', value: n(['starting', 'working', 'waiting', 'waking']), said: `${n(['starting', 'working', 'waiting', 'waking'])} sessions working now` },
-          { label: 'Need a decision', value: n(['awaiting_approval']), said: `${n(['awaiting_approval'])} sessions need a decision` },
-          { label: 'Parked or paused', value: n(['parked', 'paused']), said: `${n(['parked', 'paused'])} sessions parked or paused` },
+          { label: 'Working now', value: n(['working', 'waking']), said: `${n(['working', 'waking'])} sessions working now` },
+          { label: 'Need you', value: n(['waiting', 'awaiting_approval']), said: `${n(['waiting', 'awaiting_approval'])} sessions need you` },
+          { label: 'Paused', value: n(['parked', 'paused']), said: `${n(['parked', 'paused'])} sessions paused` },
           { label: 'Spent', value: usd(spent), said: `${usd(spent)} spent by these sessions` }
         ]} />}
         searchText={(s) => `${s.ref} ${s.title} ${PHASE_WORDS[s.phase]} ${s.started_by ?? ''} ${s.workspace?.slug ?? ''} ${s.pending_request ? askWords(s.pending_request) : ''}`}

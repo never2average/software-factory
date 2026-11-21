@@ -20,6 +20,7 @@ import { nestedOn, type HandleView } from "./nested-runs.js";
 import type { MachineRun } from "./program-machine.js";
 import { programPurpose, purposeFromWords, DEFAULT_PURPOSE, type AgentLabel, type AgentPurpose } from "./agent-purpose.js";
 import { declaredProfilePurposes, profileAgent } from "./agent-profiles.js";
+import { failedWhy, outcomeOf, runStatusOf, type RunNeeds, type RunOutcomeBadge, type RunStatus } from "./run-words.js";
 
 const { read, num, money } = H;
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -195,25 +196,58 @@ async function refsOf(q: Queryable, orgId: number, ids: readonly string[]): Prom
 
 export interface ActiveRun { id: string; ref: string | null; title: string; state: string; started_by: string | null; children: number; open: number; waiting: number; attention: boolean; programs: string[];
   /** mold_v0-295: the agent the root runs as, and each program's agent at work in its tree (its name and purpose). */
-  agent: AgentLabel; agents: AgentLabel[]; budget_usd: number; spent_usd: number; children_spent_usd: number; carved_usd: number; last_activity_at: string }
-/** Every root session with a child still at work, the newest first. */
-export async function activeRuns(orgId: number): Promise<ActiveRun[]> {
+  agent: AgentLabel; agents: AgentLabel[]; budget_usd: number; spent_usd: number; children_spent_usd: number; carved_usd: number; last_activity_at: string;
+  /**
+   * mold_v0-334: its one status (src/run-words.ts), whose decision it waits for (you: a person of the workspace; staff:
+   * a staff review), why it failed, the outcome of what it made, and whether it is finished (nothing of it at work).
+   */
+  status: RunStatus; needs: RunNeeds | null; why: string | null; outcome: RunOutcomeBadge | null; finished: boolean; settled_at: string | null }
+/** How many days a finished run stays in the Finished view. */
+export const FINISHED_DAYS = 30;
+/**
+ * Every root session with a child still at work, the newest first; with `finished` (mold_v0-334), the roots whose
+ * children have all settled in the last FINISHED_DAYS days instead, so a failed or refused run does not vanish.
+ */
+export async function activeRuns(orgId: number, opts: { finished?: boolean } = {}): Promise<ActiveRun[]> {
   needOn();
   const programs = await listDockPrograms();
   const nameOf = new Map(programs.map((p) => [p.id, p.name]));
   const purpose = await purposesOf(programs);
   const out = await read(async (q) => {
-    const open = await q.query<{ root_id: string }>("SELECT DISTINCT root_id FROM harness_children WHERE org_id = $1 AND settled_at IS NULL LIMIT 200", [orgId]);
+    const open = opts.finished
+      ? await q.query<{ root_id: string }>(`SELECT root_id FROM harness_children WHERE org_id = $1 GROUP BY root_id
+          HAVING bool_and(settled_at IS NOT NULL) AND max(settled_at) > now() - make_interval(days => $2) ORDER BY max(settled_at) DESC LIMIT 200`, [orgId, FINISHED_DAYS])
+      : await q.query<{ root_id: string }>("SELECT DISTINCT root_id FROM harness_children WHERE org_id = $1 AND settled_at IS NULL LIMIT 200", [orgId]);
     if (!open.length) return [];
     const roots = open.map((r) => r.root_id);
-    const rows = await q.query<{ id: string; ref: string | null; title: string; state: string; started_by_name: string | null; budget_usd: string; spent_usd: string; children_spent_usd: string; carved_usd: string; last_activity_at: Date; profile_id: string | null; profile_version: number | null }>(
-      "SELECT id, ref, title, state, started_by_name, budget_usd, spent_usd, children_spent_usd, carved_usd, last_activity_at, profile_id, profile_version FROM harness_sessions WHERE org_id = $1 AND id = ANY ($2::text[]) ORDER BY last_activity_at DESC", [orgId, roots]);
-    const hs = await q.query<{ root_id: string; status: string; attention: boolean; program_id: string | null; kind: string; step_of: string | null }>("SELECT root_id, status, attention, program_id, kind, step_of FROM harness_children WHERE org_id = $1 AND root_id = ANY ($2::text[])", [orgId, roots]);
+    const rows = await q.query<{ id: string; ref: string | null; title: string; state: string; state_reason: string | null; started_by_name: string | null; budget_usd: string; spent_usd: string; children_spent_usd: string; carved_usd: string; last_activity_at: Date; profile_id: string | null; profile_version: number | null }>(
+      "SELECT id, ref, title, state, state_reason, started_by_name, budget_usd, spent_usd, children_spent_usd, carved_usd, last_activity_at, profile_id, profile_version FROM harness_sessions WHERE org_id = $1 AND id = ANY ($2::text[]) ORDER BY last_activity_at DESC", [orgId, roots]);
+    const hs = await q.query<{ root_id: string; status: string; attention: boolean; program_id: string | null; kind: string; step_of: string | null; error: string | null; settled_at: Date | null }>("SELECT root_id, status, attention, program_id, kind, step_of, error, settled_at FROM harness_children WHERE org_id = $1 AND root_id = ANY ($2::text[])", [orgId, roots]);
+    // The latest evaluation of each tree and the version it made: the run's outcome.
+    const evs = await q.query<{ root_id: string; status: string; outcome: string | null; review_decision: string | null; v_status: string | null; applied_at: Date | null }>(
+      `SELECT DISTINCT ON (e.root_id) e.root_id, e.status, e.outcome, e.review_decision, c.status AS v_status, c.applied_at FROM harness_evaluations e
+         LEFT JOIN harness_champions c ON c.id = e.promoted_id AND c.org_id = e.org_id WHERE e.org_id = $1 AND e.root_id = ANY ($2::text[]) ORDER BY e.root_id, e.created_at DESC`, [orgId, roots]);
     return rows.map((r): Omit<ActiveRun, "agent"> & { profile: [string | null, number | null] } => {
       const mine = hs.filter((h) => h.root_id === r.id && h.kind !== "machine");
       const used = [...new Set(hs.filter((h) => h.root_id === r.id && h.program_id && !h.step_of).map((h) => h.program_id!))];
-      return { profile: [r.profile_id, r.profile_version], agents: used.map((id) => ({ name: nameOf.get(id) ?? id, purpose: purpose.get(id) ?? DEFAULT_PURPOSE })), id: r.id, ref: r.ref, title: r.title, state: r.state, started_by: r.started_by_name, children: mine.length, open: mine.filter((h) => OPEN.has(h.status)).length, waiting: mine.filter((h) => h.status === "queued").length, attention: hs.some((h) => h.root_id === r.id && h.attention),
-        programs: [...new Set(hs.filter((h) => h.root_id === r.id && h.program_id && !h.step_of).map((h) => nameOf.get(h.program_id!) ?? h.program_id!))], budget_usd: num(r.budget_usd), spent_usd: money(num(r.spent_usd)), children_spent_usd: money(num(r.children_spent_usd)), carved_usd: money(num(r.carved_usd)), last_activity_at: iso(r.last_activity_at)! };
+      const ev = evs.find((e) => e.root_id === r.id) ?? null;
+      const outcome = outcomeOf(ev, ev?.v_status ? { status: ev.v_status, applied_at: ev.applied_at } : null);
+      const attention = hs.some((h) => h.root_id === r.id && h.attention);
+      const finished = !mine.some((h) => OPEN.has(h.status)) && !hs.some((h) => h.root_id === r.id && !h.settled_at);
+      const failedChild = mine.find((h) => h.status === "error");
+      // Its one status: a person's decision first (the session asks), then staff's (a review), then how its tree stands.
+      const rootStatus = runStatusOf(r.state);
+      const status: RunStatus = rootStatus === "needs_you" ? "needs_you" : outcome === "waiting_for_staff" ? "needs_you"
+        : r.state === "failed" ? "failed"
+          : !finished ? (rootStatus === "paused" && r.state === "paused" ? "paused" : mine.some((h) => h.status === "running") ? "running" : "queued")
+            : failedChild || outcome === "refused" && !mine.some((h) => h.status === "done") ? "failed"
+              : mine.length && mine.every((h) => h.status === "cancelled") ? "stopped" : "succeeded";
+      const needs: RunNeeds | null = status !== "needs_you" ? null : rootStatus === "needs_you" ? "you" : "staff";
+      const why = status !== "failed" ? null : failedWhy(r.state === "failed" ? r.state_reason : null) ?? (failedChild?.error ? failedChild.error.slice(0, 200) : r.state_reason ? r.state_reason.slice(0, 200) : null);
+      const settled = mine.map((h) => h.settled_at).filter((d): d is Date => !!d).sort((a, b) => +b - +a)[0] ?? null;
+      return { profile: [r.profile_id, r.profile_version], agents: used.map((id) => ({ name: nameOf.get(id) ?? id, purpose: purpose.get(id) ?? DEFAULT_PURPOSE })), id: r.id, ref: r.ref, title: r.title, state: r.state, started_by: r.started_by_name, children: mine.length, open: mine.filter((h) => OPEN.has(h.status)).length, waiting: mine.filter((h) => h.status === "queued").length, attention,
+        programs: [...new Set(hs.filter((h) => h.root_id === r.id && h.program_id && !h.step_of).map((h) => nameOf.get(h.program_id!) ?? h.program_id!))], budget_usd: num(r.budget_usd), spent_usd: money(num(r.spent_usd)), children_spent_usd: money(num(r.children_spent_usd)), carved_usd: money(num(r.carved_usd)), last_activity_at: iso(r.last_activity_at)!,
+        status, needs, why, outcome, finished, settled_at: finished && settled ? iso(settled) : null };
     });
   });
   return Promise.all(out.map(async ({ profile, ...r }) => ({ ...r, agent: await profileAgent(profile[0], profile[1]) })));

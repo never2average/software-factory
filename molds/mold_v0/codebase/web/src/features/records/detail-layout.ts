@@ -79,6 +79,8 @@ export interface DetailActionSpec {
   program?: string;
   /** mold_v0-312: a test_connection action's call stays on the server (gen-packs leaves it out of the console's copy). */
   probe?: never;
+  /** mold_v0-334: a start_program action's record moves on start and when its run settles, and the field its reason goes in (the server makes them). */
+  move_to?: string; on_outcome?: Partial<Record<'accepted' | 'needs_review' | 'refused' | 'applied' | 'rolled_back' | 'succeeded' | 'failed', string>>; reason_field?: string;
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */

@@ -4694,6 +4694,119 @@ job run, its hook, an agent session's wake and a program's child session; a run'
 person may not read; another workspace), with `npm run test:record-pages`, `npm run test:run-page`,
 `npm run test:nested-runs` and `scripts/agent-dock-test.ts` unchanged.
 
+## Truthful improvement, catalog, run and access state (mold_v0-334)
+
+A record's state follows the programs and evaluations run on it; a catalog's maturity can be enforced on new picks
+only; everything that runs reads in one vocabulary; keys and invitations say what they are. Every key below is optional:
+a pack that declares none of them behaves as before (`packs.py check` of existing packs is unchanged).
+
+- **A program's records update and move** (`src/program-records.ts`, `src/program-spec.ts` ProgramRecord). A program's
+  `record` mapping may now:
+  - `update_by: "key"`: the result updates the record its run was started on, the fields it maps written over the stored
+    ones (encrypted fields and the state kept as stored). `key` must be one of the program's inputs (`$inputs.<name>`),
+    and the key it gives must be the record the run's root session was started on: an input the agent passed naming any
+    other record (a steered spawn) refuses the whole write, said on the parent's trace. The update and its move are made
+    as the person who started the run (their role now, the area's permissions, the transitions' roles, what they may
+    see; a run the account started, by a schedule or an account key, acts as an owner: role checks apply, and it
+    never does more than the key itself may); one who has left the workspace refuses it. A new
+    record (no `update_by`) is the server's, as before, even when its starter has left. A key from the outputs never
+    replaces a record that is there already unless this same run wrote it (its result seen again): any other is left as
+    it is and listed under `existing` on the trace.
+  - `move_to`: each record written is moved to that state along a transition of the area's lifecycle; a record that was
+    there already only along a transition naming where it is (never a `"*"` one), and never when it entered that state
+    after the run started (a person moved it since: it stays, its fields still written, listed under `unmoved` on the
+    trace's `child_records` event). Reads and writes in one transaction, the rows locked.
+  - `dedupe_on: [fields]` (1 to 5 plain fields; not with `update_by`): a new record whose values of those fields (text
+    trimmed, spaces folded, case-blind) match a record the area keeps under another key is left out, the existing one
+    standing; a result's own repeats once. The area is read whole (no cap), as the person who started the run when there
+    is one. The event lists them under `deduped` (`{key, kept}`). Writing the same key again still replaces its own record.
+
+  ```json
+  { "record": { "area": "items", "key": "$inputs.item_key", "update_by": "key", "move_to": "formalized",
+                "fields": { "claim": "claim", "metric": "metric", "rejection_condition": "rejection_condition" } } }
+  { "record": { "area": "items", "items": "found", "dedupe_on": ["statement", "target"], "fields": { "statement": "statement", "target": "target" } } }
+  ```
+  Checked when the program is saved against the build's areas: `move_to` a state a transition reaches, `dedupe_on` fields
+  the area has and does not encrypt, `$inputs.` only for an update.
+- **A start_program action moves its record** (`src/record-outcomes.ts`; `DetailActionSchema` `move_to`, `on_outcome`,
+  `reason_field`). On a record page's start_program action:
+  - `move_to`: the state the record moves to when a person starts it, moved as that person (the area's move permission
+    and the transition's roles apply; refused, it stays). The build refuses a `move_to` that no transition open to every
+    role of the action reaches.
+  - `on_outcome`: `{accepted, needs_review, refused, applied, rolled_back, succeeded, failed}` (each optional, a state):
+    where the record goes when the run it started settles. The guardian's decision and a staff review
+    (`src/nested-runs.ts` decide, reviewEvaluation) give accepted, needs_review or refused (a staff accept is accepted, a
+    decline refused); a version applied or rolled back (applyChampion, decidePolicyProposal's accept, rollbackChampion)
+    gives applied or rolled_back; a run that ended with no decision is found by the nested runs' sweep
+    (`sweepRecordOutcomes`, the last day's ended root sessions linked to a record) and gives succeeded (it said done) or
+    failed (it failed, crashed, timed out or was stopped), unless a newer run on the same record is still live.
+  - `reason_field`: a plain, optional text field of the area each outcome's reason is written into ("The evaluation
+    refused the result: …", "The run ended without a result: crashed …"), so the record's history shows why.
+  Only a root session a person started with that action moves the record: the session is written with it
+  (`harness_sessions.record_action`); a session merely linked to the record (an agent started from its page) moves
+  nothing. Outcome moves are the app's own and role-free (a staff review or an apply is not the starter's act), made in
+  the record's own transaction with its row locked, and guarded: each outcome of a session is applied once
+  (`record_outcomes`, given back if its transaction fails); a session superseded by a newer one started on the same
+  record moves nothing any more; a record that entered its state after the session last moved it (`record_moved_at`,
+  else after the session started) was moved by someone else, and that move stands, with or without a `move_to`; with a
+  `move_to`, only from where the action (or an earlier outcome) put the record, and a run's end with no decision only
+  from `move_to` itself. The sweep takes in each end of a session once (`record_swept_at`; a continued session again
+  when it ends next), held while another session a page action started on the record is running (starting, live,
+  waking; not archived), and settled anyway 6 hours after it ended. The writer is the
+  run (`run:program:<program>:<handle>`, else the session's wake), so the record's page links it; each move is a
+  `record_moved` event on the session's trace.
+  A learning-style area marks its record applied when its rule change is accepted the same way (`on_outcome: {accepted:
+  "applied"}` on the action that starts the rule change).
+
+  ```json
+  { "kind": "start_program", "place": "primary", "label": "Improve it", "program": "improve-it", "input": { "item_key": "$key" },
+    "move_to": "improving", "on_outcome": { "accepted": "solved", "needs_review": "in_review", "refused": "open", "failed": "open", "applied": "solved" },
+    "reason_field": "resolution_reason" }
+  ```
+- **References that hold for new picks only** (`filter_new_only: true` beside a reference field's `where`;
+  `src/record-areas.ts` checkRecord). The `where` is checked on the keys a write names that the record did not name before:
+  a record naming a catalog entry retired since still saves; a new pick of a retired one is refused in the same words as before.
+  The picker still lists only the kept records ("New picks: only …"), and shows the current value's title whatever it is.
+
+  ```json
+  { "name": "base", "type": "reference", "to": "catalog", "where": { "field": "maturity", "in": ["beta", "ga"] }, "filter_new_only": true }
+  ```
+- **One run vocabulary** (`src/run-words.ts`, the console's `web/src/lib/run-status.ts`, held equal by the test). Every
+  run-like thing (a job's run, a session, a child, an evaluation) reads as Waiting to start, Working, Needs you / Needs
+  staff (saying whose decision: a session asking a person, or a result waiting for a staff review), Paused, Done, Failed
+  (with why: timed out, stopped unexpectedly, a platform error) or Stopped; what it made carries a second badge: Accepted,
+  Refused, Waiting for staff, Applied or Rolled back. The Agents list (filtered by that status, cards Working now, Need
+  you, Paused, Spent), a record's runs section, the run view's tree (each child's badge and its attention mark) and the
+  staff Programs page use it. **Active runs** (`GET /api/agent/runs`, `?view=finished`): each run's status, whose
+  decision, outcome and an attention mark (a failure escalated to a person, computed since mold_v0-291 and now drawn); an
+  Active / Finished switch, Finished listing the trees whose children all settled in the last 30 days (a failed or
+  refused run no longer vanishes); cards Need attention (active) and Accepted or applied, Failed or refused, Waiting for
+  staff (finished).
+- **Reminders** (`src/run-reminders.ts`, from the nested runs' sweep; `sql/migrations/0075_record_outcomes.sql` adds the
+  notice kind `run` and the four session columns above; on its branch it was first named `0075_run_reminders`, and no
+  preview or live deploy ran that branch, so no database recorded the old name). A result waiting for a staff review 3 days (and not
+  superseded by a later decision on the same tree and target), or a version accepted and neither applied nor proposed in
+  7 days, is a workspace notice (area `run_review` / `run_apply`, the run's root session as its key; `/app/notices` "Open
+  run"), raised once a day for at most 14 days, saying platform staff act and nothing is needed from the workspace, and
+  one email to the workspace's owners listing the new ones (email kind `run_reminder`, in the `due_dates` group). A run
+  started on a sealed area's record is named "An agent run", never by its session's title. Rollback:
+  `sql/rollback/0075_record_outcomes.sql`.
+- **Access.** A workspace key staff issue may expire (`POST …/orgs/<slug>/keys {label, expires_in_days}`, a whole number
+  of days from 1 to 730, a number or a string of digits;
+  none: never, as before; the column is 0013's `api_keys.expires_at`, which every key's check already reads), and a key
+  that expires is rotated into one with the same span; the staff key lists show Expires. An active key nobody used for 90
+  days (or never, since it was made) carries `unused: true` (`src/member-keys.ts`) and a "Never used" / "Not used for 90
+  days" chip on the API keys page (its fourth card counts them). An invitation withdrawn is "Cancelled" everywhere,
+  workspace and staff (stored `revoked`; `web/src/lib/access-words.ts`); a suspended member and an expired invitation have
+  neutral badges, never red.
+
+Proof: `tsx scripts/record-outcomes-test.ts` (`npm run test:record-outcomes`: the record mappings, the action's moves on
+start and on each outcome through the real review and apply, the sweep, new picks only, the vocabulary and Active runs'
+Finished view, key expiry and the unused flag, the reminders), with `npm run test:self-improvement`,
+`npm run test:nested-runs`, `npm run test:agent-harness`, `npm run test:record-pages`, `npm run test:declarative-packs`,
+`npm run test:console-tabs`, `npm run test:migrations`, `npm run check:rls`, `npm run check:tenant-sql`,
+`npm run test:words`, `npm run test:vocabulary` and `npm run check:vocabulary` unchanged.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace

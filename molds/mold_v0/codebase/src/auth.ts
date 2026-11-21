@@ -54,15 +54,17 @@ export async function createOrg(name: string, slug = slugify(name)) {
   return { org: { orgId: org.id, slug: org.slug, name: org.name } satisfies Org, key };
 }
 
-export async function createApiKey(orgId: number, label = "default", userId: string | null = null): Promise<string> {
+/** mold_v0-334: `expiresAt` (optional): when the key stops working (resolveKey refuses it after; none: it never expires). */
+export async function createApiKey(orgId: number, label = "default", userId: string | null = null, expiresAt: Date | null = null): Promise<string> {
   const key = randomId(KEY_PREFIX, 24);
   const db = await getDb();
-  await db.query("INSERT INTO api_keys (org_id, label, key_prefix, key_hash, user_id) VALUES ($1, $2, $3, $4, $5)", [
+  await db.query("INSERT INTO api_keys (org_id, label, key_prefix, key_hash, user_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6)", [
     orgId,
     label,
     key.slice(0, KEY_PREFIX.length + 6),
     sha256(key),
     userId,
+    expiresAt,
   ]);
   return key;
 }

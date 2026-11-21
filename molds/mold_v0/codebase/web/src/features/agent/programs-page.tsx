@@ -53,7 +53,8 @@ const EXAMPLE = `{
 const OUTCOME: Record<string, { label: string; color: 'success' | 'danger' | 'warning' | 'neutral' }> = {
   accepted: { label: 'Accepted', color: 'success' },
   refused: { label: 'Refused', color: 'danger' },
-  needs_review: { label: 'Needs a person', color: 'warning' },
+  // mold_v0-334: the one run vocabulary's outcome word (web/src/lib/run-status.ts OUTCOME_WORDS).
+  needs_review: { label: 'Waiting for staff', color: 'warning' },
 };
 const Outcome = ({ e }: { e: Evaluation }) => {
   if (e.status !== 'decided' || !e.outcome) return <ToneBadge color='neutral'>Measuring</ToneBadge>;

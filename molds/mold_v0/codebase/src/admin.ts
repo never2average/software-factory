@@ -403,7 +403,7 @@ export async function orgDetail(slug: string) {
   // The session engine's tables are a host pack's (mold_v0-049): with none, no products, research, runs or sessions.
   const eng = sessionEngine(), none = Promise.resolve([] as Record<string, unknown>[]);
   const [keys, tools, clients, errors, products, research, sims, requests, invoices, perDay] = await Promise.all([
-    db.query(`SELECT id, label, key_prefix, created_at, last_used_at, revoked_at FROM api_keys WHERE org_id = $1
+    db.query(`SELECT id, label, key_prefix, created_at, last_used_at, revoked_at, expires_at FROM api_keys WHERE org_id = $1
                ORDER BY revoked_at IS NOT NULL, created_at DESC`, [org.id]),
     db.query(`SELECT name, count(*) AS calls, count(*) FILTER (WHERE NOT ok) AS errors, round(avg(ms)) AS avg_ms, max(at) AS last
                 FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' GROUP BY name ORDER BY max(at) DESC`, [org.id]),
@@ -880,21 +880,32 @@ export async function archivePlan(actor: string, priceId: string) {
 
 // ---------- legacy API keys (beta links, header-only clients) ----------
 
-export async function issueKey(actor: string, slug: string, label?: string) {
+/** mold_v0-334: how many days a workspace key staff issue may last (absent: it never expires, as before). */
+export const KEY_EXPIRY_DAYS = { min: 1, max: 730 } as const;
+export function keyExpiry(days: unknown): Date | null {
+  if (days === undefined || days === null || days === "") return null;
+  // A number, or a string of digits; anything else (true, a list, "1e2") is refused, never read as a number.
+  const n = typeof days === "number" ? days : typeof days === "string" && /^\d{1,4}$/.test(days.trim()) ? Number(days.trim()) : Number.NaN;
+  if (!Number.isInteger(n) || n < KEY_EXPIRY_DAYS.min || n > KEY_EXPIRY_DAYS.max) throw new AdminError(`expires_in_days: a whole number of days from ${KEY_EXPIRY_DAYS.min} to ${KEY_EXPIRY_DAYS.max}, or none (it never expires)`, 400);
+  return new Date(Date.now() + n * 86_400_000);
+}
+
+export async function issueKey(actor: string, slug: string, label?: string, expiresInDays?: unknown) {
   const f = await factsBySlug(slug);
   const l = String(label ?? "").trim().slice(0, 200) || "extra";
+  const expires = keyExpiry(expiresInDays);
   // Labelled with a member's email: the key is that person's, so their calls are theirs (not "Connector key").
   const owner = l.includes("@") ? (await team(slug).catch(() => null))?.members.find((m) => (m.email ?? "").toLowerCase() === l.toLowerCase())?.user_id ?? null : null;
-  const key = await createApiKey(f.id, l, owner);
-  log(actor, "key.create", slug, { label: l, key_prefix: key.slice(0, 10) });
+  const key = await createApiKey(f.id, l, owner, expires);
+  log(actor, "key.create", slug, { label: l, key_prefix: key.slice(0, 10), ...(expires ? { expires_at: expires.toISOString() } : {}) });
   return result(slug, l.includes("@") ? l : null, { key });
 }
 
 async function keyOf(slug: string, keyId: number) {
   intId(keyId);
   const f = await factsBySlug(slug);
-  const [k] = await (await getDb()).query<{ id: number; label: string; key_prefix: string; revoked_at: Date | null; user_id: string | null; scoped: boolean }>(
-    "SELECT id, label, key_prefix, revoked_at, user_id, scoped FROM api_keys WHERE id = $1 AND org_id = $2", [keyId, f.id]);
+  const [k] = await (await getDb()).query<{ id: number; label: string; key_prefix: string; revoked_at: Date | null; user_id: string | null; scoped: boolean; created_at: Date; expires_at: Date | null }>(
+    "SELECT id, label, key_prefix, revoked_at, user_id, scoped, created_at, expires_at FROM api_keys WHERE id = $1 AND org_id = $2", [keyId, f.id]);
   if (!k) throw new AdminError(`No key ${keyId} in ${slug}`, 404);
   return { f, k };
 }
@@ -913,7 +924,9 @@ export async function rotateKey(actor: string, slug: string, keyId: number) {
   // Staff revoke it (revokeKey); the member makes a new one on /app/keys.
   if (k.scoped) throw new AdminError("This is a member's own key: revoke it, and the member makes a new one on their API keys page", 409);
   if (!k.revoked_at) await (await getDb()).query("UPDATE api_keys SET revoked_at = now(), revoked_by = $3 WHERE id = $1 AND org_id = $2", [k.id, f.id, `staff:${actor}`.slice(0, 200)]);
-  const key = await createApiKey(f.id, k.label, k.user_id);
+  // mold_v0-334: a key that expires is replaced by one that lasts as long again from now.
+  const span = k.expires_at ? new Date(k.expires_at).getTime() - new Date(k.created_at).getTime() : null;
+  const key = await createApiKey(f.id, k.label, k.user_id, span !== null ? new Date(Date.now() + Math.max(span, 86_400_000)) : null);
   log(actor, "key.rotate", slug, { label: k.label, user_id: k.user_id, old_prefix: k.key_prefix, key_prefix: key.slice(0, 10) });
   return result(slug, k.label.includes("@") ? k.label : null, { key });
 }

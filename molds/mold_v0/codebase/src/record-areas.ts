@@ -242,6 +242,23 @@ async function q(): Promise<Queryable> {
   return t.tx;
 }
 
+/**
+ * mold_v0-334: inside inTransaction only, a workspace row locked until the transaction ends (SELECT … FOR UPDATE): its
+ * title and its data opened as stored, the state's entry times ($state_at) included, or null. A server move that checks
+ * where a record is (src/record-outcomes.ts, src/program-records.ts) reads it here, so no one moves it in between.
+ */
+export async function lockedWorkspaceRow(orgId: number, area: RecordArea, key: string): Promise<{ title: string | null; data: Record<string, unknown> } | null> {
+  if (!txScope.getStore()) throw new Error("lockedWorkspaceRow: inside a transaction only");
+  const [r] = await (await q()).query<Row>("SELECT key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 FOR UPDATE", [orgId, area.pack, area.name, checkKey(key)]);
+  if (!r) return null;
+  return { title: isSealed(r.title) ? await open(orgId, r.title as string) : r.title, data: await openJson(orgId, r.data) };
+}
+/** mold_v0-334: when a record's data says it entered `state` (its $state_at), or null. */
+export const stateEnteredAt = (data: Record<string, unknown>, state: string): Date | null => {
+  const at = stateTimes(data)[state];
+  return at ? new Date(at) : null;
+};
+
 // ---------- values ----------
 
 const KEY = RECORD_KEY;
@@ -353,7 +370,8 @@ async function existing(target: RecordArea, keys: string[], orgId: number | null
  * record that exists as the writer sees it (a workspace write sees its own rows and the shared ones, never another
  * workspace's; a shared write sees shared rows only), in an area the writer may read.
  */
-export async function checkRecord(area: { name: string; fields: readonly Field[] }, data: unknown, orgId: number | null, actor: Actor, what = `area ${area.name}`, skip: string[] = []): Promise<Record<string, unknown>> {
+export async function checkRecord(area: { name: string; fields: readonly Field[] }, data: unknown, orgId: number | null, actor: Actor, what = `area ${area.name}`, skip: string[] = [],
+  /** mold_v0-334: the record as stored (a field `filter_new_only` checks its `where` on the keys it did not name yet). */ before: Record<string, unknown> | null = null): Promise<Record<string, unknown>> {
   const out = checkData(area, data, what);
   const problems: string[] = [];
   for (const f of area.fields) {
@@ -369,7 +387,10 @@ export async function checkRecord(area: { name: string; fields: readonly Field[]
     // mold_v0-260 (flag record_rules): the records it may name are those its `where` keeps, as the writer reads them.
     else if (f.where && featureSetting("record_rules")) {
       const kept: string[] = [];
+      // mold_v0-334: filter_new_only: what the record named already stands; only a new pick must be kept by `where`.
+      const had = f.filter_new_only && before ? new Set((Array.isArray(before[f.name]) ? before[f.name] : [before[f.name]]) as unknown[]) : null;
       for (const k of keys) {
+        if (had?.has(k)) { kept.push(k); continue; }
         const row = await (target.scope === "platform" ? getPlatform(target, k) : orgId === null ? null : getWorkspace(orgId, target, k));
         if (row && conditionHolds(f.where as DetailCondition, row.data ?? {})) kept.push(k);
       }
@@ -1097,7 +1118,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
   const vis = meta ? null : await visibilityForWrite(orgId, area, actor, value?.visibility, prev ? prev.stored : null, txScope.getStore()?.tx, value?.data);
   if (!area.lifecycle) {
-    const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
+    const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried), prev?.opened ?? null)), ...carried }, w = writerOf(actor, meta);
     await onSaveChecks(orgId, area, key, t, data, prev ? "update" : "create", actor);
     const r = await writeRow(orgId, area, key, t, data, prev, w, meta, null, vis);
     auditMembers(orgId, area, key, members.turned);
@@ -1114,7 +1135,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
       : `a new ${area.label} record starts as ${JSON.stringify(state)}; it moves from there (records.move)`, 409);
   const rest = { ...(given as Record<string, unknown> ?? {}) };
   delete rest[field];
-  const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
+  const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)], prev?.opened ?? null)), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
   const after = { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, w = writerOf(actor, meta);
   await onSaveChecks(orgId, area, key, t, { ...data, [field]: state }, prev ? "update" : "create", actor);
@@ -1256,7 +1277,9 @@ export async function putPlatform(pack: string | null, name: string, key: string
   const area = platformAreaFor(pack, name);
   if (!meta && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
-  const data = await checkRecord(area, value?.data, null, SYSTEM_ACTOR);
+  // mold_v0-334: a reference that holds for new picks only reads what the row named before (none for a new row).
+  const was = area.fields.some((f) => f.filter_new_only) ? (await asPlatform(async () => (await q()).query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key])))[0]?.data ?? null : null;
+  const data = await checkRecord(area, value?.data, null, SYSTEM_ACTOR, undefined, [], was);
   const version = value?.version === undefined || value.version === null ? null : String(value.version).slice(0, 120);
   const t = title(value?.title);
   // mold_v0-282 (flag record_resources): a repository a hand write names (new, or changed) is read through the platform's
