@@ -81,6 +81,8 @@ export interface DetailActionSpec {
   probe?: never;
   /** mold_v0-334: a start_program action's record moves on start and when its run settles, and the field its reason goes in (the server makes them). */
   move_to?: string; on_outcome?: Partial<Record<'accepted' | 'needs_review' | 'refused' | 'applied' | 'rolled_back' | 'succeeded' | 'failed', string>>; reason_field?: string;
+  /** mold_v0-333: start_agent's record made at start, and a move that stops the record's sessions. */
+  creates?: Record<string, unknown>; stops_session?: boolean;
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
