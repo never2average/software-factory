@@ -20,6 +20,7 @@
 //                state; not drawn for a role that may not read that area
 //   runs         a section listing the runs that ran on this record: kind (a link to the run), status, started,
 //                duration, cost, who started it
+import { RUN_STATUS_WORDS, runStatusOf } from '@/lib/run-status';
 import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
@@ -583,7 +584,7 @@ function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions'
               <span className='text-muted-foreground text-xs'>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} /></span>
             </span>
             <span className='flex shrink-0 items-center gap-3 text-xs'>
-              <ToneBadge color={x.phase === 'failed' ? 'danger' : x.phase === 'awaiting_approval' ? 'warning' : ['working', 'starting', 'waking', 'waiting'].includes(x.phase) ? 'info' : 'neutral'}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
+              <ToneBadge color={x.phase === 'failed' ? 'danger' : x.phase === 'awaiting_approval' || x.phase === 'waiting' ? 'warning' : ['working', 'waking'].includes(x.phase) ? 'info' : 'neutral'}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
               <span className='tabular-nums'>{formatValue(x.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(x.budget_usd, 'usd')}</span></span>
             </span>
           </li>
@@ -592,7 +593,8 @@ function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions'
     </div>
   );
 }
-const SESSION_PHASE: Record<string, string> = { starting: 'Starting', working: 'Working', waiting: 'Waiting for you', parked: 'Parked', waking: 'Waking up', paused: 'Paused', awaiting_approval: 'Needs a decision', stopped: 'Stopped', failed: 'Failed', archived: 'Archived' };
+// mold_v0-334: a session's phase in the one run vocabulary (web/src/lib/run-status.ts).
+const SESSION_PHASE: Record<string, string> = Object.fromEntries(['starting', 'working', 'waiting', 'parked', 'waking', 'paused', 'awaiting_approval', 'stopped', 'failed', 'archived'].map((p) => [p, RUN_STATUS_WORDS[runStatusOf(p)]]));
 
 /**
  * mold_v0-331: a lifecycle's progress: its states in order (the declared ones, else the field's options), done up to the

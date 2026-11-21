@@ -8,8 +8,9 @@
  *   library             submissions received (operator alert), accepted, declined (src/contributions.ts, a host pack)
  *   usage               an account's spend crossing 80% and 100% of its monthly allowance (to owners and billing
  *                       managers), after a session (src/worker.ts) or a run (src/runs.ts) ends
- *   due dates           a workspace's records due within their area's window (mold_v0-035, src/schedules.ts dueCheck), and
- *                       a record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts clockCheck)
+ *   due dates           a workspace's records due within their area's window (mold_v0-035, src/schedules.ts dueCheck),
+ *                       a record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts clockCheck),
+ *                       and a run's result waiting on a staff review or to be applied (mold_v0-334, src/run-reminders.ts)
  *   billing             billing notices to the operator: a run's charge that could not be delivered (src/run-charges.ts)
  *   test                the "Send test email" button on /admin/emails
  *
@@ -77,7 +78,9 @@ export const EMAIL_KINDS = ["request_received", "request_alert", "request_declin
   // A record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts): the due_dates group.
   "clock_step",
   // The setup email a person sends themself from the Overview's Connect card (mold_v0-277, src/setup-email.ts).
-  "setup"] as const;
+  "setup",
+  // mold_v0-334: a run whose result waits on a staff review or to be applied (src/run-reminders.ts): the due_dates group.
+  "run_reminder"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 /** The groups a profile turns on (`email.notifications`), and the kinds in each. Sign-in and test are always on. */
@@ -85,7 +88,7 @@ export const NOTIFICATION_GROUPS = {
   access_requests: ["request_received", "request_alert", "request_declined", "request_approved"],
   library: ["submission_alert", "submission_accepted", "submission_declined"],
   usage: ["budget_80", "budget_100"],
-  due_dates: ["due_soon", "clock_step"],
+  due_dates: ["due_soon", "clock_step", "run_reminder"],
   billing: ["billing_notice"],
 } as const satisfies Record<string, readonly EmailKind[]>;
 export type NotificationGroup = keyof typeof NOTIFICATION_GROUPS;
@@ -692,6 +695,38 @@ export async function clockSteps(orgId: number, items: ClockStepItem[]): Promise
     return { recipients: to.size, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
   } catch (e) {
     console.error(`email clock_step for ${orgId} failed:`, (e as Error).message);
+    return { recipients: 0, delivered: 0 };
+  }
+}
+
+// ---------- run reminders (mold_v0-334: src/run-reminders.ts) ----------
+
+/** One run whose result waits: on a staff review, or accepted and not applied yet. */
+export interface RunReminderItem { run: string; title: string; what: "review" | "apply"; since: string }
+
+/**
+ * A workspace's run reminders from one sweep: one email to its owners listing them (the due_dates group). The idempotency
+ * key names the workspace, the runs and the day, so a sweep run twice never sends the same list again. Never throws.
+ */
+export async function runReminders(orgId: number, day: string, items: RunReminderItem[]): Promise<{ recipients: number; delivered: number }> {
+  if (!kindOn("run_reminder").on || !items.length) return { recipients: 0, delivered: 0 };
+  try {
+    const [o] = await asPlatform(async () => (await getDb()).query<{ name: string; slug: string }>("SELECT name, slug FROM organizations WHERE id = $1", [orgId]));
+    if (!o) return { recipients: 0, delivered: 0 };
+    const to = await asPlatform(() => accountRecipients(orgId, ["owner"]));
+    if (!to.length) return { recipients: 0, delivered: 0 };
+    const shown = items.slice(0, 50);
+    const list = shown.map((x) => `- ${x.title.replace(/[\r\n]+/g, " ").slice(0, 200)}: ${x.what === "review" ? "its result has waited for a staff review" : "its accepted version has not been applied"} since ${x.since}`).join("\n");
+    const results = await Promise.all(to.map((t) => send({ kind: "run_reminder", to: t, org: orgId,
+      idempotencyKey: keyFor(`run-reminder:${orgId}:${day}:${createHash("sha256").update(items.map((x) => `${x.what}:${x.run}`).sort().join(",")).digest("hex").slice(0, 16)}`, t),
+      meta: { account: o.slug, items: items.length, day },
+      subject: `${items.length} agent run${items.length === 1 ? "" : "s"} waiting in ${o.name}`.slice(0, 200),
+      text: lines("Hi,", `${items.length === 1 ? "This run's result is" : "These runs' results are"} waiting in ${o.name}:`,
+        list + (items.length > shown.length ? `\n…and ${items.length - shown.length} more` : ""),
+        `See them on ${siteUrl()}/app/notices. You're getting this because you are an owner of ${o.name}.`, sign()) })));
+    return { recipients: to.length, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
+  } catch (e) {
+    console.error(`email run_reminder for ${orgId} failed:`, (e as Error).message);
     return { recipients: 0, delivered: 0 };
   }
 }

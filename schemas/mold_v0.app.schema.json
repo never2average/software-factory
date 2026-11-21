@@ -2177,6 +2177,9 @@
                         }
                       ]
                     },
+                    "filter_new_only": {
+                      "type": "boolean"
+                    },
                     "display": {
                       "type": "string",
                       "enum": [
@@ -6703,6 +6706,48 @@
                             "probes"
                           ],
                           "additionalProperties": false
+                        },
+                        "move_to": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                        },
+                        "on_outcome": {
+                          "type": "object",
+                          "properties": {
+                            "accepted": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "needs_review": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "refused": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "applied": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "rolled_back": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "succeeded": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            "failed": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "reason_field": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
                         }
                       },
                       "required": [
@@ -7337,6 +7382,9 @@
                             }
                           ]
                         },
+                        "filter_new_only": {
+                          "type": "boolean"
+                        },
                         "display": {
                           "type": "string",
                           "enum": [
@@ -7941,6 +7989,9 @@
                               "additionalProperties": false
                             }
                           ]
+                        },
+                        "filter_new_only": {
+                          "type": "boolean"
                         },
                         "display": {
                           "type": "string",

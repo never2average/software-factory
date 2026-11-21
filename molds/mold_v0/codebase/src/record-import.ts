@@ -214,7 +214,7 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
     const merged = { ...kept, ...fields };
     const t = titleOf(title, before?.title);
     try {
-      await checkRecord(area, merged, orgId, actor, `row ${n}`, life ? [life.field] : []);
+      await checkRecord(area, merged, orgId, actor, `row ${n}`, life ? [life.field] : [], before?.data ?? null);
       // mold_v0-260 (flag record_rules): the area's checks on save, in the preview as at the write.
       await onSaveChecks(orgId, area, key, t, life ? { ...merged, [life.field]: before ? before.data[life.field] : life.initial } : merged, before ? "update" : "create", actor);
     }

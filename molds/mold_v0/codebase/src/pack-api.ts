@@ -456,6 +456,12 @@ export const RecordFieldSchema = z.object({
   /** mold_v0-260 (flag record_rules): a reference field's condition on the records it may name (ReferenceWhereSchema). */
   where: ReferenceWhereSchema.optional(),
   /**
+   * mold_v0-334: `where` holds for new picks only: a record that already names one it no longer keeps (a catalog entry
+   * retired since) may still be saved naming it; only a key it did not name before must be kept by `where`. The picker
+   * still offers the kept ones only.
+   */
+  filter_new_only: z.boolean().optional(),
+  /**
    * mold_v0-262 (flag record_pages): "chips": a json field holding a list of short strings (tags, hosts, stacks) shown
    * as chips in its list's cells, its record's sections and facts, and the peek (the first four in a cell, then +N).
    */
@@ -491,6 +497,7 @@ export const RecordFieldSchema = z.object({
   if (f.type === "reference" && !f.to) bad("a reference field names the area it refers to (to)", "to");
   if (f.type !== "reference" && f.to) bad("to is for a reference field only", "to");
   if (f.where && f.type !== "reference") bad("where is for a reference field only (the records it may name)", "where");
+  if (f.filter_new_only !== undefined && !f.where) bad("filter_new_only says where holds for new picks only: give where too", "filter_new_only");
   if (f.multiple && !["enum", "person", "reference", "file"].includes(f.type)) bad("multiple is for enum, person, reference and file fields", "multiple");
   if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
@@ -1284,6 +1291,18 @@ export const DetailNoticeSchema = z.object({
   title: plainWords(80).optional(),
   text: plainWords(300),
 }).strict();
+/**
+ * mold_v0-334: how a run a start_program action started settles, for its record's moves (src/record-outcomes.ts):
+ *   accepted      its evaluation accepted the result (the guardian, or staff after a review)
+ *   needs_review  its evaluation waits for a staff review
+ *   refused       its evaluation refused the result (or staff declined it)
+ *   applied       the version it made was applied
+ *   rolled_back   the version it made was rolled back
+ *   succeeded     it finished with no evaluation
+ *   failed        it failed or crashed, or was stopped, before an evaluation decided (stopped falls back here)
+ */
+export const RUN_OUTCOMES = ["accepted", "needs_review", "refused", "applied", "rolled_back", "succeeded", "failed"] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 /** The kinds of a page action (mold_v0-254). */
 export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage", "test_connection"] as const;
 /** A program's id (src/program-spec.ts PROGRAM_ID, the same rule). */
@@ -1361,6 +1380,12 @@ export const DetailActionSchema = z.object({
   program: z.string().regex(PROGRAM_REF, "a program's id (lowercase letters, digits and -)").optional(),
   /** mold_v0-312: a test_connection action's call (src/connection-test-config.ts ConnectionTestSchema). */
   probe: ConnectionTestSchema.optional(),
+  /** mold_v0-334: a start_program action's record moves (src/record-outcomes.ts): to `move_to` when it starts. */
+  move_to: choiceValue.optional(),
+  /** mold_v0-334: and, when the run it started settles, to the state its outcome names (RUN_OUTCOMES). */
+  on_outcome: z.object(Object.fromEntries(RUN_OUTCOMES.map((o) => [o, choiceValue.optional()])) as Record<RunOutcome, z.ZodOptional<typeof choiceValue>>).strict().optional(),
+  /** mold_v0-334: a text field of the record each outcome's reason is written into (its history shows it). */
+  reason_field: name.optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1585,6 +1610,23 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     if (x.kind === "start_program" && !x.program) bad("a start_program action names the program it starts (program)", i, "program");
     if (x.kind === "start_program" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a start_program action cannot be a viewer's", i, "roles");
     if (x.kind === "start_program" && a.scope === "platform") bad("a shared (platform) area's page starts no program: a program runs in a workspace", i, "kind");
+    // mold_v0-334: a start_program action's moves follow the area's lifecycle; its reason goes into a plain text field.
+    for (const k of ["move_to", "on_outcome", "reason_field"] as const) if (x[k] !== undefined && x.kind !== "start_program") bad(`${k} is for a start_program action, not ${x.kind}`, i, k);
+    if (x.kind === "start_program" && (x.move_to !== undefined || x.on_outcome !== undefined)) {
+      const lc = a.lifecycle;
+      const reached = new Set(lc?.transitions.map((t) => t.to) ?? []);
+      if (!lc) bad("a start_program action moves a record along its lifecycle: this area has none", i, x.move_to !== undefined ? "move_to" : "on_outcome");
+      else {
+        if (x.move_to !== undefined && !reached.has(x.move_to)) bad(`no transition of the lifecycle goes to ${x.move_to} (${[...reached].join(", ")})`, i, "move_to");
+        for (const [o, st] of Object.entries(x.on_outcome ?? {})) if (st !== undefined && !reached.has(st)) bad(`no transition of the lifecycle goes to ${st} (${[...reached].join(", ")})`, i, "on_outcome", o);
+      }
+    }
+    if (x.reason_field !== undefined) {
+      const f = fieldOf(x.reason_field);
+      if (x.on_outcome === undefined) bad("reason_field says why an outcome moved the record: give on_outcome too", i, "reason_field");
+      if (!f) bad(`${x.reason_field} is not one of the area's fields`, i, "reason_field");
+      else if (f.type !== "text" || f.encrypted || f.required) bad(`${x.reason_field} is ${f.encrypted ? "encrypted" : f.required ? "required" : `a ${f.type} field`}: a reason goes into a plain, optional text field`, i, "reason_field");
+    }
     // mold_v0-305: a storage Test is a workspace record's (the pack checks that the area is its object_storage one).
     if (x.kind === "test_storage" && a.scope === "platform") bad("a shared (platform) area holds no workspace's storage: test_storage is for the pack's object_storage area", i, "kind");
     if (x.kind === "test_storage" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a test_storage action writes the record's status", i, "roles");

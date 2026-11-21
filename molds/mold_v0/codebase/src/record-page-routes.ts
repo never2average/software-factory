@@ -636,8 +636,11 @@ export function recordPageRouter(): Router {
         const s = session(res);
         const H = await import("./harness-sessions.js");
         const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
-        return (await import("./program-start.js")).startProgram(s.org, H.actorOf(s), a.program!.id, { inputs: a.program!.inputs, title: `${a.program!.name}: ${record.title || record.key}` }, org,
+        const started = await (await import("./program-start.js")).startProgram(s.org, H.actorOf(s), a.program!.id, { inputs: a.program!.inputs, title: `${a.program!.name}: ${record.title || record.key}` }, org,
           { record: { area: area.name, key: record.key } });
+        // mold_v0-334: the action's move on start (src/record-outcomes.ts); the session has started whatever it says.
+        const moved = await (await import("./record-outcomes.js")).moveOnStart(s.org, area.name, record.key, declared, { userId: s.user ?? null }).catch((e: Error) => { console.error(`record outcomes: ${e.message}`); return null; });
+        return { ...started, ...(moved ? { moved: { from: moved.from, to: moved.to } } : {}) };
       }
       case "test_storage": {
         // mold_v0-305: never a key in the answer; the bucket's own words, cleaned (src/storage.ts bucketErrorInWords).

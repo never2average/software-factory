@@ -594,14 +594,16 @@ async function sealedDue(orgId: number, pack: string, area: string, field: strin
 // ---------- notices (the console) ----------
 
 export interface NoticeView {
-  id: string; kind: "due" | "clock"; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
+  id: string; kind: "due" | "clock" | "run"; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
+  /** mold_v0-334: where a run's notice opens (its run's page); a record's opens the record. */
+  href?: string;
   /** A clock's notice (mold_v0-191): its latest step in words ("Overdue; told owner"). */
   what?: string;
 }
 
 /** A workspace's notices, only those of areas `actor` may read (an API key or the system: every one). */
 export async function listNotices(orgId: number, opts: { all?: boolean; actor?: Actor } = {}): Promise<NoticeView[]> {
-  let rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due" | "clock"; area: string; record_key: string; title: string | null;
+  let rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due" | "clock" | "run"; area: string; record_key: string; title: string | null;
     due_on: string | Date; created_at: Date; emailed_at: Date | null; dismissed_at: Date | null; clock: string | null; step: string | null; detail: Record<string, unknown> | null }>(
     `SELECT n.id, n.kind, n.area, n.record_key, n.title, n.due_on, n.created_at, n.emailed_at, n.dismissed_at, e.clock, e.step, e.detail FROM workspace_notices n
        LEFT JOIN LATERAL (SELECT clock, step, detail FROM workspace_clock_events e WHERE n.kind = 'clock' AND e.org_id = n.org_id AND e.pack = n.pack AND e.area = n.area
@@ -609,10 +611,13 @@ export async function listNotices(orgId: number, opts: { all?: boolean; actor?: 
       WHERE n.org_id = $1 AND ($2 OR n.dismissed_at IS NULL) ORDER BY n.due_on, n.id LIMIT 500`, [orgId, !!opts.all]));
   // A notice names a record (its key, its due day, its title): only for people who may read its area (mold_v0-076).
   const actor = opts.actor;
-  if (actor) rows = rows.filter((r) => { const a = findArea(r.area); return !!a && may(a, "read", actor); });
+  // mold_v0-334: a run's notice (src/run-reminders.ts) names a run of the workspace, which its people see on Active runs.
+  if (actor) rows = rows.filter((r) => { if (r.kind === "run") return true; const a = findArea(r.area); return !!a && may(a, "read", actor); });
   // A sealed area's notice holds its title sealed with this workspace's key: opened here, for this workspace only.
   const titles = await Promise.all(rows.map(async (r) => (isSealed(r.title) ? withTenant(orgId, () => open(orgId, r.title!)).catch(() => null) : r.title)));
-  return rows.map((r, i) => ({ id: String(r.id), kind: r.kind, area: r.area, area_label: findArea(r.area)?.label ?? r.area, key: r.record_key, title: titles[i] ?? null,
+  const { runNoticeWords } = await import("./run-reminders.js");
+  return rows.map((r, i) => ({ id: String(r.id), kind: r.kind, area: r.area, area_label: r.kind === "run" ? "Agent runs" : findArea(r.area)?.label ?? r.area, key: r.record_key, title: titles[i] ?? null,
+    ...(r.kind === "run" ? { what: runNoticeWords(r.area), href: `/app/agent/runs/${encodeURIComponent(r.record_key)}` } : {}),
     due_on: typeof r.due_on === "string" ? r.due_on.slice(0, 10) : dayOf(new Date(r.due_on)), created_at: iso(r.created_at)!, emailed: !!r.emailed_at, dismissed: !!r.dismissed_at,
     ...(r.kind === "clock" && r.clock && r.step ? { what: stepWords(findArea(r.area) ?? ({ fields: [], clocks: [] } as never), r.clock, r.step, r.detail ?? {}) } : {}) }));
 }

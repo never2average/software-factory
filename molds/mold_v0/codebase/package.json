@@ -47,6 +47,7 @@
     "test:record-pages": "tsx scripts/record-pages-test.ts && tsx scripts/record-pages-3-test.ts && tsx scripts/record-page-actions-test.ts && tsx scripts/record-pages-262-test.ts && tsx scripts/record-rail-331-test.ts",
     "test:record-rail": "tsx scripts/record-rail-331-test.ts",
     "test:record-runs": "tsx scripts/record-runs-test.ts",
+    "test:record-outcomes": "tsx scripts/record-outcomes-test.ts",
     "test:record-display": "tsx scripts/record-display-309-test.ts && tsx scripts/record-titles-309-test.ts",
     "test:run-page": "tsx scripts/run-page-test.ts && tsx scripts/run-page-wake-test.ts",
     "test:generic-gaps": "tsx scripts/generic-gaps-test.ts",

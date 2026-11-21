@@ -4538,6 +4538,94 @@ job run, its hook, an agent session's wake and a program's child session; a run'
 person may not read; another workspace), with `npm run test:record-pages`, `npm run test:run-page`,
 `npm run test:nested-runs` and `scripts/agent-dock-test.ts` unchanged.
 
+## Truthful improvement, catalog, run and access state (mold_v0-334)
+
+A record's state follows the programs and evaluations run on it; a catalog's maturity can be enforced on new picks
+only; everything that runs reads in one vocabulary; keys and invitations say what they are. Every key below is optional:
+a pack that declares none of them behaves as before (`packs.py check` of existing packs is unchanged).
+
+- **A program's records update and move** (`src/program-records.ts`, `src/program-spec.ts` ProgramRecord). A program's
+  `record` mapping may now:
+  - `update_by: "key"`: each result updates the record its `key` names, the fields it maps written over the stored ones
+    (encrypted fields and the state kept as stored); `key` may be one of the program's inputs (`$inputs.<name>`: the
+    record it was started for). A key with no record refuses the whole write, said on the parent's trace.
+  - `move_to`: each record written is moved to that state when a transition of the area's lifecycle allows it from
+    where the record is; a record a person moved on since is left where it is (its fields still written), and the trace's
+    `child_records` event lists it under `unmoved`.
+  - `dedupe_on: [fields]` (1 to 5 plain fields; not with `update_by`): a new record whose values of those fields (text
+    trimmed, spaces folded, case-blind) match a record the area keeps under another key is left out, the existing one
+    standing; a result's own repeats once. The event lists them under `deduped` (`{key, kept}`). Writing the same key again
+    still replaces its own record.
+
+  ```json
+  { "record": { "area": "items", "key": "$inputs.item_key", "update_by": "key", "move_to": "formalized",
+                "fields": { "claim": "claim", "metric": "metric", "rejection_condition": "rejection_condition" } } }
+  { "record": { "area": "items", "items": "found", "dedupe_on": ["statement", "target"], "fields": { "statement": "statement", "target": "target" } } }
+  ```
+  Checked when the program is saved against the build's areas: `move_to` a state a transition reaches, `dedupe_on` fields
+  the area has and does not encrypt, `$inputs.` only for an update.
+- **A start_program action moves its record** (`src/record-outcomes.ts`; `DetailActionSchema` `move_to`, `on_outcome`,
+  `reason_field`). On a record page's start_program action:
+  - `move_to`: the state the record moves to when a person starts it (written as that person; only along a transition).
+  - `on_outcome`: `{accepted, needs_review, refused, applied, rolled_back, succeeded, failed}` (each optional, a state):
+    where the record goes when the run it started settles. The guardian's decision and a staff review
+    (`src/nested-runs.ts` decide, reviewEvaluation) give accepted, needs_review or refused (a staff accept is accepted, a
+    decline refused); a version applied or rolled back (applyChampion, decidePolicyProposal's accept, rollbackChampion)
+    gives applied or rolled_back; a run that ended with no decision is found by the nested runs' sweep
+    (`sweepRecordOutcomes`, the last day's ended root sessions linked to a record) and gives succeeded (it said done) or
+    failed (it failed, crashed, timed out or was stopped), unless a newer run on the same record is still live.
+  - `reason_field`: a plain, optional text field of the area each outcome's reason is written into ("The evaluation
+    refused the result: …", "The run ended without a result: crashed …"), so the record's history shows why.
+  With a `move_to`, an outcome moves the record only from where the action (or an earlier outcome) put it: a person's own
+  move afterwards stands, and an outcome seen twice changes nothing. The writer is the run (`run:program:<program>:<handle>`,
+  else the session's wake), so the record's page links it; each move is a `record_moved` event on the session's trace.
+  A learning-style area marks its record applied when its rule change is accepted the same way (`on_outcome: {accepted:
+  "applied"}` on the action that starts the rule change).
+
+  ```json
+  { "kind": "start_program", "place": "primary", "label": "Improve it", "program": "improve-it", "input": { "item_key": "$key" },
+    "move_to": "improving", "on_outcome": { "accepted": "solved", "needs_review": "in_review", "refused": "open", "failed": "open", "applied": "solved" },
+    "reason_field": "resolution_reason" }
+  ```
+- **References that hold for new picks only** (`filter_new_only: true` beside a reference field's `where`;
+  `src/record-areas.ts` checkRecord). The `where` is checked on the keys a write names that the record did not name before:
+  a record naming a catalog entry retired since still saves; a new pick of a retired one is refused in the same words as before.
+  The picker still lists only the kept records ("New picks: only …"), and shows the current value's title whatever it is.
+
+  ```json
+  { "name": "base", "type": "reference", "to": "catalog", "where": { "field": "maturity", "in": ["beta", "ga"] }, "filter_new_only": true }
+  ```
+- **One run vocabulary** (`src/run-words.ts`, the console's `web/src/lib/run-status.ts`, held equal by the test). Every
+  run-like thing (a job's run, a session, a child, an evaluation) reads as Waiting to start, Working, Needs you / Needs
+  staff (saying whose decision: a session asking a person, or a result waiting for a staff review), Paused, Done, Failed
+  (with why: timed out, stopped unexpectedly, a platform error) or Stopped; what it made carries a second badge: Accepted,
+  Refused, Waiting for staff, Applied or Rolled back. The Agents list (filtered by that status, cards Working now, Need
+  you, Paused, Spent), a record's runs section, the run view's tree (each child's badge and its attention mark) and the
+  staff Programs page use it. **Active runs** (`GET /api/agent/runs`, `?view=finished`): each run's status, whose
+  decision, outcome and an attention mark (a failure escalated to a person, computed since mold_v0-291 and now drawn); an
+  Active / Finished switch, Finished listing the trees whose children all settled in the last 30 days (a failed or
+  refused run no longer vanishes); cards Need attention (active) and Accepted or applied, Failed or refused, Waiting for
+  staff (finished).
+- **Reminders** (`src/run-reminders.ts`, from the nested runs' sweep; `sql/migrations/0075_run_reminders.sql` adds the
+  notice kind `run`). A result waiting for a staff review 3 days, or a version accepted and neither applied nor proposed
+  in 7 days, is a workspace notice (area `run_review` / `run_apply`, the run's root session as its key; `/app/notices`
+  "Open run"), raised once a day while it waits, and one email to the workspace's owners listing the new ones (email kind
+  `run_reminder`, in the `due_dates` group). Rollback: `sql/rollback/0075_run_reminders.sql`.
+- **Access.** A workspace key staff issue may expire (`POST …/orgs/<slug>/keys {label, expires_in_days}`, 1 to 730 days;
+  none: never, as before; the column is 0013's `api_keys.expires_at`, which every key's check already reads), and a key
+  that expires is rotated into one with the same span; the staff key lists show Expires. An active key nobody used for 90
+  days (or never, since it was made) carries `unused: true` (`src/member-keys.ts`) and a "Never used" / "Not used for 90
+  days" chip on the API keys page (its fourth card counts them). An invitation withdrawn is "Cancelled" everywhere,
+  workspace and staff (stored `revoked`; `web/src/lib/access-words.ts`); a suspended member and an expired invitation have
+  neutral badges, never red.
+
+Proof: `tsx scripts/record-outcomes-test.ts` (`npm run test:record-outcomes`: the record mappings, the action's moves on
+start and on each outcome through the real review and apply, the sweep, new picks only, the vocabulary and Active runs'
+Finished view, key expiry and the unused flag, the reminders), with `npm run test:self-improvement`,
+`npm run test:nested-runs`, `npm run test:agent-harness`, `npm run test:record-pages`, `npm run test:declarative-packs`,
+`npm run test:console-tabs`, `npm run test:migrations`, `npm run check:rls`, `npm run check:tenant-sql`,
+`npm run test:words`, `npm run test:vocabulary` and `npm run check:vocabulary` unchanged.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace
