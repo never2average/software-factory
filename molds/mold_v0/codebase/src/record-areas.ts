@@ -1067,6 +1067,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   assertCanSeal(area);
   // A writer must also be a reader: a write's answer (and its refusals) show the stored record.
   assertMay(area, "read", actor);
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332: a one-only area's writes take their turn first
   const prev = await readWorkspace(orgId, area, key);
   if (prev && mode === "create") throw new PackError(`${area.label} record ${key} already exists`, 409);
   if (prev && area.append_only) throw appendOnly(area, key); // mold_v0-195: added once, never changed
@@ -1133,6 +1134,7 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   assertMay(area, "read", actor);
   assertMay(area, "move", actor);
   checkKey(key);
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332
   const prev = await readWorkspace(orgId, area, key);
   if (!prev) throw new PackError(`no ${area.name} record ${key}`, 404);
   const field = area.lifecycle.field, from = stateOf(area, prev.opened);
@@ -1162,6 +1164,7 @@ async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, nam
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
   if (area.append_only) throw appendOnly(area, key); // mold_v0-195
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332
   // A repository's writer deletes only rows it wrote itself (its prune).
   const gone = await withTenant(orgId, async () => (await (await q()).query(
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
@@ -1355,7 +1358,7 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   if (orgId !== null) await ensureOrgKey(orgId);
   const scope: { tx: Queryable; orgId: number | null; changes?: RecordChange[]; after?: (() => Promise<unknown>)[] } = { tx: null as unknown as Queryable, orgId };
   const run = async () => (await getDb()).transaction((tx) => txScope.run(Object.assign(scope, { tx }), fn));
-  const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run));
+  const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run)).catch(health.deadlockWords); // mold_v0-332: 40P01 said as a 409
   if (scope.changes?.length) await tell(scope.changes);
   // mold_v0-282: what waits for the commit (each on its own: one failing never stops the next).
   for (const fn of scope.after ?? []) { try { await fn(); } catch (e) { console.error(`after commit: ${(e as Error).message}`); } }
@@ -1370,6 +1373,8 @@ async function batchWorkspaceNow(orgId: number, pack: string, actor: Actor, raw:
   const ops = checkOps(raw, max);
   // The data trail (mold_v0-197): each operation's entry, written only when the whole batch commits.
   return auditAtomic(() => inTransaction(orgId, async () => {
+    // mold_v0-332: every one-only area the batch touches takes its turn once, first, in name order.
+    await health.lockOnlyOne(orgId, [...new Set(ops.map((o) => o.area))].flatMap((n) => { const a = findArea(n); return a && a.pack === pack ? [a] : []; }));
     const out: RecordOperationResult[] = [];
     for (const [i, o] of ops.entries()) {
       try {

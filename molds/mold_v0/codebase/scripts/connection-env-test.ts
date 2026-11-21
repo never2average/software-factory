@@ -99,7 +99,7 @@ const KEYS = { name: "deploy_keys", label: "Deploy keys", role: "source", scope:
     actions: [{ kind: "test_connection", place: "primary", label: "Test", roles: ["owner"], probe: { probes: { "*": { method: "GET", url: "https://api.keys.example/v1/{host}", headers: { Authorization: "Bearer {api_token}" } } }, status: "health", result: "result" } },
       { kind: "edit", place: "secondary" }] } };
 const REGIONS = { name: "build_regions", label: "Build regions", role: "source", scope: "workspace",
-  fields: [{ name: "region", label: "Region", type: "text" }, { name: "primary", label: "Primary", type: "boolean" }],
+  fields: [{ name: "region", label: "Region", type: "text", required: true }, { name: "primary", label: "Primary", type: "boolean" }],
   permissions: { read: ALL, create: ["owner"], update: ["owner"], delete: ["owner"] },
   contract: { ...contract, actions: { ...contract.actions, import: ["owner"] } } };
 const KEEPER_ENV = [{ area: "deploy_keys", use: "use_in_builds", only_one: true, last_used: "last_used", prefix: "KEEP_", fields: { HOST: "host", TOKEN: "api_token" } },
@@ -640,6 +640,21 @@ try {
     const swap = await importWorkspaceRecords(A.orgId, own, rArea, [{ key: "us", data: { region: "us-east", primary: true } }, { key: "eu", data: { region: "eu-west", primary: false } }], { dryRun: false });
     assert.deepEqual(swap.rows.map((r) => r.action), ["create", "update"], `a swap in one file: ${JSON.stringify(swap.rows)}`);
     assert.deepEqual([(await ra.getFor(A.orgId, "build_regions", "us", own))!.data.primary, (await ra.getFor(A.orgId, "build_regions", "eu", own))!.data.primary], [true, false]);
+    await ra.asWriter({ by: "people", id: "owner" }, () => keys.update("build_regions", "us", { title: "us", data: { region: "us-east", primary: false } }));
+    // A row refused for another reason (no region) does not count as marked; two marked rows name each other by key.
+    const l3 = await importWorkspaceRecords(A.orgId, own, rArea, [{ key: "zz", data: { primary: true } }, { key: "ap", data: { region: "ap-south", primary: true } }], { dryRun: true });
+    assert.deepEqual(l3.rows.map((r) => r.action), ["invalid", "create"], JSON.stringify(l3.rows));
+    assert.ok(!/only one may be/.test(l3.rows[0]!.errors.join(" ")), "refused for its own reason only");
+    const l4 = await importWorkspaceRecords(A.orgId, own, rArea, [{ key: "us", title: "US East", data: { region: "us-east", primary: true } }, { key: "ap", data: { region: "ap-south", primary: true } }], { dryRun: true });
+    assert.match(l4.rows[0]!.errors.join(" "), /Build regions: "ap" \(a row of this file\) is also marked "Primary"/, JSON.stringify(l4.rows));
+    assert.match(l4.rows[1]!.errors.join(" "), /"us" \(a row of this file\) is also marked/, "by its key in the file, never a stored title");
+    // Opposite swaps at once: both finish (one may be told to try again), never a hang, and one marked at the end.
+    const swapTo = (on: string, off: string) => ra.asWriter({ by: "people", id: "owner" }, () => keys.batch([{ op: "update", area: "build_regions", key: off, data: { region: off === "us" ? "us-east" : "eu-west", primary: false } },
+      { op: "update", area: "build_regions", key: on, data: { region: on === "us" ? "us-east" : "eu-west", primary: true } }] as never));
+    const raced = await Promise.allSettled([swapTo("us", "eu"), swapTo("eu", "us")]);
+    assert.ok(raced.some((x) => x.status === "fulfilled"), JSON.stringify(raced.map((x) => x.status === "rejected" ? String((x as PromiseRejectedResult).reason) : "ok")));
+    const marks = await Promise.all(["us", "eu"].map(async (k) => (await ra.getFor(A.orgId, "build_regions", k, own))!.data.primary));
+    assert.equal(marks.filter((m) => m === true).length, 1, `one marked after two opposite swaps: ${JSON.stringify(marks)}`);
     // A second one marked before the rule (written around the store): both need attention, and the start still refuses.
     const { withTenant } = await import("../src/tenant-scope.js");
     const mark = (key: string, on: boolean) => withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{use_in_builds}', $1::jsonb) WHERE org_id = $2 AND area = 'deploy_keys' AND key = $3", [JSON.stringify(on), A.orgId, key]));

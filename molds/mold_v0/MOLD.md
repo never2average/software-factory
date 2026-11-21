@@ -4399,7 +4399,7 @@ working as before, except that a test that could not run is no longer written as
   A move that changes a field the test reads resets it too. **Only the record's own test writes its health**: any other
   write (a run, a tool, an import, a clock, a repository's index, another page action) keeps the stored values of those
   fields whatever it sends (a person sending another value is refused, as for every set_by "action" field). The test's
-  write-back carries the values it read (`asTestOf`): when the record changed while the test was out (a new host or
+  write-back carries the values it read (`asTestOf`, for that one write only): when the record changed while the test was out (a new host or
   key, so reset), its result is about values no longer there and is not written. A key that does not open with the
   workspace's key (sealed for another record or key) sets the status back to untested even with no could-not-test
   option (a locked vault keeps it as it was). Test storage's words are cut of its keys in every form before they are kept.
@@ -4408,10 +4408,13 @@ working as before, except that a test that could not run is no longer written as
   the workspace has it on: `Build connections: "main" is already marked "Use in builds", and only one may be: turn
   it off there first` (a record the writer may not read: "another record"). A record already on saves as it is; two
   marked before the rule both need attention, and a session's start still refuses them. Every marked record counts
-  (no limit). Such an area's saves run as a transaction that takes the area's turn (an advisory lock), so two saves at
-  once never both mark; in a batch the check reads the batch's own transaction (a swap, one off and one on, saves; two
-  on refuse the batch), and an import's preview judges the file's rows together (two marked rows each say the other)
-  and writes the rows turning a flag off first. A move is checked too.
+  (no limit). Such an area's writes, moves and deletes run as a transaction that takes the area's turn first (an
+  advisory lock, whatever the write does to the flag; a batch takes it once at its start for every such area it
+  touches, in name order), so two saves at once never both mark and opposite swaps never deadlock (a deadlock the
+  database breaks anyway is a plain 409, "try again"); in a batch the check reads the batch's own transaction (a swap,
+  one off and one on, saves; two on refuse the batch), and an import's preview judges the file's rows together (two
+  marked rows each name the other by its key in the file; a row refused for another reason does not count) and
+  writes the rows turning a flag off first. A move is checked too.
 - **Read now, never stored** (`withHealth`, on every list and get of such an area): each record's `health` is
   `{field, state, tested_at, days, stale, attention, reasons}`. A working status whose last test (tested_at, else
   tested) is older than `stale_after_days` is stale: the console's record header and list cell show "Tested N days

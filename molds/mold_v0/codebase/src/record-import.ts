@@ -193,7 +193,11 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
   // mold_v0-332: a one-only flag is judged across the file's rows too (each as it would be written).
   const { withPendingRows, onlyOneLast } = await import("./connection-test-health.js");
   const pending = new Map(read.filter((r) => !r.errors.length && RECORD_KEY.test(r.key)).map((r) => [r.key, { ...(stored.get(r.key)?.data ?? {}), ...r.given }]));
-  await withPendingRows(pending, async () => { for (const { n, key, title, given, errors } of read) {
+  // Rows refused for another reason never count as marked: a second pass without them (at most three).
+  for (let pass = 0; pass < 3; pass++) {
+  rows.length = 0; writes.length = 0;
+  await withPendingRows(pending, async () => { for (const { n, key, title, given, errors: readErrors } of read) {
+    const errors = [...readErrors];
     const report = (action: WorkspaceImportAction) => rows.push({ row: n, key, action, errors });
     if (errors.length) { report("invalid"); continue; }
     const before = stored.get(key);
@@ -226,6 +230,10 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
     report(before ? "update" : "create");
     writes.push({ op: before ? "update" : "create", area: area.name, key, title: t, data: merged });
   } });
+  const failed = rows.filter((r) => r.action === "invalid" && pending.has(r.key) && r.errors.some((m) => !/and only one may be/.test(m))).map((r) => r.key);
+  if (!failed.length) break;
+  for (const k of failed) pending.delete(k);
+  }
   onlyOneLast(area, writes); // rows turning a one-only flag off are written first (a swap in one file)
   // One transaction through the workspace's record store, as the person (provenance people, mold_v0-236).
   if (!opts.dryRun && writes.length)

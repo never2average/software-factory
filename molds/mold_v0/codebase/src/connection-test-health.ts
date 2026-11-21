@@ -178,7 +178,9 @@ export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null
   // Only the record's own test writes its health (and only about the values it tested): any other write (a run, a
   // tool, an import, a clock, a repository's index, another page action) keeps what is stored, whatever it says.
   const test = testScope.getStore();
-  const mine = !!test && test.area === area.name && test.key === key;
+  // One-shot: the test's own write-back alone (what that write sets off, a listener or work after its commit, does not inherit it).
+  const mine = !!test && !test.used && test.area === area.name && test.key === key;
+  if (mine) test.used = true;
   const keep = () => { for (const k of own) { delete g[k]; if (prev && !blank(prev[k])) carried[k] = prev[k]; else delete carried[k]; } };
   if (!mine) keep();
   else if (prev && h.reads.some((f) => !same(test.snapshot[f], prev[f]))) keep(); // changed while it was tested: its result is about other values
@@ -206,7 +208,7 @@ export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null
 }
 
 /** The test in progress: the record it reads, and the values of the fields it reads as it read them. */
-const testScope = new AsyncLocalStorage<{ area: string; key: string; snapshot: Record<string, unknown> }>();
+const testScope = new AsyncLocalStorage<{ area: string; key: string; snapshot: Record<string, unknown>; used?: boolean }>();
 /**
  * Run a record's test (src/connection-test.ts, src/workspace-storage.ts): its write-back alone may set the health
  * fields, and only while the record still holds the values it tested (`stored`, as read before the call: plain values
@@ -242,12 +244,19 @@ async function marked(orgId: number, area: AreaLike, use: string): Promise<{ key
       const tx = await ra.recordQuery();
       const [was] = await tx.query<{ v: string | null }>("SELECT current_setting('app.viewer', true) AS v");
       await tx.query("SELECT set_config('app.viewer', '*', true)");
-      try { return await tx.query<R>(sql, [orgId, area.pack, area.name, use]); }
-      finally { await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]); }
+      let got: R[];
+      try { got = await tx.query<R>(sql, [orgId, area.pack, area.name, use]); }
+      catch (e) {
+        // The read's own error is the one said (the transaction is then rolled back, the setting with it).
+        await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]).catch(() => undefined);
+        throw e;
+      }
+      await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]);
+      return got;
     });
   } else found = await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<R>(sql, [orgId, area.pack, area.name, use])));
   const rows = new Map(found.map((r) => [r.key, { key: r.key, title: r.title, data: parse(r.data) }]));
-  for (const [k, d] of pendingScope.getStore() ?? []) rows.set(k, { key: k, title: rows.get(k)?.title ?? k, data: d });
+  for (const [k, d] of pendingScope.getStore() ?? []) rows.set(k, { key: k, title: null, data: d });
   return [...rows.values()].filter((r) => r.data[use] === true);
 }
 
@@ -262,11 +271,7 @@ export async function checkOnlyOne(orgId: number, area: AreaLike & { scope?: str
   const mine = list.filter((o) => data[o.use] === true && matches(o.where, data));
   if (!mine.length) return;
   const ra = await import("./record-areas.js");
-  // Saves of one area in one workspace take their turn (the write runs as a transaction for such an area).
-  if (ra.inRecordBatch()) {
-    const { withTenant } = await import("./tenant-scope.js");
-    await withTenant(orgId, async () => (await ra.recordQuery()).query("SELECT pg_advisory_xact_lock(hashtext($1))", [`only-one/${orgId}/${area.pack}/${area.name}`]));
-  }
+  await lockOnlyOne(orgId, [area]);
   const { auditQuiet } = await import("./audit-trail.js");
   // The record as it stands before this write (in a batch: as the batch left it so far).
   let before = prev;
@@ -282,9 +287,12 @@ export async function checkOnlyOne(orgId: number, area: AreaLike & { scope?: str
     const rows = await marked(orgId, area, o.use);
     const other = rows.find((r) => r.key !== key && matches(o.where, r.data));
     if (!other) continue;
-    const seen = pendingScope.getStore()?.has(other.key) ? { key: other.key, title: other.title } : await auditQuiet(() => ra.getFor(orgId, area.name, other.key, actor as never)).catch(() => null);
-    const name = seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
-    throw new PackError(`${area.label ?? area.name}: ${name} is ${pendingScope.getStore()?.has(other.key) ? "also marked" : "already marked"} "${o.label}", and only one may be: turn it off there first`, 409);
+    // A row of the import's own file is named by its key in that file; any other as the writer reads it (never a title read
+    // as the shell, never one sealed: a record they cannot see is "another record").
+    const inFile = pendingScope.getStore()?.has(other.key) === true;
+    const seen = inFile ? null : await auditQuiet(() => ra.getFor(orgId, area.name, other.key, actor as never)).catch(() => null);
+    const name = inFile ? `"${other.key}" (a row of this file)` : seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
+    throw new PackError(`${area.label ?? area.name}: ${name} is ${inFile ? "also marked" : "already marked"} "${o.label}", and only one may be: turn it off there first`, 409);
   }
 }
 
@@ -295,6 +303,27 @@ export function onlyOneLast(area: AreaLike, writes: { data: Record<string, unkno
   const on = (w: { data: Record<string, unknown> }) => list.some((o) => w.data[o.use] === true);
   const sorted = [...writes.filter((w) => !on(w)), ...writes.filter(on)];
   writes.splice(0, writes.length, ...sorted);
+}
+
+/**
+ * Writes to an area with a one-only flag take their turn (an advisory lock for the write's transaction: such an area's
+ * writes always run in one), taken at the START of every write, move and delete, and once at a batch's start for
+ * every such area it touches (in name order), whatever the write does to the flag: opposite swaps never wait on each
+ * other half-way. Re-taking it in the same transaction is free.
+ */
+export async function lockOnlyOne(orgId: number, areas: readonly (AreaLike & { scope?: string })[]): Promise<void> {
+  const mine = [...new Map(areas.filter((a) => a.scope === "workspace" && onlyOneOf(a).length > 0).map((a) => [`${a.pack}/${a.name}`, a])).values()]
+    .sort((x, y) => `${x.pack}/${x.name}`.localeCompare(`${y.pack}/${y.name}`));
+  if (!mine.length) return;
+  const ra = await import("./record-areas.js");
+  if (!ra.inRecordBatch()) return;
+  const { withTenant } = await import("./tenant-scope.js");
+  for (const a of mine) await withTenant(orgId, async () => (await ra.recordQuery()).query("SELECT pg_advisory_xact_lock(hashtext($1))", [`only-one/${orgId}/${a.pack}/${a.name}`]));
+}
+/** A deadlock the database broke (40P01) said as a plain refusal to try again. */
+export function deadlockWords(e: unknown): never {
+  if ((e as { code?: unknown })?.code === "40P01") throw new PackError("Another change to these records was saved at the same moment: try again", 409);
+  throw e;
 }
 
 /** A move (src/record-areas.ts moveWorkspaceNow): the lifecycle's field changed alone; its health reset when the test reads it. */
