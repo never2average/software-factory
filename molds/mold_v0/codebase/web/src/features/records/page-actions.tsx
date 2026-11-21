@@ -38,6 +38,8 @@ import { fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { ActionCard, CardForm, CreateRecordForm, FieldsForm, fieldValues, type FormField } from '@/features/tabs/tab-action';
 import { cn } from '@/lib/utils';
+import Link from 'next/link';
+import type { RowAction } from '@/components/layout/record-filters';
 import { createHref, placed, type PageAction } from './detail-layout';
 import type { RecordRow } from './record-pages';
 import { EditRecordForm } from './staff-records';
@@ -252,12 +254,17 @@ function ActionItem({ a, take }: { a: PageAction; take: (a: PageAction, to?: str
  * The header's actions: the primary (filled), the secondary (outlined), and More (outlined: the rest, then Copy ID and,
  * unless declared, Copy link). Until the server answers, More alone (with the two copies).
  */
-export function usePageActionsBar(host: ActionHost, actions: readonly PageAction[], loading: boolean, copyLinkDeclared: boolean): { card: ReactNode; bar: ReactNode; panel: boolean } {
+export function usePageActionsBar(host: ActionHost, actions: readonly PageAction[], loading: boolean, copyLinkDeclared: boolean): { card: ReactNode; bar: ReactNode; panel: boolean; rail: RailActions } {
   const { take, busy, card, dialog, panel } = usePageActions(host, actions);
   const { primary, secondary, more } = placed(actions);
   const destructive = more.filter((a) => a.kind === 'delete'), rest = more.filter((a) => a.kind !== 'delete');
   return {
     card, panel,
+    rail: {
+      main: primary ? <RailMain a={primary} busy={busy === primary.id} take={take} /> : null,
+      dialog,
+      menu: (extra, name) => <RailMenu host={host} take={take} items={[...secondary, ...rest]} destructive={destructive} copyLinkDeclared={copyLinkDeclared} extra={extra} name={name} loading={loading} />,
+    },
     bar: (<>
       {/* mold_v0-262: wraps inside the header at any width (it never keeps its one-line width, which clipped More at 390 px).
           mold_v0-298: on a phone one row: the primary action fills it, the secondary ones move into More. */}
@@ -402,3 +409,81 @@ function RecordRunForm({ host, a, onDone }: { host: ActionHost; a: PageAction; o
   );
 }
 
+
+// ---------------------------------------------------------------------------------------------------- mold_v0-331: the rail style
+
+/**
+ * The rail header's actions (mold_v0-331): `main`, the primary action as a text link with its icon (never a box);
+ * `menu`, one borderless "⋯" with every other action, Copy ID and Copy link, then the panel's own items (`extra`: Open
+ * in its own page, the row's items), the delete last; `dialog`, the confirm question the actions ask.
+ */
+export interface RailActions { main: ReactNode; dialog: ReactNode; menu: (extra: readonly RowAction[], name: string) => ReactNode }
+
+const RAIL_LINK = 'text-primary hover:text-primary inline-flex items-center gap-1 text-[13px] whitespace-nowrap hover:underline focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-[13px]';
+
+/** The primary action as a text link; a disabled one keeps its focus and says why on hover and focus. */
+function RailMain({ a, busy, take }: { a: PageAction; busy: boolean; take: (a: PageAction, to?: string) => void }) {
+  const why = `why-rail-${a.id}`;
+  const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
+  if (a.kind === 'move' && !a.disabled && !one && (a.moves?.length ?? 0) > 0) return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type='button' variant='ghost' size='xs' className={RAIL_LINK} data-page-action={a.id} data-primary='' data-rail-main='' />}>
+        {ICON.move}{a.label}<Icons.chevronDown aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-64'><MoveItems a={a} take={take} /></DropdownMenuContent>
+    </DropdownMenu>
+  );
+  const link = (
+    <Button type='button' variant='ghost' size='xs' className={cn(RAIL_LINK, (a.disabled || busy) && 'text-muted-foreground cursor-not-allowed hover:no-underline')} data-page-action={a.id} data-primary='' data-rail-main=''
+      {...(one ? { 'data-move-to': one.to } : {})} aria-disabled={a.disabled || busy ? true : undefined} aria-describedby={a.disabled ? why : undefined}
+      onClick={() => { if (!a.disabled && !busy) take(a, one?.to); }}>
+      {ICON[a.kind]}{one ? one.label : a.label}
+    </Button>
+  );
+  if (!a.disabled) return link;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipContent className='max-w-72 text-pretty' data-action-why={a.id}>{a.disabled}</TooltipContent>
+      <Why id={why} reason={a.disabled} />
+    </Tooltip>
+  );
+}
+
+/** The rail header's one "⋯": the record's other actions, its copies, the panel's own items, the delete last. */
+function RailMenu({ host, take, items, destructive, copyLinkDeclared, extra, name, loading }: {
+  host: ActionHost; take: (a: PageAction, to?: string) => void; items: PageAction[]; destructive: PageAction[]; copyLinkDeclared: boolean;
+  extra: readonly RowAction[]; name: string; loading: boolean;
+}) {
+  // The panel's own items, less what the record's actions already offer (one Edit, one Delete).
+  const labels = new Set([...items, ...destructive].map((a) => a.label.toLowerCase()));
+  const own = extra.filter((x) => !labels.has(x.label.toLowerCase()));
+  const ownSafe = own.filter((x) => !x.destructive), ownDestructive = own.filter((x) => x.destructive);
+  const ownItem = (x: RowAction, i: number) => {
+    const cls = cn(x.destructive && 'text-destructive focus:text-destructive');
+    const body = <>{x.icon}<span className='min-w-0 flex-1 truncate'>{x.label}</span>{x.hint && <span className='text-muted-foreground ml-auto pl-3 text-xs'>{x.hint}</span>}</>;
+    return x.href && !x.disabled
+      ? <DropdownMenuItem key={`own-${i}`} className={cls} render={<Link href={x.href} />} onClick={x.onSelect} data-panel-item={x.label}>{body}</DropdownMenuItem>
+      : <DropdownMenuItem key={`own-${i}`} className={cls} disabled={x.disabled} onClick={x.onSelect} data-panel-item={x.label}>{body}</DropdownMenuItem>;
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type='button' variant='ghost' size='icon-sm' className='text-muted-foreground hover:text-foreground shrink-0' aria-label={`Actions for ${name}`} title='Actions'
+        data-panel-action='menu' data-testid='panel-actions' data-page-more='' aria-busy={loading || undefined} />}>
+        <Icons.dots aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-64' data-testid='panel-actions-menu' data-page-more-menu=''>
+        {!!items.length && <DropdownMenuGroup>{items.map((a) => <ActionItem key={a.id} a={a} take={take} />)}</DropdownMenuGroup>}
+        {!!items.length && <DropdownMenuSeparator />}
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={() => host.copy(host.record.key, 'Record ID copied')} data-copy-id=''><Icons.copy aria-hidden />Copy ID</DropdownMenuItem>
+          {!copyLinkDeclared && <DropdownMenuItem onClick={() => host.copy(window.location.href, 'Link copied')} data-copy-link=''><Icons.link aria-hidden />Copy link</DropdownMenuItem>}
+        </DropdownMenuGroup>
+        {!!ownSafe.length && <><DropdownMenuSeparator /><DropdownMenuGroup>{ownSafe.map(ownItem)}</DropdownMenuGroup></>}
+        {!!(destructive.length || ownDestructive.length) && <><DropdownMenuSeparator /><DropdownMenuGroup>
+          {destructive.map((a) => <ActionItem key={a.id} a={a} take={take} />)}{ownDestructive.map(ownItem)}
+        </DropdownMenuGroup></>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

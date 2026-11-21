@@ -39,6 +39,10 @@ export interface DetailSection {
   files?: { fields?: string[] };
   /** mold_v0-262: shown only while this condition holds on the record. */
   when?: DetailCondition;
+  /** mold_v0-331: a lifecycle's progress as numbered steps. */
+  steps?: { field: string; states?: string[] };
+  /** mold_v0-331: a related list as one link row, or fields as numbers. */
+  display?: 'rows' | 'numbers';
 }
 /** A related list (mold_v0-254): another area's records that point back here, through `via`. */
 export interface DetailRelated {
@@ -89,7 +93,13 @@ export interface DetailFact { field?: string; label?: string; unit?: string; com
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
 /** An area's page layout as the build passes it on (pack.json record_areas[].detail). */
 export interface DetailLayout {
-  header?: { title?: string; subtitle?: string; badges?: DetailBadge[]; creator?: boolean; facts?: DetailFact[] };
+  header?: { title?: string; subtitle?: string; badges?: DetailBadge[]; creator?: boolean; facts?: DetailFact[];
+    /** mold_v0-331: the record's one status (an enum field), a dot and its word in the rail header. */
+    status?: string;
+    /** mold_v0-331: the rail header's muted line of context, these fields joined by " · ". */
+    context?: string[] };
+  /** mold_v0-331: "rail" (one header row, facts beside the tabs, flat sections) or "cards" (the default). */
+  style?: 'cards' | 'rail';
   notices?: DetailNotice[];
   tabs: DetailTab[];
   unplaced?: 'show' | 'hide';
@@ -497,3 +507,57 @@ export function linkedShown(layout: DetailLayout, fields: string[]): string[] {
     ...layout.tabs.flatMap((t) => t.sections.flatMap((s) => [...(s.fields ?? []), ...(s.groups ?? []).flatMap((g) => g.fields)]))]);
   return fields.filter((f) => !placed.has(f));
 }
+
+// ---------------------------------------------------------------------------------------------------- mold_v0-331: the rail style
+
+/** Whether a layout draws in the rail style (one header row, the facts beside the tabs, flat sections). */
+export const isRail = (layout: DetailLayout | null | undefined) => layout?.style === 'rail';
+
+/** The status dot's tone, from the badge colour the layout gives that value (the dot's colour is the badge's). */
+export type DotTone = 'good' | 'warn' | 'bad' | 'info' | 'neutral';
+export function dotTone(color: BadgeColor): DotTone {
+  return color === 'success' ? 'good' : color === 'warning' ? 'warn' : color === 'danger' ? 'bad' : color === 'info' ? 'info' : 'neutral';
+}
+
+/** The rail header's muted line: "status · context", either alone, or '' (blank pieces left out). */
+export function headerContext(status: string | null | undefined, context: readonly (string | null | undefined)[]): string {
+  return [status, ...context].map((x) => (x ?? '').trim()).filter(Boolean).join(' · ');
+}
+
+/** The fields the rail header already says (its status and its context line): a value appears once, so not again as a fact or badge. */
+export const railHeaderFields = (layout: DetailLayout) => new Set([layout.header?.status, ...(layout.header?.context ?? [])].filter((x): x is string => !!x));
+/** The badges a rail page still shows as facts: every one but the header's status and context. */
+export const railBadges = (layout: DetailLayout) => { const said = railHeaderFields(layout); return (layout.header?.badges ?? []).filter((b) => !said.has(b.field)); };
+
+/** A step's state on a lifecycle: done before the record's state, now at it, to do after it. */
+export type StepState = 'done' | 'now' | 'todo';
+/** The word at a step's right. */
+export const STEP_WORD: Record<StepState, string> = { done: 'Done', now: 'Now', todo: 'To do' };
+/**
+ * A steps section's rows (mold_v0-331): the declared states (else the field's options, in order), each done, now or to
+ * do against the record's value. A value off the path (a failure state) leaves every step to do and is said apart.
+ */
+export function stepRows(states: readonly string[], value: unknown): { steps: { value: string; state: StepState }[]; off: string | null } {
+  const v = value == null || value === '' ? null : String(value);
+  const at = v === null ? -1 : states.indexOf(v);
+  return {
+    steps: states.map((s, i) => ({ value: s, state: at < 0 ? 'todo' : i < at ? 'done' : i === at ? 'now' : 'todo' })),
+    off: v !== null && at < 0 ? v : null,
+  };
+}
+/** What a step's circle shows: a check once done, otherwise its one-based number. */
+export const stepMark = (state: StepState, index: number) => (state === 'done' ? '✓' : String(index + 1));
+
+/**
+ * A related list drawn as one link row (display "rows"): its line in words. "3 builds", "More than 5 builds" when the
+ * page holds only its first rows, "None yet" with nothing.
+ */
+export function relatedRowWords(count: number, more: boolean, label: string): string {
+  const noun = label.toLowerCase();
+  if (!count) return 'None yet';
+  if (more) return `More than ${count} ${noun}`;
+  return `${count} ${count === 1 ? singularWord(noun) : noun}`;
+}
+/** A plural label's singular ("builds" → "build", "repositories" → "repository"). */
+export const singularWord = (label: string) =>
+  /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');
