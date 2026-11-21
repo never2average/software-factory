@@ -52,6 +52,8 @@ export interface FormField {
   /** mold_v0-260 (flag record_rules): the records a reference may name (its picker lists only those), and in words. */
   where?: unknown;
   where_words?: string;
+  /** mold_v0-334: the condition holds for new picks only (a value the record already names stands). */
+  filter_new_only?: boolean;
   /** mold_v0-305: an encrypted field: a hidden input, never shown filled; left empty on an edit, the saved value stays. */
   secret?: true;
 }
@@ -260,7 +262,7 @@ function RecordPicker({ id, f, value, set }: { id: string; f: FormField; value: 
     if (off || !f.to || asked === null) return;
     let live = true;
     const t = setTimeout(() => {
-      send<{ records: PickItem[] }>('GET', `/api/records/_page/_pick/${encodeURIComponent(f.to!)}?q=${encodeURIComponent(asked)}${f.where ? `&where=${encodeURIComponent(JSON.stringify(f.where))}` : ''}`)
+      send<{ records: PickItem[] }>('GET', `/api/records/_page/_pick/${encodeURIComponent(f.to!)}?q=${encodeURIComponent(asked)}${f.where && (open || !f.filter_new_only) ? `&where=${encodeURIComponent(JSON.stringify(f.where))}` : ''}`)
         .then((r) => { if (!live) return; setItems(r.records); setActive(0); setTitles((m) => ({ ...m, ...Object.fromEntries(r.records.map((x) => [x.key, x.title])) })); })
         .catch(() => { if (live) setOff(true); });
     }, open ? 180 : 0);
@@ -299,7 +301,7 @@ function RecordPicker({ id, f, value, set }: { id: string; f: FormField; value: 
         onFocus={() => !off && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onKeyDown={onKey}
         onChange={(e) => { setQ(e.target.value); setTyped(true); setOpen(true); if (!multiple) set(e.target.value); else if (off) set(keysOf(e.target.value)); }} />
       {chosen && <p className='text-muted-foreground text-xs' data-picked-title=''>{chosen}</p>}
-      {f.where_words && <p className='text-muted-foreground text-xs' data-picker-where=''>Only {f.label.toLowerCase()} records {f.where_words}.</p>}
+      {f.where_words && <p className='text-muted-foreground text-xs' data-picker-where=''>{f.filter_new_only ? 'New picks: only' : 'Only'} {f.label.toLowerCase()} records {f.where_words}.</p>}
       {open && !off && items && (
         <ul id={list} role='listbox' aria-label={f.label} data-picker-list=''
           className='bg-popover text-popover-foreground absolute top-full z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border p-1 shadow-md'>

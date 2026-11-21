@@ -55,15 +55,26 @@ export interface KeyRow {
   id: number; name: string; key_prefix: string; kind: "member" | "person" | "account"; user_id: string | null;
   created_at: string; last_used_at: string | null; expires_at: string | null; revoked_at: string | null;
   state: "active" | "expired" | "revoked";
+  /**
+   * mold_v0-334: an active key nobody has used for UNUSED_DAYS days (since it was made, when it was never used): a key
+   * to revoke if nothing needs it. Shown beside its state, never instead of it.
+   */
+  unused: boolean;
 }
+/** Days without a use after which an active key is flagged unused (the console's web/src/lib/access-words.ts, the same). */
+export const UNUSED_DAYS = 90;
+/** Whether an active key is unused (pure): its last use, else its making, longer ago than UNUSED_DAYS. */
+export const isUnused = (k: { state: string; last_used_at: string | Date | null; created_at: string | Date }, now = Date.now()) =>
+  k.state === "active" && now - new Date(k.last_used_at ?? k.created_at).getTime() > UNUSED_DAYS * 86_400_000;
 
 type Raw = { id: number; label: string; key_prefix: string; user_id: string | null; scoped: boolean; created_at: Date; last_used_at: Date | null; expires_at: Date | null; revoked_at: Date | null };
 const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
-const row = (r: Raw): KeyRow => ({
-  id: Number(r.id), name: r.label, key_prefix: r.key_prefix, kind: r.scoped ? "member" : r.user_id ? "person" : "account", user_id: r.user_id,
-  created_at: iso(r.created_at)!, last_used_at: iso(r.last_used_at), expires_at: iso(r.expires_at), revoked_at: iso(r.revoked_at),
-  state: r.revoked_at ? "revoked" : r.expires_at && +new Date(r.expires_at) <= Date.now() ? "expired" : "active",
-});
+const row = (r: Raw): KeyRow => {
+  const state: KeyRow["state"] = r.revoked_at ? "revoked" : r.expires_at && +new Date(r.expires_at) <= Date.now() ? "expired" : "active";
+  return { id: Number(r.id), name: r.label, key_prefix: r.key_prefix, kind: r.scoped ? "member" : r.user_id ? "person" : "account", user_id: r.user_id,
+    created_at: iso(r.created_at)!, last_used_at: iso(r.last_used_at), expires_at: iso(r.expires_at), revoked_at: iso(r.revoked_at),
+    state, unused: isUnused({ state, last_used_at: r.last_used_at, created_at: r.created_at }) };
+};
 const COLS = "id, label, key_prefix, user_id, scoped, created_at, last_used_at, expires_at, revoked_at";
 
 /** A key's name: one line of plain text, 1 to 80 characters. */

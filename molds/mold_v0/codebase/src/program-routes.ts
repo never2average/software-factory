@@ -70,7 +70,8 @@ export function programDockRoutes(r: Router, orgOf: (res: Response) => number) {
   }, 201));
   r.get("/dock", answer(async (_req, res) => D.dockSections(orgOf(res))));
   r.get("/dock/:section", answer(async (req, res) => D.dockSection(orgOf(res), String(req.params.section))));
-  r.get("/runs", answer(async (_req, res) => ({ runs: await D.activeRuns(orgOf(res)) })));
+  // mold_v0-334: ?view=finished lists the runs that finished in the last 30 days (Active runs' Finished view).
+  r.get("/runs", answer(async (req, res) => ({ runs: await D.activeRuns(orgOf(res), { finished: req.query.view === "finished" }) })));
   r.get("/targets/:id", answer(async (req, res) => D.targetHistory(orgOf(res), String(req.params.id))));
 }
 

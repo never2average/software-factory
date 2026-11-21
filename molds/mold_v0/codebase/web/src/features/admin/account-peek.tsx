@@ -2,6 +2,8 @@
 // One account in the accounts page's side peek: its problems with a fix, a short summary and four tabs, without leaving
 // the list. Its actions (the row ⋯ menu and the peek header) share one controller, so every dialog and result is
 // rendered once by the page.
+import { KEY_EXPIRY } from './key-expiry';
+import { CANCEL_INVITATION, INVITATION_CANCELLED, inviteStateWords } from '@/lib/access-words';
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -179,6 +181,8 @@ function AccountDialog({ kind, orgs, run, show, close }: { kind: Kind; orgs: Org
   const [a, setA] = useState(kind === 'rename' ? o.name : kind === 'allowance' && o.allowance_usd != null ? String(o.allowance_usd) : '');
   const [role, setRole] = useState('member');
   const [pick, setPick] = useState('');
+  // mold_v0-334: an issued key's expiry (empty: never).
+  const [days, setDays] = useState('');
   const [busy, setBusy] = useState(false);
   const { data: d } = useAdmin<OrgDetail>(kind === 'checkout' ? p : null);
   const plan = pick || d?.plans[0]?.price_id || '';
@@ -225,8 +229,13 @@ function AccountDialog({ kind, orgs, run, show, close }: { kind: Kind; orgs: Org
     },
     key: {
       title: 'Issue a key', description: 'A secret API key, sent in a header (never in the URL), shown once. One per person.', submit: 'Issue key', ok: true,
-      body: <Input autoFocus placeholder='Email or a label' aria-label='Key label' value={a} onChange={(e) => setA(e.target.value)} />,
-      act: async () => { const r = await run(() => post<InviteResult>(`${p}/keys`, { label: a.trim() || undefined })); if (r) { close(); show(r, `New key for ${r.org.name}`); } }
+      body: (<div className='grid gap-2'>
+        <Input autoFocus placeholder='Email or a label' aria-label='Key label' value={a} onChange={(e) => setA(e.target.value)} />
+        <NativeSelect value={days} onChange={(e) => setDays(e.target.value)} aria-label='Expires' className='w-full'>
+          {KEY_EXPIRY.map(([v, l]) => <NativeSelectOption key={v} value={v}>{l}</NativeSelectOption>)}
+        </NativeSelect>
+      </div>),
+      act: async () => { const r = await run(() => post<InviteResult>(`${p}/keys`, { label: a.trim() || undefined, ...(days ? { expires_in_days: Number(days) } : {}) })); if (r) { close(); show(r, `New key for ${r.org.name}`); } }
     }
   };
   const s = spec[kind];
@@ -421,7 +430,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
     const act = (a: string, ok: string) => () => void ctl.run(() => post(`${path}/invitations/${encodeURIComponent(x.id)}/${a}`), ok);
     return ([
       ...(x.state === 'pending' || x.state === 'expired' ? [{ label: 'Resend', onSelect: act('resend', 'Invitation resent') }] : []),
-      ...(x.state === 'pending' ? [{ label: 'Revoke…', destructive: true, separator: true, onSelect: () => confirm.ask({ title: `Revoke the invitation for ${x.email}?`, description: 'The link in their email stops working.', label: 'Revoke', destructive: true, run: act('revoke', 'Invitation revoked') }) }] : [])
+      ...(x.state === 'pending' ? [{ label: `${CANCEL_INVITATION}…`, destructive: true, separator: true, onSelect: () => confirm.ask({ title: `Cancel the invitation for ${x.email}?`, description: 'The link in their email stops working.', label: CANCEL_INVITATION, destructive: true, run: act('revoke', INVITATION_CANCELLED) }) }] : [])
     ] as RowAction[]).map((a) => ctl.lock(a, 'invite'));
   };
   const key = (k: OrgDetail['keys'][number]): RowAction[] => k.revoked_at ? [] : ([
@@ -517,13 +526,14 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
             { id: 'members', label: 'Members', content: <List noun='Members' rows={d.members} empty='Nobody has joined yet.' actions={member} cols={[
                 ['Person', (m) => <IdentityName id={m.user_id} name={m.name} email={m.email}>{m.email || m.user_id}{m.name && <span className='text-muted-foreground ml-2'>{m.name}</span>}</IdentityName>],
                 ['Role', (m) => accountRoleLabel(m)],
-                ['Status', (m) => (m.status === 'inactive' ? word('bad', 'suspended') : word(m.status === 'active' || m.status === 'pending' ? 'ok' : 'info', m.status))],
+                // mold_v0-334: suspended is not an error: a neutral word, never red.
+                ['Status', (m) => (m.status === 'inactive' ? word('neutral', 'suspended') : word(m.status === 'active' || m.status === 'pending' ? 'ok' : 'info', m.status))],
                 ['Joined', (m) => <When d={m.created_at} />]
               ]} /> },
             { id: 'invitations', label: 'Invitations', content: <List noun='Invitations' rows={d.invitations} actions={invitation} cols={[
                 ['Email', (x) => x.email],
                 ['Role', (x) => accountRoleLabel(x)],
-                ['State', (x) => word(x.state === 'expired' ? 'warn' : x.state === 'pending' ? 'ok' : 'info', x.state)],
+                ['State', (x) => word(x.state === 'expired' ? 'neutral' : x.state === 'pending' ? 'ok' : 'info', inviteStateWords(x.state))],
                 ['Expires', (x) => (x.state === 'pending' && x.expires_at ? <When d={x.expires_at} /> : dash)]
               ]} /> },
           ] : []),
@@ -531,6 +541,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
                 ['Label', (k) => k.label],
                 ['Key', (k) => <span className='tabular-nums'>{k.key_prefix}…</span>],
                 ['Last used', (k) => (k.revoked_at ? <>revoked <When d={k.revoked_at} /></> : <When d={k.last_used_at} />)],
+                ['Expires', (k) => ((k as { expires_at?: string | null }).expires_at ? <When d={(k as { expires_at?: string | null }).expires_at!} /> : 'Never')],
                 ['Created', (k) => <When d={k.created_at} />]
               ]} /> }] : []),
           { id: 'tools', label: 'Tools', content: <List noun='Tools' rows={d.tools} empty='No tool calls yet.' cols={[

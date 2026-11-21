@@ -1,5 +1,7 @@
 'use client';
 // One account in full: onboarding timeline, people (Clerk), billing (Stripe), activity, products and runs, legacy keys.
+import { CANCEL_INVITATION, INVITATION_CANCELLED, inviteStateWords } from '@/lib/access-words';
+import { KEY_EXPIRY } from './key-expiry';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import PageContainer from '@/components/layout/page-container';
@@ -181,7 +183,7 @@ function People({ d, path, onResult }: { d: Detail; path: string; onResult: (r: 
     success: 'Role changed'
   });
   const inv = useAdminAction(({ id, action }: { id: string; action: 'resend' | 'revoke' }) => post(`${path}/invitations/${encodeURIComponent(id)}/${action}`), {
-    success: (r) => (r ? 'Invitation resent' : 'Invitation revoked')
+    success: (r) => (r ? 'Invitation resent' : INVITATION_CANCELLED)
   });
   const clerkOn = d.integrations.clerk ?? d.integrations.workos;
   const linked = d.org.clerk_org_id ?? d.org.workos_org_id;
@@ -306,7 +308,7 @@ function People({ d, path, onResult }: { d: Detail; path: string; onResult: (r: 
             cols={[
               { label: 'Email', render: (x: any) => x.email },
               { label: 'Role', render: (x: any) => accountRoleLabel(x) },
-              { label: 'State', render: (x: any) => <StatusBadge tone={inviteTone(x.state)}>{x.state}</StatusBadge> },
+              { label: 'State', render: (x: any) => <StatusBadge tone={inviteTone(x.state)}>{inviteStateWords(x.state)}</StatusBadge> },
               { label: 'Sent', render: (x: any) => <When d={x.created_at} /> },
               { label: 'Expires', render: (x: any) => (x.state === 'pending' && x.expires_at ? <When d={x.expires_at} /> : <span className='text-muted-foreground'>—</span>) },
               {
@@ -322,11 +324,11 @@ function People({ d, path, onResult }: { d: Detail; path: string; onResult: (r: 
                     )}
                     {x.state === 'pending' && (
                       <Gate need='invite'><ConfirmButton
-                        label='Revoke'
+                        label={CANCEL_INVITATION}
                         variant='destructive'
-                        title={`Revoke the invitation for ${x.email}?`}
+                        title={`Cancel the invitation for ${x.email}?`}
                         description='The link in their email stops working.'
-                        confirmLabel='Revoke'
+                        confirmLabel={CANCEL_INVITATION}
                         onConfirm={() => inv.mutate({ id: x.id, action: 'revoke' })}
                       /></Gate>
                     )}
@@ -549,7 +551,9 @@ export function PackRuns({ runs }: { runs: AccountRuns }) {
 
 function Keys({ d, path, onResult }: { d: Detail; path: string; onResult: (r: InviteResult, t: string) => void }) {
   const [label, setLabel] = useState('');
-  const issue = useAdminAction(() => post<InviteResult>(`${path}/keys`, { label: label.trim() || undefined }));
+  // mold_v0-334: a workspace key may expire (never, the default, as before).
+  const [days, setDays] = useState('');
+  const issue = useAdminAction(() => post<InviteResult>(`${path}/keys`, { label: label.trim() || undefined, ...(days ? { expires_in_days: Number(days) } : {}) }));
   const rotate = useAdminAction((id: number) => post<InviteResult>(`${path}/keys/${id}/rotate`));
   const revoke = useAdminAction((id: number) => post(`${path}/keys/${id}/revoke`), { success: 'Key revoked' });
   const active = d.keys.filter((k: any) => !k.revoked_at).length;
@@ -566,6 +570,7 @@ function Keys({ d, path, onResult }: { d: Detail; path: string; onResult: (r: In
           { label: 'Key', render: (k: any) => <Mono>{k.key_prefix}…</Mono> },
           { label: 'Created', render: (k: any) => <When d={k.created_at} /> },
           { label: 'Last used', render: (k: any) => <When d={k.last_used_at} /> },
+          { label: 'Expires', render: (k: any) => (k.expires_at ? <When d={k.expires_at} /> : 'Never') },
           {
             label: '',
             key: 'act',
@@ -610,6 +615,9 @@ function Keys({ d, path, onResult }: { d: Detail; path: string; onResult: (r: In
         }}
       >
         <Input placeholder='Email or a label' className='w-full sm:w-72' value={label} onChange={(e) => setLabel(e.target.value)} aria-label='Key label' />
+        <NativeSelect value={days} onChange={(e) => setDays(e.target.value)} aria-label='Expires'>
+          {KEY_EXPIRY.map(([v, l]) => <NativeSelectOption key={v} value={v}>{l}</NativeSelectOption>)}
+        </NativeSelect>
         <Gate need='accounts'><Button variant='outline' type='submit' disabled={issue.isPending}>
           Issue key
         </Button></Gate>

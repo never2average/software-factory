@@ -13,6 +13,7 @@
 // panel beside the list (mold_v0-289's way). Access log (mold_v0-209; the workspace's owners, only where the profile
 // turns audit.data on): the audit trails on the records table (features/audit/access-log.tsx).
 // Plans and cards are the payment provider's; people are the sign-in provider's.
+import { CANCEL_INVITATION, INVITATION_CANCELLED, inviteStateWords } from '@/lib/access-words';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -410,7 +411,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
     if (!manage && !budget) return [];
     if (r.kind === 'invite') return [
       lock({ label: 'Resend invitation', icon: <Icons.send />, onSelect: () => act(appApi('POST', `/team/invitations/${encodeURIComponent(r.x.id)}/resend`), `Invitation resent to ${r.x.email}`) }, 'team'),
-      ...(r.x.state === 'pending' ? [lock({ label: 'Cancel invitation', icon: <Icons.close />, destructive: true, onSelect: () => act(appApi('POST', `/team/invitations/${encodeURIComponent(r.x.id)}/revoke`), 'Invitation cancelled') }, 'team')] : [])
+      ...(r.x.state === 'pending' ? [lock({ label: CANCEL_INVITATION, icon: <Icons.close />, destructive: true, onSelect: () => act(appApi('POST', `/team/invitations/${encodeURIComponent(r.x.id)}/revoke`), INVITATION_CANCELLED) }, 'team')] : [])
     ];
     const { m, lim } = r, self = m.user_id === t.me, active = m.status === 'active', now = roleOf(m);
     return [
@@ -423,7 +424,9 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       ])
     ];
   };
-  const statusOf = (r: PersonRow) => (r.kind === 'invite' ? (r.x.state === 'expired' ? 'Invitation expired' : 'Invited') : r.m.status === 'active' ? 'Active' : 'Suspended');
+  const statusOf = (r: PersonRow) => (r.kind === 'invite' ? inviteStateWords(r.x.state === 'expired' ? 'expired' : 'pending') : r.m.status === 'active' ? 'Active' : 'Suspended');
+  // mold_v0-334: a suspended member and an expired invitation are not errors: neutral badges, never red.
+  const statusVariant = (st: string) => (st === 'Active' ? 'secondary' as const : 'outline' as const);
   const cols: RecordCol<PersonRow>[] = [
     { key: 'person', label: 'Person', keep: true, type: 'text', value: (r) => (r.kind === 'invite' ? r.x.email : r.m.name || r.m.email || ''),
       // Invites: when it was sent, as a second line (Joined is off by default).
@@ -431,23 +434,23 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       render: (r) => r.kind === 'invite' ? (<IdentityName email={r.x.email}>
         <span className='font-medium'>{r.x.email}</span>
         <div className='text-muted-foreground mt-1 text-xs leading-none'>sent <When d={r.x.created_at} /></div>
-        <div className='mt-1 sm:hidden'><Badge variant={statusOf(r) === 'Invited' ? 'outline' : 'destructive'}>{statusOf(r)}</Badge></div>
+        <div className='mt-1 sm:hidden'><Badge variant={statusVariant(statusOf(r))}>{statusOf(r)}</Badge></div>
       </IdentityName>) : (<IdentityName id={r.m.user_id} name={r.m.name} email={r.m.email}>
         <span className='font-medium'>{r.m.name || r.m.email}</span>
         {r.m.user_id === t.me && <span className='text-muted-foreground ml-2 text-xs'>you</span>}
         {r.m.name && <span className='text-muted-foreground ml-2 text-xs max-sm:hidden'>{r.m.email}</span>}
         {/* mold_v0-298: on a phone Role is folded away, so a state other than Active shows here. */}
-        {statusOf(r) !== 'Active' && <div className='mt-1 sm:hidden'><Badge variant='destructive'>{statusOf(r)}</Badge></div>}
+        {statusOf(r) !== 'Active' && <div className='mt-1 sm:hidden'><Badge variant={statusVariant(statusOf(r))}>{statusOf(r)}</Badge></div>}
       </IdentityName>) },
     // mold_v0-298: on a phone Person, Spend this month and ⋯ stay in view; Role and Budget group fold away (a row's panel has them).
     { key: 'role', label: 'Role', className: 'w-36 max-sm:hidden', type: 'select', value: (r) => ACCOUNT_ROLE_LABEL[roleOf(r.kind === 'invite' ? r.x : r.m)],
       // The status badge under the role, only when it isn't Active (Status itself is off by default).
       render: (r) => { const x = roleOf(r.kind === 'invite' ? r.x : r.m), st = statusOf(r); return (<>
         <span className={x === 'owner' ? '' : 'text-muted-foreground'} title={roles.find((y) => y.id === x)?.help}>{ACCOUNT_ROLE_LABEL[x]}</span>
-        {st !== 'Active' && <div className='mt-1'><Badge variant={st === 'Invited' ? 'outline' : 'destructive'}>{st}</Badge></div>}
+        {st !== 'Active' && <div className='mt-1'><Badge variant={statusVariant(st)}>{st}</Badge></div>}
       </>); } },
     { key: 'status', label: 'Status', className: 'w-36', type: 'select', hidden: true, value: statusOf,
-      render: (r) => <Badge variant={statusOf(r) === 'Active' ? 'secondary' : statusOf(r) === 'Invited' ? 'outline' : 'destructive'}>{statusOf(r)}</Badge> },
+      render: (r) => <Badge variant={statusVariant(statusOf(r))}>{statusOf(r)}</Badge> },
     { key: 'team', label: 'Budget group', className: 'w-36 max-sm:hidden', type: 'select', value: (r) => (r.kind === 'member' ? teamName(r.lim?.team_id) ?? 'No group' : 'No group'),
       render: (r) => <span className='text-muted-foreground'>{r.kind === 'member' ? teamName(r.lim?.team_id) ?? '—' : '—'}</span> },
     { key: 'spend', label: 'Spend this month', className: 'w-56 max-sm:w-auto', type: 'number', value: (r) => (r.kind === 'member' ? r.lim?.spent ?? 0 : 0),

@@ -4,6 +4,7 @@
 // address) and can be revoked at any time. A key acts with its person's role. Owners also see and revoke every key of
 // the workspace, the older ones included. mold_v0-298: one name everywhere, the page's: "API keys" (the sidebar's, the
 // title's), or the label a pack gives its keys tab inside Settings; a workspace's own key belongs to "Whole workspace".
+import { UNUSED_DAYS } from '@/lib/access-words';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -25,6 +26,8 @@ interface Key {
   id: number; name: string; key_prefix: string; kind: 'member' | 'person' | 'account'; user_id: string | null;
   created_at: string; last_used_at: string | null; expires_at: string | null; revoked_at: string | null;
   state: 'active' | 'expired' | 'revoked'; owner_label?: string;
+  /** mold_v0-334: active and not used for UNUSED_DAYS days (src/member-keys.ts). */
+  unused?: boolean;
 }
 interface Keys { me: string; can_manage_all: boolean; expiry_days: number[]; keys: Key[]; all?: Key[] }
 interface SetupClient { id: string; client: string; group: 'chat' | 'agent' | 'editor'; auth: 'token' | 'oauth'; steps: string; command: string | null; file: string | null; snippet: string | null }
@@ -46,7 +49,7 @@ const KIND: Record<Key['kind'], string> = { member: 'Personal key', person: 'Per
 const KIND_ABOUT: Record<Key['kind'], string> = {
   member: 'Made by its owner here. It can do what its owner can do in this workspace, and stops working when it expires or they leave.',
   person: 'An older kind of personal key. It never expires. To replace it, make a new key, put it where this one is used, then revoke this one.',
-  account: 'A key for the whole workspace, not for one person. It works until it is revoked.'
+  account: 'A key for the whole workspace, not for one person. It works until it is revoked, or until it expires when it was given an expiry date.'
 };
 /** Who a key belongs to, in words: a person ("You", their name) or the whole workspace. */
 const belongsTo = (k: Key) => (k.kind === 'account' || !k.user_id ? 'Whole workspace' : k.owner_label ?? '');
@@ -62,6 +65,12 @@ export function KeysPage() {
 const namesOf = (label: string) => { const one = singular(label); return { many: label, one: one === label ? 'key' : one }; };
 
 const STATE_WORD: Record<Key['state'], string> = { active: 'Active', expired: 'Expired', revoked: 'Revoked' };
+/** mold_v0-334: an active key nobody used for UNUSED_DAYS days, in words: never used, or not used since. */
+const unusedWords = (k: Key) => (k.last_used_at ? `Not used for ${UNUSED_DAYS} days` : 'Never used');
+function UnusedChip({ k }: { k: Key }) {
+  if (!k.unused) return null;
+  return <Badge variant='outline' className='text-muted-foreground font-normal' data-key-unused='' title={`Revoke it if nothing needs it any more.`}>{unusedWords(k)}</Badge>;
+}
 
 /**
  * The API keys page's body (mold_v0-280, mold_v0-289: the standard list): four cards, the search row with New API key,
@@ -81,7 +90,8 @@ export function KeysPanel({ label = 'API keys' }: { label?: string }) {
     { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-48', value: (k) => k.name, render: (k) => <span className='font-medium'>{k.name}</span> },
     ...(owners ? [{ key: 'owner', label: 'Belongs to', type: 'text' as const, value: belongsTo, render: belongsTo }] : []),
     { key: 'kind', label: 'Kind', type: 'text', value: (k) => KIND[k.kind], render: (k) => KIND[k.kind] },
-    { key: 'state', label: 'State', type: 'select', keep: true, options: Object.entries(STATE_WORD).map(([value, label]) => ({ value, label })), value: (k) => k.state, render: (k) => <Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{STATE_WORD[k.state]}</Badge> },
+    { key: 'state', label: 'State', type: 'select', keep: true, options: Object.entries(STATE_WORD).map(([value, label]) => ({ value, label })), value: (k) => k.state,
+      render: (k) => <span className='flex flex-wrap items-center gap-1.5'><Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{STATE_WORD[k.state]}</Badge><UnusedChip k={k} /></span> },
     { key: 'last', label: 'Last used', type: 'date', value: (k) => k.last_used_at, render: (k) => (k.last_used_at ? <When d={k.last_used_at} /> : 'Never') },
     { key: 'expires', label: 'Expires', type: 'date', value: (k) => k.expires_at, render: (k) => (k.expires_at ? <When d={k.expires_at} /> : 'Never') },
   ];
@@ -93,7 +103,7 @@ export function KeysPanel({ label = 'API keys' }: { label?: string }) {
         { label: 'Active', value: active.length, said: `${active.length} active ${active.length === 1 ? one : many}` },
         { label: 'Expired', value: n('expired'), said: `${n('expired')} expired` },
         { label: 'Revoked', value: n('revoked'), said: `${n('revoked')} revoked` },
-        { label: 'Used in the last 30 days', value: rows.filter((k) => k.last_used_at && Date.now() - new Date(k.last_used_at).getTime() < 30 * 86_400_000).length, said: `${many} used in the last 30 days` },
+        { label: `Unused for ${UNUSED_DAYS} days`, value: rows.filter((k) => k.unused).length, said: `${rows.filter((k) => k.unused).length} active ${many} not used for ${UNUSED_DAYS} days` },
       ]} />}
       searchText={(k) => `${k.name} ${belongsTo(k)} ${KIND[k.kind]} ${STATE_WORD[k.state]}`} searchPlaceholder={`Search ${many}`}
       toolbarAction={data ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label={`New ${one}`} icon={<Icons.add />} onClick={() => setMaking(true)} /></div> : undefined}
@@ -106,7 +116,7 @@ export function KeysPanel({ label = 'API keys' }: { label?: string }) {
           <Field label='Kind'>{KIND[k.kind]}</Field>
           <Field label='What it is'>{KIND_ABOUT[k.kind]}</Field>
           <Field label='Starts with'><span className='font-mono text-xs'>{k.key_prefix}…</span></Field>
-          <Field label='State'>{STATE_WORD[k.state]}</Field>
+          <Field label='State'>{STATE_WORD[k.state]}{k.unused ? ` · ${unusedWords(k)}` : ''}</Field>
           <Field label='Created'><When d={k.created_at} /></Field>
           <Field label='Last used'>{k.last_used_at ? <When d={k.last_used_at} /> : 'Never'}</Field>
           <Field label='Expires'>{k.expires_at ? <When d={k.expires_at} /> : 'Never'}</Field>

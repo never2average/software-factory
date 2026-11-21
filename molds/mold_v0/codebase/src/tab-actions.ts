@@ -62,7 +62,7 @@ export const formField = (raw: unknown): FormField => {
     multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null, ...(f.preview ? { preview: f.preview } : {}),
     ...(f.encrypted ? { secret: true as const } : {}),
     // mold_v0-260 (flag record_rules): the records a reference may name, for the picker to narrow its list (the write enforces it).
-    ...(f.where && featureOn("record_rules") ? { where: f.where, where_words: referenceWhereWords(f.where, (n) => (findArea(f.to!)?.fields.find((x) => x.name === n)?.label ?? n).toLowerCase()) } : {}) };
+    ...(f.where && featureOn("record_rules") ? { where: f.where, where_words: referenceWhereWords(f.where, (n) => (findArea(f.to!)?.fields.find((x) => x.name === n)?.label ?? n).toLowerCase()), ...(f.filter_new_only ? { filter_new_only: true } : {}) } : {}) };
 };
 
 /** The pack's job kinds, parsed (the declared ones; a malformed one was refused when the packs were installed). */

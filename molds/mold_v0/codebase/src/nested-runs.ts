@@ -619,17 +619,21 @@ async function keepRecords(orgId: number, h0: HandleRow): Promise<void> {
   if (!h.program_id || !h.program_version || h.outputs === null || h.outputs === undefined) return;
   const config = await read((q) => programConfigOf(q, h)).catch(() => null);
   if (!config?.record) return;
-  const { writeProgramRecords } = await import("./program-records.js");
+  const { writeProgramResult } = await import("./program-records.js");
   const run = async () => (await read((q) => q.query<{ current_run_id: string | null }>("SELECT current_run_id FROM harness_sessions WHERE id = $1 AND org_id = $2", [h.parent_id, orgId])))[0]?.current_run_id ?? null;
   try {
-    const keys = await writeProgramRecords(orgId, h, config.record);
+    // mold_v0-334: what it left out as a repeat of a kept record, and the moves its records could not make, said too.
+    const w = await writeProgramResult(orgId, h, config.record);
     const r = await run();
-    await tx((q) => runEvent(q, r, orgId, "child_records", { handle: h.id, area: config.record!.area, keys: keys.slice(0, 20), written: keys.length }));
+    await tx((q) => runEvent(q, r, orgId, "child_records", { handle: h.id, area: config.record!.area, keys: w.keys.slice(0, 20), written: w.keys.length,
+      ...(w.deduped.length ? { deduped: w.deduped.slice(0, 20) } : {}), ...(w.unmoved.length ? { unmoved: w.unmoved.slice(0, 20) } : {}), ...(w.existing.length ? { existing: w.existing.slice(0, 20) } : {}) }));
   } catch (e) {
     const r = await run().catch(() => null);
     await tx((q) => runEvent(q, r, orgId, "child_records_refused", { handle: h.id, area: config.record!.area, error: maskSecrets((e as Error).message).slice(0, 300) })).catch(() => {});
   }
 }
+
+const recordOutcomes = () => import("./record-outcomes.js");
 
 async function applyFailurePolicy(orgId: number, h: HandleRow): Promise<void> {
   if (h.failure_policy === "fail_fast") {
@@ -1016,6 +1020,8 @@ async function decide(orgId: number, id: string, d0: Decision, cases: MeasuredCa
     return { handle: ev.handle_id, version };
   });
   if (out?.handle) await settleAcceptance(orgId, out.handle, { decision: d.outcome, version: out.version, reasons: d.reasons, metrics: d.metrics });
+  // mold_v0-334: the record the run was started on moves for the decision (src/record-outcomes.ts); never fails the decision.
+  if (out) await recordOutcomes().then((R) => R.afterEvaluation(orgId, id)).catch((e: Error) => console.error(`record outcomes: ${id}: ${e.message}`));
   return d.outcome;
 }
 async function settleAcceptance(orgId: number, handleId: string, outputs: { decision: string; version: number | null; reasons: string[]; metrics: unknown }): Promise<void> {
@@ -1115,6 +1121,7 @@ export async function reviewEvaluation(by: string, id: string, input: { decision
     await q.query("/* tenant: staff, by evaluation id */ UPDATE harness_evaluations SET reviewed_by = $2, reviewed_at = now(), review_decision = $3, review_reason = $4, promoted_id = coalesce(promoted_id, $5) WHERE id = $1", [id, by, input.decision, reason, promoted]);
   });
   const [row] = await read((q) => q.query<Record<string, any>>("/* tenant: staff, by evaluation id */ SELECT e.*, o.slug FROM harness_evaluations e JOIN organizations o ON o.id = e.org_id WHERE e.id = $1", [id]));
+  if (row) await recordOutcomes().then((R) => R.afterEvaluation(row.org_id, id)).catch((e: Error) => console.error(`record outcomes: ${id}: ${e.message}`));
   return evView(row!);
 }
 /** Rollback: the version before this one is the champion again; this one is kept, marked. A person's action. */
@@ -1130,6 +1137,7 @@ export async function rollbackChampion(by: string, id: string, input: { reason?:
     const [prev] = await q.query<{ id: string }>("/* tenant: within the version's own workspace */ SELECT id FROM harness_champions WHERE org_id = $1 AND target_kind = $2 AND target_id = $3 AND status = 'superseded' ORDER BY version DESC LIMIT 1", [c.org_id, c.target_kind, c.target_id]);
     if (prev) await q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET status = 'champion' WHERE id = $1", [prev.id]);
   });
+  await recordOutcomes().then((R) => R.afterVersion(id, "rolled_back")).catch((e: Error) => console.error(`record outcomes: ${id}: ${e.message}`));
   const [row] = await read((q) => q.query<ChampionRow & { slug: string }>(`/* tenant: staff, by version id */ SELECT c.${C_COLS.split(", ").join(", c.")}, o.slug FROM harness_champions c JOIN organizations o ON o.id = c.org_id WHERE c.id = $1`, [id]));
   return champView(row!);
 }
@@ -1183,6 +1191,7 @@ export async function applyChampion(by: string, id: string, input: { ref?: unkno
   await tx((q) => (pending
     ? q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_by = $2, applied_ref = $3 WHERE id = $1 AND applied_at IS NULL AND applied_ref IS NULL", [id, by, appliedRef])
     : q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_at = now(), applied_by = $2, applied_ref = $3 WHERE id = $1 AND applied_at IS NULL", [id, by, appliedRef])));
+  if (!pending) await recordOutcomes().then((R) => R.afterVersion(id, "applied")).catch((e: Error) => console.error(`record outcomes: ${id}: ${e.message}`));
   return championById(id);
 }
 async function championById(id: string): Promise<ChampionView> {
@@ -1223,6 +1232,7 @@ export async function decidePolicyProposal(by: string, id: string, input: { deci
     appliedRef = `agent profile ${c.target_id} version ${saved.version} (accepted by ${by}: ${reason})`.slice(0, 300);
   } else appliedRef = `declined by ${by}: ${reason}`.slice(0, 300);
   await tx((q) => q.query("/* tenant: staff, by version id */ UPDATE harness_champions SET applied_at = now(), applied_ref = $2 WHERE id = $1 AND applied_at IS NULL", [id, appliedRef]));
+  if (input.decision === "accept") await recordOutcomes().then((R) => R.afterVersion(id, "applied")).catch((e: Error) => console.error(`record outcomes: ${id}: ${e.message}`));
   return championById(id);
 }
 /**
@@ -1310,6 +1320,10 @@ export async function nestedTick(now = new Date()): Promise<NestedSweep> {
   // mold_v0-324: a run that failed says why (no sandbox provider, a sandbox that would not start), in its own words.
   for (const s of stuck) { await decide(s.org_id, s.id, { outcome: "refused", reasons: ["the evaluation ended without measurements", ...(s.run_status === "failed" && s.run_error ? [s.run_error.slice(0, 500)] : [])], metrics: empty(0) }, null).catch(() => {}); out.evaluations++; }
   for (const key of roots) { const [org, root] = [Number(key.split(":")[0]), key.split(":").slice(1).join(":")]; await pump(org, root).catch(() => {}); out.pumped++; }
+  // mold_v0-334: a run started on a record that ended with no decision moves its record (src/record-outcomes.ts).
+  await recordOutcomes().then((R) => R.sweepRecordOutcomes(now)).catch((e: Error) => console.error(`record outcomes: ${e.message}`));
+  // mold_v0-334: a result waiting on a staff review, or accepted and not applied, is reminded of (src/run-reminders.ts).
+  await import("./run-reminders.js").then((R) => R.runReminders(now)).catch((e: Error) => console.error(`run reminders: ${e.message}`));
   return out;
 }
 

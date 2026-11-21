@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 import { When } from '@/features/portal/shared';
 import type { AgentLabel, AgentPurpose } from '@/lib/agent-purpose';
 import { AgentName } from '../agent-name';
+import { evaluationOutcome, OUTCOME_WORDS, RUN_STATUS_WORDS, runStatusOf } from '@/lib/run-status';
+import { AttentionMark, OutcomeBadge, RunStatusBadge } from '../run-badges';
 
 const HillClimbing3D = dynamic(() => import('./hill-climbing-3d').then((m) => m.HillClimbing3D), { ssr: false, loading: () => <div className='bg-muted/40 h-64 animate-pulse rounded-lg' /> });
 
@@ -23,10 +25,17 @@ export interface RunDetail { root: { id: string; ref: string | null; title: stri
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 const pct = (v: number | null | undefined) => (typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : 'Not measured');
-export const STATUS_WORDS: Record<string, string> = { queued: 'Waiting', running: 'Working', done: 'Done', error: 'Failed', cancelled: 'Cancelled', accepted: 'Accepted', refused: 'Refused', needs_review: 'Needs a person', measuring: 'Measuring' };
-const STATUS_TONE: Record<string, string> = { running: 'border-emerald-500/50 text-emerald-700 dark:text-emerald-300', accepted: 'border-emerald-500/50 text-emerald-700 dark:text-emerald-300', done: 'border-emerald-500/50 text-emerald-700 dark:text-emerald-300', error: 'border-destructive/50 text-destructive', refused: 'border-destructive/50 text-destructive', needs_review: 'border-amber-500/50 text-amber-700 dark:text-amber-300' };
+// mold_v0-334: one run vocabulary (web/src/lib/run-status.ts): a child's stored status and an evaluation's outcome read in
+// the same words as every other run in the console.
+export const STATUS_WORDS: Record<string, string> = {
+  ...Object.fromEntries(['queued', 'running', 'done', 'error', 'cancelled'].map((s) => [s, RUN_STATUS_WORDS[runStatusOf(s)]])),
+  ...Object.fromEntries((['accepted', 'refused', 'needs_review'] as const).map((o) => [o, OUTCOME_WORDS[evaluationOutcome(o)!]])), measuring: 'Measuring'
+};
 export function StatusBadge({ status }: { status: string }) {
-  return <Badge variant='outline' className={cn('shrink-0 font-normal', STATUS_TONE[status])}>{STATUS_WORDS[status] ?? status}</Badge>;
+  const o = evaluationOutcome(status);
+  if (o) return <OutcomeBadge outcome={o} />;
+  if (status === 'measuring') return <Badge variant='outline' className='shrink-0 font-normal' data-run-status='running'>Measuring</Badge>;
+  return <RunStatusBadge status={runStatusOf(status)} />;
 }
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
@@ -117,6 +126,8 @@ function Tree({ nodes, onOpen }: { nodes: RunNode[]; onOpen?: (n: RunNode) => vo
   const row = (n: RunNode, depth: number): ReactNode => {
     const inner = <><span className={cn('size-2 shrink-0 rounded-full', n.status === 'running' ? 'motion-safe:animate-pulse bg-emerald-500' : n.status === 'error' ? 'bg-destructive' : n.status === 'queued' ? 'bg-amber-500' : 'bg-muted-foreground/40')} aria-hidden />
       <AgentName name={n.name} purpose={n.purpose} muted={false} className='flex-1 text-sm' />
+      <AttentionMark on={n.attention} />
+      <StatusBadge status={n.status} />
       {n.ref && <span className='text-muted-foreground shrink-0 font-mono text-xs'>{n.ref}</span>}
       <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{usd(n.spent_usd)}</span></>;
     return (

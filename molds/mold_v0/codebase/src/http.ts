@@ -780,7 +780,7 @@ export function createApp() {
   ob.post("/plans", need("plans"), async (req, res) => void res.status(201).json(await onboarding.createPlan(adminActor(req, res), req.body ?? {})));
   ob.post("/plans/:price_id/experiment", need("plans"), async (req, res) => void res.json(await onboarding.setPlanExperiment(adminActor(req, res), String(req.params.price_id), req.body ?? {})));
   ob.post("/plans/:price_id/archive", need("plans"), async (req, res) => void res.json(await onboarding.archivePlan(adminActor(req, res), String(req.params.price_id))));
-  ob.post("/orgs/:slug/keys", need("accounts"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.issueKey(adminActor(req, res), slug(req), req.body?.label)));
+  ob.post("/orgs/:slug/keys", need("accounts"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.issueKey(adminActor(req, res), slug(req), req.body?.label, req.body?.expires_in_days)));
   ob.post("/orgs/:slug/keys/:id/revoke", need("delete"), async (req, res) => done(res, await onboarding.revokeKey(adminActor(req, res), slug(req), Number(req.params.id))));
   ob.post("/orgs/:slug/keys/:id/rotate", need("delete"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.rotateKey(adminActor(req, res), slug(req), Number(req.params.id))));
   // Platform analytics and health across every account (src/insights.ts).
