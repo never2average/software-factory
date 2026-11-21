@@ -60,6 +60,9 @@ const PACK = {
       lifecycle: { field: "status", initial: "new", transitions: [tr(["new"], "applied"), tr(["new"], "dismissed"), tr(["applied", "dismissed"], "new")] },
       detail: { tabs: [{ label: "Overview", sections: [{ title: "About", fields: ["body"] }] }],
         actions: [{ kind: "start_program", label: "Change the rule", program: "change-rule", on_outcome: { accepted: "applied" } }] } },
+    { name: "drafts", label: "Drafts", role: "source", scope: "workspace", list_columns: ["status"],
+      fields: [{ name: "status", label: "Status", type: "enum", required: true, options: opts("draft", "final") }, { name: "body", label: "Body", type: "text" }],
+      lifecycle: { field: "status", initial: "draft", transitions: [{ from: ["draft"], to: "final", roles: ["member"] }] } },
     { name: "catalog", label: "Catalog", role: "source", scope: "workspace", list_columns: ["maturity"],
       fields: [{ name: "maturity", label: "Maturity", type: "enum", options: opts("ga", "deprecated", "retired") }] },
     { name: "apps", label: "Apps", role: "source", scope: "workspace", list_columns: ["base"],
@@ -139,6 +142,19 @@ try {
     // M1: written as the person who started the run: one who left the workspace refuses the write.
     const gone = await session({ area: "items", key: "it-1" }, "parked", null, "u-not-a-member");
     await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0004", program_id: "formalize", root_id: gone.s, inputs: { item_key: "it-1" }, outputs: { claim: "x" } }, upd), /no longer a member/);
+    // An account-started run (a schedule, an account key) acts as an owner: role checks apply (never a null role, which
+    // skips them), and it can do nothing the key cannot (the key's own record calls have no role limits at all).
+    await rec.put("drafts", "dr-1", { title: "Draft", data: { body: "x" } });
+    const acct = await session({ area: "drafts", key: "dr-1" }, "parked", null, "account");
+    const origin = await PR.runOrigin(A.orgId, acct.s);
+    assert.deepEqual(origin.actor, { role: "owner", userId: null }, "an account-started run acts as an owner");
+    const keyActor = { role: null, userId: null };
+    for (const a of RA.recordAreas()) for (const act of ["read", "create", "update", "move", "delete"] as const)
+      if (RA.may(a, act, origin.actor!)) assert.ok(RA.may(a, act, keyActor), `${a.name} ${act}: never more than the key itself`);
+    const toFinal = { area: "drafts", key: "$inputs.k", update_by: "key" as const, move_to: "final", fields: { body: "body" } };
+    await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_acct00001", program_id: "p", root_id: acct.s, inputs: { k: "dr-1" }, outputs: { body: "y" } }, toFinal), /member/,
+      "a transition only members make is refused to the account's run (a null role would have made it)");
+    assert.equal(await stateOf("drafts", "dr-1"), "draft");
     // L5: the server's own new records still go in when the starter left (only their updates and moves are refused).
     const newOnly = await PR.writeProgramResult(A.orgId, { id: "hch_newonly01", program_id: "find", root_id: gone.s, outputs: { statement: "Brand new finding" } }, { area: "items", fields: { statement: "statement" } });
     assert.deepEqual(newOnly.keys, ["hch_newonly01"], "L5: a new record is the server's");
@@ -360,7 +376,7 @@ try {
     const noWhere = PA.RecordFieldSchema.safeParse({ name: "x_ref", label: "X", type: "reference", to: "catalog", filter_new_only: true });
     assert.ok(!noWhere.success && /give where too/.test(JSON.stringify(noWhere.error.issues)), "filter_new_only needs where");
     const { formField } = await import("../src/tab-actions.js");
-    assert.equal((formField(PACK.record_areas[3]!.fields[0]) as { filter_new_only?: boolean }).filter_new_only, true, "the picker is told: new picks only");
+    assert.equal((formField(PACK.record_areas.find((x) => x.name === "apps")!.fields[0]) as { filter_new_only?: boolean }).filter_new_only, true, "the picker is told: new picks only");
     ok("new picks only: a record keeps a value retired since; a new pick of it is refused; without the flag, refused as before; the picker is told");
   }
 

@@ -64,7 +64,8 @@ export interface RunOrigin { record: { area: string; key: string } | null; start
 /**
  * A tree's origin from its root session (null fields: no root given, as a test's direct call). The starter's role is
  * read now (a person who left the workspace: `refused`); a run the workspace's account started (a schedule, an account
- * key) acts with that key's own role, which in a workspace's records is none (no role limits: src/record-areas.ts Actor).
+ * key) acts as an owner: never with no role checks (a null role skips them all), and never more than the key itself may
+ * (an account key's own calls, its MCP record tools, have no role limits at all; the data API takes people only).
  */
 export async function runOrigin(orgId: number, rootId: string | null | undefined): Promise<RunOrigin> {
   if (!rootId) return { record: null, started_at: null, actor: null };
@@ -75,7 +76,7 @@ export async function runOrigin(orgId: number, rootId: string | null | undefined
   if (!r) throw new Error("its run's root session is gone");
   let actor: import("./record-areas.js").Actor;
   const record = r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null;
-  if (!r.started_by || r.started_by === "account") actor = { role: null, userId: null };
+  if (!r.started_by || r.started_by === "account") actor = { role: "owner", userId: null };
   else {
     const role = await (await import("./auth.js")).memberRole(r.started_by, r.clerk_org_id);
     if (!role) return { record, started_at: r.created_at, actor: null, refused: "the person who started this run is no longer a member of the workspace" };

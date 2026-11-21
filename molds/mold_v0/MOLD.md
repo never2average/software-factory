@@ -4622,7 +4622,8 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
     and the key it gives must be the record the run's root session was started on: an input the agent passed naming any
     other record (a steered spawn) refuses the whole write, said on the parent's trace. The update and its move are made
     as the person who started the run (their role now, the area's permissions, the transitions' roles, what they may
-    see; a run the account started acts with its key's own role); one who has left the workspace refuses it. A new
+    see; a run the account started, by a schedule or an account key, acts as an owner: role checks apply, and it
+    never does more than the key itself may); one who has left the workspace refuses it. A new
     record (no `update_by`) is the server's, as before, even when its starter has left. A key from the outputs never
     replaces a record that is there already unless this same run wrote it (its result seen again): any other is left as
     it is and listed under `existing` on the trace.
