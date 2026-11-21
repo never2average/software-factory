@@ -117,7 +117,7 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
       const sf = area.fields.find((f) => f.name === hv.field), v = hits[0]!.data[hv.field];
       const opt = (sf?.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })).find((o) => o.value === v);
       const rf = (await import("./connection-test-health.js")).healthOf(area)?.decl.result, said = rf ? hits[0]!.data[rf] : null;
-      out.unhealthy!.push({ area: area.label, record: hits[0]!.title || hits[0]!.key, state: hv.state, status: opt?.label ?? String(v), result: typeof said === "string" && said ? said.slice(0, 300) : null });
+      out.unhealthy!.push({ area: area.label, record: hits[0]!.title || hits[0]!.key, state: hv.state, status: opt?.label ?? String(v), result: typeof said === "string" && said ? oneLine(said).slice(0, 300) : null });
     }
   }
   // mold_v0-321: an area named once, and not at all when another of its entries gave a record (a network split by
@@ -144,10 +144,12 @@ export function connectionEnvWords(start: ConnectionEnvStart): string | null {
   for (const o of start.owners ?? []) parts.push(`${o.area}: a workspace owner has not turned on "${o.flag}" for the record in use, so its variables are not set for sessions members start.`);
   // mold_v0-332: a connection given whose last test failed, could not test, or that needs its key.
   for (const u of start.unhealthy ?? []) parts.push(`Warning: ${u.area} "${u.record}" is given to this session, but its status is "${u.status}"${
-    u.state === "needs_key" ? " (its key is empty: type it again on its record)" : u.state === "cannot_test" ? " (it could not be tested)" : ""}${u.result ? `: ${u.result}` : ""}. What uses it may not work.`);
+    u.state === "needs_key" ? " (its key is empty: type it again on its record)" : u.state === "cannot_test" ? " (it could not be tested)" : ""}${u.result ? ` (its last test said: "${u.result}")` : ""}. What uses it may not work.`);
   return parts.length ? parts.join(" ") : null;
 }
 
+/** mold_v0-332: stored words as one plain line (no control characters, no line breaks, no quotes to end ours). */
+const oneLine = (v: string) => v.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/"/g, "'").replace(/\s+/g, " ").trim();
 const asText = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "");
 const matches = (c: { where?: Record<string, unknown>; use?: string }, data: Record<string, unknown>) =>
   Object.entries(c.where ?? {}).every(([k, v]) => data[k] === v) && (!c.use || data[c.use] === true);

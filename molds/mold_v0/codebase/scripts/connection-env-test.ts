@@ -98,8 +98,13 @@ const KEYS = { name: "deploy_keys", label: "Deploy keys", role: "source", scope:
   detail: { tabs: [{ label: "Details", sections: [{ title: "Where", fields: ["host", "use_in_builds"] }] }],
     actions: [{ kind: "test_connection", place: "primary", label: "Test", roles: ["owner"], probe: { probes: { "*": { method: "GET", url: "https://api.keys.example/v1/{host}", headers: { Authorization: "Bearer {api_token}" } } }, status: "health", result: "result" } },
       { kind: "edit", place: "secondary" }] } };
-const KEEPER_ENV = [{ area: "deploy_keys", use: "use_in_builds", only_one: true, last_used: "last_used", prefix: "KEEP_", fields: { HOST: "host", TOKEN: "api_token" } }];
-const PACK = { id: "fixture_conn_env", name: "Fixture connection env", version: "1", record_areas: [STORAGE, COMPUTE, NETWORK, BUILD, TARGETS, KEYS],
+const REGIONS = { name: "build_regions", label: "Build regions", role: "source", scope: "workspace",
+  fields: [{ name: "region", label: "Region", type: "text" }, { name: "primary", label: "Primary", type: "boolean" }],
+  permissions: { read: ALL, create: ["owner"], update: ["owner"], delete: ["owner"] },
+  contract: { ...contract, actions: { ...contract.actions, import: ["owner"] } } };
+const KEEPER_ENV = [{ area: "deploy_keys", use: "use_in_builds", only_one: true, last_used: "last_used", prefix: "KEEP_", fields: { HOST: "host", TOKEN: "api_token" } },
+  { area: "build_regions", use: "primary", only_one: true, prefix: "REGION_", fields: { NAME: "region" } }];
+const PACK = { id: "fixture_conn_env", name: "Fixture connection env", version: "1", record_areas: [STORAGE, COMPUTE, NETWORK, BUILD, TARGETS, KEYS, REGIONS],
   agent_profiles: [{ id: "deployer", name: "Deploy an application", connection_env: CONNECTION_ENV }, { id: "plain-agent", name: "No connections" },
     { id: "builder", name: "Builder", connection_env: BUILDER_ENV }, { id: "keeper", name: "Keeper", connection_env: KEEPER_ENV },
     // mold_v0-321: one area split by `where` (as a network per cloud), and two entries of one area naming a flag no record has on.
@@ -590,9 +595,9 @@ try {
 
   // ---------- 6. mold_v0-332: one marked, health at start, last used ----------
   {
-    assert.deepEqual(connectionEnvProblems(KEEPER_ENV, [KEYS]), [], "the keeper fixture");
+    assert.deepEqual(connectionEnvProblems(KEEPER_ENV, [KEYS, REGIONS]), [], "the keeper fixture");
     const badK = (patch: (c: any, areas: any[]) => void, re: RegExp, what: string) => {
-      const c = structuredClone(KEEPER_ENV) as any, areas = structuredClone([KEYS]) as any[]; patch(c, areas);
+      const c = structuredClone(KEEPER_ENV) as any, areas = structuredClone([KEYS, REGIONS]) as any[]; patch(c, areas);
       const p = connectionEnvProblems(c, areas);
       assert.ok(p.some((m) => re.test(m)), `${what}: ${JSON.stringify(p)}`);
     };
@@ -600,6 +605,8 @@ try {
     badK((_c, a) => { delete a[0].fields[5].set_by; }, /last_used: last_used is written by the app only/, "a last used people set");
     badK((_c, a) => { a[0].fields[5].type = "text"; }, /last_used: last_used is a plain date field/, "a last used as text");
     badK((c) => { c[0].fields.WHEN = "last_used"; }, /last_used: last_used is also the entry's use, where, members_field or a delivered field/, "a delivered last used");
+    badK((c) => { c[0].last_used = "result"; }, /last_used: result is also a field the area's test writes|last_used: result is a plain date field/, "a last used the test writes");
+    badK((c, a) => { a[0].fields[4].type = "date"; c[0].last_used = "result"; }, /last_used: result is also a field the area's test writes/, "the test's result field as last used");
     const own = { role: "owner" as const, userId: "user_owner" };
     const keys = ra.workspaceRecords(PACK.id, A.orgId, own);
     const put = (key: string, data: Record<string, unknown>, mode: "create" | "update" = "create") => ra.asWriter({ by: "people", id: "owner" }, () => keys[mode]("deploy_keys", key, { title: key, data }));
@@ -612,6 +619,27 @@ try {
     await put("k2", { host: "two", use_in_builds: true }, "update");
     await put("k2", { host: "two", use_in_builds: false }, "update");
     await put("k1", { host: "one", use_in_builds: true }, "update");
+    // M2: in one batch, a swap (k1 off, k2 on) saves; two turned on refuse the whole batch.
+    await ra.asWriter({ by: "people", id: "owner" }, () => keys.batch([{ op: "update", area: "deploy_keys", key: "k1", data: { host: "one", use_in_builds: false } },
+      { op: "update", area: "deploy_keys", key: "k2", data: { host: "two", use_in_builds: true } }] as never));
+    assert.deepEqual([(await ra.getFor(A.orgId, "deploy_keys", "k1", own))!.data.use_in_builds, (await ra.getFor(A.orgId, "deploy_keys", "k2", own))!.data.use_in_builds], [false, true], "a swap in one batch");
+    await put("k3", { host: "three", api_token: canary("k3"), use_in_builds: false });
+    await ra.asWriter({ by: "people", id: "owner" }, () => keys.batch([{ op: "update", area: "deploy_keys", key: "k2", data: { host: "two", use_in_builds: false } }]) as never);
+    await assert.rejects(ra.asWriter({ by: "people", id: "owner" }, () => keys.batch([{ op: "update", area: "deploy_keys", key: "k1", data: { host: "one", use_in_builds: true } },
+      { op: "update", area: "deploy_keys", key: "k3", data: { host: "three", use_in_builds: true } }] as never)), /"k1" is already marked "Use in builds"/, "two marked in one batch: refused");
+    assert.equal((await ra.getFor(A.orgId, "deploy_keys", "k1", own))!.data.use_in_builds, false, "the refused batch wrote nothing");
+    await ra.asWriter({ by: "people", id: "owner" }, () => recs(A.orgId).delete("deploy_keys", "k3"));
+    await put("k1", { host: "one", use_in_builds: true }, "update");
+    // An import: two marked in one file are each refused in the preview, naming the other; a swap in one file saves.
+    const { importWorkspaceRecords } = await import("../src/record-import.js");
+    const rArea = ra.findArea("build_regions")!;
+    await ra.asWriter({ by: "people", id: "owner" }, () => keys.create("build_regions", "eu", { title: "eu", data: { region: "eu-west", primary: true } }));
+    const two = await importWorkspaceRecords(A.orgId, own, rArea, [{ key: "us", data: { region: "us-east", primary: true } }, { key: "ap", data: { region: "ap-south", primary: true } }], { dryRun: true });
+    assert.deepEqual(two.rows.map((r) => r.action), ["invalid", "invalid"], JSON.stringify(two.rows));
+    assert.match(two.rows[0]!.errors.join(" "), /"(eu|ap)" is (already|also) marked "Primary"/);
+    const swap = await importWorkspaceRecords(A.orgId, own, rArea, [{ key: "us", data: { region: "us-east", primary: true } }, { key: "eu", data: { region: "eu-west", primary: false } }], { dryRun: false });
+    assert.deepEqual(swap.rows.map((r) => r.action), ["create", "update"], `a swap in one file: ${JSON.stringify(swap.rows)}`);
+    assert.deepEqual([(await ra.getFor(A.orgId, "build_regions", "us", own))!.data.primary, (await ra.getFor(A.orgId, "build_regions", "eu", own))!.data.primary], [true, false]);
     // A second one marked before the rule (written around the store): both need attention, and the start still refuses.
     const { withTenant } = await import("../src/tenant-scope.js");
     const mark = (key: string, on: boolean) => withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{use_in_builds}', $1::jsonb) WHERE org_id = $2 AND area = 'deploy_keys' AND key = $3", [JSON.stringify(on), A.orgId, key]));
@@ -622,14 +650,18 @@ try {
     await mark("k2", false);
     assert.equal((await ra.getFor(A.orgId, "deploy_keys", "k1", own))!.health?.attention, false, "one marked again: no attention");
     // Its last test failed: the session is given it and told so in its first message.
-    await ra.asAction(() => keys.update("deploy_keys", "k1", { title: "k1", data: { host: "one", use_in_builds: true, health: "failing", result: "It does not work yet: api.keys.example answered 401: the token was refused." } }));
+    // L2: no write but the record's own test sets its health: an action's write that says "failing" is kept as stored.
+    await ra.asAction(() => keys.update("deploy_keys", "k1", { title: "k1", data: { host: "one", use_in_builds: true, health: "failing" } }));
+    assert.notEqual((await ra.getFor(A.orgId, "deploy_keys", "k1", own))!.data.health, "failing", "another action cannot set the health");
+    const setHealth = (health: string, result: string) => withTenant(A.orgId, () => db.query("UPDATE workspace_records SET data = data || $1::jsonb WHERE org_id = $2 AND area = 'deploy_keys' AND key = 'k1'", [JSON.stringify({ health, result }), A.orgId]));
+    await setHealth("failing", "It does not work yet: api.keys.example answered 401:\nthe token was refused.");
     const CE = await import("../src/connection-env.js");
     const profile = { id: "keeper", source: `pack:${PACK.id}` };
     const start = await CE.connectionEnvForStart(A.orgId, profile, ownerA);
-    assert.deepEqual(start.frozen.map((f) => [f.key, f.last_used]), [["k1", "last_used"]], "frozen with its last_used field");
-    assert.match(CE.connectionEnvWords(start) ?? "", /Warning: Deploy keys "k1" is given to this session, but its status is "Failing": It does not work yet: api\.keys\.example answered 401: the token was refused\.\. What uses it may not work\./);
+    assert.deepEqual(start.frozen.filter((f) => f.area === "deploy_keys").map((f) => [f.key, f.last_used]), [["k1", "last_used"]], "frozen with its last_used field");
+    assert.match(CE.connectionEnvWords(start) ?? "", /Warning: Deploy keys "k1" is given to this session, but its status is "Failing" \(its last test said: "It does not work yet: api\.keys\.example answered 401: the token was refused\."\)\. What uses it may not work\./, "the test's words on one line, quoted");
     // Working: no warning.
-    await ra.asAction(() => keys.update("deploy_keys", "k1", { title: "k1", data: { host: "one", use_in_builds: true, health: "working", result: "It works." } }));
+    await setHealth("working", "It works.");
     assert.ok(!/Warning:/.test(CE.connectionEnvWords(await CE.connectionEnvForStart(A.orgId, profile, ownerA)) ?? ""), "a working one: no warning");
     // A delivery stamps last_used, at most once an hour, without moving the record's updated time or frozen version.
     const H2 = await import("../src/connection-test-health.js");
@@ -651,7 +683,7 @@ try {
     assert.ok(again.delivered.length && !again.changed.length, "the frozen version still matches (last_used is no field it reads)");
     assert.ok(String((await stored()).data.last_used) > hours2, "two hours later: stamped again");
     assert.equal((await CE.connectionEnvValues(A.orgId, start.frozen, { audit: false })).delivered.length > 0, true);
-    ok("mold_v0-332: only_one refuses a second marked record on save (naming the first), a legacy second needs attention; a failing connection given to a session is said in its first message; last used stamped at most hourly, the updated time and version kept");
+    ok("mold_v0-332: only_one refuses a second marked record on save (naming the first), in a batch and across an import's file too (a swap in either saves), a legacy second needs attention; a failing connection given to a session is said in its first message; last used stamped at most hourly, the updated time and version kept");
   }
 
   // ---------- 4. no secret anywhere ----------

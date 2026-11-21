@@ -190,7 +190,10 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
   const life = area.lifecycle;
   const rows: WorkspaceImportReport["rows"] = [];
   const writes: { op: "create" | "update"; area: string; key: string; title: string | null; data: Record<string, unknown> }[] = [];
-  for (const { n, key, title, given, errors } of read) {
+  // mold_v0-332: a one-only flag is judged across the file's rows too (each as it would be written).
+  const { withPendingRows, onlyOneLast } = await import("./connection-test-health.js");
+  const pending = new Map(read.filter((r) => !r.errors.length && RECORD_KEY.test(r.key)).map((r) => [r.key, { ...(stored.get(r.key)?.data ?? {}), ...r.given }]));
+  await withPendingRows(pending, async () => { for (const { n, key, title, given, errors } of read) {
     const report = (action: WorkspaceImportAction) => rows.push({ row: n, key, action, errors });
     if (errors.length) { report("invalid"); continue; }
     const before = stored.get(key);
@@ -222,7 +225,8 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
     if (before && before.title === t && canonical(kept) === canonical(merged)) { report("unchanged"); continue; }
     report(before ? "update" : "create");
     writes.push({ op: before ? "update" : "create", area: area.name, key, title: t, data: merged });
-  }
+  } });
+  onlyOneLast(area, writes); // rows turning a one-only flag off are written first (a swap in one file)
   // One transaction through the workspace's record store, as the person (provenance people, mold_v0-236).
   if (!opts.dryRun && writes.length)
     await asWriterUnlessSet({ by: "people", id: actor.userId }, () => workspaceRecords(area.pack, orgId, actor).batch(writes));

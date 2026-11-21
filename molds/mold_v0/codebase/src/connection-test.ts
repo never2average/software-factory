@@ -32,7 +32,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { ANY_PROBE, hostListed, isHttpProbe, localName, placeholders, PLACEHOLDER, PROBE_TIMEOUT_DEFAULT, probeHosts, probeSecrets, type ConnectionProbe, type ConnectionTest } from "./connection-test-config.js";
-import { testOutcome } from "./connection-test-health.js";
+import { asTestOf, testOutcome } from "./connection-test-health.js";
 import { privateAddress } from "./egress-hosts.js";
 import { ENV } from "./env-names.js";
 import { PackError } from "./pack-api.js";
@@ -393,10 +393,10 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
   const label = (n: string) => `"${fieldOf(n)?.label ?? n}"`;
   const choice = test.by ? row.data[test.by] : undefined;
   const pk = test.by && typeof choice === "string" && Object.prototype.hasOwnProperty.call(test.probes, choice) ? choice : Object.prototype.hasOwnProperty.call(test.probes, ANY_PROBE) ? ANY_PROBE : null;
-  let result: ConnectionTestAnswer, keyEmpty = false;
+  let result: ConnectionTestAnswer, keyEmpty = false, keyBroken = false;
   if (!pk) {
     result = { ok: false, outcome: "not_ready", host: null, status: null, ms: 0, probe: null,
-      words: test.by && (choice === undefined || choice === null || choice === "") ? `It can't be tested yet: ${label(test.by)} is empty.` : `It can't be tested yet: this app has no test for ${test.by ? `${label(test.by)} ${String(choice)}` : "this record"}.` };
+      words: test.by && (choice === undefined || choice === null || choice === "") ? `It can't be tested yet: ${label(test.by)} is empty.` : `It can't be tested yet: this app has no test for ${test.by ? `${label(test.by)} ${String(choice).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 80)}` : "this record"}.` };
   } else {
     const kv = await import("./keyvault.js");
     const { decryptValue, isEnvelope } = await import("./encrypted-fields.js");
@@ -408,7 +408,7 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
       if (!isEnvelope(v)) return asText(v); // written before the field was encrypted (the migration has not reached it yet)
       if (!kv.vaultUnlocked()) throw new ProbeError("not_ready", "its secrets cannot be opened while the app's key vault is locked");
       try { return asText(await withTenant(orgId, () => decryptValue(orgId, area, key, n, v))); }
-      catch { throw new ProbeError("not_ready", `${label(n)} does not open with this workspace's key: add it again`); }
+      catch { keyBroken = true; throw new ProbeError("not_ready", `${label(n)} does not open with this workspace's key: add it again`); }
     };
     const plain = Object.fromEntries(Object.entries(row.data).filter(([k]) => !sealed.has(k)));
     result = await runProbe(pk, test.probes[pk]!, { plain, sealed, open, label });
@@ -416,11 +416,12 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
     if (result.outcome === "not_ready") keyEmpty = probeSecrets(test.probes[pk]!, (n) => sealed.has(n)).some((n) => (row.data[n] === undefined || row.data[n] === null || row.data[n] === "") && result.words.includes(`${label(n)} is empty`));
   }
   // mold_v0-332: the outcome (working, failing, could not test, needs its key), its time, words and streak.
-  const extra = testOutcome(area, row.data, { ...result, keyEmpty });
+  const extra = testOutcome(area, row.data, { ...result, keyEmpty, keyBroken });
   if (Object.keys(extra).length) {
     // The masked record written back: a masked field keeps its stored value (src/encrypted-fields.ts).
     const shown = await getFor(orgId, area.name, key, actor);
-    if (shown) await workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } })
+    // mold_v0-332: as this record's test, about the values it read (changed meanwhile: the stored health is kept).
+    if (shown) await asTestOf(area, key, row.data, () => workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } }))
       .catch((e) => console.error(`connection test: the result was not written to ${area.name} ${key}: ${String((e as Error).message).slice(0, 200)}`));
   }
   return result;

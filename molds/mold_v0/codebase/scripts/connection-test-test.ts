@@ -54,6 +54,7 @@ const standin = http.createServer((req, res) => {
     const auth = typeof req.headers.authorization === "string" ? req.headers.authorization : typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"] as string : null;
     seen.push({ host: host!, path, method: req.method!, auth, body: Buffer.concat(chunks).toString() });
     const json = (status: number, v: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+    if (host === "api.paas.example" && path.startsWith("/v1/accounts/slow")) { setTimeout(() => json(200, { account: { state: "active" } }), 400); return; } // mold_v0-332: a slow answer
     if (host === "api.paas.example" && path.startsWith("/v1/accounts/")) {
       if (auth === `Bearer ${GOOD}`) return json(200, { account: { id: path.split("/")[3], state: "active" } });
       return json(401, { message: `invalid token ${auth?.replace(/^Bearer /, "")}` });
@@ -650,6 +651,34 @@ try {
     await editH("h1", { provider: "paas", account_id: "acc-1", api_token: GOOD });
     await testH("h1");
 
+    // M1: the account changed while the test was out: the result is about the old values, so the reset stays.
+    await addH("h-slow", { provider: "paas", account_id: "slow-1", api_token: GOOD });
+    const pending = testH("h-slow");
+    await new Promise((r) => setTimeout(r, 150));
+    await editH("h-slow", { provider: "paas", account_id: "slow-2", api_token: GOOD });
+    assert.equal((await pending).ok, true, "the old values answered");
+    d = await row("h-slow");
+    assert.equal(d.account_id, "slow-2"); assert.equal(d.health, "not_tested", `a result about values no longer there is not written: ${JSON.stringify(d)}`); assert.ok(cleared(d));
+    await testH("h-slow");
+    assert.equal((await row("h-slow")).health, "working", "tested as it is now: working");
+    // L2: a run creating a record cannot say it works.
+    await ra.asWriter({ by: "run", id: "run-2" }, () => ra.workspaceRecords("fixture_connections", A.orgId, { role: null, userId: null }).create("fx_health", "h-run",
+      { title: "h-run", data: { provider: "paas", account_id: "acc-1", api_token: GOOD, health: "working", failures: 0 } }));
+    d = await row("h-run");
+    assert.deepEqual([d.health, d.failures], ["not_tested", undefined], "only the record's own test writes its health");
+    // L5: a key that does not open with the workspace's key (sealed for another record): no longer "working", even
+    // where the pack has no could-not-test option (the first area).
+    const { withTenant: wt } = await import("../src/tenant-scope.js");
+    await add("ct-broken", { provider: "paas", account_id: "acc 42/x", api_token: GOOD });
+    C.resetTestRateForTest();
+    await ra.asAction(() => CT.testConnectionRecord(A.orgId, ra.findArea("fx_connections")!, "ct-broken", PROBE as never, owner));
+    assert.equal((await storedRow("fx_connections", "ct-broken")).status, "working");
+    await wt(A.orgId, () => db.query("UPDATE workspace_records SET data = jsonb_set(data, '{api_token}', (SELECT data -> 'api_token' FROM workspace_records WHERE org_id = $1 AND area = 'fx_connections' AND key = 'ct-keep')) WHERE org_id = $1 AND area = 'fx_connections' AND key = 'ct-broken'", [A.orgId]));
+    C.resetTestRateForTest();
+    const br = await ra.asAction(() => CT.testConnectionRecord(A.orgId, ra.findArea("fx_connections")!, "ct-broken", PROBE as never, owner));
+    assert.match(br.words, /"API token" does not open with this workspace's key/, br.words);
+    assert.equal((await storedRow("fx_connections", "ct-broken")).status, "untested", "a key that does not open: back to untested, not working");
+
     // Read now: fresh, then stale (an old test), then expiring; worked out on read, nothing stored.
     let rec = (await ra.getFor(A.orgId, "fx_health", "h1", owner))!;
     assert.deepEqual([rec.health?.state, rec.health?.stale, rec.health?.attention], ["working", undefined, false], JSON.stringify(rec.health));
@@ -672,7 +701,7 @@ try {
     // A metric of the records needing attention (h1 stale, h-exp expiring, h-other could not test).
     const M = await import("../src/metrics.js");
     const m = await M.computeSpec(A.orgId, { name: "fx_attention", label: "Need attention", over: "fx_health", measure: "count", needs_attention: true, limit: 12, pack: "fixture_connections" } as never, { role: null, userId: null } as never);
-    assert.equal((m as { value: number }).value, 3, JSON.stringify(m));
+    assert.equal((m as { value: number }).value, 3, JSON.stringify(m)); // h1 stale, h-exp expiring, h-other could not test
     ok("mold_v0-332: health keys checked; a new record untested; working, failing (streak, since), could not test (never failing; kept when undeclared), needs its key; a key typed again or a field the test reads changed resets it in the same write (a person's or a run's), a key the binding clears resets to needs its key; stale and expiring need attention on read; a metric counts them");
   }
 

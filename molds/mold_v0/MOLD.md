@@ -4396,26 +4396,38 @@ working as before, except that a test that could not run is no longer written as
   object storage's bucket, endpoint and keys) or that a key is bound to (`src/secret-binding.ts`), sets the status to
   untested, or needs_key when it emptied a key (the binding's clearing included), and clears tested, tested_at,
   result, failing_since and failures, overriding what the write said. A new record without a status starts untested.
+  A move that changes a field the test reads resets it too. **Only the record's own test writes its health**: any other
+  write (a run, a tool, an import, a clock, a repository's index, another page action) keeps the stored values of those
+  fields whatever it sends (a person sending another value is refused, as for every set_by "action" field). The test's
+  write-back carries the values it read (`asTestOf`): when the record changed while the test was out (a new host or
+  key, so reset), its result is about values no longer there and is not written. A key that does not open with the
+  workspace's key (sealed for another record or key) sets the status back to untested even with no could-not-test
+  option (a locked vault keeps it as it was). Test storage's words are cut of its keys in every form before they are kept.
 - **One marked at a time**: a `connection_env` entry's `only_one: true` (it needs `use`) refuses, on save (the record
   store's save checks: every door, an import's preview too), a record turned on (or into its `where`) while another of
   the workspace has it on: `Build connections: "main" is already marked "Use in builds", and only one may be: turn
   it off there first` (a record the writer may not read: "another record"). A record already on saves as it is; two
-  marked before the rule both need attention, and a session's start still refuses them.
+  marked before the rule both need attention, and a session's start still refuses them. Every marked record counts
+  (no limit). Such an area's saves run as a transaction that takes the area's turn (an advisory lock), so two saves at
+  once never both mark; in a batch the check reads the batch's own transaction (a swap, one off and one on, saves; two
+  on refuse the batch), and an import's preview judges the file's rows together (two marked rows each say the other)
+  and writes the rows turning a flag off first. A move is checked too.
 - **Read now, never stored** (`withHealth`, on every list and get of such an area): each record's `health` is
   `{field, state, tested_at, days, stale, attention, reasons}`. A working status whose last test (tested_at, else
   tested) is older than `stale_after_days` is stale: the console's record header and list cell show "Tested N days
   ago", neutral, in place of its badge. **Needs attention**: failing, could not test, needs its key, stale, `expires_on`
-  within 14 days (or past), or more than one record marked where only one may be (untested alone does not). The
+  within 14 days (or past), or more than one record marked where only one may be, counted as the reader sees (a reader
+  who cannot see the other marked record is not told of it; untested alone does not). The
   console's lists of a tested area have a filter-only column "Needs attention" (Filter: Needs attention is Yes), and a
   metric `"needs_attention": true` over such an area counts those records (counted in code, like a clock's).
 - **Last used**: an entry's `last_used` (a date field, set_by "action", none of its `use`, `where`, `members_field` or
-  delivered fields) is set to the time a wake's delivery gave the record's values, at most once an hour per record (in
+  delivered fields, nor a field the area's test or the object storage writes; checked again when stamped) is set to the time a wake's delivery gave the record's values, at most once an hour per record (in
   the process, and in the database: a newer value is left as it is). A stamp of the app's own: no history line, the
   record's updated time and the session's frozen version unchanged (a sealed or chained area is never stamped).
 - **A session told**: a record given at a session's start whose status is failing, could not test or needs its key is
-  named in its first system message with its status's label and the test's own words: `Warning: Build connections
-  "main" is given to this session, but its status is "Failing": It does not work yet: ... answered 401: the token
-  was refused. What uses it may not work.` Its values are still given (a warning, not a block).
+  named in its first system message with its status's label and the test's own words on one line, quoted: `Warning:
+  Build connections "main" is given to this session, but its status is "Failing" (its last test said: "It does not
+  work yet: ... answered 401: the token was refused."). What uses it may not work.` Its values are still given (a warning, not a block).
 - Tests: `npx tsx scripts/connection-test-test.ts` (section 6), `scripts/connection-env-test.ts` (section 6),
   `scripts/signed-probes-test.ts`, `scripts/workspace-storage-test.ts`.
 

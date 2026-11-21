@@ -114,6 +114,9 @@ export function connectionEnvProblems(raw: unknown, areas: readonly unknown[], t
       if (!f) out.push(`${at}.last_used: ${c.area} has no field ${n}`);
       else if (f.type !== "date" || f.encrypted || f.multiple) out.push(`${at}.last_used: ${n} is a plain date field (when a session last received the record)`);
       else if (f.set_by !== "action") out.push(`${at}.last_used: ${n} is written by the app only: declare it set_by "action"`);
+      // Nor one a test writes (its status or health fields): the test and the delivery never write each other's.
+      const probe = ((a as { detail?: { actions?: { kind?: string; probe?: Record<string, unknown> }[] } }).detail?.actions ?? []).find((x) => x?.kind === "test_connection")?.probe;
+      if (probe && ["status", "tested", "tested_at", "result", "failing_since", "failures", "expires_on"].some((k) => probe[k] === n)) out.push(`${at}.last_used: ${n} is also a field the area's test writes: give it a field of its own`);
       if (n === c.use || n === c.members_field || Object.keys(c.where ?? {}).includes(n) || envVars(c).some((v) => v.field === n)) out.push(`${at}.last_used: ${n} is also the entry's use, where, members_field or a delivered field: give it a field of its own`);
     }
     if (reservedEnv(c.prefix) || reservedEnv(`${c.prefix}X`)) out.push(`${at}.prefix: ${c.prefix} starts names a program or the session reads itself: choose another prefix`);
@@ -150,6 +153,9 @@ export function membersFieldProblems(profiles: readonly unknown[], areas: readon
   });
   const named = (v: unknown, m: string) => JSON.stringify(v ?? null).includes(JSON.stringify(m));
   for (const { at, c } of entries) {
+    // mold_v0-332: an entry's last_used is never one of the object storage's fields (its status and health included).
+    const ls = objectStorage as { area?: string; fields?: Record<string, unknown> } | undefined;
+    if (c.last_used && ls?.area === c.area && Object.values(ls.fields ?? {}).includes(c.last_used)) out.push(`${at}.last_used: ${c.last_used} is one of the object storage's fields: give it a field of its own`);
     const m = c.members_field;
     if (!m) continue;
     for (const o of entries) if (o.c.area === c.area && (o.c.use === m || Object.keys(o.c.where ?? {}).includes(m)))

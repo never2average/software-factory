@@ -187,8 +187,10 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
   const inUseNow = row.data[d.fields.use] === true;
   let result: StorageTestAnswer;
+  const secrets: string[] = [];
   try {
     const settings = await settingsOf(orgId, key, row.data);
+    secrets.push(...[settings.access_key_id, settings.secret_access_key].filter((x): x is string => typeof x === "string" && x.length > 0));
     const { testBucket } = await import("./storage.js");
     const t = await testBucket(settings);
     // mold_v0-322: the flags this area's records are used by, as the pack declares them: its own (the workspace's
@@ -206,12 +208,15 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   // refused before any call, could not be tested (needs its key when one is empty): never blamed on the bucket.
   const asked = result.ok || result.steps.length > 0;
   const keyEmpty = [d.fields.access_key_id, d.fields.secret_access_key].some((f) => row.data[f] === undefined || row.data[f] === null || row.data[f] === "");
-  const { testOutcome } = await import("./connection-test-health.js");
-  const extra = testOutcome(area, row.data, { ok: result.ok, outcome: asked ? (result.ok ? "working" : "unexpected") : "not_ready", words: result.words, keyEmpty: !asked && keyEmpty });
+  const { testOutcome, asTestOf } = await import("./connection-test-health.js");
+  // mold_v0-332: the words kept on the record carry no key in any form (as a connection test's).
+  result.words = (await import("./connection-test.js")).cleanAnswer(result.words, secrets);
+  const keyBroken = !asked && /do not open with this workspace's key/.test(result.words);
+  const extra = testOutcome(area, row.data, { ok: result.ok, outcome: asked ? (result.ok ? "working" : "unexpected") : "not_ready", words: result.words, keyEmpty: !asked && keyEmpty, keyBroken });
   if (Object.keys(extra).length) {
     // The masked record written back: a masked field keeps its stored value (src/encrypted-fields.ts).
     const shown = await getFor(orgId, area.name, key, actor);
-    if (shown) await workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } })
+    if (shown) await asTestOf(area, key, row.data, () => workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } }))
       .catch((e) => console.error(`workspace storage: the test's result was not written to ${area.name} ${key}: ${(e as Error).message}`));
   }
   forgetWorkspaceStorage(orgId);

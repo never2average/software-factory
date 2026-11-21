@@ -214,6 +214,8 @@ export const onRecordChangeInTransaction = (fn: TxListener["fn"], wants: TxListe
 // mold_v0-256: a laid-out area's change history (src/record-history.ts), in the change's own transaction; only for an area
 // whose page has a history section while record_pages is on (else no transaction of its own, as before).
 onRecordChangeInTransaction((c, tx) => writeHistory(findArea(c.area)!, c, tx), (name) => historyKept(findArea(name)));
+// mold_v0-332: an area with a one-only flag saves in a transaction of its own (its check takes the area's turn there).
+onRecordChangeInTransaction(async () => {}, (name) => { const a = findArea(name); return !!a && health.onlyOneOf(a).length > 0; });
 /** Run a single write as a transaction when a transaction listener wants its area (inside a batch: the batch's). */
 const atomic = <T>(orgId: number, area: string, fn: () => Promise<T>): Promise<T> =>
   !txScope.getStore() && txListeners.some((l) => l.wants(area)) ? auditAtomic(() => inTransaction(orgId, fn)) : fn();
@@ -230,6 +232,9 @@ async function changed(c: RecordChange) {
   if (t) { (t.changes ??= []).push(c); return; }
   await tell([c]);
 }
+/** mold_v0-332 (src/connection-test-health.ts): the record store's own queryable (a batch's transaction inside one), and whether one is open. */
+export const recordQuery = () => q();
+export const inRecordBatch = () => !!txScope.getStore();
 async function q(): Promise<Queryable> {
   const t = txScope.getStore();
   if (!t) return getDb();
@@ -1079,7 +1084,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const members = membersFlagWrite(area, consentWriter(actor, meta), prev?.opened ?? null, own.input);
   Object.assign(carried, members.carried);
   // mold_v0-332: a key typed or cleared, or what the test reads changed: the test's status resets, in this same write.
-  const given = health.healthWrite(area, prev?.opened ?? null, members.input, carried);
+  const given = health.healthWrite(area, prev?.opened ?? null, members.input, carried, key);
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
@@ -1140,7 +1145,9 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  const after = { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, w = writerOf(actor, null);
+  // mold_v0-332: a move changing what a connection's test reads resets it; a one-only flag's `where` is checked.
+  const after = health.healthMove(area, prev.opened, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }), w = writerOf(actor, null);
+  await health.checkOnlyOne(orgId, area, key, after, actor, prev.opened);
   const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
   return r;

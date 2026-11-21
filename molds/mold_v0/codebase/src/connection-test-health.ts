@@ -25,6 +25,7 @@
  *                at most once an hour per record (a stamp of the app's own: no history line, the record's updated time
  *                kept)
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { bodyStrings, ConnectionTestSchema, isHttpProbe, outcomeOf, outcomeValue, placeholders, type HealthDecl, type HealthOutcome } from "./connection-test-config.js";
 import { ConnectionEnvSchema } from "./connection-env-config.js";
@@ -118,7 +119,9 @@ const matches = (where: Record<string, unknown>, data: Record<string, unknown>) 
 // ---------------------------------------------------------------- the test's write
 
 /** What a test found, as the health fields take it. */
-export interface TestFinding { ok: boolean; outcome: string; words: string; keyEmpty?: boolean }
+export interface TestFinding { ok: boolean; outcome: string; words: string; keyEmpty?: boolean;
+  /** The record's own key does not open with the workspace's key (not the vault locked): nothing it says is true any more. */
+  keyBroken?: boolean }
 /** The outcome of a test: working, failing (the service answered no or never answered), or could-not-test / needs its key. */
 export const findingOutcome = (r: TestFinding): HealthOutcome => (r.ok ? "working" : r.outcome !== "not_ready" ? "failing" : r.keyEmpty ? "needs_key" : "cannot_test");
 export const RESULT_MAX = 300;
@@ -135,6 +138,9 @@ export function testOutcome(area: AreaLike, stored: Record<string, unknown>, r: 
   let o = findingOutcome(r);
   let value = d.status ? outcomeValue(h.status, o, d.outcomes) : null;
   if (d.status && value === null && o === "needs_key") { o = "cannot_test"; value = outcomeValue(h.status, o, d.outcomes); }
+  // A key that does not open with the workspace's key: the status it had is no longer true. With no could-not-test
+  // option it goes back to untested (or is cleared), the tested day left as it was.
+  if (d.status && value === null && o === "cannot_test" && r.keyBroken) { out[d.status] = outcomeValue(h.status, "untested", d.outcomes); if (d.result) out[d.result] = r.words.slice(0, RESULT_MAX); return out; }
   const written = !d.status || value !== null;
   if (d.status && value !== null) out[d.status] = value;
   if (written && d.tested) out[d.tested] = now.toISOString().slice(0, 10);
@@ -161,17 +167,25 @@ export function testOutcome(area: AreaLike, stored: Record<string, unknown>, r: 
  * else untested) and clears the tested and result fields, whoever writes, in this same write. A new record without a
  * status starts untested. Returns the input to write (`carried` is changed in place).
  */
-export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null, given: unknown, carried: Record<string, unknown>): unknown {
+export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null, given: unknown, carried: Record<string, unknown>, key?: string): unknown {
   const h = healthOf(area);
   if (!h || !isObj(given)) return given;
   const d = h.decl;
   const untested = d.status ? outcomeValue(h.status, "untested", d.outcomes) : null;
-  if (!prev) {
-    if (d.status && untested !== null && blank(given[d.status]) && blank(carried[d.status])) carried[d.status] = untested;
-    return given;
-  }
+  const own = [d.status, d.tested, d.tested_at, d.result, d.failing_since, d.failures].filter((k): k is string => !!k);
   const g = { ...given };
   const has = (k: string) => Object.prototype.hasOwnProperty.call(g, k);
+  // Only the record's own test writes its health (and only about the values it tested): any other write (a run, a
+  // tool, an import, a clock, a repository's index, another page action) keeps what is stored, whatever it says.
+  const test = testScope.getStore();
+  const mine = !!test && test.area === area.name && test.key === key;
+  const keep = () => { for (const k of own) { delete g[k]; if (prev && !blank(prev[k])) carried[k] = prev[k]; else delete carried[k]; } };
+  if (!mine) keep();
+  else if (prev && h.reads.some((f) => !same(test.snapshot[f], prev[f]))) keep(); // changed while it was tested: its result is about other values
+  if (!prev) {
+    if (d.status && untested !== null && blank(g[d.status]) && blank(carried[d.status])) carried[d.status] = untested;
+    return g;
+  }
   let changed = false, emptied = false;
   for (const f of h.reads) {
     if (h.sealed.includes(f)) {
@@ -181,7 +195,7 @@ export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null
       if (!blank(prev[f]) && !kept) { changed = true; emptied = true; }
     } else if (!same(has(f) ? g[f] : carried[f], prev[f])) changed = true;
   }
-  if (!changed) return given;
+  if (!changed) return g;
   for (const k of [d.tested, d.tested_at, d.result, d.failing_since, d.failures]) if (k) { delete g[k]; delete carried[k]; }
   if (d.status) {
     delete g[d.status];
@@ -191,32 +205,106 @@ export function healthWrite(area: AreaLike, prev: Record<string, unknown> | null
   return g;
 }
 
+/** The test in progress: the record it reads, and the values of the fields it reads as it read them. */
+const testScope = new AsyncLocalStorage<{ area: string; key: string; snapshot: Record<string, unknown> }>();
+/**
+ * Run a record's test (src/connection-test.ts, src/workspace-storage.ts): its write-back alone may set the health
+ * fields, and only while the record still holds the values it tested (`stored`, as read before the call: plain values
+ * and sealed envelopes); else the write keeps the stored health (a reset meanwhile stays).
+ */
+export function asTestOf<T>(area: AreaLike, key: string, stored: Record<string, unknown>, fn: () => T): T {
+  const h = healthOf(area);
+  const snapshot = Object.fromEntries((h?.reads ?? []).map((f) => [f, stored[f]]));
+  return testScope.run({ area: area.name, key, snapshot: structuredClone(snapshot) }, fn);
+}
+
+/** Rows an import's preview is about to write (key: its data), so one-only marks are judged across the file. */
+const pendingScope = new AsyncLocalStorage<Map<string, Record<string, unknown>>>();
+export const withPendingRows = <T>(rows: Map<string, Record<string, unknown>>, fn: () => T): T => pendingScope.run(rows, fn);
+
+/**
+ * The workspace's records of `area` with `use` on, as they stand for this write: every row (the shell's read: a row the
+ * writer cannot see counts too; in a batch, as its transaction has them), and an import preview's pending rows over
+ * them. Never limited: every marked row is counted.
+ */
+async function marked(orgId: number, area: AreaLike, use: string): Promise<{ key: string; title: string | null; data: Record<string, unknown> }[]> {
+  const { getDb } = await import("./db.js");
+  const { withTenant, withViewer } = await import("./tenant-scope.js");
+  const ra = await import("./record-areas.js");
+  const parse = (d: Record<string, unknown> | string) => (typeof d === "string" ? JSON.parse(d) : d) as Record<string, unknown>;
+  const sql = "SELECT key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND data -> $4 = 'true'::jsonb";
+  type R = { key: string; title: string | null; data: Record<string, unknown> | string };
+  let found: R[];
+  if (ra.inRecordBatch()) {
+    // On the write's own transaction (it sees what the batch wrote so far), as the shell reads: every record of the
+    // workspace, whoever may see it (app.viewer "*" for this one read, then the writer's again).
+    found = await withTenant(orgId, async () => {
+      const tx = await ra.recordQuery();
+      const [was] = await tx.query<{ v: string | null }>("SELECT current_setting('app.viewer', true) AS v");
+      await tx.query("SELECT set_config('app.viewer', '*', true)");
+      try { return await tx.query<R>(sql, [orgId, area.pack, area.name, use]); }
+      finally { await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]); }
+    });
+  } else found = await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<R>(sql, [orgId, area.pack, area.name, use])));
+  const rows = new Map(found.map((r) => [r.key, { key: r.key, title: r.title, data: parse(r.data) }]));
+  for (const [k, d] of pendingScope.getStore() ?? []) rows.set(k, { key: k, title: rows.get(k)?.title ?? k, data: d });
+  return [...rows.values()].filter((r) => r.data[use] === true);
+}
+
 /**
  * mold_v0-332, in the record store's save checks (src/record-areas.ts onSaveChecks: every write and an import's
  * preview): a record saved with a one-only flag on, which was not on (or not of that `where`) before, is refused
  * while another record of the workspace has it on, naming that record (one the writer may not read: "another record").
  */
-export async function checkOnlyOne(orgId: number, area: AreaLike & { scope?: string }, key: string, data: Record<string, unknown>, actor: { role: unknown; userId: string | null }): Promise<void> {
+export async function checkOnlyOne(orgId: number, area: AreaLike & { scope?: string }, key: string, data: Record<string, unknown>, actor: { role: unknown; userId: string | null }, prev?: Record<string, unknown> | null): Promise<void> {
   const list = area.scope === "workspace" ? onlyOneOf(area) : [];
   if (!list.length) return;
   const mine = list.filter((o) => data[o.use] === true && matches(o.where, data));
   if (!mine.length) return;
-  const { getDb } = await import("./db.js");
-  const { withTenant, withViewer } = await import("./tenant-scope.js");
-  const { getFor } = await import("./record-areas.js");
-  const { auditQuiet } = await import("./audit-trail.js");
-  for (const o of mine) {
-    const rows = await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<{ key: string; title: string | null; data: Record<string, unknown> | string }>(
-      "SELECT key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND data -> $4 = 'true'::jsonb ORDER BY updated_at DESC, key LIMIT 50",
-      [orgId, area.pack, area.name, o.use])));
-    const dataOf = (r: { data: Record<string, unknown> | string }) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>;
-    if (rows.some((r) => r.key === key && matches(o.where, dataOf(r)))) continue; // already on: not this write's doing
-    const other = rows.find((r) => r.key !== key && matches(o.where, dataOf(r)));
-    if (!other) continue;
-    const seen = await auditQuiet(() => getFor(orgId, area.name, other.key, actor as never)).catch(() => null);
-    const name = seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
-    throw new PackError(`${area.label ?? area.name}: ${name} is already marked "${o.label}", and only one may be: turn it off there first`, 409);
+  const ra = await import("./record-areas.js");
+  // Saves of one area in one workspace take their turn (the write runs as a transaction for such an area).
+  if (ra.inRecordBatch()) {
+    const { withTenant } = await import("./tenant-scope.js");
+    await withTenant(orgId, async () => (await ra.recordQuery()).query("SELECT pg_advisory_xact_lock(hashtext($1))", [`only-one/${orgId}/${area.pack}/${area.name}`]));
   }
+  const { auditQuiet } = await import("./audit-trail.js");
+  // The record as it stands before this write (in a batch: as the batch left it so far).
+  let before = prev;
+  if (before === undefined) {
+    const { withTenant } = await import("./tenant-scope.js");
+    const [r] = await withTenant(orgId, async () => (await ra.recordQuery()).query<{ data: Record<string, unknown> | string }>(
+      "SELECT data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4", [orgId, area.pack, area.name, key]));
+    before = r ? ((typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>) : null;
+  }
+  for (const o of mine) {
+    // Already on (and of that `where`) before this write: not this write's doing (two marked before the rule save as they are).
+    if (before && before[o.use] === true && matches(o.where, before)) continue;
+    const rows = await marked(orgId, area, o.use);
+    const other = rows.find((r) => r.key !== key && matches(o.where, r.data));
+    if (!other) continue;
+    const seen = pendingScope.getStore()?.has(other.key) ? { key: other.key, title: other.title } : await auditQuiet(() => ra.getFor(orgId, area.name, other.key, actor as never)).catch(() => null);
+    const name = seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
+    throw new PackError(`${area.label ?? area.name}: ${name} is ${pendingScope.getStore()?.has(other.key) ? "also marked" : "already marked"} "${o.label}", and only one may be: turn it off there first`, 409);
+  }
+}
+
+/** Orders a batch's writes so that those turning a one-only flag on come last (in place): a swap in one file saves. */
+export function onlyOneLast(area: AreaLike, writes: { data: Record<string, unknown> }[]): void {
+  const list = onlyOneOf(area);
+  if (!list.length) return;
+  const on = (w: { data: Record<string, unknown> }) => list.some((o) => w.data[o.use] === true);
+  const sorted = [...writes.filter((w) => !on(w)), ...writes.filter(on)];
+  writes.splice(0, writes.length, ...sorted);
+}
+
+/** A move (src/record-areas.ts moveWorkspaceNow): the lifecycle's field changed alone; its health reset when the test reads it. */
+export function healthMove(area: AreaLike, prev: Record<string, unknown>, after: Record<string, unknown>): Record<string, unknown> {
+  const h = healthOf(area);
+  if (!h || !h.reads.some((f) => !same(prev[f], after[f]))) return after;
+  const d = h.decl, out = { ...after };
+  for (const k of [d.tested, d.tested_at, d.result, d.failing_since, d.failures]) if (k) delete out[k];
+  if (d.status) { const v = outcomeValue(h.status, "untested", d.outcomes); if (v !== null) out[d.status] = v; else delete out[d.status]; }
+  return out;
 }
 
 // ---------------------------------------------------------------- the view (on every read)
@@ -261,17 +349,20 @@ export function healthView(area: AreaLike, data: Record<string, unknown>, now: D
   return view;
 }
 
-/** The keys of the workspace's records with a one-only flag on beside another (of the same `where`). */
+/**
+ * The keys of the workspace's records with a one-only flag on beside another (of the same `where`), as the reader sees
+ * them (the visibility in scope): a reader who cannot see the other marked record is not told it exists.
+ */
 async function duplicates(orgId: number, area: AreaLike): Promise<Set<string>> {
   const out = new Set<string>();
   const list = onlyOneOf(area);
   if (!list.length) return out;
-  const { getDb } = await import("./db.js");
-  const { withTenant, withViewer } = await import("./tenant-scope.js");
+  const ra = await import("./record-areas.js");
+  const { withTenant } = await import("./tenant-scope.js");
   for (const o of list) {
-    const rows = await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<{ key: string; data: Record<string, unknown> | string }>(
-      "SELECT key, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND data -> $4 = 'true'::jsonb LIMIT 200",
-      [orgId, area.pack, area.name, o.use])));
+    const rows = await withTenant(orgId, async () => (await ra.recordQuery()).query<{ key: string; data: Record<string, unknown> | string }>(
+      "SELECT key, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND data -> $4 = 'true'::jsonb",
+      [orgId, area.pack, area.name, o.use]));
     const on = rows.filter((r) => matches(o.where, (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>));
     if (on.length > 1) for (const r of on) out.add(r.key);
   }
@@ -313,7 +404,11 @@ export async function stampLastUsed(orgId: number, areaName: string, key: string
   try {
     const { findArea, isSealedArea } = await import("./record-areas.js");
     const area = findArea(areaName);
-    if (!area || area.scope !== "workspace" || isSealedArea(area) || area.chain === true || !area.fields.some((f) => f.name === field && f.type === "date")) return;
+    if (!area || area.scope !== "workspace" || isSealedArea(area) || area.chain === true || !area.fields.some((f) => f.name === field && f.type === "date" && f.set_by === "action")) return;
+    // Still an entry's declared last_used of this area (a frozen session's field name never writes another field).
+    const declared = packs().some((p) => p.id === area.pack && ((p.definition.agentProfiles ?? []) as { connection_env?: unknown[] }[]).some((prof) => (prof.connection_env ?? []).some((raw) => {
+      const c = ConnectionEnvSchema.safeParse(raw); return c.success && c.data.area === area.name && c.data.last_used === field; })));
+    if (!declared) return;
     const { getDb } = await import("./db.js");
     const { withTenant, withViewer } = await import("./tenant-scope.js");
     await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query(
