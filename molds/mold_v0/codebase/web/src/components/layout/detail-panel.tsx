@@ -281,7 +281,7 @@ export interface RecordPanelProps {
   children: ReactNode;
 }
 
-export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, menu, expanded, onExpandedChange, onClose, closeRef, fill = false, children }: RecordPanelProps) {
+export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, menu: ownMenu, expanded, onExpandedChange, onClose, closeRef, fill = false, children }: RecordPanelProps) {
   const [token] = useState(() => ({}));
   const panelRef = useRef<HTMLElement | null>(null);
   const [resizing, setResizing] = useState(false);
@@ -346,6 +346,8 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
     return () => setClaimed((n) => n - 1);
   }, []);
   const slots: PanelHeaderSlots = { heading: headingEl, menu: menuEl, items, name, claim };
+  // Claimed, the body's one ⋯ carries the panel's items: the panel draws no menu of its own.
+  const menu = claimed > 0 ? null : ownMenu;
 
   const layout = split.layout;
   const full = !!layout?.full, auto = !!layout?.auto;
@@ -387,7 +389,7 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
                 </Button>
               )}
               <span ref={setMenuEl} className='contents' data-slot='detail-panel-menu' />
-              {claimed <= 0 && (menu ?? <PanelMenu items={items} name={name} />)}
+              {menu ?? <PanelMenu items={claimed > 0 ? [] : items} name={name} />}
             </div>
           </div>
           <div className={cn('min-h-0 flex-1 px-4 md:px-6', fill ? 'flex flex-col overflow-hidden pt-5 pb-4' : 'overflow-y-auto overscroll-contain py-5')} data-slot='detail-panel-body'

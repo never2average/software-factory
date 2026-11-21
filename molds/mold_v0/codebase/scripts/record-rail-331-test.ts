@@ -145,7 +145,7 @@ process.stdout.write('\\u0001' + JSON.stringify({
 {
   const panel = src("components/layout/detail-panel.tsx");
   assert.match(panel, /export function usePanelHeaderSlots/);
-  assert.match(panel, /claimed <= 0 && \(menu \?\? <PanelMenu/, "a claimed header drops the panel's own ⋯ (the body's one ⋯ carries its items)");
+  assert.match(panel, /const menu = claimed > 0 \? null : ownMenu;[\s\S]*\{menu \?\? <PanelMenu items=\{claimed > 0 \? \[\] : items\}/, "a claimed header drops the panel's own ⋯ (the body's one ⋯ carries its items)");
   assert.match(panel, /claimed <= 0 && \(\s*<div className='min-w-0 flex-1 max-lg:order-last max-lg:basis-full' data-slot='detail-panel-heading'>/, "and its plain title");
   for (const kept of ["data-testid='detail-panel-expand'", "data-testid='detail-panel-close'", "data-testid='detail-panel-back'", "PanelSplitter"])
     assert.ok(panel.includes(kept), `the panel keeps ${kept}`);
