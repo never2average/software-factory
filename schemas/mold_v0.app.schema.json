@@ -3338,6 +3338,13 @@
               "detail": {
                 "type": "object",
                 "properties": {
+                  "style": {
+                    "type": "string",
+                    "enum": [
+                      "cards",
+                      "rail"
+                    ]
+                  },
                   "header": {
                     "type": "object",
                     "properties": {
@@ -3348,6 +3355,19 @@
                       "subtitle": {
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "status": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "context": {
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        }
                       },
                       "badges": {
                         "maxItems": 3,
@@ -5023,6 +5043,36 @@
                                 "type": "object",
                                 "properties": {},
                                 "additionalProperties": false
+                              },
+                              "steps": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "states": {
+                                    "minItems": 2,
+                                    "maxItems": 12,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 80
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "display": {
+                                "type": "string",
+                                "enum": [
+                                  "rows",
+                                  "numbers"
+                                ]
                               },
                               "when": {
                                 "type": "object",

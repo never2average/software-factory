@@ -1224,7 +1224,16 @@ export const DetailComputedSchema = z.object({
   where: DetailConditionSchema.optional(),
 }).strict();
 /** The kinds of a section (each in place of fields): mold_v0-254's related and runs, mold_v0-256's log, history, code, table and files. */
-export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files", "versions"] as const;
+export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files", "versions", "steps"] as const;
+/**
+ * mold_v0-331: how a section draws its content (optional; the default is the section's usual look):
+ *   rows     a related list as ONE link row: the section's title, one plain line saying what is there ("3 builds",
+ *            "None yet") and a "View →" text link to that list narrowed to this record (no table)
+ *   numbers  a fields section as a few counts: each value in a fixed right-aligned column, its label beside it
+ */
+export const DETAIL_SECTION_DISPLAYS = ["rows", "numbers"] as const;
+/** mold_v0-331: a lifecycle's progress (a single-choice enum field, usually the lifecycle's): its states in order, the record's one marked. */
+export const DetailStepsSchema = z.object({ field: name, states: z.array(z.string().min(1).max(80)).min(2).max(12).optional() }).strict();
 
 /**
  * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
@@ -1253,6 +1262,10 @@ export const DetailSectionSchema = z.object({
   files: DetailFilesSchema.optional(),
   /** mold_v0-292 (flag nested_runs): the program runs that targeted this record, its versions and its current champion. */
   versions: z.object({}).strict().optional(),
+  /** mold_v0-331: a lifecycle's progress as numbered steps (DetailStepsSchema). */
+  steps: DetailStepsSchema.optional(),
+  /** mold_v0-331: how the section draws (DETAIL_SECTION_DISPLAYS): a related list as one link row, fields as numbers. */
+  display: z.enum(DETAIL_SECTION_DISPLAYS).optional(),
   /**
    * mold_v0-262: shown only while this condition holds on the record (the notices' condition language; an Error section
    * only when its build failed), else not drawn at all. Its tab stays.
@@ -1367,9 +1380,21 @@ export type DetailAction = z.output<typeof DetailActionSchema>;
  *            section at the end of the first tab, the fields that have a value) or "hide"
  */
 export const RecordDetailSchema = z.object({
+  /**
+   * mold_v0-331: the page's look. "cards" (the default): the header card, banners and a card per section. "rail": one
+   * header row (the status as a coloured dot and its word, the title, a muted line of context, the primary action as a
+   * text link, every other action in the "⋯"), then the notices as single lines and every fact as label and value in a
+   * left column beside the tabs (stacked when narrow), and the tabs' sections flat: a small title, label and value rows,
+   * short tables in a thin border, link rows, numbers and steps. In a list's record panel and on the record's own page.
+   */
+  style: z.enum(["cards", "rail"]).optional(),
   header: z.object({
     title: name.optional(),
     subtitle: name.optional(),
+    /** mold_v0-331: the record's one status (a single-choice enum field): in the rail style, a dot in its badge colour and its word beside the title, never again as a badge or a fact. */
+    status: name.optional(),
+    /** mold_v0-331: up to 3 fields joined by " · " as the rail header's muted line of context ("Web · Production"). */
+    context: z.array(name).min(1).max(3).optional(),
     badges: z.array(z.object({
       field: name,
       colors: z.record(z.string(), z.enum(BADGE_COLORS, { error: (i) => `${String(i.input)} is not a badge colour: one of the theme's tokens ${BADGE_COLORS.join(", ")}` })).optional(),
@@ -1434,6 +1459,15 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
   const h = d.header;
   if (h?.title) shown(h.title, "the title", "header", "title");
   if (h?.subtitle) shown(h.subtitle, "the subtitle", "header", "subtitle");
+  if (h?.status) {
+    const f = shown(h.status, "the status", "header", "status");
+    if (f && (f.type !== "enum" || f.multiple)) bad(`${h.status} is not a single-choice enum field: the status shows one of its options`, "header", "status");
+  }
+  for (const [i, n] of (h?.context ?? []).entries()) {
+    const f = shown(n, "the context line", "header", "context", i);
+    if (f?.type === "json") bad(`${n} is a json field: the context line shows short values`, "header", "context", i);
+    if ((h?.context ?? []).indexOf(n) !== i) bad(`${n} is in the context line twice`, "header", "context", i);
+  }
   for (const [i, b] of (h?.badges ?? []).entries()) {
     const f = shown(b.field, "a badge", "header", "badges", i, "field");
     if (f && (f.type !== "enum" || f.multiple)) bad(`${b.field} is not a single-choice enum field: a badge shows one of its options`, "header", "badges", i, "field");
@@ -1480,7 +1514,7 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
         if (kinds.length > 1) bad(kinds.length === 2 && kinds.includes("related") && kinds.includes("runs") ? `section ${s.title} is a related list or the record's runs, not both`
           : `section ${s.title} is one kind of section: ${kinds.join(" or ")}, not ${kinds.length === 2 ? "both" : "several"}`, "tabs", ti, "sections", si);
         const what: Record<(typeof DETAIL_SECTION_KINDS)[number], string> = { related: "lists related records", runs: "lists runs", log: "shows a log", history: "lists the record's changes",
-          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files", versions: "lists the record's runs and versions" };
+          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files", versions: "lists the record's runs and versions", steps: "shows a lifecycle's steps" };
         for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} ${what[kinds[0]!]}: it has no ${k}`, "tabs", ti, "sections", si, k);
         const at = (...p: (string | number)[]) => ["tabs", ti, "sections", si, ...p];
         const valueOf = (n: string, kind: string, types: readonly string[], ...p: (string | number)[]) => {
@@ -1498,6 +1532,13 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
           if (f?.multiple) bad(`${s.code.field} is a list of values: a code view shows one`, ...at("code", "field"));
         }
         if (s.table) valueOf(s.table.field, "a table view", ["json"], "table", "field");
+        if (s.steps) {
+          const f = valueOf(s.steps.field, "a steps section", ["enum"], "steps", "field");
+          if (f?.multiple) bad(`${s.steps.field} holds several options: a steps section follows one state`, ...at("steps", "field"));
+          else if (f) for (const [k, v] of (s.steps.states ?? []).entries()) if (!optionValues(f).includes(v)) bad(`${v} is not one of ${f.name}'s options`, ...at("steps", "states", k));
+        }
+        if (s.display === "numbers") bad(`section ${s.title} ${what[kinds[0]!]}: display numbers is for a section of fields`, ...at("display"));
+        if (s.display === "rows" && !s.related) bad(`section ${s.title} ${what[kinds[0]!]}: display rows is for a related list`, ...at("display"));
         if (s.history) for (const [k, n] of (s.history.fields ?? []).entries()) known(n, ...at("history", "fields", k));
         if (s.files) {
           const docs = a.fields.filter((f) => f.type === "file" || f.preview === "document").map((f) => f.name);
@@ -1508,6 +1549,7 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
         continue;
       }
       if (s.fields && s.groups) bad(`section ${s.title} gives fields or groups, not both`, "tabs", ti, "sections", si);
+      if (s.display === "rows") bad(`section ${s.title} lists fields: display rows is for a related list`, "tabs", ti, "sections", si, "display");
       const lists = s.groups ? s.groups.map((g, gi) => ({ names: g.fields, path: ["groups", gi, "fields"] as (string | number)[] })) : [{ names: s.fields ?? [], path: ["fields"] as (string | number)[] }];
       if (!lists.some((l) => l.names.length)) bad(`section ${s.title} lists no fields`, "tabs", ti, "sections", si);
       for (const [gi, g] of (s.groups ?? []).entries()) if (!g.fields.length) bad(`a group of section ${s.title} lists no fields`, "tabs", ti, "sections", si, "groups", gi, "fields");

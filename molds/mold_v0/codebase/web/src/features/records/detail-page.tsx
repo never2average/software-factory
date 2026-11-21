@@ -24,7 +24,7 @@ import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
 import { RunLinkText } from './run-link';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -40,17 +40,19 @@ import { formatValue } from '@/features/tabs/charts';
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
-import { useInRecordPanel } from '@/components/layout/detail-panel';
+import { useInRecordPanel, usePanelHeaderSlots } from '@/components/layout/detail-panel';
+import { createPortal } from 'react-dom';
+import { CopyLink, LinkRow, NoticeLine, RailEmpty, RailFields, RailHeading, RailNumbers, RailSection, RailSteps, TextLink, type RailRow } from './record-kit';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
   addedByWords, BADGE_CLASS, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
-  shownNotices, tabId, unplacedFields,
+  shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
   type RelatedData, type RunsData
 } from './detail-layout';
-import { RowActions, usePageActionsBar, type ActionHost } from './page-actions';
+import { RowActions, usePageActionsBar, type ActionHost, type RailActions } from './page-actions';
 import { CodeView, JsonTable } from './code-view';
 import { languageOf } from './code-text';
 import { FileBrowser } from './file-browser';
@@ -189,10 +191,50 @@ function useRepeatsTab(title: string) {
   return tab != null && tab.trim().toLowerCase() === title.trim().toLowerCase();
 }
 
+/** mold_v0-331: the page draws in the rail style (flat sections, label and value rows, thin-bordered tables). */
+const RailStyle = createContext(false);
+const useRail = () => useContext(RailStyle);
+
 /** A section: a full-width card, its groups of fields in its columns, or its empty state. */
 function SectionCard({ s, area, base, layout, record, id, labels = 'auto' }: { s: DetailSection; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; id: string; labels?: 'auto' | 'always' }) {
   const empty = sectionEmpty(s, record.data);
   const repeatsTab = useRepeatsTab(s.title);
+  const rail = useRail();
+  const value = (n: string) => {
+    const f = area.fields.find((x) => x.name === n);
+    return f ? <LaidOutValue area={area} base={base} layout={layout} f={f} v={record.data[n]} recordKey={record.key} unit={layout.header?.facts?.find((x) => x.field === n)?.unit} titles={record.ref_titles?.[n]} /> : null;
+  };
+  // mold_v0-331: a section of counts (display numbers): the values right-aligned in a column, each label beside it.
+  const numbers = s.display === 'numbers' && !empty
+    ? <RailNumbers items={sectionGroups(s).flatMap((g) => g.fields).flatMap((n) => { const f = area.fields.find((x) => x.name === n); return f ? [{ key: n, label: f.label, value: value(n) }] : []; })} />
+    : null;
+  if (rail) return (
+    <RailSection id={id} title={s.title} titleHidden={repeatsTab}>
+      {empty ? <RailEmpty>{s.empty ?? 'Nothing here yet.'}</RailEmpty> : numbers ?? (
+        <div className='grid gap-4'>
+          {sectionGroups(s).map((g, gi) => (
+            <div key={gi} className='grid gap-[7px]'>
+              {g.title && <h4 className='text-muted-foreground m-0 text-xs font-medium'>{g.title}</h4>}
+              <RailFields rows={g.fields.map((n): RailRow => {
+                const f = area.fields.find((x) => x.name === n);
+                if (!f) return null;
+                const c = copyOf(f, record.data[n]);
+                return { key: n, label: f.label, value: value(n), labelHidden: labels === 'auto' && !fieldLabelShown(s, f.label),
+                  wide: f.type === 'json' || (f.type === 'text' && typeof record.data[n] === 'string' && (record.data[n] as string).length > 120),
+                  copy: c ? <CopyLink what={c.what} onCopy={() => copyWithToast(c.text, `${c.what} copied`)} /> : undefined };
+              })} />
+            </div>
+          ))}
+        </div>
+      )}
+    </RailSection>
+  );
+  if (numbers) return (
+    <Card className='w-full gap-0 py-0' data-detail-section={id} aria-labelledby={`${id}-title`} role='region'>
+      <CardHeader className={repeatsTab ? 'sr-only' : 'border-b py-3.5 [.border-b]:pb-3.5'}><CardTitle id={`${id}-title`} className='text-sm font-semibold'>{s.title}</CardTitle></CardHeader>
+      <CardContent className='py-4'>{numbers}</CardContent>
+    </Card>
+  );
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} aria-labelledby={`${id}-title`} role='region'>
       <CardHeader className={repeatsTab ? 'sr-only' : 'border-b py-3.5 [.border-b]:pb-3.5'} data-title-repeats-tab={repeatsTab ? '' : undefined}>
@@ -248,6 +290,8 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
   // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
   if (s.versions) return featureOn('nested_runs') ? <TargetVersions target={record.key} title={s.title} empty={s.empty} /> : null;
+  // mold_v0-331: a lifecycle's progress as numbered steps.
+  if (s.steps) return <StepsSection s={s} id={id} area={area} layout={layout} record={record} />;
   // mold_v0-256: a log, the change history, a code view, a table, a file browser.
   const copy = (t: string, done: string) => void copyWithToast(t, done);
   const fieldLabel = (n: string) => area.fields.find((f) => f.name === n)?.label ?? n;
@@ -299,6 +343,12 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
  */
 function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' }) {
   const repeatsTab = useRepeatsTab(title);
+  // mold_v0-331: the rail style: the small title (its link at the right), the content in a thin border (none round an empty line).
+  if (useRail()) return (
+    <RailSection id={id} title={title} titleHidden={repeatsTab} action={link} data-section-kind={kind}>
+      <div className='min-w-0 overflow-hidden rounded-lg border has-[>[data-section-empty]]:rounded-none has-[>[data-section-empty]]:border-0' data-rail-box=''>{children}</div>
+    </RailSection>
+  );
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} data-section-kind={kind} aria-labelledby={`${id}-title`} role='region'>
       <CardHeader className={repeatsTab && !link ? 'sr-only' : cn('flex flex-row flex-wrap items-center gap-x-4 gap-y-2 border-b py-3 [.border-b]:pb-3', repeatsTab ? 'justify-end' : 'justify-between')}
@@ -311,7 +361,7 @@ function ListCard({ id, title, link, children, kind }: { id: string; title: stri
   );
 }
 /** A list section's empty state, as a fields section's. */
-const ListEmpty = ({ text }: { text: string }) => (
+const ListEmpty = ({ text }: { text: string }) => useRail() ? <RailEmpty>{text}</RailEmpty> : (
   <div className='flex items-center gap-3 px-6 py-5' data-section-empty=''>
     <Icons.inbox aria-hidden className='text-muted-foreground size-5 shrink-0' />
     <p className='text-muted-foreground text-sm'>{text}</p>
@@ -322,8 +372,11 @@ const ListLoading = () => (
     {[0, 1, 2].map((i) => <div key={i} className='bg-muted h-5 animate-pulse rounded' style={{ width: `${80 - i * 15}%` }} />)}
   </div>
 );
-const TH = 'text-muted-foreground h-9 px-3 text-left align-middle text-xs font-medium whitespace-nowrap first:pl-6 last:pr-6';
-const TD = 'px-3 py-2.5 align-middle first:pl-6 last:pr-6';
+const TH_CARD = 'text-muted-foreground h-9 px-3 text-left align-middle text-xs font-medium whitespace-nowrap first:pl-6 last:pr-6';
+const TD_CARD = 'px-3 py-2.5 align-middle first:pl-6 last:pr-6';
+// mold_v0-331: the rail style's short table: a muted header row, 13px rows, hairlines.
+const TH_RAIL = 'bg-muted h-8 px-[9px] text-left align-middle text-[13px] font-semibold whitespace-nowrap first:pl-3 last:pr-3';
+const TD_RAIL = 'px-[9px] py-1.5 align-middle text-[13px] first:pl-3 last:pr-3';
 
 /** A cell of a related list: as the area's list shows it (an enum its layout colours as a badge). */
 function RelatedCell({ target, f, v, recordKey, titles, base = 'app' }: { target: RecordAreaSpec; f: RecordFieldSpec; v: unknown; recordKey: string; titles?: Record<string, string>; base?: 'app' | 'admin' }) {
@@ -354,6 +407,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
   s: DetailSection; id: string; base: 'app' | 'admin'; record: RecordRow; page: PageLoad; data: RelatedData | undefined; changed: () => void;
 }) {
   const target = findRecordArea(base, s.related!.area);
+  const rail = useRail();
   // Hidden from this role (it may not read that area), or nothing for it in the page's answer: no card at all.
   if (!target || data?.hidden || (page.data && !data)) return null;
   // mold_v0-256: each column its field and its own heading, when it has one.
@@ -364,9 +418,17 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
   const all = data && !data.hidden && data.match !== null ? showAllHref(base, target.name, data.via, data.match ?? record.key) : null;
   const hostOf = (r: (typeof rows)[number]): ActionHost => ({ area: target.name, areaLabel: target.label, base, record: { key: r.key, title: r.title, data: r.data, updated_at: r.updated_at },
     copy: (t, done) => void copyWithToast(t, done), changed, deleted: changed });
+  // mold_v0-331: display rows: one link row (what is there, in words, and View → the list narrowed to this record).
+  if (s.display === 'rows') {
+    const words = page.error && !data ? 'Could not load' : !data ? 'Loading…' : relatedRowWords(rows.length, more, target.label);
+    const row = <LinkRow id={id} title={s.title} detail={words} action='View' href={all} data-section-kind='related' data-related-count={data ? String(rows.length) : undefined} />;
+    return rail ? row : <div className='bg-card w-full rounded-xl border px-4 py-1.5' data-related-card=''>{row}</div>;
+  }
+  const TH = rail ? TH_RAIL : TH_CARD, TD = rail ? TD_RAIL : TD_CARD;
   return (
     <ListCard id={id} kind='related' title={s.title}
-      link={all && more ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={all} />} data-show-all=''>Show all<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
+      link={all && more ? (rail ? <TextLink label='Show all →' href={all} data-show-all='' />
+        : <Button variant='outline' size='sm' nativeButton={false} render={<Link href={all} />} data-show-all=''>Show all<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button>) : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
         : !rows.length ? <ListEmpty text={s.empty ?? `No ${target.label.toLowerCase()} point to this record yet.`} />
@@ -425,6 +487,7 @@ const runHref = (_pack: string, id: string) => `/app/runs/${encodeURIComponent(i
 
 /** The record's runs (mold_v0-254): newest first, at most its limit, each with its state, timing, cost and who started it. */
 function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: RunsData | undefined }) {
+  const rail = useRail();
   const runs = data?.runs ?? [];
   // mold_v0-310 (`wrote`): the runs and agent sessions that made or changed it.
   const wrote = data?.wrote ?? [];
@@ -439,9 +502,11 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
     return h ? <Link href={h} className='font-medium underline-offset-4 hover:underline' data-run-link={r.id}>{label}</Link> : <span className='font-medium'>{label}</span>; };
   const started = (r: (typeof runs)[number]) => (r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} /> : <span className='text-muted-foreground'>—</span>);
   const took = (r: (typeof runs)[number]) => duration(runSeconds(r)) || '—';
+  const TH = rail ? TH_RAIL : TH_CARD, TD = rail ? TD_RAIL : TD_CARD;
   return (
     <ListCard id={id} kind='runs' title={s.title}
-      link={tab && data && data.total > runs.length ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
+      link={tab && data && data.total > runs.length ? (rail ? <TextLink label='All runs →' href={tab.url} data-all-runs='' />
+        : <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button>) : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
         : !runs.length && !sessions.length && !wrote.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
@@ -529,6 +594,32 @@ function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions'
 }
 const SESSION_PHASE: Record<string, string> = { starting: 'Starting', working: 'Working', waiting: 'Waiting for you', parked: 'Parked', waking: 'Waking up', paused: 'Paused', awaiting_approval: 'Needs a decision', stopped: 'Stopped', failed: 'Failed', archived: 'Archived' };
 
+/**
+ * mold_v0-331: a lifecycle's progress: its states in order (the declared ones, else the field's options), done up to the
+ * record's state, which is marked; a state off that path (a failure) is said on a line of its own under them.
+ */
+function StepsSection({ s, id, area, layout, record }: { s: DetailSection; id: string; area: RecordAreaSpec; layout: DetailLayout; record: RecordRow }) {
+  const rail = useRail();
+  const repeatsTab = useRepeatsTab(s.title);
+  const f = area.fields.find((x) => x.name === s.steps!.field);
+  if (!f) return null;
+  const states = s.steps!.states ?? (f.options ?? []).map((o) => (typeof o === 'string' ? o : o.value));
+  const { steps, off } = stepRows(states, record.data[f.name]);
+  const body = (
+    <div className='grid gap-2'>
+      <RailSteps label={s.title} steps={steps.map((x) => ({ key: x.value, label: optionWords(f, x.value), state: x.state }))} />
+      {off && <p className='text-muted-foreground m-0 text-[13px]' data-steps-off={off}>Now: <ToneBadge color={badgeColor(layout, f.name, off)}>{optionWords(f, off)}</ToneBadge></p>}
+    </div>
+  );
+  if (rail) return <RailSection id={id} title={s.title} titleHidden={repeatsTab} data-section-kind='steps'>{body}</RailSection>;
+  return (
+    <Card className='w-full gap-0 py-0' data-detail-section={id} data-section-kind='steps' aria-labelledby={`${id}-title`} role='region'>
+      <CardHeader className={repeatsTab ? 'sr-only' : 'border-b py-3.5 [.border-b]:pb-3.5'}><CardTitle id={`${id}-title`} className='text-sm font-semibold'>{s.title}</CardTitle></CardHeader>
+      <CardContent className='py-4'>{body}</CardContent>
+    </Card>
+  );
+}
+
 const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', success: 'circleCheck', warning: 'warning', danger: 'alertCircle' };
 /**
  * A fact computed from related records (mold_v0-256), as the server answered it for this person: a count (linked to that
@@ -603,7 +694,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   const changed = () => { void page.reload(); onChanged?.(); };
   const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed, canShare };
   const withActions = base === 'app' && declaresActions(layout);
-  const { bar, card, panel } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
+  const { bar, card, panel, rail } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
   // mold_v0-256: a log section that is live (its live_when holds) reads the record again every few seconds.
   const live = tab.sections.some((s) => logLive(s, record.data, record.clocks));
   useEffect(() => {
@@ -616,17 +707,19 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   return (
     <FormHost card={withActions && card ? <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div> : null} panel={panel}>
       <LaidOutBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} provenance={provenance} where={where}
-        credentials={credentials} tabs={tabs} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} headerActions={headerActions} />
+        credentials={credentials} tabs={tabs} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} rail={rail} setAsked={setAsked} canShare={canShare} headerActions={headerActions} />
     </FormHost>
   );
 }
 
 /** The laid-out page itself: the header, the notices, the tabs and their sections. */
-function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tabs, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare, headerActions }: {
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tabs, tab, ti, first, page, changed, withActions, bar: actionsBar, rail, setAsked, canShare, headerActions }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode; /** mold_v0-298: the tabs shown for this record */ tabs: DetailLayout['tabs']; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
   page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
   headerActions?: ReactNode;
+  /** mold_v0-331: the rail style's header actions (the main one as a text link, one ⋯). */
+  rail: RailActions;
 }) {
   // mold_v0-259 (flag teams): who sees it, in the header, with Share for the people who may change it.
   const visibility = base === 'app' && (visibilityOf(area) || inheritedVisibility(area)) ? record.visibility ?? null : null;
@@ -654,6 +747,12 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   const sectionId = (i: number) => `detail-${tabId(tab.label)}-${i}`;
   // mold_v0-289: in a list's side panel the title is the panel's own (not repeated here) and the actions take their own row.
   const inRecordPanel = useInRecordPanel();
+
+  if (isRail(layout)) return (
+    <RailBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} where={where} credentials={credentials}
+      tabs={tabs} tab={tab} ti={ti} first={first} page={page} changed={changed} rail={rail} setAsked={setAsked} share={share} headerActions={headerActions}
+      title={title} subtitle={subtitle} facts={facts} notices={notices} added={added} made={made} lastRun={lastRun} rest={rest} visibility={visibility} />
+  );
 
   return (
     <div className='flex w-full flex-col gap-4 md:gap-6' data-record-layout=''>
@@ -748,6 +847,101 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   );
 }
 
+type FactRow = NonNullable<DetailLayout['header']>['facts'] extends (infer F)[] | undefined ? F & { i: number; f: RecordFieldSpec | undefined } : never;
+
+/**
+ * mold_v0-331: the rail style. One header row (the status dot, the title, "status · context", the main action as a text
+ * link, one ⋯), in a record panel the panel's own header row; then the notices as single lines and every fact as label
+ * and value in a left column (290px) beside the tabs, stacked when the space is under 44rem (a panel beside its list, a
+ * phone); the open tab's sections flat. A status appears once (in the header) and the ID once (as a field, with Copy).
+ */
+function RailBody({ area, base, layout, record, links, clockEvents, where, credentials, tabs, tab, ti, first, page, changed, rail, setAsked, share, headerActions,
+  title, subtitle, facts, notices, added, made, lastRun, rest, visibility }: {
+  area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[]; where: string; credentials: ReactNode;
+  tabs: DetailLayout['tabs']; tab: DetailLayout['tabs'][number]; ti: number; first: boolean; page: PageLoad & { data: PageData | null }; changed: () => void;
+  rail: RailActions; setAsked: (v: string | null) => unknown; share: ReactNode; headerActions?: ReactNode;
+  title: string; subtitle: RecordFieldSpec | undefined; facts: FactRow[]; notices: ReturnType<typeof shownNotices>; added: string | null;
+  made: NonNullable<PageData['writers']>['made'] | null; lastRun: NonNullable<PageData['writers']>['changed'][number] | null; rest: RecordFieldSpec[];
+  visibility: RecordRow['visibility'] | null;
+}) {
+  const h = layout.header ?? {};
+  const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
+  const statusField = field(h.status);
+  const sv = statusField ? record.data[statusField.name] : undefined;
+  const status = statusField && !isEmptyValue(sv) ? optionWords(statusField, sv) : null;
+  const tone = statusField && !isEmptyValue(sv) ? dotTone(badgeColor(layout, statusField.name, sv)) : null;
+  const context = headerContext(status, (h.context ?? []).map((n) => { const f = field(n), v = f ? record.data[n] : undefined;
+    return f && !isEmptyValue(v) ? (refTarget(area, f) && record.ref_titles?.[n] ? refWords(v, record.ref_titles[n]) : fieldText(f, v, record.key)) : null; }));
+  const slots = usePanelHeaderSlots();
+  const claim = slots?.claim;
+  useLayoutEffect(() => claim?.(true), [claim]);
+  const name = title || record.key;
+  const trailing = <>{rail.main}{share}{headerActions}</>;
+  const heading = <RailHeading title={title} tone={tone} status={status} context={context} trailing={slots ? trailing : null} level={slots ? 'h2' : 'h1'} />;
+  const menu = rail.menu(slots?.items ?? [], name);
+  const updated = dateWords(record.updated_at);
+  const copyId = () => copyWithToast(record.key, 'Record ID copied');
+  const said = railHeaderFields(layout);
+  const rows: RailRow[] = [
+    ...railBadges(layout).map((b): RailRow => { const f = field(b.field), v = record.data[b.field];
+      return f && !isEmptyValue(v) ? { key: `badge-${b.field}`, label: f.label, value: <ToneBadge color={badgeColor(layout, b.field, v)}>{optionWords(f, v)}</ToneBadge>, attrs: { 'data-record-badge': b.field } } : null; }),
+    ...facts.filter((x) => x.computed || !said.has(x.field!)).map((x): RailRow => x.computed
+      ? { key: `computed-${x.i}`, label: x.label ?? '', value: <span data-computed-fact={x.i}><ComputedValue fact={x} answer={page.data?.facts?.[String(x.i)]} loading={!page.data && !page.error} base={base} recordKey={record.key} /></span> }
+      : { key: `fact-${x.field}`, label: x.label ?? x.f!.label, value: <LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} fact unit={x.unit} titles={record.ref_titles?.[x.field!]} linkText={x.link_text} />,
+          copy: (() => { const c = copyOf(x.f!, record.data[x.field!]); return c ? <CopyLink what={c.what} onCopy={() => copyWithToast(c.text, `${c.what} copied`)} /> : undefined; })() }),
+    visibility && visibility.mode !== 'workspace' && { key: 'visibility', label: 'Who sees it', value: <VisibilityBadge v={visibility} /> },
+    { key: 'id', label: 'ID', value: <code className='font-mono text-xs break-all'>{record.key}</code>, copy: <CopyLink what='ID' onCopy={copyId} />, attrs: { 'data-record-id': '' } },
+    !!record.version && { key: 'version', label: 'Version', value: record.version },
+    !!updated && { key: 'updated', label: 'Updated', value: <DateText v={record.updated_at} /> },
+    !!added && { key: 'added', label: 'Added by', value: added, attrs: { 'data-record-creator': '' } },
+    !!made && { key: 'made', label: 'Made by', value: <RunLinkText link={made!} />, attrs: { 'data-record-made-by': '' } },
+    !!lastRun && { key: 'changed', label: 'Changed by', value: <RunLinkText link={lastRun!} />, attrs: { 'data-record-changed-by': '' } },
+  ];
+  const sectionId = (i: number) => `detail-${tabId(tab.label)}-${i}`;
+  const sections = (
+    <div className='flex min-w-0 flex-col gap-6 [&>[data-link-row]+[data-link-row]]:-mt-6 [&>[data-link-row]+[data-link-row]]:border-t' data-rail-sections=''>
+      <SoleSectionTab.Provider value={tab.sections.length === 1 && !first ? tab.label : null}>
+        {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+      </SoleSectionTab.Provider>
+      {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
+    </div>
+  );
+  return (
+    <RailStyle.Provider value>
+      {slots?.heading && createPortal(heading, slots.heading)}
+      {slots?.menu && createPortal(menu, slots.menu)}
+      <div className='@container w-full' data-record-layout='' data-style='rail'>
+        {!slots && (
+          <div className='mb-4 flex min-w-0 items-center gap-2 border-b pb-3' data-record-header=''>
+            <div className='min-w-0 flex-1'>{heading}</div>
+            <span className='flex shrink-0 items-center gap-2'>{trailing}</span>
+            {menu}
+          </div>
+        )}
+        {rail.dialog}
+        <div className='flex flex-col @min-[44rem]:grid @min-[44rem]:grid-cols-[290px_minmax(0,1fr)]' data-rail-columns=''>
+          <div className='grid min-w-0 content-start gap-3 border-b pb-4 @min-[44rem]:border-r @min-[44rem]:border-b-0 @min-[44rem]:pr-5 @min-[44rem]:pb-0' data-rail='' data-record-facts=''>
+            {!slots && where && <p className='text-muted-foreground m-0 text-xs'>{area.label} · {where}</p>}
+            {notices.map((n, i) => <NoticeLine key={i} tone={n.tone} title={n.title} text={n.text} />)}
+            {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
+              <p className='m-0 text-sm leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
+            )}
+            <RailFields rows={rows} />
+          </div>
+          <div className='min-w-0 pt-3 @min-[44rem]:pt-0 @min-[44rem]:pl-5' data-rail-main=''>
+            {tabs.length > 1 ? (
+              <Tabs value={tabId(tab.label)} onValueChange={(v) => void setAsked(v === tabId(tabs[0]!.label) ? null : String(v))} className='w-full gap-4'>
+                <RecordTabStrip tabs={tabs} open={tabId(tab.label)} />
+                <TabsContent value={tabId(tab.label)}>{sections}</TabsContent>
+              </Tabs>
+            ) : sections}
+          </div>
+        </div>
+      </div>
+    </RailStyle.Provider>
+  );
+}
+
 /**
  * The record page's tab strip (mold_v0-300): always one row. When its tabs are wider than the page (a phone with seven
  * tabs) it scrolls sideways, the open tab scrolled into view, and the edge with more tabs past it fades out as a cue.
@@ -800,6 +994,32 @@ function FirstTabRest({ area, base, layout, record, rest, links, clockEvents, cr
   // mold_v0-262: none with linked: false; else only the links the page does not show already (as a fact or a section's field).
   const listed = new Set(linkedShown(layout, links.map((l) => l.field)));
   const linked = links.filter((l) => l.records.length && listed.has(l.field));
+  // mold_v0-331: the rail style: Other details as label and value rows, the linked records as link rows.
+  if (useRail()) return (
+    <>
+      {!!rest.length && (
+        <SectionCard s={{ title: 'Other details', fields: rest.map((f) => f.name), columns: 2 }} id='detail-other' area={area} base={base} layout={layout} record={record} labels='always' />
+      )}
+      <div className='flex flex-col gap-6 [&:not(:has(section))]:hidden' data-record-extras=''>
+        {!layout.tabs.some((t) => t.sections.some((x) => x.files)) && <RecordDocuments area={area} base={base} recordKey={record.key} count={false} />}
+        <ClockSection record={record} events={clockEvents} />
+      </div>
+      {!!linked.length && (
+        <RailSection id='detail-linked' title='Linked records' data-record-links=''>
+          <div className='grid [&>*+*]:border-t'>
+            {linked.flatMap((l) => {
+              const target = findRecordArea(base, l.area);
+              return l.records.map((r) => (
+                <LinkRow key={`${l.field}-${r.key}`} id={`linked-${l.field}-${r.key}`} title={r.title || r.key} detail={`${areaFieldLabel(area, l.field)} · ${target?.label ?? l.area}`}
+                  action='Open' href={`/${base}/records/${l.area}/${encodeURIComponent(r.key)}`} />
+              ));
+            })}
+          </div>
+        </RailSection>
+      )}
+      {credentials}
+    </>
+  );
   return (
     <>
       {!!rest.length && (

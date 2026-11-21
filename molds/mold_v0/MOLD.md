@@ -3672,6 +3672,42 @@ Generic display rules and pack options, all optional (a pack that names none rea
 
 Proof: `npm run test:record-display`.
 
+## Record details in the rail style (mold_v0-331)
+
+One look for a record's details, ported from a detail panel the operator already uses and likes: flat, one header row,
+the facts beside the tabs. All keys optional; a layout that names none draws exactly as before (the cards).
+
+- **Declared** (`src/pack-api.ts` `RecordDetailSchema`, `DetailSectionSchema`, `DetailStepsSchema`; the pack schema and the
+  app spec's copy regenerated): a layout's `style` (`"cards"`, the default, or `"rail"`); the header's `status` (one
+  single-choice enum field: the record's state) and `context` (up to 3 fields joined by " · "); a section's `display`
+  (`"rows"`: a related list as one link row; `"numbers"`: a fields section as counts) and a new section kind `steps`
+  (`{field, states?}`: a lifecycle's progress, the states in order, default the field's options).
+- **Refused at build** (`detailProblems`): a status that is not a single-choice enum, a context field the area lacks, a
+  json one or one named twice, more than 3; `display: "rows"` on anything but a related list, `"numbers"` on anything but
+  fields; a steps field that is not a single-choice enum, a state it does not have, steps with fields.
+- **Drawn** (`web/src/features/records/detail-page.tsx` `RailBody`, the blocks in `record-kit.tsx`, pure in
+  `detail-layout.ts`): one header row: a dot in the status value's badge colour, the title, the muted "status ·
+  context" line (it truncates first), the primary action as a text link with its icon, and ONE borderless ⋯ with every
+  other action, Copy ID and Copy link, then the panel's own items (Open in its own page, the row's items), deletes last
+  (`page-actions.tsx` `RailMenu`). In a list's record panel that row IS the panel's header row: the body claims the
+  panel's title and ⋯ slots (`detail-panel.tsx` `usePanelHeaderSlots`); Expand / Collapse, the round ✕, Back to list,
+  Esc, the splitter, `?id=` and the phone layer are the panel's as before. Then two columns from 44rem of space (the
+  panel expanded, a record's own page), stacked below it (a panel beside its list, a phone): on the left (290px) the
+  notices as single lines (▲ for a warning or a problem, no box), the subtitle as reading text and every fact as label
+  and value rows (one 130px label width): the badges other than the status, the facts other than the status and
+  context (a value appears once), who sees it, the **ID once, with Copy**, the version, updated, added, made and changed
+  by; on the right the underline tabs and the open tab's sections flat: a 13.5px title (hidden for a screen reader
+  when it repeats its tab), label and value rows (a long text or a list under its label; a copyable field with a Copy
+  text link), group titles as small headings, related lists, runs, tables, logs, code, history and files inside one thin
+  border with a muted header row (an empty one is a single muted line, no box), Show all / All runs as text links, link
+  rows ("Builds  3 builds  View →", hairlines between neighbours), numbers (the value right-aligned, its label beside it)
+  and steps (numbered circles, a thin connector, done ones checked, the current one in the brand colour; a state off the
+  path said apart). The first tab's Other details are rows, its linked records link rows.
+
+Proof: `npm run test:record-rail` (also the last step of `npm run test:record-pages`): the keys and 11 refusals with
+their paths, the pure decisions, the blocks rendered from the console's own bundle, and the wiring (the panel keeps
+Expand, ✕, Back and the splitter). A pack that names none of the keys builds and draws as before.
+
 ## Record pages, part 2: related lists, runs, actions (mold_v0-254)
 
 Under the same flag (`record_pages`, off by default; off, `/api/records/_page` answers nothing and the generated files

@@ -58,6 +58,18 @@ export function closeRecordPanel() {
 }
 
 const InPanel = createContext(false);
+
+/**
+ * mold_v0-331: the panel header's slots. A body drawn in the rail style claims them: its own heading row (a status dot,
+ * the title, a muted line of context, the main action as a text link) takes the title's place, and its one "⋯" menu
+ * (the record's actions, then the panel's own items, `items`) takes the panel's. Unclaimed, the header is as before.
+ */
+export interface PanelHeaderSlots { heading: HTMLElement | null; menu: HTMLElement | null; items: readonly RowAction[]; name: string; claim: (on: boolean) => () => void }
+const HeaderSlots = createContext<PanelHeaderSlots | null>(null);
+/** The open record panel's header slots, or null outside a panel. */
+export function usePanelHeaderSlots(): PanelHeaderSlots | null {
+  return useContext(HeaderSlots);
+}
 /** Whether this renders inside a record panel's body (a form there opens in place, never in a second panel). */
 export function useInRecordPanel(): boolean {
   return useContext(InPanel);
@@ -324,6 +336,17 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
     return () => document.removeEventListener('keydown', onKey);
   }, [hostRef, close]);
 
+  // mold_v0-331: a rail body's claim on the header's title and menu (counted: a claim per mounted heading).
+  const [headingEl, setHeadingEl] = useState<HTMLElement | null>(null);
+  const [menuEl, setMenuEl] = useState<HTMLElement | null>(null);
+  const [claimed, setClaimed] = useState(0);
+  const claim = useCallback((on: boolean) => {
+    if (!on) return () => {};
+    setClaimed((n) => n + 1);
+    return () => setClaimed((n) => n - 1);
+  }, []);
+  const slots: PanelHeaderSlots = { heading: headingEl, menu: menuEl, items, name, claim };
+
   const layout = split.layout;
   const full = !!layout?.full, auto = !!layout?.auto;
   const panelId = `record-panel-${type.replace(/[^\w-]/g, '-')}`;
@@ -344,13 +367,16 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
       <section ref={panelRef} aria-label={name} data-slot='detail-panel' data-testid='detail-panel' data-row={rowKey} data-expanded={expanded || undefined}
         className='relative flex h-full min-h-0 w-full flex-col lg:pt-3.5 lg:pr-3.5'>
         <div className='bg-background text-foreground flex min-h-0 w-full flex-1 flex-col overflow-hidden text-sm lg:rounded-lg lg:border lg:shadow-sm' data-slot='detail-panel-card'>
-          <div className='flex shrink-0 items-start gap-2 border-b py-2.5 pl-3 max-lg:flex-wrap max-lg:pr-[max(0.75rem,env(safe-area-inset-right))] md:pl-4 lg:pr-5' data-slot='detail-panel-header'>
+          <div className={cn('flex shrink-0 gap-2 border-b py-2.5 pl-3 max-lg:flex-wrap max-lg:pr-[max(0.75rem,env(safe-area-inset-right))] md:pl-4 lg:pr-5', claimed > 0 ? 'items-center' : 'items-start')} data-slot='detail-panel-header' data-claimed={claimed > 0 ? '' : undefined}>
             <Button variant='ghost' size='sm' className='-ml-1 shrink-0 lg:hidden' onClick={close} data-testid='detail-panel-back'>
               <IconArrowLeft aria-hidden /> Back to list
             </Button>
-            <div className='min-w-0 flex-1 max-lg:order-last max-lg:basis-full' data-slot='detail-panel-heading'>
-              <h2 className='flex min-w-0 flex-wrap items-center gap-2 text-base leading-tight font-semibold tracking-tight break-words' data-testid='detail-panel-title'>{title}</h2>
-            </div>
+            <div ref={setHeadingEl} className={cn('min-w-0 flex-1 max-lg:order-last max-lg:basis-full', claimed <= 0 && 'hidden')} data-slot='detail-panel-heading-slot' />
+            {claimed <= 0 && (
+              <div className='min-w-0 flex-1 max-lg:order-last max-lg:basis-full' data-slot='detail-panel-heading'>
+                <h2 className='flex min-w-0 flex-wrap items-center gap-2 text-base leading-tight font-semibold tracking-tight break-words' data-testid='detail-panel-title'>{title}</h2>
+              </div>
+            )}
             {/* Right: only the labelled Expand / Collapse and the "⋯" actions menu. */}
             <div className='ml-auto flex shrink-0 items-center gap-1' data-slot='detail-panel-controls'>
               {!auto && (
@@ -360,12 +386,13 @@ export function RecordPanel({ hostRef, split, type, title, name, rowKey, items, 
                   {expanded ? 'Collapse' : 'Expand'}
                 </Button>
               )}
-              {menu ?? <PanelMenu items={items} name={name} />}
+              <span ref={setMenuEl} className='contents' data-slot='detail-panel-menu' />
+              {claimed <= 0 && (menu ?? <PanelMenu items={items} name={name} />)}
             </div>
           </div>
           <div className={cn('min-h-0 flex-1 px-4 md:px-6', fill ? 'flex flex-col overflow-hidden pt-5 pb-4' : 'overflow-y-auto overscroll-contain py-5')} data-slot='detail-panel-body'
             onInput={onEdit} onChange={onEdit} onSubmit={() => { edited.current = null; }}>
-            <InPanel.Provider value><PanelFull.Provider value={full && split.space >= ROOMY}>{children}</PanelFull.Provider></InPanel.Provider>
+            <InPanel.Provider value><HeaderSlots.Provider value={slots}><PanelFull.Provider value={full && split.space >= ROOMY}>{children}</PanelFull.Provider></HeaderSlots.Provider></InPanel.Provider>
           </div>
         </div>
         <Button variant='outline' size='icon'
