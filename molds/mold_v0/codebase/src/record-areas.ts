@@ -1205,11 +1205,12 @@ async function supersedeOthers(orgId: number, area: RecordArea, key: string, dat
   const mine = stateTimes(data)[sp.when_enters] ?? new Date().toISOString();
   const keys: string[] = [];
   let after: string | undefined;
-  do {
+  for (let pages = 0; pages < 50; pages++) { // at most 10,000 in one scope: more is a pack's mistake, not a lifecycle
     const page = await listFor(orgId, area.name, { filter: { [area.lifecycle!.field]: sp.when_enters, ...Object.fromEntries(scope) }, limit: 200, ...(after ? { after } : {}) });
     keys.push(...page.records.map((r) => r.key).filter((k) => k !== key));
-    after = page.next ?? undefined;
-  } while (after);
+    if (!page.next) break;
+    after = page.next;
+  }
   for (const k of keys) {
     const other = await readWorkspace(orgId, area, k);
     if (!other || stateOf(area, other.opened) !== sp.when_enters || (stateTimes(other.opened)[sp.when_enters] ?? "") > mine) continue;

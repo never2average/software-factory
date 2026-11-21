@@ -34,7 +34,9 @@ export interface CreatedLink {
    * Set once the shell settled it: why the session ended, when, where it moved the record (null: left as it was), and
    * whether it is done (false: a move failed while the record was still open; the sweep tries again, at most 5 times).
    */
-  closed?: { reason: SessionEndReason; at: string; moved_to: string | null; done?: boolean; tries?: number };
+  closed?: { reason: SessionEndReason; at: string; moved_to: string | null; done?: boolean | null; tries?: number;
+    /** Where the record was at the first attempt: every attempt moves it only from there. */ from?: string | null;
+    /** When the attempt in progress (done: null) claimed it: a lease; past SETTLE_LEASE_MS another settle may take over. */ claimed_at?: string };
 }
 
 /** A new record's key: the date and time, then a short random tail (sortable, unique enough, a valid record key). */
@@ -113,15 +115,25 @@ const canMove = (area: RecordArea, from: unknown, to: string) =>
  */
 export function closedStates(link: Pick<CreatedLink, "on_session_end">, area: RecordArea): string[] {
   const clocks = ((area as { clocks?: { escalate?: { move_to?: string }[] }[] }).clocks ?? []).flatMap((c) => (c.escalate ?? []).flatMap((e) => (e.move_to ? [e.move_to] : [])));
-  return [...new Set([...Object.values(link.on_session_end ?? {}).filter((x): x is string => !!x), ...stopStates(area as never), ...clocks])];
+  // Only terminal ones: a state a named transition leaves is still going somewhere (its children stay with it).
+  const terminal = (st: string) => !(area.lifecycle?.transitions ?? []).some((t) => t.from !== "*" && t.from.includes(st) && t.to !== st);
+  return [...new Set([...Object.values(link.on_session_end ?? {}).filter((x): x is string => !!x), ...stopStates(area as never), ...clocks])].filter(terminal);
 }
 const stateOfRow = (area: RecordArea, rec: RecordRow | null) => (rec && area.lifecycle ? rec.data[area.lifecycle.field] ?? area.lifecycle.initial : null);
 
+/** How long a close-out's claim holds before another settle may take it over (a process that died mid-way). */
+export const SETTLE_LEASE_MS = 5 * 60_000;
+/** The most a close-out is tried (a refused move while the record is still where it was). */
+export const SETTLE_TRIES = 5;
+
 /**
- * Settle the record session `id` made, once: claim the mark (two settles at once do it once; a failed move is claimed
- * again by the sweep, at most 5 times), move the record to the state its end reason names when a transition reaches it
- * from where the record is (a record the agent finished is left as it is), write why, and, once the record is closed
- * (that state, a Cancel's or a time limit's), close its children. Returns what it did (null: nothing to settle now).
+ * Settle the record session `id` made, once: claim it (an in-progress mark with a lease: a concurrent settle, from a
+ * Cancel's stop racing the wake's end or the sweep, finds it held and does nothing), move the record to the state its end
+ * reason names from the state it was in at the first attempt (`from`, kept: a retry never moves a record a person moved
+ * since; it is done instead), write why, and, once the record is closed (a terminal state its close-out, a Cancel or a
+ * time limit reaches), close its children. The last write is a compare-and-set on this attempt's claim. A refused move
+ * while the record is still where it was leaves it not done: the sweep tries again, at most SETTLE_TRIES times.
+ * Returns what it did (null: nothing to settle now, or another settle holds it).
  */
 export async function settleCreated(orgId: number, id: string): Promise<{ reason: SessionEndReason; moved_to: string | null; children: number } | null> {
   const db = await getDb();
@@ -132,27 +144,38 @@ export async function settleCreated(orgId: number, id: string): Promise<{ reason
   const link = s?.policy?.creates;
   if (!s || !link) return null;
   const before = link.closed;
-  if (before && (before.done !== false || (before.tries ?? 0) >= 5)) return null;
+  if (before && (before.done === true || (before.tries ?? 0) >= SETTLE_TRIES)) return null;
+  if (before && before.done == null && before.claimed_at && Date.now() - Date.parse(before.claimed_at) < SETTLE_LEASE_MS) return null; // held
   const reason = before?.reason ?? endReasonOf(s, s.refused);
   if (!reason) return null;
   const area = findArea(link.area);
   const target = link.on_session_end?.[reason] ?? null;
-  // The claim: only one settle holds it at a time (a retry claims by the tries it read).
+  const rec0 = area?.lifecycle ? await getFor(orgId, area.name, link.key).catch(() => null) : null;
+  // Where the record was when the shell first came to close it: every attempt moves it only from there.
+  const from = before?.from ?? (area && rec0 ? String(stateOfRow(area, rec0)) : null);
   const tries = (before?.tries ?? 0) + 1;
+  const claimedAt = new Date().toISOString();
+  const mark = (done: boolean | null, moved: string | null) => JSON.stringify({ reason, at: before?.at ?? claimedAt, from, moved_to: moved, done, tries, claimed_at: claimedAt });
+  // The claim: from nothing, from a failed attempt, or from a lease gone stale; by the tries it read (compare-and-set).
   const claimed = await asPlatform(() => db.query(
     `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb), updated_at = now()
       WHERE id = $1 AND org_id = $2 AND policy ? 'creates'
-        AND (NOT (policy->'creates' ? 'closed') OR (policy->'creates'->'closed'->>'done' = 'false' AND coalesce((policy->'creates'->'closed'->>'tries')::int, 0) = $4)) RETURNING id`,
-    [id, orgId, JSON.stringify({ reason, at: before?.at ?? new Date().toISOString(), moved_to: null, done: false, tries }), tries - 1]));
+        AND (NOT (policy->'creates' ? 'closed')
+             OR (coalesce((policy->'creates'->'closed'->>'tries')::int, 0) = $4
+                 AND (policy->'creates'->'closed'->>'done' = 'false'
+                      OR (policy->'creates'->'closed'->>'done' IS NULL AND coalesce((policy->'creates'->'closed'->>'claimed_at')::timestamptz, 'epoch') < now() - make_interval(secs => $5)))))
+      RETURNING id`,
+    [id, orgId, mark(null, null), tries - 1, SETTLE_LEASE_MS / 1000]));
   if (!claimed.length) return null;
   let moved: string | null = null, children = 0, done = true;
   if (area?.lifecycle) await asWriter({ by: "shell", id: "session" }, async () => {
     let rec = await getFor(orgId, area.name, link.key).catch(() => null);
     if (!rec) return;
-    const from = stateOfRow(area, rec);
-    if (target && canMove(area, from, target)) {
+    const at = stateOfRow(area, rec);
+    // Only from where it was at the first attempt: a record a person moved since is theirs (done, left as it is).
+    if (target && from !== null && at === from && canMove(area, from, target)) {
       try {
-        await shellMove(orgId, area.pack, area.name, link.key, [String(from)], target);
+        await shellMove(orgId, area.pack, area.name, link.key, [from], target);
         moved = target;
         if (link.reason_field) {
           rec = await getFor(orgId, area.name, link.key);
@@ -164,12 +187,14 @@ export async function settleCreated(orgId: number, id: string): Promise<{ reason
     const now = stateOfRow(area, rec);
     // Its children only once the record itself is closed (by this close-out, a Cancel or a time limit).
     if (typeof now === "string" && closedStates(link, area).includes(now)) children = await closeChildren(orgId, link);
-    // Not done while a move it should make is still open to it (a refusal, a race): the sweep tries again.
-    else if (target && canMove(area, now, target)) done = false;
+    // Not done while the move is still open to it from where it was (a refusal, a race): the sweep tries again.
+    else if (target && from !== null && now === from && canMove(area, from, target)) done = false;
   });
+  // The last write: only while this attempt's claim stands.
   await asPlatform(() => db.query(
-    `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb) WHERE id = $1 AND org_id = $2`,
-    [id, orgId, JSON.stringify({ reason, at: before?.at ?? new Date().toISOString(), moved_to: moved, done, tries })]));
+    `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb)
+      WHERE id = $1 AND org_id = $2 AND policy->'creates'->'closed'->>'claimed_at' = $4 AND coalesce((policy->'creates'->'closed'->>'tries')::int, 0) = $5`,
+    [id, orgId, mark(done, moved), claimedAt, tries]));
   console.log(`session ${id} ended (${reason}): ${link.area}/${link.key} ${moved ? `moved to ${moved}` : "left as it was"}${children ? `, ${children} linked record${children === 1 ? "" : "s"} closed` : ""}${done ? "" : " (tried again later)"}`);
   return { reason, moved_to: moved, children };
 }
@@ -228,9 +253,12 @@ export async function settleEnded(limit = 100): Promise<number> {
   const rows = await asPlatform(() => db.query<{ id: string; org_id: number }>(
     `/* tenant: platform sweep across workspaces */ SELECT s.id, s.org_id FROM harness_sessions s
       WHERE s.policy ? 'creates' AND s.current_run_id IS NULL
-        AND (NOT (s.policy->'creates' ? 'closed') OR (s.policy->'creates'->'closed'->>'done' = 'false' AND coalesce((s.policy->'creates'->'closed'->>'tries')::int, 0) < 5))
+        AND (NOT (s.policy->'creates' ? 'closed')
+             OR (coalesce((s.policy->'creates'->'closed'->>'tries')::int, 0) < $2
+                 AND (s.policy->'creates'->'closed'->>'done' = 'false'
+                      OR (s.policy->'creates'->'closed'->>'done' IS NULL AND coalesce((s.policy->'creates'->'closed'->>'claimed_at')::timestamptz, 'epoch') < now() - make_interval(secs => $3)))))
         AND (s.state IN ('stopped', 'failed') OR (s.state IN ('parked', 'awaiting') AND EXISTS (SELECT 1 FROM harness_session_requests r WHERE r.org_id = s.org_id AND r.session_id = s.id AND r.kind = 'budget' AND r.status IN ('declined', 'expired'))))
-      ORDER BY s.updated_at LIMIT $1`, [limit]));
+      ORDER BY s.updated_at LIMIT $1`, [limit, SETTLE_TRIES, SETTLE_LEASE_MS / 1000]));
   let n = 0;
   for (const r of rows) if (await withTenant(r.org_id, () => settleCreated(r.org_id, r.id)).catch((e) => { console.error(`session ${r.id}: close-out: ${(e as Error).message}`); return null; })) n++;
   return n;

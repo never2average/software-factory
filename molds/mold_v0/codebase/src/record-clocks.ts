@@ -307,7 +307,8 @@ async function planAction(orgId: number, area: ClockArea, key: string, e: NonNul
     if (!covers.includes(from) || from === e.move_to) return null;
     detail.move_to = e.move_to;
     return async () => {
-      await asWriter({ by: "shell", id: "clock" }, () => shellMove(orgId, area.pack, area.name, key, [from], e.move_to!));
+      // Any state the step covers (a running build that reached deploying meanwhile still times out), read in the move.
+      await asWriter({ by: "shell", id: "clock" }, () => shellMove(orgId, area.pack, area.name, key, covers.filter((x) => x !== e.move_to), e.move_to!));
       return { moved: { field: area.lifecycle!.field, from, to: e.move_to } };
     };
   }

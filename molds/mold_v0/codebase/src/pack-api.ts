@@ -1882,7 +1882,7 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
         if ((src === "$now" || src === "$today") && f.type !== "date" && f.type !== "text") at(where, `field ${k} takes ${src}: a date or text field`);
         if (src === "$session" && f.type !== "text") at(where, `field ${k} takes $session: a text field`);
         // A field only the app's actions set takes only what the start itself knows, never a value a person typed here.
-        if ((f as { set_by?: string }).set_by === "action" && !src.startsWith("$")) at(where, `field ${k} is set by the app's own actions: it takes $session, $person, $now, $today, $key or $title, not this record's ${src}`);
+        if ((f as { set_by?: string }).set_by === "action" && !(CREATES_SPECIAL as readonly string[]).includes(src) && src !== "$key") at(where, `field ${k} is set by the app's own actions: it takes $session, $person, $now, $today or $key, not ${src}`);
       }
       const lc = target.lifecycle, lf = lc ? tf(lc.field) : undefined;
       const states = lf ? optionValues(lf) : [];

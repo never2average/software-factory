@@ -4479,10 +4479,13 @@ generic (neutral words; a pack names its own areas and states); a pack that name
   build the agent finished stays succeeded; the shell uses only transitions that name their from state, never `"*"`,
   and checks the from state inside the move itself), writes the reason's words into `reason_field` while it is empty.
   Children (each still in `from`, moved or, without a lifecycle, written to `to`) are closed only once the record is
-  closed: in an `on_session_end` state, a Cancel's or a time limit's, whoever put it there; never while it is open or
-  succeeded. A Cancel and a time-limit move close them at once. Once per session: a mark claimed in its policy
-  (`creates.closed`) before anything moves; a move that failed while the record is still open is marked `done: false`
-  and the sweep claims it again (at most 5 tries). Called after the transaction that ended it (stop, a wake's reconcile, a
+  closed: in a terminal `on_session_end` state, a Cancel's or a time limit's, whoever put it there; never while it is
+  open or succeeded. A Cancel and a time-limit move close them at once. Once per session: a claim in its policy
+  (`creates.closed`, `done: null` with a 5-minute lease while an attempt is in progress, so a concurrent settle does
+  nothing) before anything moves, and the attempt's last write is a compare-and-set on its claim. The state the record
+  was in at the first attempt is kept (`from`): a move that failed while the record is still there is marked
+  `done: false` and the sweep tries again from there (at most 5 tries); a record a person moved since is left alone, done.
+  `sql/migrations/0076_session_created_records.sql` indexes sessions by the record they made (rollback beside it). Called after the transaction that ended it (stop, a wake's reconcile, a
   declined request) and by the harness sweep (`settleEnded`) for one missed. Its history names `shell:session`.
 - **Cancel cancels**: a move action's `stops_session: true` (with `to`; every transition to it must name its `roles`)
   stops the session that made the record (as the platform: it works only for the record) and those started from it
@@ -4492,7 +4495,7 @@ generic (neutral words; a pack names its own areas and states); a pack that name
 - **Time limits**: a clock's escalation step may declare `move_to` (a state): the clock check moves the record there by a
   declared transition, as the shell (`shell:clock`), once per deadline, only while the record is still in the state the
   clock started on (`starts: {event: "entered", state}`) or one of the step's `move_from` (the states it covers), checked
-  again inside the move; the step's event says what it meant (`move_to`), an `escalate:<j>:moved` event that it moved
+  again inside the move from any covered state (a build that reached deploying meanwhile still times out); the step's event says what it meant (`move_to`), an `escalate:<j>:moved` event that it moved
   (a refusal is `:failed`); durations take minutes too (`"90m"`). Example: `{"name":
   "build_limit", "label": "Time limit", "starts": {"event": "entered", "state": "running"}, "after": "90m", "stops_when":
   {"field": "status", "in": ["succeeded", "failed", "cancelled", "timed_out"]}, "escalate": [{"after": "0m", "label":
@@ -4519,7 +4522,7 @@ generic (neutral words; a pack names its own areas and states); a pack that name
 
 Refused at build (with their paths): creates on another kind or a shared area, into an append-only, chained, sealed or
 repository-fed area, from a field this record lacks, into an unknown field, the lifecycle's field or the link, a
-`set_by: "action"` field from anything but a `$` source, a link that does not point here, a state that is not one or that no
+`set_by: "action"` field from anything but `$session`, `$person`, `$now`, `$today` or `$key`, a link that does not point here, a state that is not one or that no
 transition reaches, a reason field that is not plain text, a child's via, field or states; stops_session on another kind,
 without `to` or over a transition with no roles; `move_to` without a lifecycle, a state, a clock started by a state or
 a transition naming each state it moves from; supersedes without

@@ -121,9 +121,9 @@ try {
     bent[0].detail.actions[0].creates.on_session_end.failed = "nowhere";
     bent[0].detail.actions[0].creates.children[0].via = "app";
     bent[0].detail.actions[0].creates.fields.status = "$key";
-    bent[0].detail.actions[0].creates.fields.session = "summary";
+    bent[0].detail.actions[0].creates.fields.session = "$title";
     const probs = P.detailBuildProblems(bent as never, []).join("\n");
-    for (const re of [/link summary is not a reference or link field of fx_builds to fx_apps/, /on_session_end.failed: nowhere is not a state/, /via app is not a reference or link field of fx_deploys to fx_builds/, /field status is fx_builds's lifecycle field/, /field session is set by the app's own actions/])
+    for (const re of [/link summary is not a reference or link field of fx_builds to fx_apps/, /on_session_end.failed: nowhere is not a state/, /via app is not a reference or link field of fx_deploys to fx_builds/, /field status is fx_builds's lifecycle field/, /field session is set by the app's own actions: it takes \$session, \$person, \$now, \$today or \$key, not \$title/])
       assert.match(probs, re);
     const sealed = clone(parsed) as any[];
     sealed[1].append_only = true; sealed[1].sealed = true;
@@ -263,14 +263,46 @@ try {
     assert.equal((await build(broke.build))!.data.status, "failed", "budget refused: failed");
     assert.equal((await build(broke.build))!.data.error, S.REASON_WORDS.budget);
     assert.equal((await build(lost.build))!.data.status, "cancelled", "a stopped session's build cancelled by the sweep");
-    // A close-out whose move failed (done: false) is tried again by the sweep, never left claimed.
+    const closedAs = (id: string, mark: Record<string, unknown>) => db.query(`UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb) WHERE id = $1 AND org_id = $2`, [id, W.orgId, JSON.stringify(mark)]);
+    // A close-out whose move failed (done: false) is tried again by the sweep, from where the record was then.
     const retry = await press();
     await rec.move("fx_builds", retry.build, "running");
     await end(retry.session.id, "failed", "the harness failed");
-    await db.query(`UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', '{"reason": "failed", "at": "2026-11-21T00:00:00Z", "moved_to": null, "done": false, "tries": 1}'::jsonb) WHERE id = $1 AND org_id = $2`, [retry.session.id, W.orgId]);
+    await closedAs(retry.session.id, { reason: "failed", at: "2026-11-21T00:00:00Z", from: "running", moved_to: null, done: false, tries: 1 });
     await S.settleEnded();
     const rs = (await session(retry.session.id)).policy as any;
     assert.deepEqual([(await build(retry.build))!.data.status, rs.creates.closed.done, rs.creates.closed.tries], ["failed", true, 2], "a failed close-out is tried again by the sweep");
+    // M-b: a retry never moves a record a person moved since the first attempt: it is done, the record left as it is.
+    const moved = await press();
+    await rec.move("fx_builds", moved.build, "running");
+    await end(moved.session.id, "failed", "the harness failed");
+    await closedAs(moved.session.id, { reason: "failed", at: "2026-11-21T00:00:00Z", from: "queued", moved_to: null, done: false, tries: 1 });
+    await S.settleEnded();
+    const ms = (await session(moved.session.id)).policy as any;
+    assert.deepEqual([(await build(moved.build))!.data.status, ms.creates.closed.done, ms.creates.closed.moved_to], ["running", true, null], "moved by a person since the first attempt (queued then, running now): left as it is, done");
+    // M-a: an attempt in progress holds its claim: a concurrent settle (a Cancel's stop, the wake's end, the sweep) does
+    // nothing while the lease stands, and takes over only once it is stale.
+    const held = await press();
+    await rec.move("fx_builds", held.build, "running");
+    await end(held.session.id, "failed", "the harness failed");
+    await closedAs(held.session.id, { reason: "failed", at: new Date().toISOString(), from: "running", moved_to: null, done: null, tries: 1, claimed_at: new Date().toISOString() });
+    assert.equal(await S.settleCreated(W.orgId, held.session.id), null, "held: a second settle does nothing");
+    assert.equal(await S.settleEnded(), 0, "nor does the sweep");
+    assert.equal((await build(held.build))!.data.status, "running", "the record untouched by the second settle");
+    await closedAs(held.session.id, { reason: "failed", at: new Date().toISOString(), from: "running", moved_to: null, done: null, tries: 1, claimed_at: new Date(Date.now() - S.SETTLE_LEASE_MS - 1000).toISOString() });
+    assert.deepEqual(await S.settleCreated(W.orgId, held.session.id), { reason: "failed", moved_to: "failed", children: 0 }, "a stale lease is taken over");
+    // Two settles at once: one moves, the other finds it claimed; the mark ends done, by the attempt that held it.
+    const twice = await press();
+    await rec.move("fx_builds", twice.build, "running");
+    await rec.put("fx_deploys", "t-building", { title: "Twice", data: { app: "blog", build: twice.build } });
+    await end(twice.session.id, "failed", "the harness failed");
+    const both = await Promise.all([S.settleCreated(W.orgId, twice.session.id), S.settleCreated(W.orgId, twice.session.id), S.settleEnded()]);
+    assert.equal(both.slice(0, 2).filter((x) => x !== null).length, 1, "exactly one settle claims it");
+    const tw = (await session(twice.session.id)).policy as any;
+    assert.deepEqual([(await build(twice.build))!.data.status, tw.creates.closed.done, tw.creates.closed.tries, (await ra.getFor(W.orgId, "fx_deploys", "t-building"))!.data.state], ["failed", true, 1, "CANCELED"], "moved once, its child closed once, done");
+    // closedStates: only terminal ones (a state a named transition leaves is still going somewhere).
+    const fbArea = ra.findArea("fx_builds")!;
+    assert.deepEqual(S.closedStates({ on_session_end: { failed: "failed", stopped: "cancelled", finished: "running" } }, fbArea).sort(), ["cancelled", "failed", "timed_out"], "running is not a closing state, even when named");
     // Pure: the end reasons.
     assert.equal(S.endReasonOf({ state: "failed", state_reason: "approval_timeout: x", current_run_id: null }), "policy");
     assert.equal(S.endReasonOf({ state: "parked", state_reason: null, current_run_id: null }), null, "parked is not an end");

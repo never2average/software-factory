@@ -629,7 +629,9 @@ export function recordPageRouter(): Router {
               await H.stopSession(s.org, id, by);
               stopped++;
             } catch (e) {
-              await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed')", [id, s.org]));
+              // Not this person's to stop: the mark goes (only where no stop was asked of it, nor did it end).
+              if ((e as { status?: number }).status === 403)
+                await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed') AND stop_requested_at IS NULL", [id, s.org]));
               console.error(`${area.name}/${record.key}: session ${id} not stopped: ${(e as Error).message}`);
             }
           }
