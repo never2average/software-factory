@@ -153,14 +153,14 @@ export function RailHeading({ title, tone, status, context, trailing, level }: {
 }) {
   const H = level;
   return (
-    // The title on its first line; the "status · context" line under it in full (it wraps, never cut short); the main
+    // The title on its first lines (it wraps, at most three); the "status · context" line under it in full (it wraps, never cut short); the main
     // action and its neighbours at the right of both lines when the row has room (44rem), else on a line of their own
     // under the context. One element each (a grid), so nothing is drawn twice.
     <div className='@container/rail-head min-w-0' data-rail-header=''>
       <div className='grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-x-3 gap-y-1 @[44rem]/rail-head:grid-cols-[minmax(0,1fr)_auto]'>
-        <div className='flex min-w-0 items-center gap-[7px]'>
-          {tone && <span className={cn('size-[7px] shrink-0 rounded-full', DOT[tone])} data-status-dot={tone} title={status ?? undefined} aria-hidden />}
-          <H className='m-0 min-w-0 truncate text-base leading-tight font-semibold tracking-tight' data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
+        <div className='flex min-w-0 items-start gap-[7px]'>
+          {tone && <span className={cn('mt-[7px] size-[7px] shrink-0 rounded-full', DOT[tone])} data-status-dot={tone} title={status ?? undefined} aria-hidden />}
+          <H className='m-0 line-clamp-3 min-w-0 text-base leading-snug font-semibold tracking-tight break-words' data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
         </div>
         {context && <p className={cn('text-muted-foreground m-0 min-w-0 text-[13px] leading-snug break-words @[44rem]/rail-head:col-start-1', tone && 'pl-[14px]')} data-rail-context=''>{context}</p>}
         {trailing && <div className={cn('flex min-w-0 flex-wrap items-center gap-2 @[44rem]/rail-head:col-start-2 @[44rem]/rail-head:row-span-2 @[44rem]/rail-head:row-start-1 @[44rem]/rail-head:justify-end', tone && 'pl-[14px] @[44rem]/rail-head:pl-0')} data-rail-actions=''>{trailing}</div>}
