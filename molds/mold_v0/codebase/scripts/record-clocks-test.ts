@@ -188,7 +188,7 @@ try {
     assert.throws(() => pack([{ ...FIX_BY, assignee: undefined }]), /declare the clock's assignee/);
     assert.throws(() => pack([{ ...FIX_BY, assignee: "note" }]), /single person fields/);
     assert.throws(() => pack([{ ...FIX_BY, escalate: [{ after: "7d", notify: ["owner"] }, { after: "2d", notify: ["owner"] }] }]), /in order of after/);
-    assert.throws(() => pack([{ ...FIX_BY, escalate: [{ after: "1d" }] }]), /notifies, reassigns or raises/);
+    assert.throws(() => pack([{ ...FIX_BY, escalate: [{ after: "1d" }] }]), /notifies, reassigns, raises or moves/);
     assert.throws(() => pack([{ ...FIX_BY, escalate: [{ after: "1d", raise: { field: "severity" } }] }]), /the field the clock's duration is chosen by/);
     assert.throws(() => pack([{ ...FIX_BY, escalate: [{ after: "1d", raise: { field: "state" } }] }]), /lifecycle's field/);
     assert.throws(() => pack([{ ...FIX_BY, after: { by: "severity", values: { urgent: "1d" } } }]), /urgent is not one of severity's options/);

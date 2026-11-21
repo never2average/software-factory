@@ -896,6 +896,12 @@ const stateTimes = (data: Record<string, unknown> | undefined): Record<string, s
   const v = data?.[STATE_TIMES];
   return v && typeof v === "object" && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
 };
+/** mold_v0-333: when a workspace record last entered each state (a steps section's "where it stopped"); {} for none. */
+export async function recordStateTimes(orgId: number, area: RecordArea, key: string): Promise<Record<string, string>> {
+  if (!area.lifecycle || area.scope !== "workspace") return {};
+  const r = await readWorkspace(orgId, area, key).catch(() => null);
+  return r ? stateTimes(r.opened) : {};
+}
 /** A record's state; a row with none (written before its area had a lifecycle) is in the initial state. */
 const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifecycle ? data[area.lifecycle.field] ?? area.lifecycle.initial : undefined);
 
@@ -1136,6 +1142,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const r = await writeRow(orgId, area, key, t, after, prev, w, meta, null, vis);
   auditMembers(orgId, area, key, members.turned);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
+  if (!prev) await supersedeOthers(orgId, area, key, after); // mold_v0-333: created in the state that replaces
   return r;
 }
 
@@ -1144,10 +1151,16 @@ const movesFrom = (area: RecordArea, from: unknown) => area.lifecycle!.transitio
   .filter((t) => t.from === "*" || (typeof from === "string" && t.from.includes(from)))
   .map((t) => `${JSON.stringify(t.to)}${t.label ? ` (${t.label})` : ""}${t.roles ? ` [${t.roles.join(", ")}]` : ""}`);
 
-function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
-  return asViewerOf(actor, () => atomic(orgId, name, () => moveWorkspaceNow(orgId, pack, actor, name, key, to)));
+function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown, expect?: readonly string[]): Promise<RecordRow> {
+  return asViewerOf(actor, () => atomic(orgId, name, () => moveWorkspaceNow(orgId, pack, actor, name, key, to, expect)));
 }
-async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
+/**
+ * mold_v0-333: the shell's own move (a session's close-out, a clock's time limit): only from one of `from`, read in the
+ * move itself (a record that moved on meanwhile is refused, 409), only by a transition that names its from state.
+ */
+export const shellMove = (orgId: number, pack: string, name: string, key: string, from: readonly string[], to: string) =>
+  moveWorkspace(orgId, pack, SYSTEM_ACTOR, name, key, to, from);
+async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown, expect?: readonly string[]): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
   if (isReadOnlyArea(area)) throw readOnly(area);
   assertCanSeal(area);
@@ -1160,8 +1173,15 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   if (!prev) throw new PackError(`no ${area.name} record ${key}`, 404);
   const field = area.lifecycle.field, from = stateOf(area, prev.opened);
   if (typeof to !== "string") throw new PackError("to must be a state", 400);
+  if (expect && !(typeof from === "string" && expect.includes(from))) throw new PackError(`${area.label} record ${key} is ${JSON.stringify(from)} now, not ${expect.map((x) => JSON.stringify(x)).join(" or ")}: left as it is`, 409);
   if (to === from) return prev.record;
-  const ways = area.lifecycle.transitions.filter((t) => (t.from === "*" || (typeof from === "string" && t.from.includes(from))) && t.to === to);
+  const ways = area.lifecycle.transitions.filter((t) => (expect ? t.from !== "*" && typeof from === "string" && t.from.includes(from) : t.from === "*" || (typeof from === "string" && t.from.includes(from))) && t.to === to);
+  // mold_v0-333: a record a person cancelled (a move with stops_session) is no longer moved by the session that cancel
+  // stopped: that session's late final move is ignored, said in the log, never a refusal its agent would keep retrying.
+  if (!ways.length && typeof from === "string" && lateStopStates(area).includes(from) && await stoppedFor(orgId, area.name, key)) {
+    console.log(`${area.name}/${key}: ${JSON.stringify(to)} ignored: the record was moved to ${JSON.stringify(from)}, which stopped its session (${currentVia()})`);
+    return prev.record;
+  }
   if (!ways.length) {
     const can = movesFrom(area, from);
     throw new PackError(`${area.label} record ${key} cannot move from ${JSON.stringify(from)} to ${JSON.stringify(to)}. ${can.length ? `From ${JSON.stringify(from)} it can move to: ${can.join(", ")}.` : `Nothing moves it from ${JSON.stringify(from)}.`}`, 409);
@@ -1173,7 +1193,51 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   await health.checkOnlyOne(orgId, area, key, after, actor, prev.opened);
   const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
+  await supersedeOthers(orgId, area, key, after);
   return r;
+}
+
+/**
+ * mold_v0-333: whether this write comes from a wake of a session that a stops_session move of this record stopped (its
+ * policy's stopped_for names the record): only those sessions' late moves are ignored.
+ */
+async function stoppedFor(orgId: number, area: string, key: string): Promise<boolean> {
+  const via = currentVia();
+  const run = via?.startsWith("run:") ? via.slice(4) : null;
+  if (!run) return false;
+  const rows = await (await q()).query(
+    `/* tenant: the workspace's own run and session */ SELECT 1 FROM runs r JOIN harness_sessions s ON s.id = r.harness_session_id AND s.org_id = r.org_id
+      WHERE r.org_id = $1 AND r.id = $2 AND s.policy->'stopped_for'->>'area' = $3 AND s.policy->'stopped_for'->>'key' = $4 LIMIT 1`, [orgId, run, area, key]).catch(() => []);
+  return rows.length > 0;
+}
+/** mold_v0-333: the states a stops_session move (Cancel) reaches on `area`'s page. */
+const lateStopStates = (area: RecordArea) =>
+  ((area as { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }).detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!);
+/**
+ * mold_v0-333 (lifecycle.supersedes): a record that entered `when_enters` replaces the others of its scope (the same
+ * values of every scope field) still there and entered before it: each is moved to `previous_to` by the shell, along the
+ * lifecycle (its history says "shell:supersede"). A record with a scope field empty replaces nothing.
+ */
+async function supersedeOthers(orgId: number, area: RecordArea, key: string, data: Record<string, unknown>) {
+  const sp = area.lifecycle?.supersedes;
+  if (!sp || data[area.lifecycle!.field] !== sp.when_enters) return;
+  const scope = sp.scope_fields.map((f) => [f, data[f]] as const);
+  if (scope.some(([, v]) => v === undefined || v === null || v === "" || typeof v === "object")) return;
+  const mine = stateTimes(data)[sp.when_enters] ?? new Date().toISOString();
+  const keys: string[] = [];
+  let after: string | undefined;
+  for (let pages = 0; pages < 50; pages++) { // at most 10,000 in one scope: more is a pack's mistake, not a lifecycle
+    const page = await listFor(orgId, area.name, { filter: { [area.lifecycle!.field]: sp.when_enters, ...Object.fromEntries(scope) }, limit: 200, ...(after ? { after } : {}) });
+    keys.push(...page.records.map((r) => r.key).filter((k) => k !== key));
+    if (!page.next) break;
+    after = page.next;
+  }
+  for (const k of keys) {
+    const other = await readWorkspace(orgId, area, k);
+    if (!other || stateOf(area, other.opened) !== sp.when_enters || (stateTimes(other.opened)[sp.when_enters] ?? "") > mine) continue;
+    await asWriter({ by: "shell", id: "supersede" }, () => moveWorkspaceNow(orgId, area.pack, SYSTEM_ACTOR, area.name, k, sp.previous_to, [sp.when_enters]))
+      .catch((e) => console.error(`${area.name}/${k}: not superseded by ${key}: ${(e as Error).message}`));
+  }
 }
 
 function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {

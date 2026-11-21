@@ -3,7 +3,7 @@
 
 export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';
 /** How a card reads its metric (src/metric-spec.ts SparkMode): a running total, week by week, or this period's bucket. */
-export type SparkMode = 'total' | 'weekly' | 'latest';
+export type SparkMode = 'total' | 'weekly' | 'latest' | 'current';
 /** The console's number format (./charts.tsx formatValue). */
 export type Format = (v: number | null, unit: Unit) => string;
 
@@ -18,6 +18,8 @@ export function cardValue(v: number | null, unit: Unit, format: Format): string 
  * value are compared (a week with nothing to average has none); within 5% of the larger is steady.
  */
 export function trendWords(c: { series: (number | null)[]; unit: Unit; mode: SparkMode }, weeks: number, format: Format): string {
+  // mold_v0-333: a count of what is in the state now: no trend is drawn or said.
+  if (c.mode === 'current') return 'As of now.';
   const xs = c.series.filter((v): v is number => v !== null);
   const span = `the last ${weeks} weeks`;
   if (xs.length < 2) return `No trend yet over ${span}.`;

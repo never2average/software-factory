@@ -69,6 +69,8 @@ async function computeSparklinesNow(orgId: number | null, tab: SpecTab, actor: A
         cards.push({ ...base, unit: "count", label: `${c.top.label}: ${top.label}`, value: top.value, series: running(top.value ?? 0, valuesOf(s)) });
         continue;
       }
+      // mold_v0-333: a count of now: no weeks (a running total of creation would misread a state's history).
+      if (c.mode === "current") { cards.push({ ...base, value: v.value ?? null, series: [] }); continue; }
       if (c.mode === "latest") { cards.push({ ...base, value: lastOf(v), series: valuesOf(c.series === c.value ? v : await computeSpec(orgId, c.series, actor, now, opts)) }); continue; }
       const s = await computeSpec(orgId, c.series, actor, now, opts);
       cards.push({ ...base, value: v.value ?? null, series: c.mode === "total" ? running(v.value ?? 0, valuesOf(s)) : valuesOf(s) });

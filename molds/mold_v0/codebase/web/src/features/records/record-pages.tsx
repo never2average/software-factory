@@ -369,6 +369,20 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
     // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
     const values = relatedValues.data ?? {};
     const extra = related.columns.map((c): RecordCol<RecordRow> & { at: number } => {
+      // mold_v0-333: a pointer ("latest" alone): the newest related record itself, its title linked to its page.
+      if (c.show === 'latest') {
+        const ptr = (r: RecordRow) => (values[c.id] as Record<string, { key: string; title: string | null } | null> | undefined)?.[r.key] ?? null;
+        return {
+          key: c.id, label: c.label, type: 'text' as PropType, keep: false, at: c.at,
+          value: (r) => { const p = ptr(r); return p ? p.title || p.key : null; },
+          render: (r) => {
+            if (!relatedValues.data && !relatedValues.error) return <span className='bg-muted inline-block h-3 w-8 animate-pulse rounded' aria-busy='true' />;
+            const p = ptr(r);
+            if (!p) return dash;
+            return <Link href={`/app/records/${encodeURIComponent(c.area)}/${encodeURIComponent(p.key)}`} className='line-clamp-2 underline-offset-4 hover:underline' data-related-cell={c.id} data-pointer-cell={p.key} onClick={(e) => e.stopPropagation()}>{p.title || p.key}</Link>;
+          }
+        };
+      }
       const f = latestField(c, recordAreas, c.area);
       const type: PropType = !f ? 'number' : (!f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
       const raw = (r: RecordRow) => (values[c.id] as Record<string, unknown> | undefined)?.[r.key];
