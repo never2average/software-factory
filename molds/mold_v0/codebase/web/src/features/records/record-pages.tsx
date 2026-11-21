@@ -34,7 +34,7 @@ import { useRecordCredentials } from '@/features/credentials/record-credentials'
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
-import { LINKED_PARAM, addedByWords, badgeColor, columnUnit, layoutOf, numberWords, optionWords, parseLinked } from './detail-layout';
+import { LINKED_PARAM, addedByWords, badgeColor, columnUnit, layoutOf, numberWords, optionWords, parseLinked, staleWords, type HealthView } from './detail-layout';
 import { LaidOutRecord, ToneBadge } from './detail-page';
 import { EntriesTable } from './record-detail-entries';
 import { entriesLine, entriesText, entriesView, entryObjects } from '@/lib/record-entries';
@@ -45,6 +45,8 @@ import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilit
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
+  /** mold_v0-332: a connection's health as read now (stale, needs attention). */
+  health?: HealthView;
   /** mold_v0-262 (flag record_pages): the titles of the records its references name, {field: {key: title}}. */
   ref_titles?: Record<string, Record<string, string>>;
   /** A shared row on the staff pages (mold_v0-221, src/record-areas.ts Provenance): staff's or its repository's, and what a staff override stands over. */
@@ -140,6 +142,8 @@ function logCell(f: RecordFieldSpec | undefined, v: unknown): string | null {
 }
 /** The filter-only column of an area with a clock: any of its clocks overdue (mold_v0-217). */
 const OVERDUE_COL = '_overdue';
+/** mold_v0-332: the filter-only column of a tested area: its record needs attention (failing, could not test, needs its key, stale, expiring, more than one marked). */
+const ATTENTION_COL = '_attention';
 const COL_TYPE: Record<string, PropType> = { enum: 'select', number: 'number', date: 'date', boolean: 'boolean' };
 const dash = <span className='text-muted-foreground'>—</span>;
 
@@ -209,6 +213,9 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         }
         const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
+        // mold_v0-332: a working test older than its pack's stale_after_days: neutral, "Tested N days ago".
+        const stale = r.health?.field === name ? staleWords(r.health) : null;
+        if (stale) return <span className='flex flex-wrap gap-1' data-enum-cell={name} data-stale=''><ToneBadge color='neutral'>{stale}</ToneBadge></span>;
         if (layout && f?.type === 'enum' && !f.encrypted && r.data[name] != null && r.data[name] !== '') return (
           <span className='flex flex-wrap gap-1' data-enum-cell={name}>
             {(Array.isArray(r.data[name]) ? r.data[name] as unknown[] : [r.data[name]]).map((x) => <ToneBadge key={String(x)} color={badgeColor(layout, name, x)}>{optionWords(f, x)}</ToneBadge>)}
@@ -228,7 +235,11 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
   // mold_v0-191: each clock's deadline and status (./clocks); mold_v0-217: whether any is overdue, a filter only (?overdue=1).
   const overdue: RecordCol<RecordRow>[] = area.clocks?.length
     ? [{ key: OVERDUE_COL, label: 'Overdue', type: 'boolean', hidden: true, keep: false, csv: false, peek: false, value: (r) => isOverdue(r), render: (r) => (isOverdue(r) ? 'Yes' : 'No') }] : [];
-  return [record, ...fields, ...clockColumns<RecordRow>(area), ...overdue, ...(source?.updated === false ? [] : [updated])];
+  // mold_v0-332: an area whose records are tested: whether each needs attention now, a filter only (Needs attention is Yes).
+  const tested = ((area as { detail?: { actions?: { kind?: string }[] } }).detail?.actions ?? []).some((a) => a.kind === 'test_connection' || a.kind === 'test_storage');
+  const attention: RecordCol<RecordRow>[] = tested
+    ? [{ key: ATTENTION_COL, label: 'Needs attention', type: 'boolean', hidden: true, keep: false, csv: false, peek: false, value: (r) => r.health?.attention === true, render: (r) => (r.health?.attention ? 'Yes' : 'No') }] : [];
+  return [record, ...fields, ...clockColumns<RecordRow>(area), ...overdue, ...attention, ...(source?.updated === false ? [] : [updated])];
 }
 
 /** The area a reference or link field names (mold_v0-262: its cells link to the record, by its title). */

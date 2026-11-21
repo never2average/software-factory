@@ -24,7 +24,8 @@
  *                (workspacesWithStorage), and restores from both.
  *   Test         the record page's `test_storage` action (src/record-page-routes.ts): writes, reads and deletes one small
  *                object with the record's own settings (src/storage.ts testBucket, the Key vault's Test), says what went
- *                wrong in plain words (never a key), and writes the declared status (working, failing) and tested date.
+ *                wrong in plain words (never a key), and writes the declared status (working, failing; mold_v0-332: could
+ *                not test, needs its key: src/connection-test-health.ts) and tested date, and its declared health fields.
  *
  * The keys are opened only here, on the server, for the storage client; nothing returns them.
  */
@@ -186,8 +187,10 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
   const inUseNow = row.data[d.fields.use] === true;
   let result: StorageTestAnswer;
+  const secrets: string[] = [];
   try {
     const settings = await settingsOf(orgId, key, row.data);
+    secrets.push(...[settings.access_key_id, settings.secret_access_key].filter((x): x is string => typeof x === "string" && x.length > 0));
     const { testBucket } = await import("./storage.js");
     const t = await testBucket(settings);
     // mold_v0-322: the flags this area's records are used by, as the pack declares them: its own (the workspace's
@@ -201,24 +204,22 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
     result = { ok: false, bucket: plain(row.data[d.fields.bucket]), endpoint: plain(row.data[d.fields.endpoint]) || null, ms: 0, steps: [], error: (e as Error).message, in_use: inUseNow,
       words: `It can't be tested yet: ${(e as Error).message}.` };
   }
-  const extra: Record<string, unknown> = {};
-  if (d.fields.status) extra[d.fields.status] = statusValue(area, d.fields.status, result.ok);
-  if (d.fields.tested) extra[d.fields.tested] = new Date().toISOString().slice(0, 10);
+  // mold_v0-332: a bucket that answered (or did not) is working or failing; keys that could not be opened, or were
+  // refused before any call, could not be tested (needs its key when one is empty): never blamed on the bucket.
+  const asked = result.ok || result.steps.length > 0;
+  const keyEmpty = [d.fields.access_key_id, d.fields.secret_access_key].some((f) => row.data[f] === undefined || row.data[f] === null || row.data[f] === "");
+  const { testOutcome, asTestOf } = await import("./connection-test-health.js");
+  // mold_v0-332: the words kept on the record carry no key in any form (as a connection test's).
+  result.words = (await import("./connection-test.js")).cleanAnswer(result.words, secrets);
+  const keyBroken = !asked && /do not open with this workspace's key/.test(result.words);
+  const extra = testOutcome(area, row.data, { ok: result.ok, outcome: asked ? (result.ok ? "working" : "unexpected") : "not_ready", words: result.words, keyEmpty: !asked && keyEmpty, keyBroken });
   if (Object.keys(extra).length) {
     // The masked record written back: a masked field keeps its stored value (src/encrypted-fields.ts).
     const shown = await getFor(orgId, area.name, key, actor);
-    if (shown) await workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } })
+    if (shown) await asTestOf(area, key, row.data, () => workspaceRecords(area.pack, orgId, actor).update(area.name, key, { title: shown.title, data: { ...shown.data, ...extra } }))
       .catch((e) => console.error(`workspace storage: the test's result was not written to ${area.name} ${key}: ${(e as Error).message}`));
   }
   forgetWorkspaceStorage(orgId);
   return result;
 }
 const fieldLabel = (area: { fields: readonly { name: string; label: string }[] }, name: string) => `"${area.fields.find((f) => f.name === name)?.label ?? name}"`;
-/** The status written: "working" or "failing", or the enum's option whose value or label says so. */
-function statusValue(area: { fields: readonly { name: string; type: string; options?: readonly (string | { value: string; label?: string })[] }[] }, name: string, ok: boolean): string {
-  const want = ok ? "working" : "failing";
-  const f = area.fields.find((x) => x.name === name);
-  if (f?.type !== "enum") return want;
-  const opts = (f.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value }));
-  return (opts.find((o) => o.value === want) ?? opts.find((o) => o.label.toLowerCase() === want) ?? { value: want }).value;
-}

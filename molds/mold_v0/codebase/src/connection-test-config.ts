@@ -294,12 +294,108 @@ export const KIND_HOSTS = {
 export const GCP_TOKEN_URI = "https://oauth2.googleapis.com/token";
 const roleFields = (p: SignedProbe) => Object.entries(p.fields as Record<string, string | undefined>).filter((e): e is [string, string] => typeof e[1] === "string");
 
+// ---------------------------------------------------------------- mold_v0-332: truthful connection health
+
+/**
+ * What a test (or a reset) can say about a connection: it works, it does not (the service answered no, or never
+ * answered), it could not be tested (the vault locked, a field empty, no test for this provider, a key that does not
+ * open with the workspace's key: nothing about the account is known), it needs its key typed again (the key is empty),
+ * or it has not been tested since it was added or since what it tests changed.
+ */
+export const HEALTH_OUTCOMES = ["working", "failing", "cannot_test", "needs_key", "untested"] as const;
+export type HealthOutcome = (typeof HEALTH_OUTCOMES)[number];
+const optionValue = z.string().min(1).max(80);
+/** Each outcome's value in the area's status field (an option's value); absent, the option of that name (or none). */
+export const HealthOutcomesSchema = z.object(Object.fromEntries(HEALTH_OUTCOMES.map((o) => [o, optionValue.optional()])) as Record<HealthOutcome, z.ZodOptional<typeof optionValue>>).strict();
+export type HealthOutcomes = z.output<typeof HealthOutcomesSchema>;
+export const STALE_AFTER_DAYS_MAX = 3650;
+/**
+ * The optional health keys a test declares beside `status` and `tested` (a test_connection probe's own keys; an
+ * object_storage declaration's `fields`, with `outcomes` and `stale_after_days` beside them):
+ *   tested_at       a date field (set_by "action"): when the last test ran, to the second (an ISO time)
+ *   result          a text field (set_by "action"): the test's own words, secret-free ("It does not work yet: ... 401")
+ *   failing_since   a date field (set_by "action"): the first failing test after a working one (an ISO time)
+ *   failures        a number field (set_by "action"): failing tests in a row (0 on a working one)
+ *   expires_on      a date field people set: when the key expires (needs attention 14 days before)
+ */
+export const HEALTH_FIELD_KEYS = ["tested_at", "result", "failing_since", "failures", "expires_on"] as const;
+export const healthFieldShape = { tested_at: fieldName.optional(), result: fieldName.optional(), failing_since: fieldName.optional(), failures: fieldName.optional(), expires_on: fieldName.optional() };
+export const healthDeclShape = {
+  /** mold_v0-332: each outcome's option value in the status field (`{"cannot_test": "cant_test", "untested": "not_tested"}`). */
+  outcomes: HealthOutcomesSchema.optional(),
+  /** mold_v0-332: a working status whose last test is older than this many days is shown as "Tested N days ago" (neutral) and needs attention. */
+  stale_after_days: z.number().int().min(1).max(STALE_AFTER_DAYS_MAX).optional(),
+};
+/** A test's health declaration, as a probe's (or object storage's, flattened) keys say it. */
+export interface HealthDecl { status?: string; tested?: string; tested_at?: string; result?: string; failing_since?: string; failures?: string; expires_on?: string; outcomes?: HealthOutcomes; stale_after_days?: number }
+const optionValues = (f: { options?: readonly (string | { value: string; label?: string })[] }) => (f.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value }));
+/** Other spellings an option may take for an outcome, when the declaration maps none. */
+const OUTCOME_ALIASES: Record<HealthOutcome, string[]> = { working: ["working"], failing: ["failing"], cannot_test: ["cannot_test", "cant_test", "not_testable"], needs_key: ["needs_key"], untested: ["untested", "not_tested"] };
+/**
+ * The value an outcome writes into the status field `f`: the declared option, else (an enum) the option whose value or
+ * label is the outcome's name (or an alias), else (a text field) the outcome's name. Null: the enum has no such option
+ * (an undeclared could-not-test leaves the status as it is; an undeclared untested clears it).
+ */
+export function outcomeValue(f: { type?: string; options?: readonly (string | { value: string; label?: string })[] } | undefined, o: HealthOutcome, outcomes?: HealthOutcomes): string | null {
+  const declared = outcomes?.[o];
+  if (declared) return declared;
+  if (f?.type !== "enum") return o === "cannot_test" || o === "needs_key" || o === "untested" ? (f ? o : null) : o;
+  const opts = optionValues(f);
+  for (const a of OUTCOME_ALIASES[o]) { const hit = opts.find((x) => x.value === a) ?? opts.find((x) => x.label.toLowerCase() === a.replace(/_/g, " ") || x.label.toLowerCase() === a); if (hit) return hit.value; }
+  return null;
+}
+/** Which outcome a stored status value is (null: none, or empty). */
+export function outcomeOf(f: Parameters<typeof outcomeValue>[0], v: unknown, outcomes?: HealthOutcomes): HealthOutcome | null {
+  if (v === undefined || v === null || v === "") return null;
+  for (const o of HEALTH_OUTCOMES) if (outcomeValue(f, o, outcomes) === v) return o;
+  return null;
+}
+/**
+ * mold_v0-332: what is wrong with a test's health keys on `area` ([]: nothing): each field the area's, plain, of its
+ * type, written by the app's actions only (expires_on by people), the status field's options holding every outcome it
+ * maps, and outcomes or stale_after_days only with a status field.
+ */
+export function healthProblems(fields: readonly Field[], d: HealthDecl): { key: string; message: string }[] {
+  const out: { key: string; message: string }[] = [];
+  const field = (n: string) => fields.find((f) => f.name === n);
+  const want: Record<(typeof HEALTH_FIELD_KEYS)[number], { types: string[]; words: string; action: boolean }> = {
+    tested_at: { types: ["date"], words: "a date field (the time of the last test)", action: true },
+    result: { types: ["text"], words: "a text field (the test's own words)", action: true },
+    failing_since: { types: ["date"], words: "a date field (the first failing test's time)", action: true },
+    failures: { types: ["number"], words: "a number field (failing tests in a row)", action: true },
+    expires_on: { types: ["date"], words: "a date field (when the key expires)", action: false },
+  };
+  const named = new Map<string, string>();
+  for (const k of [...HEALTH_FIELD_KEYS, "status", "tested"] as const) { const n = d[k]; if (n) { if (named.has(n)) out.push({ key: k, message: `${n} is also ${named.get(n)}: each is a field of its own` }); named.set(n, k); } }
+  for (const k of HEALTH_FIELD_KEYS) {
+    const n = d[k];
+    if (!n) continue;
+    const f = field(n), w = want[k];
+    if (!f) { out.push({ key: k, message: `${n} is not one of the area's fields` }); continue; }
+    if (f.encrypted) { out.push({ key: k, message: `${n} is encrypted: the test's health is a plain field` }); continue; }
+    if (f.multiple || !w.types.includes(f.type ?? "text")) out.push({ key: k, message: `${n} is ${w.words}` });
+    if (w.action && f.set_by !== "action") out.push({ key: k, message: `${n} is written by the test only: declare it set_by "action" (a person never sets it by hand)` });
+    if (!w.action && f.set_by !== undefined) out.push({ key: k, message: `${n} is set by the workspace's people (when the key expires): leave set_by out` });
+  }
+  if ((d.outcomes || d.stale_after_days !== undefined) && !d.status) out.push({ key: d.outcomes ? "outcomes" : "stale_after_days", message: "names the status field's outcomes: declare the status field it reads (status)" });
+  const sf = d.status ? field(d.status) : undefined;
+  if (sf?.type === "enum" && d.outcomes) {
+    const vals = optionValues(sf).map((o) => o.value);
+    for (const [o, v] of Object.entries(d.outcomes)) if (v && !vals.includes(v)) out.push({ key: "outcomes", message: `${o} is ${JSON.stringify(v)}, which is not one of ${d.status}'s options (${vals.join(", ")})` });
+    const seen = new Map<string, string>();
+    for (const o of HEALTH_OUTCOMES) { const v = outcomeValue(sf, o, d.outcomes); if (v === null) continue; if (seen.has(v)) out.push({ key: "outcomes", message: `${seen.get(v)} and ${o} are both ${JSON.stringify(v)}: each outcome is its own option` }); seen.set(v, o); }
+  }
+  return out;
+}
+
 export const ConnectionTestSchema = z.object({
   by: fieldName.optional(),
   probes: z.record(z.string().min(1).max(80), ConnectionProbeSchema)
     .refine((p) => Object.keys(p).length >= 1 && Object.keys(p).length <= PROBES_MAX, `1 to ${PROBES_MAX} probes`),
   status: fieldName.optional(),
   tested: fieldName.optional(),
+  ...healthFieldShape,
+  ...healthDeclShape,
 }).strict();
 export type ConnectionTest = z.output<typeof ConnectionTestSchema>;
 
@@ -478,9 +574,12 @@ export function connectionTestProblems(area: Area, raw: unknown): { message: str
     const why = check(f);
     if (why) bad(`${n} ${why}`, k);
   };
+  // mold_v0-332: the status's working and failing values may be other options (outcomes).
+  const wf = [t.outcomes?.working ?? "working", t.outcomes?.failing ?? "failing"];
   if (t.status) setByAction("status", t.status, (f) => !["text", "enum"].includes(f.type ?? "text") ? "is a text or enum field"
-    : f.type === "enum" && !(values(f).includes("working") && values(f).includes("failing")) ? "is an enum with the options working and failing (what the test writes)" : null);
+    : f.type === "enum" && !wf.every((v) => values(f).includes(v)) ? (t.outcomes?.working || t.outcomes?.failing ? `is an enum with the options ${wf.join(" and ")} (what the test writes)` : "is an enum with the options working and failing (what the test writes)") : null);
   if (t.tested) setByAction("tested", t.tested, (f) => (f.type !== "date" ? "is a date field" : null));
+  for (const p of healthProblems(area.fields, t)) bad(p.message, p.key);
   const plainUse = (n: string, where: string, ...path: (string | number)[]) => {
     const f = field(n);
     if (!f) return bad(`{${n}} is not one of the area's fields`, ...path);

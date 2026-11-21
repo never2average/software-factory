@@ -244,6 +244,12 @@ export function checkViews(b: BuildViews): string[] {
       if (!a) at(p, `${w}: clock: clocks are a record area's (runs and run_results have none)`);
       else if (!(a.clocks ?? []).some((c) => c.name === m.clock!.name)) at(p, `${w}: clock: ${m.clock.name} is not a clock of ${a.name}${a.clocks?.length ? ` (${a.clocks.map((c) => c.name).join(", ")})` : ""}`);
     }
+    // mold_v0-332: a count of the connections needing attention, over an area whose test (or one-only flag) says so.
+    if (m.needs_attention) {
+      const a = typeof over === "string" ? null : over;
+      const tests = !!a && (a.detail?.actions ?? []).some((x) => x.kind === "test_connection" || x.kind === "test_storage");
+      if (!a || a.scope !== "workspace" || !tests) at(p, `${w}: needs_attention: counts a workspace area's connections, tested by its records' page (an area with a test_connection or test_storage action)`);
+    }
     if (m.field !== undefined) { const k = col(m.field, `the ${m.measure} of ${m.field}`); if (k && k.type !== "number") at(p, `${w}: a ${m.measure} reads a number field; ${m.field} is ${k.type}`); }
     if (m.duration) for (const end of [m.duration.from, m.duration.to]) { const c = pointOf(over, end); if (typeof c === "string") at(p, `${w}: duration: ${c}`); }
     if (m.by_time) { const c = pointOf(over, m.by_time.at); if (typeof c === "string") at(p, `${w}: by_time.at: ${c}`); }
