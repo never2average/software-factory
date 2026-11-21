@@ -2838,7 +2838,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  /** Its icon wherever it shows (mold_v0-242; src/record-icons.ts): its own, its customer tab's, else one picked from its name. */\n  icon: NonNullable<NavItem['icon']>;\n" +
   "  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
-  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
+  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[]; supersedes?: { scope_fields: string[]; when_enters: string; previous_to: string } } | null;\n" +
   "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
   "  /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */\n  export_roles?: string[];\n" +
   "  /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */\n  import_roles?: string[];\n" +
