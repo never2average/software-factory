@@ -6,7 +6,7 @@
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { crumbParentProblems } from "./record-crumbs.js";
-import { WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { conditionIssues, WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -344,6 +344,14 @@ export function checkViews(b: BuildViews): string[] {
           if (!f) at(p, `${cw}: ${fn} is not one of ${c.related.area}'s fields`);
           else if (f.encrypted || f.type === "file" || f.type === "json") at(p, `${cw}: ${fn} is ${f.encrypted ? "encrypted" : `a ${f.type} field`}: a cell shows one plain value`);
         }
+        // mold_v0-333: the order and the condition a latest column (or a count, for where) reads its records by.
+        if (c.sort) {
+          if (c.show === "count") at(p, `${cw}: a count has no order: sort is for a latest column`);
+          const f = r.fields.find((x) => x.name === c.sort!.field);
+          if (!f && !["updated_at", "title", "key"].includes(c.sort.field)) at(p, `${cw}: sort ${c.sort.field} is not one of ${c.related.area}'s fields (or updated_at, title, key)`);
+          else if (f && (f.encrypted || f.type === "json" || f.type === "file" || f.multiple)) at(p, `${cw}: sort ${c.sort.field} is ${f.encrypted ? "encrypted" : f.multiple ? "a list" : `a ${f.type} field`}: sort by a field with one plain value`);
+        }
+        if (c.where) for (const m of conditionIssues(r.fields, (r as { clocks?: { name: string }[] }).clocks ?? [], c.where, c.related.area)) at(p, `${cw}: where: ${m}`);
       }
       // Its filter (mold_v0-175): the area's fields (or key, title, updated_at); the server checks each value as a list's.
       for (const n of Object.keys(t.filter ?? {})) if (!["key", "title", "updated_at"].includes(n) && !a.fields.some((f) => f.name === n)) at(p, `${w}: filter ${n} is not a field of area ${a.name}`);
@@ -700,7 +708,8 @@ export const SPARK_WEEKS = 12;
  *   weekly   the value is the metric now (or over its own window); the line is the same measure week by week
  *   latest   a series metric (by_time): the value is its current bucket (this week, this month, today), the line its weeks
  */
-export type SparkMode = "total" | "weekly" | "latest";
+/** mold_v0-333: "current", a count of now with no sparkline (a metric's `mode`). */
+export type SparkMode = "total" | "weekly" | "latest" | "current";
 export interface SparkCard {
   id: string;
   label: string;
@@ -725,7 +734,7 @@ export const sparkSeries = (m: SpecMetric): SpecMetric => ({ ...m, by_time: { at
 const PERIOD: Record<NonNullable<Metric["by_time"]>["every"], string> = { day: "today", week: "this week", month: "this month" };
 /** A declared metric as a card: its label (a series': "<label> this week"), what reads its value and its weeks. */
 export function sparkCardOf(m: SpecMetric): SparkCard {
-  const mode: SparkMode = m.by_time ? "latest" : m.measure === "count" || m.measure === "sum" ? "total" : "weekly";
+  const mode: SparkMode = m.mode === "current" ? "current" : m.by_time ? "latest" : m.measure === "count" || m.measure === "sum" ? "total" : "weekly";
   return { id: m.name, label: m.by_time ? `${m.label} ${PERIOD[m.by_time.every]}` : m.label, value: m, series: sparkSeries(m), mode };
 }
 

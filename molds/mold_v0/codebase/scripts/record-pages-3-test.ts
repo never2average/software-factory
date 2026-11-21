@@ -127,7 +127,8 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   const facts = (d: any) => d.header.facts;
   has(edited("projects", (d) => { facts(d)[3].field = "owner"; }), /a computed fact has no field of its own/, "a computed fact with a field");
   has(edited("projects", (d) => { delete facts(d)[4].label; }), /a computed fact names itself \(label\)/, "a computed fact without its label");
-  has(edited("projects", (d) => { delete facts(d)[3].computed.field; }), /a latest fact names the field it shows/, "a latest fact without its field");
+  // mold_v0-333: a latest fact without a field is a pointer (the record itself): it takes no unit.
+  has(edited("projects", (d) => { delete facts(d)[3].computed.field; facts(d)[3].unit = "builds"; }), /a pointer \(a latest fact with no field\) shows a record: it has no unit/, "a pointer with a unit");
   has(edited("projects", (d) => { facts(d)[4].computed.field = "status"; }), /a count fact counts records: it names no field/, "a count with a field");
   has(edited("projects", (d) => { facts(d).push({ label: "Odd" }); }), /a fact names a field of the record, or is computed from related records/, "a fact with neither");
   has(edited("projects", (d) => { facts(d).push({ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }); }), /at most 10 facts/, "an eleventh fact (computed ones count; mold_v0-329: 10 at most)");
@@ -139,7 +140,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(edited("projects", (d) => { add(d).roles = ["viewer"]; }), /a create_record action cannot be a viewer's/, "a viewer's Add");
   assert.ok(!api.RecordAreaSchema.safeParse({ ...clone(areaOf(FIXTURE, "projects")), key_from_title: "yes" }).success, "key_from_title is true or false");
   const tab = (edit: (t: any) => void) => { const t = clone(FIXTURE.tabs.find((x: any) => x.id === "projects")); edit(t); const r = api.TabSchema.safeParse(t); return r.success ? [] : r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`); };
-  has(tab((t) => { t.columns[2].show = "sum"; }), /show is "count" or "latest:<a field of the related area>"/, "a related column showing a sum");
+  has(tab((t) => { t.columns[2].show = "sum"; }), /show is "count", "latest" \(the record itself\) or "latest:<a field of the related area>"/, "a related column showing a sum");
   has(tab((t) => { t.columns.push(clone(t.columns[2])); }), /a column is listed twice/, "a related column twice");
   has(tab((t) => { t.areas = [{ area: "projects" }, { area: "releases" }]; delete t.area; }), /a merged tab's columns are fields/, "a related column on a merged tab");
   // The second batch: notice conditions (dates, a clock, all and any, a success tone), a run on a linked record, a
@@ -156,7 +157,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(edited("releases", (d) => { d.actions[0].target.via = "owner"; }), /owner is not a link or reference field of the area: a run's target is the record one names/, "a target through a text field");
   void rel;
   ok("the second batch, in the area (mold_v0-256): refused: a date test on a text field, two date tests, a clock the area lacks, a clock's test with a field, all beside a test, all and any together, a tone outside info, success, warning and danger, a target on a link action, a target through a text field");
-  ok("in the area and the tab (mold_v0-256): the fixture takes; refused: a log of a number or file field or with fields, two kinds in one section, a code view of a file field or in another language, a table of a text field or of nine columns, history of a field the area lacks or past 100, a file browser of a text field or on an area without files, a computed fact with a field or without its label, a latest without its field, a count with one, a where of two tests, a fact with neither, an eleventh fact, Add without its area, an area on a run, an input from a field the record lacks or not a field, a viewer's Add, a related column showing a sum, twice or on a merged tab");
+  ok("in the area and the tab (mold_v0-256): the fixture takes; refused: a log of a number or file field or with fields, two kinds in one section, a code view of a file field or in another language, a table of a text field or of nine columns, history of a field the area lacks or past 100, a file browser of a text field or on an area without files, a computed fact with a field or without its label, a pointer with a unit (mold_v0-333: a latest without its field is the record itself), a count with one, a where of two tests, a fact with neither, an eleventh fact, Add without its area, an area on a run, an input from a field the record lacks or not a field, a viewer's Add, a related column showing a sum, twice or on a merged tab");
 
   const build = (edit?: (j: any) => void) => { const j = clone(FIXTURE); edit?.(j); return checkViews(viewsOf([{ id: "fixture_pages", definition: compileDeclarations(j) as never }])); };
   assert.deepEqual(build(), [], "the fixture's build: no problem");

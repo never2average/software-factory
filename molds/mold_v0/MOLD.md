@@ -4383,6 +4383,79 @@ that declared recipes for its profiles without listing the Recipes page left `wo
 was refused at run time (409) though the build passed; a pack's own recipes now ask for the flag (`src/features.ts`,
 `scripts/gen-packs.mjs`, `.claude/scripts/lib/features.py`).
 
+## Truthful build and deployment lifecycle (mold_v0-333)
+
+A record's state says what really happened to the work it stands for: made when the work is started, closed when its
+agent session ends, cancelled for real, timed out, failed at a known stage, replaced by a newer one. All keys optional and
+generic (neutral words; a pack names its own areas and states); a pack that names none builds and behaves as before
+(`python3 .claude/scripts/packs.py check` of the existing packs is unchanged).
+
+- **Made at the start** (`src/pack-api.ts` `SessionCreatesSchema`, `src/session-records.ts`, `src/record-page-routes.ts`):
+  a start_agent action's `creates: {area, link, fields, title, on_session_end, reason_field, children}`. When the session
+  starts, the server adds the record through the record store as the person who pressed (inside the app's own action,
+  so `set_by: "action"` fields may be set): in its lifecycle's initial state, `link` set to this record's key, each of
+  `fields` from this record (a field, `$key`, `$title`) or the start (`$session`, `$person`, `$now`, `$today`), its title
+  a template (default this record's). The first message's `{{created_key}}` names it (the page's preview says "(given
+  when it starts)"). The session keeps the link in its frozen policy (`policy.creates`); a refused start removes both.
+  Example: `"creates": {"area": "builds", "link": "application", "fields": {"environment": "environment", "session":
+  "$session", "requested_by": "$person", "started": "$now"}, "on_session_end": {"failed": "failed", "crash": "failed",
+  "policy": "failed", "budget": "failed", "finished": "failed", "stopped": "cancelled"}, "reason_field": "error",
+  "children": [{"area": "deployments", "via": "build", "from": ["BUILDING"], "to": "CANCELED"}]}`.
+- **Closed when the session ends** (`settleCreated`): why it ended is `finished` (stopped, reason done), `stopped`,
+  `failed`, `crash` (crashed past its resumes), `policy` (its governance refused it, an approval declined or timed out)
+  or `budget` (its last budget request declined or expired, nothing running). The shell then moves the record to the
+  state `on_session_end` names for that reason, only when a declared transition reaches it from where the record is (a
+  build the agent finished stays succeeded), writes the reason's words into `reason_field` while it is empty, and moves
+  (or, without a lifecycle, writes) each child still in `from` to `to`. Once per session: a mark claimed in its policy
+  (`creates.closed`) before anything moves. Called after the transaction that ended it (stop, a wake's reconcile, a
+  declined request) and by the harness sweep (`settleEnded`) for one missed. Its history names `shell:session`.
+- **Cancel cancels**: a move action's `stops_session: true` (with `to`) stops every open session working on the record
+  (the one that made it, those started from it) as the platform; its answer says how many. A record in a state such a
+  move reaches is no longer moved by a session's late call (a write in a wake, `run:<id>`): ignored with a log line,
+  never a 409 its agent would retry; a person's move there is still refused.
+- **Time limits**: a clock's escalation step may declare `move_to` (a state): the clock check moves the record there by a
+  declared transition, as the shell (`shell:clock`), once per deadline, only while the record is still in the state the
+  clock started on (`starts: {event: "entered", state}`); durations take minutes too (`"90m"`). Example: `{"name":
+  "build_limit", "label": "Time limit", "starts": {"event": "entered", "state": "running"}, "after": "90m", "stops_when":
+  {"field": "status", "in": ["succeeded", "failed", "cancelled", "timed_out"]}, "escalate": [{"after": "0m", "label":
+  "Timed out", "move_to": "timed_out"}]}`.
+- **Where it stopped**: a steps section's `failed_stage` (an enum or text field holding one of the steps' states). A
+  record off the path is drawn as reached, stopped here (its state's word: "Failed here") and not reached: at
+  `failed_stage`'s value, else the last step it entered before it left the path (the page's answer carries `state_at`,
+  when it entered each state; `web/src/features/records/detail-layout.ts` `stepRows`). A record from before shows as before.
+- **Replaced, and what serves now**: a lifecycle's `supersedes: {scope_fields, when_enters, previous_to}`: when a record
+  enters `when_enters` (moved, or created in it), each other record with the same scope values still there and entered
+  before it moves to `previous_to` (a transition must exist), as the shell (`shell:supersede`); an empty scope value
+  replaces nothing. Example: `{"scope_fields": ["environment"], "when_enters": "READY", "previous_to": "SUPERSEDED"}`. A
+  derived pointer, never stored: a computed fact `{op: "latest"}` with no `field` is the newest related record itself
+  (its title, linked), and a list column `show: "latest"` the same per row; list columns take `sort` and `where` (the
+  notices' condition) and `id` (`rel_<id>`, when two read the same area): `{"related": {"area": "deployments", "via":
+  "environment"}, "show": "latest", "where": {"field": "state", "equals": "READY"}, "label": "Serving", "id": "serving"}`,
+  `{"related": {"area": "builds"}, "show": "latest:status", "sort": {"field": "started", "direction": "desc"}}`.
+- **Counts of now**: a metric's `mode: "current"` (a count or a sum, no `by_time`): its card shows what is in the state
+  today with no sparkline ("As of now."), never a running total of creation dates.
+- **Checklist steps on a value**: an onboarding step's `where: {field, in}` on a `record:<area>` step: done once a record
+  holds one of those values, from when it entered that state (else when it was last written), in the checklist and the
+  staff funnel. Example: `{"id": "first_live", "label": "First app live", "done_when": "record:deployments", "where":
+  {"field": "state", "in": ["READY"]}}`.
+
+Refused at build (with their paths): creates on another kind or a shared area, from a field this record lacks, into an
+unknown field, the lifecycle's field or the link, a link that does not point here, a state that is not one or that no
+transition reaches, a reason field that is not plain text, a child's via, field or states; stops_session on another kind
+or without `to`; `move_to` without a lifecycle, a state, a clock started by a state or a transition; supersedes without
+its transition, by a list, json, file or the lifecycle's own field, on a sealed area; `failed_stage` on anything but an
+enum or text field; a related column's sort and where on fields it lacks; `mode: "current"` with `by_time` or a measure
+other than count or sum; an onboarding `where` off a record step, on a field it lacks or with a value not an option.
+
+Proof: `npm run test:build-lifecycle` (`scripts/build-lifecycle-333-test.ts`, offline, its own fixture pack): the
+refusals; Start build making the build (queued, linked, the session, the person, the time) and the first message naming
+it; Cancel stopping the session and ignoring its late move; close-out for every end reason, its error written and its
+BUILDING deployment cancelled, once, a finished build left, the sweep settling a missed one; the clock moving a running
+build past 90 minutes to timed_out once; the steps' stop point; SUPERSEDED per scope and the serving pointer as a fact and
+a column; a list column's sort and where; a current-count card; the checklist step done only on READY. **Not covered:**
+two Start build presses at once (both make a build; "one at a time" is a pack's `unavailable` on the action); a
+rollback or promote action; a pointer across two hops (application → environment → deployment).
+
 ## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
 
 Flag `nested_runs` (with `agent_harness`). The full contract is `molds/mold_v0/docs/agent-harness.md` ("Nested runs and

@@ -3112,8 +3112,9 @@ function viewsModule() {
       ...(FEATURE_ON.record_pages && t.related_columns?.length ? { related_columns: t.related_columns.map((c) => {
         const r = recordAreas.find((a) => a.name === c.related.area), fn = c.show.startsWith("latest:") ? c.show.slice(7) : null;
         const fl = fn ? r?.fields.find((f) => f.name === fn)?.label ?? fn : null;
-        return { id: `rel_${c.related.area}_${c.show.replace(":", "_")}`, at: c.at, area: c.related.area, show: c.show,
-          label: c.label ?? (fl ? `Latest ${fl.charAt(0).toLowerCase()}${fl.slice(1)}` : r?.label ?? c.related.area) };
+        // mold_v0-333: a column's own id (when two read the same area and show); "latest" is the record itself (a pointer).
+        return { id: c.id ? `rel_${c.id}` : `rel_${c.related.area}_${c.show.replace(":", "_")}`, at: c.at, area: c.related.area, show: c.show,
+          label: c.label ?? (fl ? `Latest ${fl.charAt(0).toLowerCase()}${fl.slice(1)}` : c.show === "latest" ? `Latest ${(r?.label ?? c.related.area).toLowerCase()}` : r?.label ?? c.related.area) };
       }) } : {}) } : {}),
     // mold_v0-208: a list tab is its four cards, the search row and the table: an area tab's charts are not drawn.
     charts: t.kind === "area" ? [] : t.charts ?? [],

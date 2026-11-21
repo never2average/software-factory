@@ -207,7 +207,8 @@ function permissions(r: SessionRow, a: Actor) {
     message: mine && (open || (!isChild(r) && (a.kind === "key" || canAccount(a.role, "launch")))),
     pause: open && (mine || owner || staff) && ["starting", "live", "waking", "parked"].includes(r.state) && !r.pause_requested_at,
     resume: open && mine && (r.state === "paused" || r.state === "parked"),
-    stop: open && (mine || owner || staff),
+    // mold_v0-333: the platform stops a session when its record is cancelled (a move with stops_session).
+    stop: open && (mine || owner || staff || a.kind === "system"),
     decide: open && (mine || owner),
     // A child's budget is carved from its parent's: raising it would let the tree pass its root.
     raise: open && !isChild(r) && (staff || a.kind === "key" || canAccount(a.role, "budget")),
@@ -326,7 +327,9 @@ export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ def
  * start it, its instructions, model, budget, ceiling, turns, web, tools and files. `opts.record` (the server's own, from a
  * record page's start_agent action; never from a request's body) links it to that record.
  */
-export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string }; permitProgram?: string } = {}): Promise<SessionDetail> {
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string }; permitProgram?: string;
+    /** mold_v0-333: the record the session makes as it starts (src/session-records.ts): kept in its policy, made after it is written. */
+    creates?: { link: import("./session-records.js").CreatedLink; make: (sessionId: string) => Promise<unknown> } } = {}): Promise<SessionDetail> {
   needOn();
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
@@ -362,6 +365,8 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     ...(opts.followOn ? { follow_on: opts.followOn } : {}),
     // mold_v0-316: the page it was opened from (the agent page's examples and quick commands read it back).
     ...(openedFrom ? { opened_from: openedFrom } : {}),
+    // mold_v0-333: the record it made (closed out by the shell when it ends: src/session-records.ts settleCreated).
+    ...(opts.creates ? { creates: opts.creates.link } : {}),
   });
   if (eff.governance) {
     // Its governance policy, frozen as the reference freezes a run's (later edits apply to new sessions only); the web
@@ -416,10 +421,20 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     const envWords = C.connectionEnvWords(connectionStart);
     if (envWords) await systemMessage(q, { id, org_id: orgId }, envWords);
   });
+  // mold_v0-333: the record it makes (a build, queued), added now it has an id; refused, the session goes with it.
+  if (opts.creates) {
+    try { await opts.creates.make(id); }
+    catch (e) {
+      await tx(async (q) => { await q.query("DELETE FROM harness_sessions WHERE id = $1 AND org_id = $2", [id, orgId]); });
+      throw e;
+    }
+  }
   try { await queueWake(orgId, id, "start", actor, org); }
   catch (e) {
     // Nothing ran: the session goes with the refusal (its run never started), and the caller hears why.
     await tx(async (q) => { await q.query("DELETE FROM harness_sessions WHERE id = $1 AND org_id = $2", [id, orgId]); });
+    // mold_v0-333: and so does the record it made: nothing was started.
+    if (opts.creates) await (await import("./session-records.js")).unmakeCreated(orgId, opts.creates.link);
     throw e;
   }
   return readSession(orgId, id, actor);
@@ -765,6 +780,7 @@ export async function stopSession(orgId: number | null, id: string, actor: Actor
   if (queued) await withdraw(r.org_id, queued, actor);
   // mold_v0-291: stopping a session stops its children: they act only for it.
   if (r.root_id) await (await nestedModule())?.cancelChildrenOf(r.org_id, r.id, `stopped by ${actor.name ?? "someone"}`);
+  await settleRecord(r.org_id, r.id);
   return read(async (q) => view(await rowOf(q, orgId, id), actor, null));
 }
 
@@ -780,6 +796,15 @@ export async function endSession(q: Queryable, x: { id: string; org_id: number; 
   const undelivered = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' LIMIT 1", [x.org_id, x.id]);
   if (undelivered.length) await systemMessage(q, x, "It ended before reading your last message. Send another and it continues with both.");
   await revokeToolTokens(q, x.org_id, x.id, `the session ${state === "failed" ? "failed" : "ended"}`);
+}
+
+/**
+ * mold_v0-333: the record a session made (start_agent `creates`), closed out once the session has ended: after the
+ * transaction that ended it (never inside one: the record store writes on its own), and again by the sweep for one missed.
+ */
+export async function settleRecord(orgId: number, id: string): Promise<void> {
+  const S = await import("./session-records.js");
+  await S.settleCreated(orgId, id).catch((e) => console.error(`agent session ${id}: its record not closed out: ${(e as Error).message}`));
 }
 
 function denied(r: SessionRow, a: Actor, what: string) {
@@ -854,6 +879,8 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
     return x.state === "awaiting" || x.state === "parked" ? "approval" : false;
   });
   if (wake) await queueWake(r.org_id, sessionId, wake, actor, org);
+  // mold_v0-333: a declined budget (or a governed decline that ended it) closes out the record it made.
+  else await settleRecord(r.org_id, sessionId);
   return readSession(orgId, sessionId, actor);
 }
 const requestWords = (kind: RequestKind, subject: string, policy?: AgentPolicy | null) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${toolWords(policy, subject)}` : `more budget (at ${subject})`;
@@ -1424,6 +1451,9 @@ export async function reconcileWake(runId: string): Promise<void> {
     await queueWake(auto.org, auto.id, auto.reason, { kind: "system", user: null, name: "the platform", role: null }).catch((e) =>
       console.error(`agent session ${auto.id}: ${auto.reason === "auto_resume" ? "automatic resume" : "wake"} refused: ${(e as Error).message}`));
   }
+  // mold_v0-333: a session that ended closes out the record it made (once; the sweep says it again).
+  const ended = await read((q) => q.query<{ id: string; org_id: number }>("/* tenant: the ended run's session, by run id */ SELECT s.id, s.org_id FROM harness_sessions s JOIN runs r ON r.harness_session_id = s.id AND r.org_id = s.org_id WHERE r.id = $1 AND s.policy ? 'creates'", [runId]));
+  for (const e of ended) await settleRecord(e.org_id, e.id);
   // mold_v0-291: a child settles, or a parent that ended reaps its children; idempotent, and the sweep says it again.
   const settled = settledSession as { org: number; id: string; root: boolean } | null;
   if (settled) await (await nestedModule())?.afterWake(settled.org, settled.id).catch((e: Error) => console.error(`nested runs: ${settled.id}: ${e.message}`));
@@ -1499,6 +1529,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
   await tx((q) => sweepToolTokens(q, now));
   // mold_v0-291: the durable reconcile of every tree (children, machines, evaluations): all of it is in the database.
   await (await nestedModule())?.nestedTick(now).catch((e: Error) => console.error(`nested runs: the tick: ${e.message}`));
+  // mold_v0-333: ended sessions whose record was not closed out (a lost reconcile, an expired budget request).
+  await (await import("./session-records.js")).settleEnded().catch((e: Error) => console.error(`agent sessions: records not closed out: ${e.message}`));
   return out;
 }
 

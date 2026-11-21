@@ -867,6 +867,12 @@ const stateTimes = (data: Record<string, unknown> | undefined): Record<string, s
   const v = data?.[STATE_TIMES];
   return v && typeof v === "object" && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
 };
+/** mold_v0-333: when a workspace record last entered each state (a steps section's "where it stopped"); {} for none. */
+export async function recordStateTimes(orgId: number, area: RecordArea, key: string): Promise<Record<string, string>> {
+  if (!area.lifecycle || area.scope !== "workspace") return {};
+  const r = await readWorkspace(orgId, area, key).catch(() => null);
+  return r ? stateTimes(r.opened) : {};
+}
 /** A record's state; a row with none (written before its area had a lifecycle) is in the initial state. */
 const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifecycle ? data[area.lifecycle.field] ?? area.lifecycle.initial : undefined);
 
@@ -1104,6 +1110,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const r = await writeRow(orgId, area, key, t, after, prev, w, meta, null, vis);
   auditMembers(orgId, area, key, members.turned);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
+  if (!prev) await supersedeOthers(orgId, area, key, after); // mold_v0-333: created in the state that replaces
   return r;
 }
 
@@ -1129,6 +1136,12 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   if (typeof to !== "string") throw new PackError("to must be a state", 400);
   if (to === from) return prev.record;
   const ways = area.lifecycle.transitions.filter((t) => (t.from === "*" || (typeof from === "string" && t.from.includes(from))) && t.to === to);
+  // mold_v0-333: a record a person cancelled (a move with stops_session) is no longer moved by the session it stopped:
+  // that session's late final move is ignored, said in the log, never a refusal its agent would keep retrying.
+  if (!ways.length && typeof from === "string" && currentVia()?.startsWith("run:") && lateStopStates(area).includes(from)) {
+    console.log(`${area.name}/${key}: ${JSON.stringify(to)} ignored: the record was moved to ${JSON.stringify(from)}, which stopped its session (${currentVia()})`);
+    return prev.record;
+  }
   if (!ways.length) {
     const can = movesFrom(area, from);
     throw new PackError(`${area.label} record ${key} cannot move from ${JSON.stringify(from)} to ${JSON.stringify(to)}. ${can.length ? `From ${JSON.stringify(from)} it can move to: ${can.join(", ")}.` : `Nothing moves it from ${JSON.stringify(from)}.`}`, 409);
@@ -1138,7 +1151,32 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   const after = { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, w = writerOf(actor, null);
   const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
+  await supersedeOthers(orgId, area, key, after);
   return r;
+}
+
+/** mold_v0-333: the states a stops_session move (Cancel) reaches on `area`'s page. */
+const lateStopStates = (area: RecordArea) =>
+  ((area as { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }).detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!);
+/**
+ * mold_v0-333 (lifecycle.supersedes): a record that entered `when_enters` replaces the others of its scope (the same
+ * values of every scope field) still there and entered before it: each is moved to `previous_to` by the shell, along the
+ * lifecycle (its history says "shell:supersede"). A record with a scope field empty replaces nothing.
+ */
+async function supersedeOthers(orgId: number, area: RecordArea, key: string, data: Record<string, unknown>) {
+  const sp = area.lifecycle?.supersedes;
+  if (!sp || data[area.lifecycle!.field] !== sp.when_enters) return;
+  const scope = sp.scope_fields.map((f) => [f, data[f]] as const);
+  if (scope.some(([, v]) => v === undefined || v === null || v === "" || typeof v === "object")) return;
+  const mine = stateTimes(data)[sp.when_enters] ?? new Date().toISOString();
+  const page = await listFor(orgId, area.name, { filter: { [area.lifecycle!.field]: sp.when_enters, ...Object.fromEntries(scope) }, limit: 100 });
+  for (const row of page.records) {
+    if (row.key === key) continue;
+    const other = await readWorkspace(orgId, area, row.key);
+    if (!other || stateOf(area, other.opened) !== sp.when_enters || (stateTimes(other.opened)[sp.when_enters] ?? "") > mine) continue;
+    await asWriter({ by: "shell", id: "supersede" }, () => moveWorkspaceNow(orgId, area.pack, SYSTEM_ACTOR, area.name, row.key, sp.previous_to))
+      .catch((e) => console.error(`${area.name}/${row.key}: not superseded by ${key}: ${(e as Error).message}`));
+  }
 }
 
 function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {

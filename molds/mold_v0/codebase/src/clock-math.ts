@@ -20,9 +20,11 @@ export type ClockKind = "calendar" | "business";
 
 /** A duration as the clock counts it: milliseconds of its own kind of time. */
 export function parseDuration(d: string): { ms: number; kind: ClockKind } {
-  const m = /^(0|[1-9][0-9]{0,4})(h|d|bd)$/.exec(d);
+  const m = /^(0|[1-9][0-9]{0,4})(m|h|d|bd)$/.exec(d);
   if (!m) throw new Error(`not a clock duration: ${JSON.stringify(d).slice(0, 40)}`);
   const n = Number(m[1]);
+  // mold_v0-333: minutes (a run's time limit, "90m").
+  if (m[2] === "m") return { ms: n * 60_000, kind: "calendar" };
   return m[2] === "h" ? { ms: n * HOUR, kind: "calendar" } : m[2] === "d" ? { ms: n * DAY, kind: "calendar" } : { ms: n * DAY, kind: "business" };
 }
 /** A clock's kind of time (checked at build: every duration of one clock is the same kind). */

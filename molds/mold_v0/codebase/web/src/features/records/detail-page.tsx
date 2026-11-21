@@ -291,7 +291,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
   if (s.versions) return featureOn('nested_runs') ? <TargetVersions target={record.key} title={s.title} empty={s.empty} /> : null;
   // mold_v0-331: a lifecycle's progress as numbered steps.
-  if (s.steps) return <StepsSection s={s} id={id} area={area} layout={layout} record={record} />;
+  if (s.steps) return <StepsSection s={s} id={id} area={area} layout={layout} record={record} stateAt={page.data?.state_at ?? null} />;
   // mold_v0-256: a log, the change history, a code view, a table, a file browser.
   const copy = (t: string, done: string) => void copyWithToast(t, done);
   const fieldLabel = (n: string) => area.fields.find((f) => f.name === n)?.label ?? n;
@@ -598,16 +598,17 @@ const SESSION_PHASE: Record<string, string> = { starting: 'Starting', working: '
  * mold_v0-331: a lifecycle's progress: its states in order (the declared ones, else the field's options), done up to the
  * record's state, which is marked; a state off that path (a failure) is said on a line of its own under them.
  */
-function StepsSection({ s, id, area, layout, record }: { s: DetailSection; id: string; area: RecordAreaSpec; layout: DetailLayout; record: RecordRow }) {
+function StepsSection({ s, id, area, layout, record, stateAt }: { s: DetailSection; id: string; area: RecordAreaSpec; layout: DetailLayout; record: RecordRow; stateAt: Record<string, string> | null }) {
   const rail = useRail();
   const repeatsTab = useRepeatsTab(s.title);
   const f = area.fields.find((x) => x.name === s.steps!.field);
   if (!f) return null;
   const states = s.steps!.states ?? (f.options ?? []).map((o) => (typeof o === 'string' ? o : o.value));
-  const { steps, off } = stepRows(states, record.data[f.name]);
+  // mold_v0-333: a record that left the path (failed, cancelled) shows the step it stopped at.
+  const { steps, off } = stepRows(states, record.data[f.name], { stage: s.steps!.failed_stage ? record.data[s.steps!.failed_stage] : null, stateAt });
   const body = (
     <div className='grid gap-2'>
-      <RailSteps label={s.title} steps={steps.map((x) => ({ key: x.value, label: optionWords(f, x.value), state: x.state }))} />
+      <RailSteps label={s.title} steps={steps.map((x) => ({ key: x.value, label: optionWords(f, x.value), state: x.state, ...(x.state === 'failed' && off ? { word: `${optionWords(f, off)} here` } : {}) }))} />
       {off && <p className='text-muted-foreground m-0 text-[13px]' data-steps-off={off}>Now: <ToneBadge color={badgeColor(layout, f.name, off)}>{optionWords(f, off)}</ToneBadge></p>}
     </div>
   );
@@ -634,6 +635,11 @@ function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: Detai
     return answer.via
       ? <Link href={showAllHref(base, answer.area, answer.via, recordKey)} className='tabular-nums underline-offset-4 hover:underline' data-computed-count={answer.value}>{words}</Link>
       : <span className='tabular-nums'>{words}</span>;
+  }
+  // mold_v0-333: a pointer (no field): the newest related record itself, its title linked ("Serving: Web · Production").
+  if (answer.field === null) {
+    if (!answer.record) return <span className='text-muted-foreground'>—</span>;
+    return <Link href={`/${base}/records/${answer.area}/${encodeURIComponent(answer.record.key)}`} className='break-words underline-offset-4 hover:underline' data-computed-pointer={answer.record.key}>{answer.record.title || answer.record.key}</Link>;
   }
   const target = recordAreas.find((a) => a.name === answer.area);
   const f = target?.fields.find((x) => x.name === answer.field);

@@ -40,7 +40,7 @@ import { packs } from "./packs.js";
 import { personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
 import { lineLinks, recordWriters } from "./record-runs.js";
-import { asAction, findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
+import { asAction, findArea, getFor, recordStateTimes, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 const listForWorkspace = listFor;
 import { formOffers } from "./secret-binding.js";
 import { withTenant } from "./tenant-scope.js";
@@ -237,7 +237,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         if (!prof) continue;
         const { fillTemplate } = await import("./agent-profile-spec.js");
         out.push({ ...base, label: x.label ?? `Start ${prof.name}`, disabled: unavailable ?? prof.disabled,
-          agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", record) } });
+          // mold_v0-333: the record it makes has no key until it starts: the preview says so.
+          agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", x.creates ? { ...record, data: { ...record.data, created_key: "(given when it starts)" } } : record) } });
         break;
       }
       case "start_program": {
@@ -327,7 +328,7 @@ export const viaOf = (area: string, target: RecordArea, related: { via?: string 
 type Fact = NonNullable<NonNullable<Layout["header"]>["facts"]>[number];
 /** A computed fact's answer (mold_v0-256): a count, the latest related record's value, or hidden from this person. */
 export type ComputedAnswer = { hidden: true } | { op: "count"; value: number; capped: boolean; area: string; via: string }
-  | { op: "latest"; value: unknown; area: string; field: string; record: { key: string; title: string | null } | null };
+  | { op: "latest"; value: unknown; area: string; field: string | null; record: { key: string; title: string | null } | null };
 /**
  * A fact computed from the records of another area that point back to `record` (mold_v0-256), read as the person (the
  * area's read permission, its list not withheld; else hidden), in the workspace's own scope, a page at a time: `count`
@@ -361,11 +362,12 @@ export async function computedFact(org: number | null, area: RecordArea, record:
     const page = await listFor(org, target.name, { filter, sort, limit: c.where ? 100 : 1, ...(after ? { after } : {}) }, actor);
     read += page.records.length;
     const row = page.records.find(keeps);
-    if (row) return { op: "latest", value: row.data[c.field!] ?? null, area: target.name, field: c.field!, record: { key: row.key, title: row.title } };
+    // mold_v0-333: with no field, the record itself (a pointer): its title (or key) is the value.
+    if (row) return { op: "latest", value: c.field ? row.data[c.field] ?? null : row.title || row.key, area: target.name, field: c.field ?? null, record: { key: row.key, title: row.title } };
     if (!page.next) break;
     after = page.next;
   }
-  return { op: "latest", value: null, area: target.name, field: c.field!, record: null };
+  return { op: "latest", value: null, area: target.name, field: c.field ?? null, record: null };
 }
 
 /** The record picker's page: at most PICK_MAX choices, from the PICK_SCAN newest records. */
@@ -380,20 +382,26 @@ async function relatedColumn(org: number, area: RecordArea, c: import("./pack-ap
   const via = target ? viaOf(area.name, target, c.related) : null;
   if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
   const out: Record<string, unknown> = {};
+  // mold_v0-333: "latest" alone is the record itself (a pointer: {key, title}); sort and where choose which.
+  const pointer = c.show === "latest";
   const latest = c.show.startsWith("latest:") ? c.show.slice(7) : null;
-  for (const k of keys) out[k] = latest ? null : 0;
+  for (const k of keys) out[k] = latest || pointer ? null : 0;
   if (!keys.length) return out;
   const f = target.fields.find((x) => x.name === via);
   const many = !!(f?.multiple || f?.type === "link");
+  const sort = c.sort ? `${(c.sort.direction ?? "desc") === "desc" ? "-" : ""}${c.sort.field}` : "-updated_at";
+  const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data, (row as { clocks?: unknown }).clocks);
   let after: string | undefined, read = 0;
   while (read < COMPUTED_COUNT_MAX) {
-    // Newest change first: the first row seen for a key is its latest.
-    const page = await listFor(org, target.name, { filter: many ? {} : { [via]: { in: keys } }, sort: "-updated_at", limit: 200, ...(after ? { after } : {}) }, actor);
+    // In the column's order (newest change first by default): the first row seen for a key is its latest.
+    const page = await listFor(org, target.name, { filter: many ? {} : { [via]: { in: keys } }, sort, limit: 200, ...(after ? { after } : {}) }, actor);
     read += page.records.length;
     for (const row of page.records) {
+      if (!keeps(row)) continue;
       const v = row.data[via];
       for (const k of (Array.isArray(v) ? v : [v]).filter((x): x is string => typeof x === "string" && x in out)) {
-        if (latest) { if (out[k] === null) out[k] = row.data[latest] ?? null; } else out[k] = (out[k] as number) + 1;
+        if (pointer) { if (out[k] === null) out[k] = { key: row.key, title: row.title ?? null }; }
+        else if (latest) { if (out[k] === null) out[k] = row.data[latest] ?? null; } else out[k] = (out[k] as number) + 1;
       }
     }
     if (!page.next) break;
@@ -543,7 +551,9 @@ export function recordPageRouter(): Router {
     }
     // mold_v0-310: the run or agent session that made the record and those that changed it since (the header's "Made by").
     writers ??= await recordWriters(org, area, record.key);
-    return { actions: await pageActions(area, record, actor, { org }), sections, facts, writers };
+    // mold_v0-333: a steps section shows where a record that left the path stopped: when it entered each state.
+    const steps = layout.tabs.some((t) => t.sections.some((x) => x.steps)) ? { state_at: await recordStateTimes(org, area, record.key) } : {};
+    return { actions: await pageActions(area, record, actor, { org }), sections, facts, writers, ...steps };
   }));
 
   // mold_v0-256: a history section's older lines (Show more): ?section=<tab>-<section>&before=<line id>.
@@ -603,7 +613,17 @@ export function recordPageRouter(): Router {
         const m = a.moves?.find((x) => x.to === to);
         if (!m) throw new PackError(`${typeof to === "string" ? `${stateWords(area, to)} is` : "to is"} not a state this action moves ${area.label} records to${a.moves?.length ? ` (${a.moves.map((x) => x.to).join(", ")})` : ""}.`, 400);
         if (m.disabled) throw new PackError(m.disabled, 409);
-        return dataApi.move(callerOf(res), area.name, record.key, m.to);
+        const moved = await dataApi.move(callerOf(res), area.name, record.key, m.to);
+        // mold_v0-333: Cancel cancels: the sessions working on the record (the one that made it, those started from it) stop.
+        if (declared.stops_session) {
+          const S = await import("./session-records.js"), H = await import("./harness-sessions.js");
+          const s = session(res);
+          const ids = await H.read((q) => S.sessionsFor(q, s.org, area.name, record.key));
+          const by = { kind: "system" as const, user: null, name: `${s.email ?? "Someone"} (moved ${record.title || record.key} to ${stateWords(area, m.to)})`, role: null };
+          for (const id of ids) await H.stopSession(s.org, id, by).catch((e) => console.error(`${area.name}/${record.key}: session ${id} not stopped: ${(e as Error).message}`));
+          return { ...moved, stopped_sessions: ids.length };
+        }
+        return moved;
       }
       case "edit": {
         if (a.disabled) throw new PackError(a.disabled, 409);
@@ -627,6 +647,21 @@ export function recordPageRouter(): Router {
         const s = session(res);
         const H = await import("./harness-sessions.js");
         const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
+        // mold_v0-333: the record the session makes (a build, queued), added by the server as it starts; the agent is
+        // told its key ({{created_key}}) and moves it; the shell closes it out when the session ends.
+        const c = declared.creates;
+        if (c) {
+          const S = await import("./session-records.js");
+          const { fillTemplate } = await import("./agent-profile-spec.js");
+          const key = S.createdKey();
+          const target = findArea(c.area)!;
+          const message = fillTemplate(declared.first_message ?? "", { ...record, data: { ...record.data, created_key: key } });
+          const link: import("./session-records.js").CreatedLink = { area: c.area, key, pack: target.pack,
+            ...(c.on_session_end ? { on_session_end: c.on_session_end } : {}), ...(c.reason_field ? { reason_field: c.reason_field } : {}), ...(c.children ? { children: c.children } : {}) };
+          const made = await H.startSession(s.org, H.actorOf(s), { message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
+            { record: { area: area.name, key: record.key }, creates: { link, make: (sid) => S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date() }, fillTemplate), actor) } });
+          return { session: made, created: { area: c.area, key } };
+        }
         return { session: await H.startSession(s.org, H.actorOf(s), { message: a.agent!.message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
           { record: { area: area.name, key: record.key } }) };
       }

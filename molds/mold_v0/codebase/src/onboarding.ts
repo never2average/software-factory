@@ -54,7 +54,11 @@ async function doneAt(orgId: number, s: OnboardingStep): Promise<string | null> 
       case "connected": return one("SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method = 'initialize'", [orgId]);
       case "first_call": return one("SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok", [orgId]);
       case "tool": return one(`SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method IN (${TOOL_METHODS}) AND ok AND name = $2`, [orgId, arg]);
-      case "record": return one("SELECT min(created_at) AS at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3", [orgId, s.pack, arg]);
+      // mold_v0-333: with `where`, only a record holding one of its values (from when it entered it, else last written).
+      case "record": return s.where
+        ? one(`SELECT min(coalesce((data->'$state_at'->>(data->>$4))::timestamptz, updated_at)) AS at FROM workspace_records
+                WHERE org_id = $1 AND pack = $2 AND area = $3 AND data->>$4 = ANY($5::text[])`, [orgId, s.pack, arg, s.where.field, s.where.in])
+        : one("SELECT min(created_at) AS at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3", [orgId, s.pack, arg]);
       case "run": return one("SELECT min(ended_at) AS at FROM runs WHERE org_id = $1 AND pack = $2 AND kind = $3 AND status = 'succeeded'", [orgId, s.pack, arg]);
       default: return null; // refused when the pack loads (src/pack-api.ts): never reached
     }
@@ -77,7 +81,8 @@ export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, 
   const steps = stageSteps();
   const out = new Map<number, Record<string, string>>();
   if (!steps.length || (orgIds && !orgIds.length)) return out;
-  const by = (what: string) => steps.filter((s) => s.done_when.startsWith(`${what}:`));
+  // mold_v0-333: a record step with `where` is read on its own (below), not by the area's first record.
+  const by = (what: string) => steps.filter((s) => s.done_when.startsWith(`${what}:`) && !(what === "record" && s.where));
   const ids = orgIds ?? null;
   type Row = { org_id: number; a: string; b: string; at: Date | string | null };
   const q = async (what: string, sql: string, params: unknown[]): Promise<Row[]> => (by(what).length ? (await getDb()).query<Row>(sql, [...params, ids]) : []);
@@ -98,12 +103,19 @@ export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, 
   ]));
   const index = (rows: Row[]) => new Map(rows.map((r) => [`${r.org_id} ${r.a} ${r.b}`, iso(r.at)]));
   const at = { run: index(runs), record: index(records), tool: index(tools), credential: index(creds) } as Record<string, Map<string, string | null>>;
-  const orgs = new Set([...runs, ...records, ...tools, ...creds].map((r) => Number(r.org_id)));
+  const wheres = new Map<string, Map<number, string | null>>();
+  for (const s of steps.filter((x) => x.where)) {
+    const rows = await asPlatform(async () => (await getDb()).query<{ org_id: number; at: Date | string | null }>(`/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
+      SELECT org_id, min(coalesce((data->'$state_at'->>(data->>$3))::timestamptz, updated_at)) AS at FROM workspace_records WHERE org_id IS NOT NULL AND pack = $1 AND area = $2
+        AND data->>$3 = ANY($4::text[]) AND ($5::int[] IS NULL OR org_id = ANY($5::int[])) GROUP BY org_id`, [s.pack, s.done_when.slice(7), s.where!.field, s.where!.in, ids]));
+    wheres.set(stepKey(s), new Map(rows.map((r) => [Number(r.org_id), iso(r.at)])));
+  }
+  const orgs = new Set([...runs, ...records, ...tools, ...creds, ...[...wheres.values()].flatMap((m) => [...m.keys()].map((org_id) => ({ org_id })))].map((r) => Number(r.org_id)));
   for (const org of orgs) {
     const reached: Record<string, string> = {};
     for (const s of steps) {
       const [what, arg = ""] = s.done_when.split(":", 2) as [string, string?];
-      const t = at[what]?.get(`${org} ${what === "tool" ? "" : s.pack} ${arg}`);
+      const t = s.where ? wheres.get(stepKey(s))?.get(org) : at[what]?.get(`${org} ${what === "tool" ? "" : s.pack} ${arg}`);
       if (t) reached[stepKey(s)] = t;
     }
     if (Object.keys(reached).length) out.set(org, reached);

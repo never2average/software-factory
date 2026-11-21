@@ -40,7 +40,7 @@ export interface DetailSection {
   /** mold_v0-262: shown only while this condition holds on the record. */
   when?: DetailCondition;
   /** mold_v0-331: a lifecycle's progress as numbered steps. */
-  steps?: { field: string; states?: string[] };
+  steps?: { field: string; states?: string[]; /** mold_v0-333 */ failed_stage?: string };
   /** mold_v0-331: a related list as one link row, or fields as numbers. */
   display?: 'rows' | 'numbers';
 }
@@ -382,7 +382,9 @@ export interface PageData { actions: PageAction[]; sections: Record<string, Rela
   /** mold_v0-256: the header's computed facts, by their place among the facts. */
   facts?: Record<string, ComputedFact>;
   /** mold_v0-310: the run or agent session that made the record, and those that changed it. */
-  writers?: RecordWriters }
+  writers?: RecordWriters;
+  /** mold_v0-333: when the record last entered each state (a steps section says where a record that left the path stopped). */
+  state_at?: Record<string, string> }
 
 /** A section's key in the page's data: its tab's and its own place. */
 export const sectionKey = (tab: number, section: number) => `${tab}-${section}`;
@@ -444,7 +446,7 @@ export const readsHistory = (layout: DetailLayout) => layout.tabs.some((t) => t.
 export const readsComputed = (layout: DetailLayout) => (layout.header?.facts ?? []).some((f) => !!f.computed);
 /** A computed fact's value as the server answers it: a count, the latest record's value (and that record), or hidden. */
 export type ComputedFact = { hidden: true } | { hidden?: false; op: 'count'; value: number; capped: boolean; area: string; via?: string }
-  | { hidden?: false; op: 'latest'; value: unknown; area: string; field: string; record: { key: string; title: string | null } | null };
+  | { hidden?: false; op: 'latest'; value: unknown; area: string; /** mold_v0-333: null for a pointer (the record itself). */ field: string | null; record: { key: string; title: string | null } | null };
 /**
  * mold_v0-309: whether a header fact is shown: its `when` holds (on the record's fields and clocks), and, with
  * `hide_empty`, it has a value (a field's, or a computed one's: a count above 0, a latest value; one still loading is
@@ -529,24 +531,42 @@ export const railHeaderFields = (layout: DetailLayout) => new Set([layout.header
 /** The badges a rail page still shows as facts: every one but the header's status and context. */
 export const railBadges = (layout: DetailLayout) => { const said = railHeaderFields(layout); return (layout.header?.badges ?? []).filter((b) => !said.has(b.field)); };
 
-/** A step's state on a lifecycle: done before the record's state, now at it, to do after it. */
-export type StepState = 'done' | 'now' | 'todo';
+/** A step's state on a lifecycle: done before the record's state, now at it, to do after it; mold_v0-333: stopped at it. */
+export type StepState = 'done' | 'now' | 'todo' | 'failed';
 /** The word at a step's right. */
-export const STEP_WORD: Record<StepState, string> = { done: 'Done', now: 'Now', todo: 'To do' };
+export const STEP_WORD: Record<StepState, string> = { done: 'Done', now: 'Now', todo: 'To do', failed: 'Stopped here' };
 /**
  * A steps section's rows (mold_v0-331): the declared states (else the field's options, in order), each done, now or to
- * do against the record's value. A value off the path (a failure state) leaves every step to do and is said apart.
+ * do against the record's value. A value off the path (a failure state) is said apart; mold_v0-333: and the step it
+ * stopped at is marked (`failed`), the ones before it reached (done), the rest not reached: the step `stage` names (a
+ * failed_stage field's value), else the last step it entered before it left the path (`stateAt`, the store's times).
+ * Without either (a record from before), every step stays to do, as before.
  */
-export function stepRows(states: readonly string[], value: unknown): { steps: { value: string; state: StepState }[]; off: string | null } {
+export function stepRows(states: readonly string[], value: unknown, stop: { stage?: unknown; stateAt?: Record<string, string> | null } = {}): { steps: { value: string; state: StepState }[]; off: string | null; stopped: string | null } {
   const v = value == null || value === '' ? null : String(value);
   const at = v === null ? -1 : states.indexOf(v);
+  const off = v !== null && at < 0 ? v : null;
+  let stopAt = -1;
+  if (off !== null) {
+    const stage = stop.stage == null || stop.stage === '' ? null : String(stop.stage);
+    if (stage !== null && states.includes(stage)) stopAt = states.indexOf(stage);
+    else if (stop.stateAt) {
+      const left = stop.stateAt[off] ?? null;
+      let best: string | null = null;
+      for (const [i, s] of states.entries()) {
+        const t = stop.stateAt[s];
+        if (t && (left === null || t <= left) && (best === null || t >= best)) { best = t; stopAt = i; }
+      }
+    }
+  }
   return {
-    steps: states.map((s, i) => ({ value: s, state: at < 0 ? 'todo' : i < at ? 'done' : i === at ? 'now' : 'todo' })),
-    off: v !== null && at < 0 ? v : null,
+    steps: states.map((s, i) => ({ value: s, state: stopAt >= 0 ? (i < stopAt ? 'done' : i === stopAt ? 'failed' : 'todo') : at < 0 ? 'todo' : i < at ? 'done' : i === at ? 'now' : 'todo' })),
+    off,
+    stopped: stopAt >= 0 ? states[stopAt]! : null,
   };
 }
 /** What a step's circle shows: a check once done, otherwise its one-based number. */
-export const stepMark = (state: StepState, index: number) => (state === 'done' ? '✓' : String(index + 1));
+export const stepMark = (state: StepState, index: number) => (state === 'done' ? '✓' : state === 'failed' ? '✕' : String(index + 1));
 
 /**
  * A related list drawn as one link row (display "rows"): its line in words. "3 builds", "More than 5 builds" when the

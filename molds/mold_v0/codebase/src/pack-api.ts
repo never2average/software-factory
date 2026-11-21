@@ -522,6 +522,17 @@ export const LifecycleSchema = z.object({
     label: z.string().min(1).max(80).optional(),
     roles: z.array(role).min(1).max(4).optional(),
   }).strict()).min(1).max(200),
+  /**
+   * mold_v0-333: a newer record replaces the one before it. When a record enters `when_enters` (by a move, or created in
+   * it), every other record of the area in that state with the same values of `scope_fields` (an environment, a tenant)
+   * is moved to `previous_to` by the shell (its history says so): one READY deployment per environment, the rest
+   * SUPERSEDED. A transition from `when_enters` to `previous_to` must be declared.
+   */
+  supersedes: z.object({
+    scope_fields: z.array(name).min(1).max(3),
+    when_enters: choiceValue,
+    previous_to: choiceValue,
+  }).strict().optional(),
 }).strict();
 
 /**
@@ -781,8 +792,9 @@ export const AgentJobKindSchema = z.object({
  * A duration a clock counts: a whole number and a unit, `h` (hours) or `d` (calendar days), or `bd` (business days:
  * Monday to Friday, UTC; a pause or a start on a weekend counts no business time). "90d", "10bd", "48h".
  */
-export const CLOCK_DURATION = /^(0|[1-9][0-9]{0,4})(h|d|bd)$/;
-const clockDuration = z.string().regex(CLOCK_DURATION, 'a duration: a whole number then h (hours), d (calendar days) or bd (business days, Monday to Friday, UTC): "90d", "10bd", "48h"');
+export const CLOCK_DURATION = /^(0|[1-9][0-9]{0,4})(m|h|d|bd)$/;
+// mold_v0-333: m (minutes) too, for a run's time limit ("90m"); the check runs at most every 15 minutes.
+const clockDuration = z.string().regex(CLOCK_DURATION, 'a duration: a whole number then m (minutes), h (hours), d (calendar days) or bd (business days, Monday to Friday, UTC): "90d", "10bd", "48h", "90m"');
 /** Who a clock's reminder or escalation step tells: the record's assignee (the clock's `assignee` person field) or the workspace's people with a role. */
 export const CLOCK_AUDIENCE = ["assignee", ...DECLARABLE_ROLES] as const;
 const audience = z.array(z.enum(CLOCK_AUDIENCE)).min(1).max(5);
@@ -831,6 +843,12 @@ export const ClockSchema = z.object({
     notify: audience.optional(),
     reassign: z.object({ field: name, from_field: name }).strict().optional(),
     raise: z.object({ field: name, to: choiceValue.optional() }).strict().optional(),
+    /**
+     * mold_v0-333: moves the record along its lifecycle to this state (a running build past its limit: timed_out),
+     * by a declared transition, as the shell (its history says the clock moved it). Only while the record is still in
+     * the state its clock started on (starts {event: "entered", state}); a record that moved on is left alone.
+     */
+    move_to: choiceValue.optional(),
   }).strict()).max(8).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
@@ -883,9 +901,19 @@ export function clockProblems(a: { scope: string; fields: z.output<typeof field>
     if (tells.includes("assignee") && c.assignee === undefined) bad("notify names the assignee: declare the clock's assignee field", i, "assignee");
     const befores = (c.remind ?? []).map((r) => r.before);
     if (new Set(befores).size !== befores.length) bad("two reminders at the same time", i, "remind");
-    const ms = (d: string) => Number(d.replace(/\D+$/, "")) * (d.endsWith("h") ? 1 : 24);
+    const ms = (d: string) => Number(d.replace(/\D+$/, "")) * (d.endsWith("m") ? 1 : d.endsWith("h") ? 60 : 1440);
     for (const [j, e] of (c.escalate ?? []).entries()) {
-      if (!e.notify && !e.reassign && !e.raise) bad("an escalation step notifies, reassigns or raises", i, "escalate", j);
+      if (!e.notify && !e.reassign && !e.raise && !e.move_to) bad("an escalation step notifies, reassigns, raises or moves", i, "escalate", j);
+      // mold_v0-333: a step that moves the record: a clock started by entering a state, and a transition from it.
+      if (e.move_to !== undefined) {
+        const lf = a.lifecycle ? single(a.lifecycle.field) : null;
+        if (!lf || !a.lifecycle) bad("move_to needs the area's lifecycle", i, "escalate", j, "move_to");
+        else if (!optionValues(lf).includes(e.move_to)) bad(`${e.move_to} is not a state of the area's lifecycle`, i, "escalate", j, "move_to");
+        else if (!("state" in c.starts)) bad("a step that moves the record is on a clock started by entering a state (starts {event: entered, state})", i, "escalate", j, "move_to");
+        else if (c.starts.state === e.move_to) bad("move_to is another state than the one the clock starts on", i, "escalate", j, "move_to");
+        else if (!a.lifecycle.transitions.some((t) => t.to === e.move_to && (t.from === "*" || t.from.includes((c.starts as { state: string }).state))))
+          bad(`no transition moves ${c.starts.state} to ${e.move_to}: declare it, so the clock moves the record along the lifecycle`, i, "escalate", j, "move_to");
+      }
       if (j > 0 && ms(e.after) <= ms(c.escalate![j - 1]!.after)) bad("escalation steps are in order of after, each later than the one before", i, "escalate", j, "after");
       if (e.reassign) {
         if (!person(e.reassign.field)) bad("reassign.field must name one of the area's single person fields", i, "escalate", j, "reassign", "field");
@@ -1211,7 +1239,9 @@ export const DetailFilesSchema = z.object({ fields: z.array(name).min(1).max(20)
 /**
  * A fact computed from related records (mold_v0-256), in the header beside the record's own: over the records of `area`
  * that point back here (through `via`, as a related list), those `where` keeps: `count` (how many; "Used by" N) or
- * `latest` (`field`'s value on the newest of them by `sort`, default the newest change: the last build's status).
+ * `latest` (`field`'s value on the newest of them by `sort`, default the newest change: the last build's status;
+ * mold_v0-333: with no `field`, the newest record itself, its title linked: a derived pointer, "Serving: the newest
+ * deployment where state is READY", never stored, so it cannot drift).
  * Evaluated on the server as the person reading (the area's read permission: a role that may not read it does not see
  * the fact), in the workspace's own scope.
  */
@@ -1233,7 +1263,13 @@ export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code"
  */
 export const DETAIL_SECTION_DISPLAYS = ["rows", "numbers"] as const;
 /** mold_v0-331: a lifecycle's progress (a single-choice enum field, usually the lifecycle's): its states in order, the record's one marked. */
-export const DetailStepsSchema = z.object({ field: name, states: z.array(z.string().min(1).max(80)).min(2).max(12).optional() }).strict();
+export const DetailStepsSchema = z.object({ field: name, states: z.array(z.string().min(1).max(80)).min(2).max(12).optional(),
+  /**
+   * mold_v0-333: where a record that left the path (failed, cancelled, timed out) stopped: a field of the record holding
+   * one of the steps' states (the stage it failed at); without it, or while it is empty, the last step it entered before
+   * it left the path (the store's own state times). Drawn as reached, stopped here (with the state's word) and not reached.
+   */
+  failed_stage: name.optional() }).strict();
 
 /**
  * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
@@ -1300,6 +1336,39 @@ export const columnField = (c: string | { field: string }) => (typeof c === "str
 const inputSource = z.union([name, z.enum(RECORD_INPUT_SPECIAL), z.string().regex(/^\$field:[a-z][a-z0-9_]{1,62}$/, 'a field of the record, "$field:<name>", $key or $title')]);
 /** The record field an input's source names, or null for $key and $title. */
 export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly string[]).includes(from) ? null : from.startsWith("$field:") ? from.slice(7) : from);
+/** mold_v0-333: why a session ended, as a record it created is closed out by (`on_session_end`). */
+export const SESSION_END_REASONS = ["finished", "failed", "budget", "crash", "policy", "stopped"] as const;
+export type SessionEndReason = (typeof SESSION_END_REASONS)[number];
+/** mold_v0-333: what a created record's field takes besides this record's fields, $key and $title. */
+export const CREATES_SPECIAL = ["$session", "$person", "$now", "$today"] as const;
+const createsSource = z.union([inputSource, z.enum(CREATES_SPECIAL)]);
+/**
+ * mold_v0-333: a start_agent action's record, made by the server when the session starts (Start build makes the build):
+ *   area            the workspace area it is added to (a lifecycle area: it starts in its initial state)
+ *   link            its reference field to this record (set to this record's key)
+ *   fields          its other fields, each from this record (a field, $key, $title) or the start: $session (the
+ *                   session's id), $person (who pressed it), $now (the time), $today (the date)
+ *   title           its title, a template filled from this record ({{key}}, {{title}}, {{<field>}}; default: this
+ *                   record's title)
+ *   on_session_end  when the session ends with the record still where a move to the named state can be made, the
+ *                   shell moves it there: finished (it ended without moving it), failed, budget (it ran out and nobody
+ *                   raised it), crash (it crashed past its resumes), policy (its governance refused it), stopped
+ *   reason_field    a text field the shell writes why into, when it closes the record out
+ *   children        records pointing at it (through `via`) still in one of `from` are moved (or, without a
+ *                   lifecycle, written) to `to` in `field` (default their lifecycle's): deployments still BUILDING
+ *                   become CANCELED
+ * The agent is told the record's key in its first message ({{created_key}}) and moves it from there.
+ */
+export const SessionCreatesSchema = z.object({
+  area: name,
+  link: name.optional(),
+  fields: z.record(name, createsSource).optional(),
+  title: z.string().trim().min(1).max(200).optional(),
+  on_session_end: z.object(Object.fromEntries(SESSION_END_REASONS.map((r) => [r, choiceValue.optional()])) as Record<SessionEndReason, z.ZodOptional<typeof choiceValue>>).strict().optional(),
+  reason_field: name.optional(),
+  children: z.array(z.object({ area: name, via: name, field: name.optional(), from: z.array(choiceValue).min(1).max(12), to: choiceValue }).strict()).max(4).optional(),
+}).strict();
+export type SessionCreates = z.output<typeof SessionCreatesSchema>;
 /**
  * An action of a record's page (mold_v0-254), in its header (`place`: the primary, a secondary button, or the More
  * menu, the default):
@@ -1361,6 +1430,13 @@ export const DetailActionSchema = z.object({
   program: z.string().regex(PROGRAM_REF, "a program's id (lowercase letters, digits and -)").optional(),
   /** mold_v0-312: a test_connection action's call (src/connection-test-config.ts ConnectionTestSchema). */
   probe: ConnectionTestSchema.optional(),
+  /** mold_v0-333: a start_agent action's record, made by the server as the session starts (SessionCreatesSchema). */
+  creates: SessionCreatesSchema.optional(),
+  /**
+   * mold_v0-333: a move action (with `to`) that also stops the agent sessions working on the record (the one that
+   * created it, or one started from it): Cancel cancels. The record's later moves by those sessions are ignored.
+   */
+  stops_session: z.boolean().optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1483,7 +1559,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
       if (x.field !== undefined) bad("a computed fact has no field of its own: it reads the related records' (computed.field)", "header", "facts", i, "field");
       if (x.link_text !== undefined) bad("link_text is for a fact of a url field of the record, not a computed one", "header", "facts", i, "link_text");
       if (x.label === undefined) bad("a computed fact names itself (label): the page cannot take it from a field", "header", "facts", i, "label");
-      if (c.op === "latest" && !c.field) bad("a latest fact names the field it shows of the newest related record (computed.field)", "header", "facts", i, "computed", "field");
+      // mold_v0-333: a latest fact with no field is a pointer: the newest related record itself (its title, linked).
+      if (c.op === "latest" && !c.field && x.unit !== undefined) bad("a pointer (a latest fact with no field) shows a record: it has no unit", "header", "facts", i, "unit");
       if (c.op === "count" && c.field !== undefined) bad("a count fact counts records: it names no field", "header", "facts", i, "computed", "field");
       if (c.op === "count" && c.sort !== undefined) bad("a count fact counts records: it has no sort", "header", "facts", i, "computed", "sort");
       // Its where's fields are the related area's: checked across the build (detailBuildProblems).
@@ -1536,6 +1613,13 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
           const f = valueOf(s.steps.field, "a steps section", ["enum"], "steps", "field");
           if (f?.multiple) bad(`${s.steps.field} holds several options: a steps section follows one state`, ...at("steps", "field"));
           else if (f) for (const [k, v] of (s.steps.states ?? []).entries()) if (!optionValues(f).includes(v)) bad(`${v} is not one of ${f.name}'s options`, ...at("steps", "states", k));
+          // mold_v0-333: the field that says where a failed record stopped holds one plain value (a step's state).
+          if (s.steps.failed_stage !== undefined) {
+            const g = a.fields.find((x) => x.name === s.steps!.failed_stage);
+            if (!g) bad(`${s.steps.failed_stage} is not one of the area's fields`, ...at("steps", "failed_stage"));
+            else if (g.encrypted || g.multiple || !["enum", "text"].includes(g.type)) bad(`${g.name} is ${g.encrypted ? "encrypted" : g.multiple ? "a list" : `a ${g.type} field`}: failed_stage names an enum or text field holding one step's state`, ...at("steps", "failed_stage"));
+            else if (g.name === s.steps.field) bad("failed_stage is another field than the steps' own", ...at("steps", "failed_stage"));
+          }
         }
         if (s.display === "numbers") bad(`section ${s.title} ${what[kinds[0]!]}: display numbers is for a section of fields`, ...at("display"));
         if (s.display === "rows" && !s.related) bad(`section ${s.title} ${what[kinds[0]!]}: display rows is for a related list`, ...at("display"));
@@ -1615,6 +1699,8 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
       if ((x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a start_agent action cannot be a viewer's", i, "roles");
       for (const n of templateNames(x.first_message ?? "")) {
         if (n === "key" || n === "title") continue;
+        // mold_v0-333: the record the server made for the session (creates), by its key.
+        if (n === "created_key" && x.creates) continue;
         const f = fieldOf(n);
         if (!f) bad(`{{${n}}} is not one of the area's fields (a first message takes {{key}}, {{title}} or a field)`, i, "first_message");
         else if (f.encrypted || f.type === "file") bad(`{{${n}}} is ${f.encrypted ? "encrypted" : "a file field"}: a first message never carries it`, i, "first_message");
@@ -1627,6 +1713,20 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
       if (!f) bad(`${from} is not one of the area's fields (input ${arg} takes a field, $key or $title)`, i, "input", arg);
       else if (f.encrypted || f.type === "file") bad(`${from} is ${f.encrypted ? "encrypted" : "a file field"}: ${x.kind === "create_record" ? "a new record's" : "a run's"} input never takes it from the page`, i, "input", arg);
     }
+    // mold_v0-333: a start_agent's record made at the start; a move that stops the record's sessions names its state.
+    if (x.creates !== undefined && x.kind !== "start_agent") bad(`creates is for a start_agent action, not ${x.kind}`, i, "creates");
+    if (x.creates && a.scope !== "workspace") bad("a shared (platform) area's page starts no session that makes a workspace record", i, "creates");
+    for (const [k, raw] of Object.entries(x.creates?.fields ?? {})) {
+      if ((CREATES_SPECIAL as readonly string[]).includes(raw)) continue;
+      const from = inputField(raw);
+      if (from === null) continue;
+      const f = fieldOf(from);
+      if (!f) bad(`${from} is not one of the area's fields (a created record's field takes a field, $key, $title, $session, $person, $now or $today)`, i, "creates", "fields", k);
+      else if (f.encrypted || f.type === "file") bad(`${from} is ${f.encrypted ? "encrypted" : "a file field"}: a created record never copies it`, i, "creates", "fields", k);
+    }
+    for (const n of templateNames(x.creates?.title ?? "")) if (n !== "key" && n !== "title" && !fieldOf(n)) bad(`{{${n}}} is not one of the area's fields`, i, "creates", "title");
+    if (x.stops_session !== undefined && x.kind !== "move") bad(`stops_session is for a move action, not ${x.kind}`, i, "stops_session");
+    if (x.stops_session && x.to === undefined) bad("a move that stops the record's sessions names the state it moves to (to)", i, "to");
     if (x.kind === "move") {
       const lc = a.lifecycle;
       if (!lc) bad("a move action is for an area with a lifecycle: this one's records do not move", i, "kind");
@@ -1741,6 +1841,48 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
         const f = target.fields.find((y) => y.name === k);
         if (!f) at(where, `input ${k} is not one of ${x.area}'s fields`);
         else if (f.encrypted || f.type === "file") at(where, `input ${k} is ${f.encrypted ? "encrypted" : "a file field"}: a new record's form never takes it from a page`);
+      }
+    }
+    // mold_v0-333: a start_agent's record made at the start: a workspace area with a lifecycle, its fields, its link
+    // back here, the states it is closed out to and the children closed with it.
+    for (const x of d.actions ?? []) {
+      const c = x.kind === "start_agent" ? x.creates : undefined;
+      if (!c) continue;
+      const where = `action ${pageActionId(x)}: creates`, target = areas.find((y) => y.name === c.area) as (DetailBuildArea & { lifecycle?: z.output<typeof LifecycleSchema> }) | undefined;
+      if (!target) { at(where, `${c.area} is not a record area of this build`); continue; }
+      if (target.scope !== "workspace") at(where, `${c.area} is shared (platform): a session makes a workspace's own record`);
+      const tf = (n: string) => target.fields.find((y) => y.name === n);
+      if (c.link !== undefined && !linksBack(target, a.name).includes(c.link)) at(where, `link ${c.link} is not a reference or link field of ${c.area} to ${a.name}`);
+      for (const [k, src] of Object.entries(c.fields ?? {})) {
+        const f = tf(k);
+        if (!f) { at(where, `field ${k} is not one of ${c.area}'s fields`); continue; }
+        if (f.encrypted || f.type === "file") at(where, `field ${k} is ${f.encrypted ? "encrypted" : "a file field"}: a created record never takes it from a page`);
+        if (target.lifecycle?.field === k) at(where, `field ${k} is ${c.area}'s lifecycle field: a new record starts in its initial state`);
+        if (k === c.link) at(where, `field ${k} is the link: it is set to this record's key`);
+        if (src === "$person" && f.type !== "person" && f.type !== "text") at(where, `field ${k} takes $person: a person or text field`);
+        if ((src === "$now" || src === "$today") && f.type !== "date" && f.type !== "text") at(where, `field ${k} takes ${src}: a date or text field`);
+        if (src === "$session" && f.type !== "text") at(where, `field ${k} takes $session: a text field`);
+      }
+      const lc = target.lifecycle, lf = lc ? tf(lc.field) : undefined;
+      const states = lf ? optionValues(lf) : [];
+      if ((c.on_session_end || c.children) && !lc) at(where, `${c.area} has no lifecycle: a session's end closes out a record that moves`);
+      for (const [r, st] of Object.entries(c.on_session_end ?? {})) {
+        if (!lc || st === undefined) continue;
+        if (!states.includes(st)) at(where, `on_session_end.${r}: ${st} is not a state of ${c.area}'s lifecycle`);
+        else if (!lc.transitions.some((t) => t.to === st)) at(where, `on_session_end.${r}: no transition of ${c.area}'s lifecycle goes to ${st}`);
+      }
+      if (c.reason_field !== undefined) { const f = tf(c.reason_field); if (!f || f.type !== "text" || f.encrypted) at(where, `reason_field ${c.reason_field} is not a plain text field of ${c.area}`); }
+      for (const [j, ch] of (c.children ?? []).entries()) {
+        const w2 = `${where}: children[${j}]`, kid = areas.find((y) => y.name === ch.area) as (DetailBuildArea & { lifecycle?: z.output<typeof LifecycleSchema> }) | undefined;
+        if (!kid) { at(w2, `${ch.area} is not a record area of this build`); continue; }
+        if (kid.scope !== "workspace") at(w2, `${ch.area} is shared (platform)`);
+        if (!linksBack(kid, c.area).includes(ch.via)) at(w2, `via ${ch.via} is not a reference or link field of ${ch.area} to ${c.area}`);
+        const fname = ch.field ?? kid.lifecycle?.field;
+        const kf = fname ? kid.fields.find((y) => y.name === fname) : undefined;
+        if (!fname) at(w2, `${ch.area} has no lifecycle: name the field its state is in (field)`);
+        else if (!kf || kf.type !== "enum" || kf.multiple) at(w2, `${fname} is not a single-choice enum field of ${ch.area}`);
+        else for (const v of [...ch.from, ch.to]) if (!optionValues(kf).includes(v)) at(w2, `${v} is not one of ${ch.area}'s ${fname} options`);
+        if (kid.lifecycle && ch.field !== undefined && ch.field !== kid.lifecycle.field) at(w2, `${ch.area} has a lifecycle: its state is ${kid.lifecycle.field}, moved by a transition`);
       }
     }
     for (const x of d.actions ?? []) {
@@ -2020,6 +2162,22 @@ export const RecordAreaSchema = z.object({
         if (!states.has(t.to)) bad(`to ${t.to} is not one of ${f.name}'s options`, "lifecycle", "transitions", i, "to");
         if ((t.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a transition cannot be a viewer's", "lifecycle", "transitions", i, "roles");
       }
+      // mold_v0-333: a newer record replaces the one before it in the same scope.
+      const sp = lc.supersedes;
+      if (sp) {
+        if (!states.has(sp.when_enters)) bad(`when_enters ${sp.when_enters} is not one of ${f.name}'s options`, "lifecycle", "supersedes", "when_enters");
+        if (!states.has(sp.previous_to)) bad(`previous_to ${sp.previous_to} is not one of ${f.name}'s options`, "lifecycle", "supersedes", "previous_to");
+        if (sp.when_enters === sp.previous_to) bad("previous_to is another state than when_enters", "lifecycle", "supersedes", "previous_to");
+        else if (!lc.transitions.some((t) => t.to === sp.previous_to && (t.from === "*" || t.from.includes(sp.when_enters))))
+          bad(`no transition moves ${sp.when_enters} to ${sp.previous_to}: declare it, so the replaced record moves along the lifecycle`, "lifecycle", "supersedes", "previous_to");
+        for (const [i, n] of sp.scope_fields.entries()) {
+          const x = a.fields.find((y) => y.name === n);
+          if (!x) bad(`${n} is not one of the area's fields`, "lifecycle", "supersedes", "scope_fields", i);
+          else if (x.encrypted || x.multiple || x.type === "json" || x.type === "file" || x.type === "link" || n === lc.field) bad(`${n} cannot scope a replacement: a scope field holds one plain value (a reference, an enum, text), not the lifecycle's own field`, "lifecycle", "supersedes", "scope_fields", i);
+        }
+        if (new Set(sp.scope_fields).size !== sp.scope_fields.length) bad("a scope field is named twice", "lifecycle", "supersedes", "scope_fields");
+        if (a.role === "asset" || a.sealed) bad("a sealed area's records are opened one by one: it cannot supersede by its fields", "lifecycle", "supersedes");
+      }
     }
   }
 });
@@ -2298,9 +2456,16 @@ export const MetricSchema = z.object({
   limit: z.number().int().min(1).max(50).default(12),
   roles: z.array(role).min(1).max(4).optional(),
   unit: z.enum(METRIC_UNITS).optional(),
+  /**
+   * mold_v0-333: how its card reads: "current", the count (or sum) of what is in the state now, with no sparkline. A
+   * metric over a state (Failed, Live deployments) is a count of now: a running total of creation dates would show a
+   * record that left the state since as if it were still in it.
+   */
+  mode: z.enum(["current"]).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((m, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (m.mode === "current" && (m.by_time || !["count", "sum"].includes(m.measure))) bad('mode "current" is for a count or a sum of now (no by_time)', "mode");
   const needs = { sum: "field", average: "field", rate: "rate", duration: "duration" } as const;
   for (const [measure, key] of Object.entries(needs)) {
     if (m.measure === measure && m[key] === undefined) bad(`a ${measure} metric names its ${key}`, key);
@@ -2538,20 +2703,29 @@ export type TabAction = z.output<typeof TabActionSchema>;
  * A list column computed from the records that point back to each row (mold_v0-256, flag record_pages): of `related.area`
  * (through `related.via`, its link or reference field to the tab's area; needed only when it has several), `show`
  * "count" (how many) or "latest:<field>" (that field on the newest of them, by its last change), headed `label`
+ * (mold_v0-333: or "latest", the newest record itself, its title linked: a derived pointer; `sort` orders them, default
+ * the newest change, and `where` keeps only those its condition holds on: the last build by started, the last deployment
+ * where state is READY; `id` names the column when two read the same area and show),
  * (default the area's label, or "Latest <field>"). Computed on the server as the person reading (the related area's read
  * permission: a role that may not read it sees an empty column), in the workspace's own scope; formatted as the
  * related area's cells. Off, the column is left out.
  */
 export const TabRelatedColumnSchema = z.object({
   related: z.object({ area: name, via: name.optional() }).strict(),
-  show: z.string().regex(/^(count|latest:[a-z][a-z0-9_]{1,62})$/, 'show is "count" or "latest:<a field of the related area>"'),
+  show: z.string().regex(/^(count|latest|latest:[a-z][a-z0-9_]{1,62})$/, 'show is "count", "latest" (the record itself) or "latest:<a field of the related area>"'),
   label: plainWords(40).optional(),
+  /** mold_v0-333: the order "latest" reads them in (default the newest change). */
+  sort: z.object({ field: name, direction: z.enum(["asc", "desc"]).optional() }).strict().optional(),
+  /** mold_v0-333: only the related records this condition holds on (the notices' condition language, their fields). */
+  where: DetailConditionSchema.optional(),
+  /** mold_v0-333: the column's own id (rel_<id>), when two columns read the same area and show. */
+  id: name.optional(),
 }).strict();
 export type TabRelatedColumn = z.output<typeof TabRelatedColumnSchema>;
 /** Whether a tab column is computed from related records (else it is a field's name). */
 export const isRelatedColumn = (c: unknown): c is TabRelatedColumn => !!c && typeof c === "object" && "related" in (c as object);
 /** A related column's id in the console's table and the API: rel_<area>_<count|latest_field>. */
-export const relatedColumnId = (c: TabRelatedColumn) => `rel_${c.related.area}_${c.show.replace(":", "_")}`;
+export const relatedColumnId = (c: Pick<TabRelatedColumn, "related" | "show" | "id">) => (c.id ? `rel_${c.id}` : `rel_${c.related.area}_${c.show.replace(":", "_")}`);
 
 /**
  * mold_v0-316 (flag agent_quick_commands; web/src/features/agent/composer/quick-commands.ts): what the workspace agent offers
@@ -2986,6 +3160,12 @@ export const OnboardingStepSchema = z.object({
    * `record:<area>` or `run:<kind>`, checked as `done_when` is; the get_started tool's "how" follows it.
    */
   how: z.string().regex(ONBOARDING_HOW, "how: tool:<name>, credential:<name>, record:<area> or run:<kind>").optional(),
+  /**
+   * mold_v0-333: a record:<area> step is done only once a record of it holds one of these values in `field` (a
+   * deployment whose state is READY: "First app live"), not as soon as any record exists (a failed build is no first
+   * build). Done from when the first such record entered that state (its lifecycle's time), else was last written.
+   */
+  where: z.object({ field: name, in: z.array(choiceValue).min(1).max(12) }).strict().optional(),
 }).strict();
 
 /**
@@ -3480,6 +3660,20 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
       else if (a.scope !== "workspace") problems.push(at(`onboarding step ${st.id}: record:${arg} must name a workspace-scope area (a shared area says nothing about one workspace)`));
     }
   }
+  // mold_v0-333: a step done by a record's value: a record:<area> step, on a plain enum or text field of that area.
+  for (const st of p.onboarding ?? []) {
+    const w = (st as { where?: { field: string; in: string[] } } | undefined)?.where;
+    if (!w) continue;
+    const [what, arg] = String(st?.done_when ?? "").split(":", 2);
+    if (what !== "record") { problems.push(at(`onboarding step ${st.id}: where is for a record:<area> step`)); continue; }
+    const a = (p.recordAreas ?? []).find((x) => x?.name === arg);
+    if (!a) continue;
+    const f = (a.fields ?? []).find((x) => x?.name === w.field) as { type?: string; encrypted?: boolean; multiple?: boolean; options?: unknown[] } | undefined;
+    if (!f) problems.push(at(`onboarding step ${st.id}: where.field ${w.field} is not one of ${arg}'s fields`));
+    else if (f.encrypted || f.multiple || !["enum", "text"].includes(String(f.type))) problems.push(at(`onboarding step ${st.id}: where.field ${w.field} is not a plain enum or text field`));
+    else if (f.type === "enum") for (const v of w.in) if (!optionValues(f as { options?: z.output<typeof choice>[] }).includes(v)) problems.push(at(`onboarding step ${st.id}: ${v} is not one of ${w.field}'s options`));
+    if ((a as { role?: string }).role === "asset" || (a as { sealed?: boolean }).sealed) problems.push(at(`onboarding step ${st.id}: ${arg} is sealed: its values are not read across a workspace, so a step cannot wait for one`));
+  }
   if (problems.length) throw new PackDefinitionError(problems.join("\n"));
   return p;
 }
@@ -3506,7 +3700,7 @@ function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
       if ((READ_ONLY_KINDS as readonly string[]).includes(r.kind)) {
         if (a.lifecycle) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot have a lifecycle`);
         // mold_v0-191: a clock's escalation writes the record (reassign, raise): not on a read-only area.
-        for (const c of ((a as { clocks?: Clock[] }).clocks ?? [])) if ((c.escalate ?? []).some((e) => e.reassign || e.raise))
+        for (const c of ((a as { clocks?: Clock[] }).clocks ?? [])) if ((c.escalate ?? []).some((e) => e.reassign || e.raise || e.move_to))
           out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): clock ${c.name} cannot reassign or raise (it would write the record)`);
         for (const k of ["create", "update", "move", "delete"] as const) if (a.permissions?.[k]) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot declare ${k}`);
       }

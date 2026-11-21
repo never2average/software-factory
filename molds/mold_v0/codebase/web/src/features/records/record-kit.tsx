@@ -109,10 +109,11 @@ const CIRCLE: Record<StepState, string> = {
   done: 'bg-primary text-primary-foreground border-primary',
   now: 'border-primary text-primary bg-background',
   todo: 'text-muted-foreground bg-background',
+  failed: 'border-destructive bg-destructive text-white',
 };
 
 /** Progress along a lifecycle: numbered circles, a thin connector (filled once done), the current step in the brand colour. */
-export function RailSteps({ steps, label }: { steps: readonly { key: string; label: ReactNode; state: StepState }[]; label: string }) {
+export function RailSteps({ steps, label }: { steps: readonly { key: string; label: ReactNode; state: StepState; /** mold_v0-333: the word at its right in place of the state's ("Failed here"). */ word?: string }[]; label: string }) {
   return (
     <ol className='m-0 list-none p-0' aria-label={label} data-rail-steps=''>
       {steps.map((s, i) => (
@@ -120,8 +121,8 @@ export function RailSteps({ steps, label }: { steps: readonly { key: string; lab
           {i < steps.length - 1 && <span className={cn('absolute top-[25px] -bottom-[5px] left-2.5 w-px', s.state === 'done' ? 'bg-primary' : 'bg-border')} aria-hidden />}
           <div className='grid w-full grid-cols-[22px_minmax(0,1fr)_auto] items-start gap-2 py-[5px] text-left text-[13px]'>
             <span className={cn('relative z-10 grid size-5 place-items-center rounded-full border text-[11px]', CIRCLE[s.state])} aria-hidden>{stepMark(s.state, i)}</span>
-            <span className={cn('min-w-0', s.state === 'now' && 'text-primary font-medium')}>{s.label}</span>
-            <span className='text-muted-foreground text-[12.5px]'>{STEP_WORD[s.state]}</span>
+            <span className={cn('min-w-0', s.state === 'now' && 'text-primary font-medium', s.state === 'failed' && 'text-destructive font-medium')}>{s.label}</span>
+            <span className={cn('text-[12.5px]', s.state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>{s.word ?? STEP_WORD[s.state]}</span>
           </div>
         </li>
       ))}
