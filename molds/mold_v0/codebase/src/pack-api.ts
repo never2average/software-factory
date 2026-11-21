@@ -846,9 +846,12 @@ export const ClockSchema = z.object({
     /**
      * mold_v0-333: moves the record along its lifecycle to this state (a running build past its limit: timed_out),
      * by a declared transition, as the shell (its history says the clock moved it). Only while the record is still in
-     * the state its clock started on (starts {event: "entered", state}); a record that moved on is left alone.
+     * the state its clock started on (starts {event: "entered", state}), or one of `move_from` (the states the clock
+     * covers: running and deploying); a record that moved on is left alone. Only by a transition that names its from
+     * state ("*" transitions are people's, never the shell's).
      */
     move_to: choiceValue.optional(),
+    move_from: z.array(choiceValue).min(1).max(12).optional(),
   }).strict()).max(8).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
@@ -910,10 +913,14 @@ export function clockProblems(a: { scope: string; fields: z.output<typeof field>
         if (!lf || !a.lifecycle) bad("move_to needs the area's lifecycle", i, "escalate", j, "move_to");
         else if (!optionValues(lf).includes(e.move_to)) bad(`${e.move_to} is not a state of the area's lifecycle`, i, "escalate", j, "move_to");
         else if (!("state" in c.starts)) bad("a step that moves the record is on a clock started by entering a state (starts {event: entered, state})", i, "escalate", j, "move_to");
-        else if (c.starts.state === e.move_to) bad("move_to is another state than the one the clock starts on", i, "escalate", j, "move_to");
-        else if (!a.lifecycle.transitions.some((t) => t.to === e.move_to && (t.from === "*" || t.from.includes((c.starts as { state: string }).state))))
-          bad(`no transition moves ${c.starts.state} to ${e.move_to}: declare it, so the clock moves the record along the lifecycle`, i, "escalate", j, "move_to");
+        else for (const from of e.move_from ?? [c.starts.state]) {
+          if (!optionValues(lf).includes(from)) bad(`${from} is not a state of the area's lifecycle`, i, "escalate", j, "move_from");
+          else if (from === e.move_to) bad("move_to is another state than the ones it moves from", i, "escalate", j, "move_to");
+          else if (!a.lifecycle.transitions.some((t) => t.to === e.move_to && t.from !== "*" && t.from.includes(from)))
+            bad(`no transition names ${from} and moves it to ${e.move_to}: declare it, so the clock moves the record along the lifecycle`, i, "escalate", j, "move_to");
+        }
       }
+      if (e.move_from !== undefined && e.move_to === undefined) bad("move_from is for a step that moves the record (move_to)", i, "escalate", j, "move_from");
       if (j > 0 && ms(e.after) <= ms(c.escalate![j - 1]!.after)) bad("escalation steps are in order of after, each later than the one before", i, "escalate", j, "after");
       if (e.reassign) {
         if (!person(e.reassign.field)) bad("reassign.field must name one of the area's single person fields", i, "escalate", j, "reassign", "field");
@@ -1727,6 +1734,9 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     for (const n of templateNames(x.creates?.title ?? "")) if (n !== "key" && n !== "title" && !fieldOf(n)) bad(`{{${n}}} is not one of the area's fields`, i, "creates", "title");
     if (x.stops_session !== undefined && x.kind !== "move") bad(`stops_session is for a move action, not ${x.kind}`, i, "stops_session");
     if (x.stops_session && x.to === undefined) bad("a move that stops the record's sessions names the state it moves to (to)", i, "to");
+    // Stopping a session is a decision about someone else's work: its transitions say exactly who may.
+    if (x.stops_session && x.to !== undefined && a.lifecycle && a.lifecycle.transitions.some((t) => t.to === x.to && !t.roles))
+      bad(`a move that stops sessions names who may make it: give every transition to ${x.to} its roles`, i, "stops_session");
     if (x.kind === "move") {
       const lc = a.lifecycle;
       if (!lc) bad("a move action is for an area with a lifecycle: this one's records do not move", i, "kind");
@@ -1851,6 +1861,10 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
       const where = `action ${pageActionId(x)}: creates`, target = areas.find((y) => y.name === c.area) as (DetailBuildArea & { lifecycle?: z.output<typeof LifecycleSchema> }) | undefined;
       if (!target) { at(where, `${c.area} is not a record area of this build`); continue; }
       if (target.scope !== "workspace") at(where, `${c.area} is shared (platform): a session makes a workspace's own record`);
+      const tx = target as { append_only?: boolean; chain?: boolean; sealed?: boolean; role?: string; repository?: string };
+      if (tx.append_only || tx.chain) at(where, `${c.area} is append-only: a record the shell closes out later must be one that moves`);
+      if (tx.sealed || tx.role === "asset") at(where, `${c.area} is sealed: the shell cannot close out what it cannot read`);
+      if (tx.repository) at(where, `${c.area} comes from a repository: it is read only`);
       const tf = (n: string) => target.fields.find((y) => y.name === n);
       if (c.link !== undefined && !linksBack(target, a.name).includes(c.link)) at(where, `link ${c.link} is not a reference or link field of ${c.area} to ${a.name}`);
       for (const [k, src] of Object.entries(c.fields ?? {})) {
@@ -1862,6 +1876,8 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
         if (src === "$person" && f.type !== "person" && f.type !== "text") at(where, `field ${k} takes $person: a person or text field`);
         if ((src === "$now" || src === "$today") && f.type !== "date" && f.type !== "text") at(where, `field ${k} takes ${src}: a date or text field`);
         if (src === "$session" && f.type !== "text") at(where, `field ${k} takes $session: a text field`);
+        // A field only the app's actions set takes only what the start itself knows, never a value a person typed here.
+        if ((f as { set_by?: string }).set_by === "action" && !src.startsWith("$")) at(where, `field ${k} is set by the app's own actions: it takes $session, $person, $now, $today, $key or $title, not this record's ${src}`);
       }
       const lc = target.lifecycle, lf = lc ? tf(lc.field) : undefined;
       const states = lf ? optionValues(lf) : [];
@@ -2167,8 +2183,9 @@ export const RecordAreaSchema = z.object({
       if (sp) {
         if (!states.has(sp.when_enters)) bad(`when_enters ${sp.when_enters} is not one of ${f.name}'s options`, "lifecycle", "supersedes", "when_enters");
         if (!states.has(sp.previous_to)) bad(`previous_to ${sp.previous_to} is not one of ${f.name}'s options`, "lifecycle", "supersedes", "previous_to");
+        if (sp.when_enters === lc.initial) bad("when_enters is a state a record is moved into, not its initial state (every new record would replace the last)", "lifecycle", "supersedes", "when_enters");
         if (sp.when_enters === sp.previous_to) bad("previous_to is another state than when_enters", "lifecycle", "supersedes", "previous_to");
-        else if (!lc.transitions.some((t) => t.to === sp.previous_to && (t.from === "*" || t.from.includes(sp.when_enters))))
+        else if (!lc.transitions.some((t) => t.to === sp.previous_to && t.from !== "*" && t.from.includes(sp.when_enters)))
           bad(`no transition moves ${sp.when_enters} to ${sp.previous_to}: declare it, so the replaced record moves along the lifecycle`, "lifecycle", "supersedes", "previous_to");
         for (const [i, n] of sp.scope_fields.entries()) {
           const x = a.fields.find((y) => y.name === n);

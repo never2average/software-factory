@@ -21,7 +21,7 @@
 import { randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
 import { CREATES_SPECIAL, inputField, PackError, type RecordRow, type SessionCreates, type SessionEndReason } from "./pack-api.js";
-import { asAction, asWriter, findArea, getFor, listFor, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { asAction, asWriter, findArea, getFor, listFor, shellMove, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
 /** What a session's frozen policy keeps of the record it made (harness_sessions.policy.creates). */
@@ -30,8 +30,11 @@ export interface CreatedLink {
   on_session_end?: SessionCreates["on_session_end"];
   reason_field?: string;
   children?: SessionCreates["children"];
-  /** Set once the shell closed it out (or found nothing to do): why the session ended, and when. */
-  closed?: { reason: SessionEndReason | "open"; at: string; moved_to: string | null };
+  /**
+   * Set once the shell settled it: why the session ended, when, where it moved the record (null: left as it was), and
+   * whether it is done (false: a move failed while the record was still open; the sweep tries again, at most 5 times).
+   */
+  closed?: { reason: SessionEndReason; at: string; moved_to: string | null; done?: boolean; tries?: number };
 }
 
 /** A new record's key: the date and time, then a short random tail (sortable, unique enough, a valid record key). */
@@ -97,14 +100,28 @@ export function endReasonOf(s: { state: string; state_reason: string | null; cur
   return null;
 }
 
-/** A state a lifecycle can move a record to from `from`, by a declared transition. */
+/**
+ * A state a lifecycle lets the shell move a record to from `from`: by a transition that names `from` ("*" transitions
+ * are people's, never the shell's own close-out).
+ */
 const canMove = (area: RecordArea, from: unknown, to: string) =>
-  !!area.lifecycle && from !== to && area.lifecycle.transitions.some((t) => t.to === to && (t.from === "*" || (typeof from === "string" && t.from.includes(from))));
+  !!area.lifecycle && from !== to && typeof from === "string" && area.lifecycle.transitions.some((t) => t.to === to && t.from !== "*" && t.from.includes(from));
 
 /**
- * Close out the record session `id` made, once: claim the mark (two settles at once do it once), then move the record to
- * the state its end reason names (when a transition reaches it from where the record is: a record the agent already
- * finished is left as it is), write why, and close its children. Returns what it did (null: nothing to settle yet).
+ * The states that close a made record for good, so its children are closed with it: the states its close-out moves it
+ * to, a Cancel's (stops_session), and a time limit's (a clock's move_to). Never succeeded, never one still going.
+ */
+export function closedStates(link: Pick<CreatedLink, "on_session_end">, area: RecordArea): string[] {
+  const clocks = ((area as { clocks?: { escalate?: { move_to?: string }[] }[] }).clocks ?? []).flatMap((c) => (c.escalate ?? []).flatMap((e) => (e.move_to ? [e.move_to] : [])));
+  return [...new Set([...Object.values(link.on_session_end ?? {}).filter((x): x is string => !!x), ...stopStates(area as never), ...clocks])];
+}
+const stateOfRow = (area: RecordArea, rec: RecordRow | null) => (rec && area.lifecycle ? rec.data[area.lifecycle.field] ?? area.lifecycle.initial : null);
+
+/**
+ * Settle the record session `id` made, once: claim the mark (two settles at once do it once; a failed move is claimed
+ * again by the sweep, at most 5 times), move the record to the state its end reason names when a transition reaches it
+ * from where the record is (a record the agent finished is left as it is), write why, and, once the record is closed
+ * (that state, a Cancel's or a time limit's), close its children. Returns what it did (null: nothing to settle now).
  */
 export async function settleCreated(orgId: number, id: string): Promise<{ reason: SessionEndReason; moved_to: string | null; children: number } | null> {
   const db = await getDb();
@@ -113,37 +130,65 @@ export async function settleCreated(orgId: number, id: string): Promise<{ reason
        coalesce((SELECT r.status IN ('declined', 'expired') FROM harness_session_requests r WHERE r.org_id = s.org_id AND r.session_id = s.id AND r.kind = 'budget' ORDER BY r.created_at DESC LIMIT 1), false) AS refused
        FROM harness_sessions s WHERE s.id = $1 AND s.org_id = $2`, [id, orgId]));
   const link = s?.policy?.creates;
-  if (!s || !link || link.closed) return null;
-  const reason = endReasonOf(s, s.refused);
+  if (!s || !link) return null;
+  const before = link.closed;
+  if (before && (before.done !== false || (before.tries ?? 0) >= 5)) return null;
+  const reason = before?.reason ?? endReasonOf(s, s.refused);
   if (!reason) return null;
   const area = findArea(link.area);
   const target = link.on_session_end?.[reason] ?? null;
-  // The claim: only one settle marks it (and so moves it).
+  // The claim: only one settle holds it at a time (a retry claims by the tries it read).
+  const tries = (before?.tries ?? 0) + 1;
   const claimed = await asPlatform(() => db.query(
     `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb), updated_at = now()
-      WHERE id = $1 AND org_id = $2 AND policy ? 'creates' AND NOT (policy->'creates' ? 'closed') RETURNING id`,
-    [id, orgId, JSON.stringify({ reason, at: new Date().toISOString(), moved_to: null })]));
-  if (!claimed.length || !area) return null;
-  let moved: string | null = null, children = 0;
-  await asWriter({ by: "shell", id: "session" }, async () => {
-    const rec = await getFor(orgId, area.name, link.key).catch(() => null);
-    if (!rec || !target || !area.lifecycle) return;
-    if (!canMove(area, rec.data[area.lifecycle.field] ?? area.lifecycle.initial, target)) return;
-    try {
-      const store = workspaceRecords(area.pack, orgId, SYSTEM_ACTOR);
-      await store.move(area.name, link.key, target);
-      moved = target;
-      if (link.reason_field) {
-        const now = await getFor(orgId, area.name, link.key);
-        if (now && !now.data[link.reason_field]) await asAction(() => store.update(area.name, link.key, { title: now.title, data: { ...now.data, [link.reason_field!]: REASON_WORDS[reason] } }));
-      }
-    } catch (e) { console.error(`session ${id}: ${area.name}/${link.key} not closed out (${reason}): ${(e as Error).message}`); }
-    children = await closeChildren(orgId, link);
+      WHERE id = $1 AND org_id = $2 AND policy ? 'creates'
+        AND (NOT (policy->'creates' ? 'closed') OR (policy->'creates'->'closed'->>'done' = 'false' AND coalesce((policy->'creates'->'closed'->>'tries')::int, 0) = $4)) RETURNING id`,
+    [id, orgId, JSON.stringify({ reason, at: before?.at ?? new Date().toISOString(), moved_to: null, done: false, tries }), tries - 1]));
+  if (!claimed.length) return null;
+  let moved: string | null = null, children = 0, done = true;
+  if (area?.lifecycle) await asWriter({ by: "shell", id: "session" }, async () => {
+    let rec = await getFor(orgId, area.name, link.key).catch(() => null);
+    if (!rec) return;
+    const from = stateOfRow(area, rec);
+    if (target && canMove(area, from, target)) {
+      try {
+        await shellMove(orgId, area.pack, area.name, link.key, [String(from)], target);
+        moved = target;
+        if (link.reason_field) {
+          rec = await getFor(orgId, area.name, link.key);
+          if (rec && !rec.data[link.reason_field]) await asAction(() => workspaceRecords(area.pack, orgId, SYSTEM_ACTOR).update(area.name, link.key, { title: rec!.title, data: { ...rec!.data, [link.reason_field!]: REASON_WORDS[reason] } }));
+        }
+      } catch (e) { console.error(`session ${id}: ${area.name}/${link.key} not closed out (${reason}): ${(e as Error).message}`); }
+      rec = await getFor(orgId, area.name, link.key).catch(() => null);
+    }
+    const now = stateOfRow(area, rec);
+    // Its children only once the record itself is closed (by this close-out, a Cancel or a time limit).
+    if (typeof now === "string" && closedStates(link, area).includes(now)) children = await closeChildren(orgId, link);
+    // Not done while a move it should make is still open to it (a refusal, a race): the sweep tries again.
+    else if (target && canMove(area, now, target)) done = false;
   });
-  if (moved) await asPlatform(() => db.query(
-    `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed,moved_to}', to_jsonb($3::text)) WHERE id = $1 AND org_id = $2`, [id, orgId, moved]));
-  console.log(`session ${id} ended (${reason}): ${area.name}/${link.key} ${moved ? `moved to ${moved}` : "left as it was"}${children ? `, ${children} linked record${children === 1 ? "" : "s"} closed` : ""}`);
+  await asPlatform(() => db.query(
+    `/* tenant: the session's own workspace, by id */ UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', $3::jsonb) WHERE id = $1 AND org_id = $2`,
+    [id, orgId, JSON.stringify({ reason, at: before?.at ?? new Date().toISOString(), moved_to: moved, done, tries })]));
+  console.log(`session ${id} ended (${reason}): ${link.area}/${link.key} ${moved ? `moved to ${moved}` : "left as it was"}${children ? `, ${children} linked record${children === 1 ? "" : "s"} closed` : ""}${done ? "" : " (tried again later)"}`);
   return { reason, moved_to: moved, children };
+}
+
+/**
+ * The children of a record a session made, closed once the record is (a Cancel's move or a time limit's, called right
+ * after it): by the link its session keeps. Nothing while the record is open or succeeded.
+ */
+export async function closeChildrenFor(orgId: number, areaName: string, key: string): Promise<number> {
+  const area = findArea(areaName);
+  if (!area?.lifecycle) return 0;
+  const db = await getDb();
+  const rows = await asPlatform(() => db.query<{ policy: { creates?: CreatedLink } }>(
+    `/* tenant: the workspace's own sessions */ SELECT policy FROM harness_sessions WHERE org_id = $1 AND policy->'creates'->>'area' = $2 AND policy->'creates'->>'key' = $3 LIMIT 1`, [orgId, areaName, key]));
+  const link = rows[0]?.policy?.creates;
+  if (!link?.children?.length) return 0;
+  const now = stateOfRow(area, await getFor(orgId, areaName, key).catch(() => null));
+  if (typeof now !== "string" || !closedStates(link, area).includes(now)) return 0;
+  return asWriter({ by: "shell", id: "session" }, () => closeChildren(orgId, link));
 }
 
 /** The records pointing at the made one still in one of `from`: moved (a lifecycle) or written (a plain field) to `to`. */
@@ -154,32 +199,36 @@ async function closeChildren(orgId: number, link: CreatedLink): Promise<number> 
     if (!kid) continue;
     const field = ch.field ?? kid.lifecycle?.field;
     if (!field) continue;
-    const store = workspaceRecords(kid.pack, orgId, SYSTEM_ACTOR);
+    const keys: { key: string }[] = [];
     let after: string | undefined;
-    for (let pages = 0; pages < 10; pages++) {
+    for (let pages = 0; pages < 50; pages++) {
       const page = await listFor(orgId, kid.name, { filter: { [ch.via]: link.key }, limit: 200, ...(after ? { after } : {}) });
-      for (const row of page.records) {
-        const v = row.data[field] ?? (kid.lifecycle?.field === field ? kid.lifecycle.initial : undefined);
-        if (typeof v !== "string" || !ch.from.includes(v)) continue;
-        try {
-          if (kid.lifecycle?.field === field) { if (!canMove(kid, v, ch.to)) continue; await store.move(kid.name, row.key, ch.to); }
-          else await asAction(() => store.update(kid.name, row.key, { title: row.title, data: { ...row.data, [field]: ch.to } }));
-          n++;
-        } catch (e) { console.error(`session record ${link.area}/${link.key}: ${kid.name}/${row.key} not closed: ${(e as Error).message}`); }
-      }
+      keys.push(...page.records.map((r) => ({ key: r.key })));
       if (!page.next) break;
       after = page.next;
+    }
+    for (const { key } of keys) {
+      const row = await getFor(orgId, kid.name, key).catch(() => null);
+      if (!row) continue;
+      const v = row.data[field] ?? (kid.lifecycle?.field === field ? kid.lifecycle.initial : undefined);
+      if (typeof v !== "string" || !ch.from.includes(v)) continue;
+      try {
+        if (kid.lifecycle?.field === field) { if (!canMove(kid, v, ch.to)) continue; await shellMove(orgId, kid.pack, kid.name, key, [v], ch.to); }
+        else await asAction(() => workspaceRecords(kid.pack, orgId, SYSTEM_ACTOR).update(kid.name, key, { title: row.title, data: { ...row.data, [field]: ch.to } }));
+        n++;
+      } catch (e) { console.error(`session record ${link.area}/${link.key}: ${kid.name}/${key} not closed: ${(e as Error).message}`); }
     }
   }
   return n;
 }
 
-/** The sweep's pass: every ended session with a record not yet closed out, a bounded batch (src/harness-sessions.ts). */
+/** The sweep's pass: ended sessions whose record is not settled yet (or whose close-out move is to be tried again). */
 export async function settleEnded(limit = 100): Promise<number> {
   const db = await getDb();
   const rows = await asPlatform(() => db.query<{ id: string; org_id: number }>(
     `/* tenant: platform sweep across workspaces */ SELECT s.id, s.org_id FROM harness_sessions s
-      WHERE s.policy ? 'creates' AND NOT (s.policy->'creates' ? 'closed') AND s.current_run_id IS NULL
+      WHERE s.policy ? 'creates' AND s.current_run_id IS NULL
+        AND (NOT (s.policy->'creates' ? 'closed') OR (s.policy->'creates'->'closed'->>'done' = 'false' AND coalesce((s.policy->'creates'->'closed'->>'tries')::int, 0) < 5))
         AND (s.state IN ('stopped', 'failed') OR (s.state IN ('parked', 'awaiting') AND EXISTS (SELECT 1 FROM harness_session_requests r WHERE r.org_id = s.org_id AND r.session_id = s.id AND r.kind = 'budget' AND r.status IN ('declined', 'expired'))))
       ORDER BY s.updated_at LIMIT $1`, [limit]));
   let n = 0;
@@ -187,17 +236,25 @@ export async function settleEnded(limit = 100): Promise<number> {
   return n;
 }
 
-/** The open sessions working on a record: the one that made it, and those started from it (by the record's own key). */
-export async function sessionsFor(q: Queryable, orgId: number, area: string, key: string): Promise<string[]> {
-  const rows = await q.query<{ id: string }>(
-    `SELECT id FROM harness_sessions WHERE org_id = $1 AND state NOT IN ('stopped', 'failed') AND archived_at IS NULL
+/**
+ * The open sessions a record's Cancel stops: the one that made it (always: it works for the record), and those started
+ * from it (`started`: stopped only where the person who cancelled may stop them).
+ */
+export async function sessionsFor(q: Queryable, orgId: number, area: string, key: string): Promise<{ made: string[]; started: string[] }> {
+  const rows = await q.query<{ id: string; made: boolean }>(
+    `SELECT id, (policy->'creates'->>'area' = $2 AND policy->'creates'->>'key' = $3) AS made FROM harness_sessions WHERE org_id = $1 AND state NOT IN ('stopped', 'failed') AND archived_at IS NULL
        AND ((record_area = $2 AND record_key = $3) OR (policy->'creates'->>'area' = $2 AND policy->'creates'->>'key' = $3))`, [orgId, area, key]);
-  return rows.map((r) => r.id);
+  return { made: rows.filter((r) => r.made).map((r) => r.id), started: rows.filter((r) => !r.made).map((r) => r.id) };
+}
+
+/** Mark a session as stopped by a record's Cancel: only its wakes' late moves of that record are ignored. */
+export async function markStoppedFor(q: Queryable, orgId: number, id: string, area: string, key: string): Promise<void> {
+  await q.query(`UPDATE harness_sessions SET policy = jsonb_set(policy, '{stopped_for}', $3::jsonb) WHERE id = $1 AND org_id = $2`, [id, orgId, JSON.stringify({ area, key })]);
 }
 
 /**
- * The states of `area` a stops_session move reaches (Cancel's): a record in one is no longer moved by the sessions it
- * stopped (their late move is ignored, with a log line, instead of a refusal the agent would keep retrying).
+ * The states of `area` a stops_session move reaches (Cancel's): a record in one is no longer moved by the sessions that
+ * move stopped (their late move is ignored, with a log line, instead of a refusal the agent would keep retrying).
  */
 export function stopStates(area: Pick<RecordArea, "name"> & { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }): string[] {
   return (area.detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!);

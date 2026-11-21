@@ -20,12 +20,15 @@
 //   9. An onboarding step done only when a deployment is READY, not when any exists.
 import assert from "node:assert/strict";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 const ok = (m: string) => console.log(`✓ ${m}`);
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
+// The console's modules by path (as scripts/record-pages-test.ts loads them): the server's typecheck never reads web/.
+const web = (rel: string) => import(pathToFileURL(path.join(ROOT, "web", "src", rel)).href);
 
 const states = (xs: string[]) => xs.map((v) => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1).toLowerCase().replace("_", " ") }));
 const BUILD_STATES = ["queued", "running", "deploying", "succeeded", "failed", "cancelled", "timed_out"];
@@ -50,9 +53,9 @@ const PACK = {
         { name: "failed_stage", label: "Failed at", type: "enum", options: states(["queued", "running", "deploying", "succeeded"]) }],
       lifecycle: { field: "status", initial: "queued", transitions: [
         { from: ["queued"], to: "running" }, { from: ["running"], to: "deploying" }, { from: ["deploying"], to: "succeeded" },
-        { from: ["queued", "running", "deploying"], to: "failed" }, { from: ["queued", "running", "deploying"], to: "cancelled" }, { from: ["queued", "running", "deploying"], to: "timed_out" }] },
+        { from: ["queued", "running", "deploying"], to: "failed" }, { from: ["queued", "running", "deploying"], to: "cancelled", roles: ["member", "owner"] }, { from: ["queued", "running", "deploying"], to: "timed_out" }] },
       clocks: [{ name: "build_limit", label: "Time limit", starts: { event: "entered", state: "running" }, after: "90m", stops_when: { field: "status", in: ["succeeded", "failed", "cancelled", "timed_out"] },
-        escalate: [{ after: "0m", label: "Timed out", move_to: "timed_out" }] }],
+        escalate: [{ after: "0m", label: "Timed out", move_to: "timed_out", move_from: ["running", "deploying"] }] }],
       detail: { tabs: [{ label: "Overview", sections: [{ title: "Progress", steps: { field: "status", states: ["queued", "running", "deploying", "succeeded"], failed_stage: "failed_stage" } }] }],
         actions: [{ kind: "move", to: "cancelled", label: "Cancel", stops_session: true, confirm: "Cancel this build and stop its agent session?" }] } },
     { name: "fx_deploys", label: "Deployments", role: "check", scope: "workspace",
@@ -99,10 +102,14 @@ try {
     says(area(1, (a) => { a.detail.actions.push({ kind: "copy_link", stops_session: true }); }), /stops_session is for a move action/, "stops_session on a copy");
     says(area(0, (a) => { a.detail.actions.push({ kind: "copy_link", creates: { area: "fx_builds" } }); }), /creates is for a start_agent action/, "creates on a copy");
     says(area(0, (a) => { a.detail.actions[0].creates.fields.extra = "nope"; }), /nope is not one of the area's fields/, "creates from a field this record lacks");
-    says(area(1, (a) => { a.clocks[0].escalate[0].move_to = "queued"; }), /no transition moves running to queued/, "a clock step with no transition");
+    says(area(1, (a) => { a.clocks[0].escalate[0].move_to = "queued"; }), /no transition names running and moves it to queued/, "a clock step with no transition");
     says(area(1, (a) => { a.clocks[0].starts = { event: "created" }; }), /started by entering a state/, "a moving clock not started by a state");
     says(area(2, (a) => { a.lifecycle.transitions.pop(); }), /no transition moves READY to SUPERSEDED/, "supersedes without its transition");
     says(area(2, (a) => { a.lifecycle.supersedes.scope_fields = ["state"]; }), /cannot scope a replacement/, "supersedes scoped by the lifecycle's field");
+    says(area(2, (a) => { a.lifecycle.supersedes.when_enters = "BUILDING"; a.lifecycle.transitions.push({ from: ["BUILDING"], to: "SUPERSEDED" }); }), /not its initial state/, "supersedes on entering the initial state");
+    says(area(2, (a) => { a.lifecycle.transitions = a.lifecycle.transitions.filter((t: any) => t.to !== "SUPERSEDED"); a.lifecycle.transitions.push({ from: "*", to: "SUPERSEDED" }); }), /no transition moves READY to SUPERSEDED/, "a \"*\" transition is not the shell's");
+    says(area(1, (a) => { delete a.lifecycle.transitions[4].roles; }), /give every transition to cancelled its roles/, "stops_session over a transition with no roles");
+    says(area(1, (a) => { a.clocks[0].escalate[0].move_from = ["succeeded", "running"]; }), /no transition names succeeded and moves it to timed_out/, "move_from a state with no transition");
     says(area(1, (a) => { a.detail.tabs[0].sections[0].steps.failed_stage = "app"; }), /failed_stage names an enum or text field/, "failed_stage on a reference");
     assert.match(P.MetricSchema.safeParse({ name: "fx_m", label: "M", over: "fx_deploys", mode: "current", by_time: { at: "created", every: "week" } }).error?.issues[0]?.message ?? "", /mode "current" is for a count or a sum of now/);
     assert.equal(P.CLOCK_DURATION.test("90m"), true, "minutes are a clock duration");
@@ -114,9 +121,13 @@ try {
     bent[0].detail.actions[0].creates.on_session_end.failed = "nowhere";
     bent[0].detail.actions[0].creates.children[0].via = "app";
     bent[0].detail.actions[0].creates.fields.status = "$key";
+    bent[0].detail.actions[0].creates.fields.session = "summary";
     const probs = P.detailBuildProblems(bent as never, []).join("\n");
-    for (const re of [/link summary is not a reference or link field of fx_builds to fx_apps/, /on_session_end.failed: nowhere is not a state/, /via app is not a reference or link field of fx_deploys to fx_builds/, /field status is fx_builds's lifecycle field/])
+    for (const re of [/link summary is not a reference or link field of fx_builds to fx_apps/, /on_session_end.failed: nowhere is not a state/, /via app is not a reference or link field of fx_deploys to fx_builds/, /field status is fx_builds's lifecycle field/, /field session is set by the app's own actions/])
       assert.match(probs, re);
+    const sealed = clone(parsed) as any[];
+    sealed[1].append_only = true; sealed[1].sealed = true;
+    assert.match(P.detailBuildProblems(sealed as never, []).join("\n"), /fx_builds is append-only[\s\S]*fx_builds is sealed/, "creates into an append-only or sealed area");
     // A related column's sort and where; an onboarding where only on a record step.
     install(PACK);
     const { checkViews } = await import("../src/metric-spec.js");
@@ -182,6 +193,7 @@ try {
 
   // ---------- 3. Cancel stops the session; its late move is ignored ----------
   {
+    await rec.put("fx_deploys", "c-building", { title: "Cancelled build's deploy", data: { app: "blog", build: first.build } });
     const p = await app(own.token, "GET", `/api/records/_page/fx_builds/${first.build}`);
     const cancel = p.body.actions.find((x: { kind: string }) => x.kind === "move");
     const r = await app(own.token, "POST", `/api/records/_page/fx_builds/${first.build}/actions/${cancel.id}`, {});
@@ -191,14 +203,18 @@ try {
     const s = await session(first.session.id);
     assert.equal(s.state, "stopped", "Cancel cancels: the session ended");
     assert.equal((s.policy as any).creates.closed.reason, "stopped", "settled once: nothing left to move");
+    assert.equal((await ra.getFor(W.orgId, "fx_deploys", "c-building"))!.data.state, "CANCELED", "its deployment still building is cancelled with it");
+    const [wake] = await db.query<{ id: string }>("SELECT id FROM runs WHERE org_id = $1 AND harness_session_id = $2 LIMIT 1", [W.orgId, first.session.id]);
+    assert.ok(wake, "the stopped session's wake");
     // The session's late final move (its agent did not hear yet): ignored, said in the log.
     const logged: string[] = [];
     const orig = console.log;
     console.log = (...a: unknown[]) => { logged.push(a.join(" ")); };
-    const late = await ra.asVia(`run:${s.current_run_id ?? "late"}`, () => rec.move("fx_builds", first.build, "succeeded")).finally(() => { console.log = orig; });
+    const late = await ra.asVia(`run:${wake!.id}`, () => rec.move("fx_builds", first.build, "succeeded")).finally(() => { console.log = orig; });
     assert.equal(late.data.status, "cancelled", "the late move changes nothing");
     assert.ok(logged.some((l) => /ignored: the record was moved to "cancelled"/.test(l)), "and says so in the log");
     await assert.rejects(rec.move("fx_builds", first.build, "succeeded"), /cannot move from "cancelled"/, "a person's move is still refused");
+    await assert.rejects(ra.asVia("run:another-run", () => rec.move("fx_builds", first.build, "succeeded")), /cannot move from "cancelled"/, "and so is another run's: only the stopped session's moves are ignored");
     ok("Cancel (a move with stops_session) stops the build's session; the session's late final move is ignored with a log line, a person's is still refused");
   }
 
@@ -247,6 +263,14 @@ try {
     assert.equal((await build(broke.build))!.data.status, "failed", "budget refused: failed");
     assert.equal((await build(broke.build))!.data.error, S.REASON_WORDS.budget);
     assert.equal((await build(lost.build))!.data.status, "cancelled", "a stopped session's build cancelled by the sweep");
+    // A close-out whose move failed (done: false) is tried again by the sweep, never left claimed.
+    const retry = await press();
+    await rec.move("fx_builds", retry.build, "running");
+    await end(retry.session.id, "failed", "the harness failed");
+    await db.query(`UPDATE harness_sessions SET policy = jsonb_set(policy, '{creates,closed}', '{"reason": "failed", "at": "2026-11-21T00:00:00Z", "moved_to": null, "done": false, "tries": 1}'::jsonb) WHERE id = $1 AND org_id = $2`, [retry.session.id, W.orgId]);
+    await S.settleEnded();
+    const rs = (await session(retry.session.id)).policy as any;
+    assert.deepEqual([(await build(retry.build))!.data.status, rs.creates.closed.done, rs.creates.closed.tries], ["failed", true, 2], "a failed close-out is tried again by the sweep");
     // Pure: the end reasons.
     assert.equal(S.endReasonOf({ state: "failed", state_reason: "approval_timeout: x", current_run_id: null }), "policy");
     assert.equal(S.endReasonOf({ state: "parked", state_reason: null, current_run_id: null }), null, "parked is not an end");
@@ -260,31 +284,35 @@ try {
     const x = await press();
     await rec.move("fx_builds", x.build, "running");
     const y = await press();
-    await rec.move("fx_builds", y.build, "running");
-    await rec.move("fx_builds", y.build, "deploying");
+    for (const to of ["running", "deploying", "succeeded"]) await rec.move("fx_builds", y.build, to);
+    const z = await press();
+    await rec.move("fx_builds", z.build, "running"); await rec.move("fx_builds", z.build, "deploying");
+    await rec.put("fx_deploys", "z-building", { title: "Timed-out build's deploy", data: { app: "blog", build: z.build } });
     const later = new Date(Date.now() + 2 * 3600_000);
     await rc.clockCheck(later, { force: true, orgId: W.orgId });
     assert.equal((await build(x.build))!.data.status, "timed_out", "running past 90 minutes: timed out");
-    assert.equal((await build(y.build))!.data.status, "deploying", "one that moved on is left alone");
-    const ev = await db.query<{ step: string; detail: any }>("SELECT step, detail FROM workspace_clock_events WHERE org_id = $1 AND record_key = $2 AND step LIKE 'escalate%'", [W.orgId, x.build]);
-    assert.deepEqual(ev.map((e) => [e.step, e.detail.moved?.to]), [["escalate:0", "timed_out"]], "the step recorded once, with its move");
+    assert.equal((await build(z.build))!.data.status, "timed_out", "deploying is covered too (move_from)");
+    assert.equal((await build(y.build))!.data.status, "succeeded", "one that finished is left alone");
+    assert.equal((await ra.getFor(W.orgId, "fx_deploys", "z-building"))!.data.state, "CANCELED", "a timed-out build's deployment still building is cancelled with it");
+    const ev = await db.query<{ step: string; detail: any }>("SELECT step, detail FROM workspace_clock_events WHERE org_id = $1 AND record_key = $2 AND step LIKE 'escalate%' ORDER BY step", [W.orgId, x.build]);
+    assert.deepEqual(ev.map((e) => [e.step, e.detail.move_to ?? null, e.detail.moved?.to ?? null]), [["escalate:0", "timed_out", null], ["escalate:0:moved", null, "timed_out"]], "the step says what it meant; its own event that it moved");
     await rc.clockCheck(new Date(later.getTime() + 60_000), { force: true, orgId: W.orgId });
-    assert.equal((await db.query("SELECT 1 FROM workspace_clock_events WHERE org_id = $1 AND record_key = $2 AND step LIKE 'escalate%'", [W.orgId, x.build])).length, 1, "never again");
+    assert.equal((await db.query("SELECT 1 FROM workspace_clock_events WHERE org_id = $1 AND record_key = $2 AND step LIKE 'escalate%'", [W.orgId, x.build])).length, 2, "never again");
     assert.equal(await by("fx_builds", x.build), "shell:clock", "the record's last writer is the clock");
     assert.equal(rc.stepWords(ra.findArea("fx_builds")!, "build_limit", "escalate:0", { moved: { to: "timed_out" } }), "Timed out; moved to Timed out");
-    ok("a clock step moves a running build past its 90-minute limit to timed_out, recorded once with its move (its history names the clock); a build that moved on is left alone");
+    ok("a clock step moves a running build past its 90-minute limit to timed_out, recorded once with its move (its history names the clock); deploying too (move_from), its BUILDING deployment cancelled; a build that finished is left alone");
   }
 
   // ---------- 6. steps show where a failed record stopped ----------
   {
-    const L = await import("../web/src/features/records/detail-layout.js");
+    const L = await web("features/records/detail-layout.ts");
     const path_ = ["queued", "running", "deploying", "succeeded"];
-    assert.deepEqual(L.stepRows(path_, "failed", { stage: "deploying" }).steps.map((s) => s.state), ["done", "done", "failed", "todo"], "failed_stage: reached, stopped here, not reached");
+    assert.deepEqual(L.stepRows(path_, "failed", { stage: "deploying" }).steps.map((s: { state: string }) => s.state), ["done", "done", "failed", "todo"], "failed_stage: reached, stopped here, not reached");
     const at = { queued: "2026-11-01T10:00:00Z", running: "2026-11-01T10:01:00Z", failed: "2026-11-01T10:05:00Z" };
     const r = L.stepRows(path_, "failed", { stateAt: at });
-    assert.deepEqual([r.steps.map((s) => s.state), r.off, r.stopped], [["done", "failed", "todo", "todo"], "failed", "running"], "without a stage: the last state it entered before it left the path");
-    assert.deepEqual(L.stepRows(path_, "failed").steps.map((s) => s.state), ["todo", "todo", "todo", "todo"], "a record from before: as before");
-    assert.deepEqual(L.stepRows(path_, "running", { stateAt: at }).steps.map((s) => s.state), ["done", "now", "todo", "todo"], "on the path: as before");
+    assert.deepEqual([r.steps.map((s: { state: string }) => s.state), r.off, r.stopped], [["done", "failed", "todo", "todo"], "failed", "running"], "without a stage: the last state it entered before it left the path");
+    assert.deepEqual(L.stepRows(path_, "failed").steps.map((s: { state: string }) => s.state), ["todo", "todo", "todo", "todo"], "a record from before: as before");
+    assert.deepEqual(L.stepRows(path_, "running", { stateAt: at }).steps.map((s: { state: string }) => s.state), ["done", "now", "todo", "todo"], "on the path: as before");
     const failed = (await ra.listFor(W.orgId, "fx_builds", { filter: { status: "failed" }, limit: 1 })).records[0]!;
     const p = await app(own.token, "GET", `/api/records/_page/fx_builds/${failed.key}`);
     assert.ok(p.body.state_at?.queued && p.body.state_at?.failed, `the page answers when it entered each state: ${JSON.stringify(p.body.state_at)}`);
@@ -325,8 +353,8 @@ try {
     const c = s.cards.find((x) => x.id === "fx_live")!, t = s.cards.find((x) => x.id === "fx_deploys_total")!;
     assert.deepEqual([c.mode, c.value, c.series], ["current", 2, []], "Live deployments: what serves now, no running total");
     assert.equal(t.mode, "total", "an undeclared card as before");
-    const words = await import("../web/src/features/tabs/spark-words.js");
-    assert.equal(words.trendWords({ series: [], unit: "count", mode: "current" }, 12, (v) => String(v)), "As of now.");
+    const words = await web("features/tabs/spark-words.ts");
+    assert.equal(words.trendWords({ series: [], unit: "count", mode: "current" }, 12, (v: number | null) => String(v)), "As of now.");
     ok("a metric card in mode current shows today's count (the two serving deployments) with no sparkline; another card as before");
   }
 

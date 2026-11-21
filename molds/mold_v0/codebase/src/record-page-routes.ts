@@ -614,14 +614,28 @@ export function recordPageRouter(): Router {
         if (!m) throw new PackError(`${typeof to === "string" ? `${stateWords(area, to)} is` : "to is"} not a state this action moves ${area.label} records to${a.moves?.length ? ` (${a.moves.map((x) => x.to).join(", ")})` : ""}.`, 400);
         if (m.disabled) throw new PackError(m.disabled, 409);
         const moved = await dataApi.move(callerOf(res), area.name, record.key, m.to);
-        // mold_v0-333: Cancel cancels: the sessions working on the record (the one that made it, those started from it) stop.
+        // mold_v0-333: Cancel cancels: the session that made the record stops (it works only for the record; this move's
+        // transition names who may make it), and those started from it that this person may stop under the session's
+        // own rules (theirs, or as an owner). Only those sessions' late moves of this record are ignored afterwards.
         if (declared.stops_session) {
           const S = await import("./session-records.js"), H = await import("./harness-sessions.js");
           const s = session(res);
-          const ids = await H.read((q) => S.sessionsFor(q, s.org, area.name, record.key));
-          const by = { kind: "system" as const, user: null, name: `${s.email ?? "Someone"} (moved ${record.title || record.key} to ${stateWords(area, m.to)})`, role: null };
-          for (const id of ids) await H.stopSession(s.org, id, by).catch((e) => console.error(`${area.name}/${record.key}: session ${id} not stopped: ${(e as Error).message}`));
-          return { ...moved, stopped_sessions: ids.length };
+          const { made, started } = await H.read((q) => S.sessionsFor(q, s.org, area.name, record.key));
+          const words = `${s.email ?? "Someone"} (moved ${record.title || record.key} to ${stateWords(area, m.to)})`;
+          let stopped = 0;
+          for (const [id, by] of [...made.map((id) => [id, { kind: "system" as const, user: null, name: words, role: null }] as const), ...started.map((id) => [id, H.actorOf(s)] as const)]) {
+            try {
+              await H.tx((q) => S.markStoppedFor(q, s.org, id, area.name, record.key));
+              await H.stopSession(s.org, id, by);
+              stopped++;
+            } catch (e) {
+              await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed')", [id, s.org]));
+              console.error(`${area.name}/${record.key}: session ${id} not stopped: ${(e as Error).message}`);
+            }
+          }
+          // Its children (deployments still building) close with it now, not when the session's wake ends.
+          await S.closeChildrenFor(s.org, area.name, record.key).catch((e) => console.error(`${area.name}/${record.key}: children not closed: ${(e as Error).message}`));
+          return { ...moved, stopped_sessions: stopped };
         }
         return moved;
       }

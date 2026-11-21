@@ -4405,28 +4405,35 @@ generic (neutral words; a pack names its own areas and states); a pack that name
   `failed`, `crash` (crashed past its resumes), `policy` (its governance refused it, an approval declined or timed out)
   or `budget` (its last budget request declined or expired, nothing running). The shell then moves the record to the
   state `on_session_end` names for that reason, only when a declared transition reaches it from where the record is (a
-  build the agent finished stays succeeded), writes the reason's words into `reason_field` while it is empty, and moves
-  (or, without a lifecycle, writes) each child still in `from` to `to`. Once per session: a mark claimed in its policy
-  (`creates.closed`) before anything moves. Called after the transaction that ended it (stop, a wake's reconcile, a
+  build the agent finished stays succeeded; the shell uses only transitions that name their from state, never `"*"`,
+  and checks the from state inside the move itself), writes the reason's words into `reason_field` while it is empty.
+  Children (each still in `from`, moved or, without a lifecycle, written to `to`) are closed only once the record is
+  closed: in an `on_session_end` state, a Cancel's or a time limit's, whoever put it there; never while it is open or
+  succeeded. A Cancel and a time-limit move close them at once. Once per session: a mark claimed in its policy
+  (`creates.closed`) before anything moves; a move that failed while the record is still open is marked `done: false`
+  and the sweep claims it again (at most 5 tries). Called after the transaction that ended it (stop, a wake's reconcile, a
   declined request) and by the harness sweep (`settleEnded`) for one missed. Its history names `shell:session`.
-- **Cancel cancels**: a move action's `stops_session: true` (with `to`) stops every open session working on the record
-  (the one that made it, those started from it) as the platform; its answer says how many. A record in a state such a
-  move reaches is no longer moved by a session's late call (a write in a wake, `run:<id>`): ignored with a log line,
-  never a 409 its agent would retry; a person's move there is still refused.
+- **Cancel cancels**: a move action's `stops_session: true` (with `to`; every transition to it must name its `roles`)
+  stops the session that made the record (as the platform: it works only for the record) and those started from it
+  that the person may stop under the session's own rules (theirs, or an owner's); its answer says how many. Each stopped
+  session is marked (`policy.stopped_for`); only its wakes' late moves of that record are ignored, with a log line,
+  never a 409 its agent would retry; anyone else's move there is still refused.
 - **Time limits**: a clock's escalation step may declare `move_to` (a state): the clock check moves the record there by a
   declared transition, as the shell (`shell:clock`), once per deadline, only while the record is still in the state the
-  clock started on (`starts: {event: "entered", state}`); durations take minutes too (`"90m"`). Example: `{"name":
+  clock started on (`starts: {event: "entered", state}`) or one of the step's `move_from` (the states it covers), checked
+  again inside the move; the step's event says what it meant (`move_to`), an `escalate:<j>:moved` event that it moved
+  (a refusal is `:failed`); durations take minutes too (`"90m"`). Example: `{"name":
   "build_limit", "label": "Time limit", "starts": {"event": "entered", "state": "running"}, "after": "90m", "stops_when":
   {"field": "status", "in": ["succeeded", "failed", "cancelled", "timed_out"]}, "escalate": [{"after": "0m", "label":
-  "Timed out", "move_to": "timed_out"}]}`.
+  "Timed out", "move_to": "timed_out", "move_from": ["running", "deploying"]}]}`.
 - **Where it stopped**: a steps section's `failed_stage` (an enum or text field holding one of the steps' states). A
   record off the path is drawn as reached, stopped here (its state's word: "Failed here") and not reached: at
   `failed_stage`'s value, else the last step it entered before it left the path (the page's answer carries `state_at`,
   when it entered each state; `web/src/features/records/detail-layout.ts` `stepRows`). A record from before shows as before.
 - **Replaced, and what serves now**: a lifecycle's `supersedes: {scope_fields, when_enters, previous_to}`: when a record
   enters `when_enters` (moved, or created in it), each other record with the same scope values still there and entered
-  before it moves to `previous_to` (a transition must exist), as the shell (`shell:supersede`); an empty scope value
-  replaces nothing. Example: `{"scope_fields": ["environment"], "when_enters": "READY", "previous_to": "SUPERSEDED"}`. A
+  before it moves to `previous_to` (a transition naming `when_enters` must exist; `when_enters` is never the initial
+  state), as the shell (`shell:supersede`), every match paged through; an empty scope value replaces nothing. Example: `{"scope_fields": ["environment"], "when_enters": "READY", "previous_to": "SUPERSEDED"}`. A
   derived pointer, never stored: a computed fact `{op: "latest"}` with no `field` is the newest related record itself
   (its title, linked), and a list column `show: "latest"` the same per row; list columns take `sort` and `where` (the
   notices' condition) and `id` (`rel_<id>`, when two read the same area): `{"related": {"area": "deployments", "via":
@@ -4439,11 +4446,13 @@ generic (neutral words; a pack names its own areas and states); a pack that name
   staff funnel. Example: `{"id": "first_live", "label": "First app live", "done_when": "record:deployments", "where":
   {"field": "state", "in": ["READY"]}}`.
 
-Refused at build (with their paths): creates on another kind or a shared area, from a field this record lacks, into an
-unknown field, the lifecycle's field or the link, a link that does not point here, a state that is not one or that no
-transition reaches, a reason field that is not plain text, a child's via, field or states; stops_session on another kind
-or without `to`; `move_to` without a lifecycle, a state, a clock started by a state or a transition; supersedes without
-its transition, by a list, json, file or the lifecycle's own field, on a sealed area; `failed_stage` on anything but an
+Refused at build (with their paths): creates on another kind or a shared area, into an append-only, chained, sealed or
+repository-fed area, from a field this record lacks, into an unknown field, the lifecycle's field or the link, a
+`set_by: "action"` field from anything but a `$` source, a link that does not point here, a state that is not one or that no
+transition reaches, a reason field that is not plain text, a child's via, field or states; stops_session on another kind,
+without `to` or over a transition with no roles; `move_to` without a lifecycle, a state, a clock started by a state or
+a transition naming each state it moves from; supersedes without
+its transition or entering the initial state, by a list, json, file or the lifecycle's own field, on a sealed area; `failed_stage` on anything but an
 enum or text field; a related column's sort and where on fields it lacks; `mode: "current"` with `by_time` or a measure
 other than count or sum; an onboarding `where` off a record step, on a field it lacks or with a value not an option.
 

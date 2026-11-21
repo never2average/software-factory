@@ -27,7 +27,7 @@ import { getDb, type Db, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { optionValues, PackError, type Clock, type PackTool, type RecordRow, type Workspace } from "./pack-api.js";
-import { asWriter, getFor, isSealedArea, may, recordAreas, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { asWriter, getFor, isSealedArea, may, recordAreas, shellMove, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { featureOn, featureSetting } from "./features.js";
 
@@ -259,7 +259,19 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
     if (!ev) continue; // done before
     report.steps++;
     if (plan) {
-      try { await plan(); report.actions++; }
+      try {
+        const did = await plan();
+        report.actions++;
+        // mold_v0-333: a move made: said in its own event (the step's says only what it meant to do), its children closed.
+        const moved = (did as { moved?: unknown } | undefined)?.moved;
+        if (moved) {
+          await db.query(
+            `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
+            [orgId, area.pack, area.name, row.key, c.name, `${s.id}:moved`, v.due_at, v.due_at, JSON.stringify({ moved }), now]);
+          await (await import("./session-records.js")).closeChildrenFor(orgId, area.name, row.key).catch((err) => console.error(`${area.name}/${row.key}: children not closed: ${(err as Error).message}`));
+        }
+      }
       catch (err) {
         // Refused by the record store (a field's rule, the vault locked): recorded beside the step, never retried.
         await db.query(
@@ -286,15 +298,18 @@ async function planAction(orgId: number, area: ClockArea, key: string, e: NonNul
   if (!e.reassign && !e.raise && !e.move_to) return null;
   const rec = await getFor(orgId, area.name, key);
   if (!rec) return null;
-  // mold_v0-333: a step that moves the record (a time limit): only while it is still in the state its clock started on,
-  // by the lifecycle's own transition, as the shell (the record's history names the clock). It moves; nothing else.
+  // mold_v0-333: a step that moves the record (a time limit): only while it is in a state the step covers (move_from,
+  // else the one its clock started on), checked again in the move itself, by a transition naming that state, as the
+  // shell. The step's event says what it means to do; a ":moved" event says it did (a refusal is ":failed").
   if (e.move_to && area.lifecycle) {
-    const from = rec.data[area.lifecycle.field] ?? area.lifecycle.initial;
-    const started = c && "state" in c.starts ? c.starts.state : null;
-    if (started !== null && from !== started) return null;
-    if (from === e.move_to) return null;
-    detail.moved = { field: area.lifecycle.field, from, to: e.move_to };
-    return () => asWriter({ by: "shell", id: "clock" }, () => workspaceRecords(area.pack, orgId, SYSTEM_ACTOR).move(area.name, key, e.move_to!));
+    const from = String(rec.data[area.lifecycle.field] ?? area.lifecycle.initial);
+    const covers = e.move_from ?? (c && "state" in c.starts ? [c.starts.state] : []);
+    if (!covers.includes(from) || from === e.move_to) return null;
+    detail.move_to = e.move_to;
+    return async () => {
+      await asWriter({ by: "shell", id: "clock" }, () => shellMove(orgId, area.pack, area.name, key, [from], e.move_to!));
+      return { moved: { field: area.lifecycle!.field, from, to: e.move_to } };
+    };
   }
   if (!e.reassign && !e.raise) return null;
   const data = { ...rec.data };
