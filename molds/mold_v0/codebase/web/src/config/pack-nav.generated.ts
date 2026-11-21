@@ -38,7 +38,7 @@ export interface RecordAreaSpec {
   fields: RecordFieldSpec[];
   list_columns: string[];
   links: { field: string; area: string }[];
-  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;
+  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[]; supersedes?: { scope_fields: string[]; when_enters: string; previous_to: string } } | null;
   /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */
   clocks?: { name: string; label: string }[];
   /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */
