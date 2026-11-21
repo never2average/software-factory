@@ -134,7 +134,8 @@ export async function importRecords(area: RecordArea, raw: unknown, opts: { dryR
     // sends it, so a field the area no longer has (a schema change) or the file leaves out is dropped.
     const merged = opts.replace ? { ...given } : { ...(before?.data ?? {}), ...given };
     const t = titleOf(title, before?.title);
-    try { await checkRecord(area, merged, null, SYSTEM_ACTOR, `row ${n}`); }
+    // mold_v0-334: a reference holding for new picks only keeps what the row named before.
+    try { await checkRecord(area, merged, null, SYSTEM_ACTOR, `row ${n}`, [], before?.data ?? null); }
     catch (e) { if (!(e instanceof PackError)) throw e; errors.push(...e.message.split("; ")); report("invalid"); continue; }
     if (before && before.title === t && canonical(before.data) === canonical(merged)) { report("unchanged"); continue; }
     report(!before ? "create" : before.source ? "override" : "update");

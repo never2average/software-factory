@@ -639,7 +639,8 @@ export function recordPageRouter(): Router {
         const started = await (await import("./program-start.js")).startProgram(s.org, H.actorOf(s), a.program!.id, { inputs: a.program!.inputs, title: `${a.program!.name}: ${record.title || record.key}` }, org,
           { record: { area: area.name, key: record.key } });
         // mold_v0-334: the action's move on start (src/record-outcomes.ts); the session has started whatever it says.
-        const moved = await (await import("./record-outcomes.js")).moveOnStart(s.org, area.name, record.key, declared, { userId: s.user ?? null }).catch((e: Error) => { console.error(`record outcomes: ${e.message}`); return null; });
+        // Marked as this action's session (only its outcomes move the record), then moved as the person who started it.
+        const moved = await (await import("./record-outcomes.js")).moveOnStart(s.org, area.name, record.key, id, started.session.id, actor).catch((e: Error) => { console.error(`record outcomes: ${e.message}`); return null; });
         return { ...started, ...(moved ? { moved: { from: moved.from, to: moved.to } } : {}) };
       }
       case "test_storage": {

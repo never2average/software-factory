@@ -723,6 +723,7 @@ export async function runReminders(orgId: number, day: string, items: RunReminde
       subject: `${items.length} agent run${items.length === 1 ? "" : "s"} waiting in ${o.name}`.slice(0, 200),
       text: lines("Hi,", `${items.length === 1 ? "This run's result is" : "These runs' results are"} waiting in ${o.name}:`,
         list + (items.length > shown.length ? `\n…and ${items.length - shown.length} more` : ""),
+        "Platform staff act on these; nothing is needed from you.",
         `See them on ${siteUrl()}/app/notices. You're getting this because you are an owner of ${o.name}.`, sign()) })));
     return { recipients: to.length, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
   } catch (e) {

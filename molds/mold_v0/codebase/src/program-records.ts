@@ -13,7 +13,7 @@
  *   dedupe_on        a new record whose values of these fields match a record the area keeps under another key is left
  *                    out (text trimmed, case-blind); a batch's own repeats once
  */
-import type { RecordOperation } from "./pack-api.js";
+import { PackError, type RecordOperation } from "./pack-api.js";
 import { recordPath, recordProblems, type ProgramRecord, type RecordAreaShape } from "./program-spec.js";
 
 /** The most records one result writes. */
@@ -53,12 +53,46 @@ export const fingerprintOf = (data: Record<string, unknown>, fields: readonly st
 /** What one settled result wrote: the keys written, those left out as repeats of a kept record, and moves it could not make. */
 export interface RecordsWritten { keys: string[]; deduped: { key: string; kept: string }[]; unmoved: { key: string; from: string }[] }
 
-/** Write one settled result's records in its workspace. Answers the keys written (writeProgramResult says what else). */
-export async function writeProgramRecords(orgId: number, h: { id: string; program_id: string | null; outputs: unknown; inputs?: unknown }, rec: ProgramRecord): Promise<string[]> {
-  return (await writeProgramResult(orgId, h, rec)).keys;
+/** Where a run came from: the record its root session was started on, when, and the person who started it. */
+export interface RunOrigin { record: { area: string; key: string } | null; started_at: Date | null; actor: import("./record-areas.js").Actor | null }
+
+/**
+ * A tree's origin from its root session (null fields: no root given, as a test's direct call). The starter's role is
+ * read now (a person who left the workspace refuses the write); a run the workspace's account started (a schedule, an
+ * account key) acts as the account does.
+ */
+export async function runOrigin(orgId: number, rootId: string | null | undefined): Promise<RunOrigin> {
+  if (!rootId) return { record: null, started_at: null, actor: null };
+  const { getDb } = await import("./db.js");
+  const { asPlatform } = await import("./tenant-scope.js");
+  const [r] = await asPlatform(async () => (await getDb()).query<{ record_area: string | null; record_key: string | null; created_at: Date; started_by: string | null; clerk_org_id: string | null }>(
+    "SELECT s.record_area, s.record_key, s.created_at, s.started_by, o.clerk_org_id FROM harness_sessions s JOIN organizations o ON o.id = s.org_id WHERE s.org_id = $1 AND s.id = $2", [orgId, rootId]));
+  if (!r) throw new Error("its run's root session is gone");
+  let actor: import("./record-areas.js").Actor;
+  if (!r.started_by || r.started_by === "account") actor = { role: "owner", userId: null };
+  else {
+    const role = await (await import("./auth.js")).memberRole(r.started_by, r.clerk_org_id);
+    if (!role) throw new Error("the person who started this run is no longer a member of the workspace");
+    actor = { role, userId: r.started_by };
+  }
+  return { record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null, started_at: r.created_at, actor };
 }
 
-export async function writeProgramResult(orgId: number, h: { id: string; program_id: string | null; outputs: unknown; inputs?: unknown }, rec: ProgramRecord): Promise<RecordsWritten> {
+/** Write one settled result's records in its workspace. Answers the keys written (writeProgramResult says what else). */
+export async function writeProgramRecords(orgId: number, h: ResultHandle, rec: ProgramRecord): Promise<string[]> {
+  return (await writeProgramResult(orgId, h, rec)).keys;
+}
+type ResultHandle = { id: string; program_id: string | null; outputs: unknown; inputs?: unknown; root_id?: string | null };
+
+/**
+ * mold_v0-334, who writes: a new record (put) the server, as before; an update (update_by) and every move of a record
+ * that was there already, the person who started the run (their role, the area's permissions, the transitions' roles and
+ * what they may see apply). An update writes only the record the run was started on. A move of a record that was there
+ * already goes only along a transition that names where it is (never a "*" one), and never when it entered that state
+ * after the run started (a person moved it since: it stays, said as unmoved). Reads and writes in one transaction, the
+ * rows it changes locked.
+ */
+export async function writeProgramResult(orgId: number, h: ResultHandle, rec: ProgramRecord): Promise<RecordsWritten> {
   const RA = await import("./record-areas.js");
   const shapes = await recordAreaShapes();
   const bad = recordProblems(rec, shapes);
@@ -67,45 +101,57 @@ export async function writeProgramResult(orgId: number, h: { id: string; program
   let ops = recordOps(rec, h.outputs ?? {}, h.id, h.inputs ?? {});
   const out: RecordsWritten = { keys: [], deduped: [], unmoved: [] };
   if (!ops.length) return out;
-  const { withTenant } = await import("./tenant-scope.js");
-  const writer = { by: "run" as const, id: `program:${h.program_id ?? "unknown"}:${h.id}` };
-  const stored = await RA.workspaceStored(orgId, area, [...new Set(ops.map((o) => o.key))]);
-  const lc = area.lifecycle;
+  const origin = await runOrigin(orgId, h.root_id);
   if (rec.update_by === "key") {
-    const missing = [...new Set(ops.filter((o) => !stored.has(o.key)).map((o) => o.key))];
-    if (missing.length) throw new Error(`no ${area.name} record ${missing.slice(0, 5).join(", ")} to update`);
-    // Over the stored record: its encrypted fields and its state are left out (kept as stored), the rest carried.
-    const keep = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([k]) => !k.startsWith("$") && k !== lc?.field && !area.fields.some((f) => f.name === k && f.encrypted)));
-    ops = ops.map((o) => {
-      const s = stored.get(o.key)!, x = o as { title?: string; data: Record<string, unknown> };
-      return { op: "update" as const, area: area.name, key: o.key, title: x.title ?? s.title, data: { ...keep(s.data), ...x.data } };
-    });
+    // Only the record the run was started on: an input the agent passed (it may be steered) names nothing else.
+    const other = ops.find((o) => !origin.record || origin.record.area !== area.name || origin.record.key !== o.key);
+    if (other) throw new Error(`a program updates only the record its run was started on${origin.record ? ` (${origin.record.area} ${origin.record.key})` : ""}, not ${area.name} ${other.key}`);
   } else if (rec.dedupe_on?.length) {
-    ops = await dedupe(orgId, area.name, rec.dedupe_on, ops, out);
+    ops = await dedupe(orgId, area.name, rec.dedupe_on, ops, out, origin.actor ?? RA.SYSTEM_ACTOR);
     if (!ops.length) return out;
   }
-  // A move only along a transition from where the record is (new: its initial state); else the record stays and it is said.
-  const moves: RecordOperation[] = [];
-  if (rec.move_to && lc) for (const o of ops) {
-    const from = String(stored.get(o.key)?.data[lc.field] ?? lc.initial);
-    if (from === rec.move_to || moves.some((m) => m.key === o.key)) continue;
-    if (lc.transitions.some((t) => t.to === rec.move_to && (t.from === "*" || t.from.includes(from)))) moves.push({ op: "move", area: area.name, key: o.key, to: rec.move_to });
-    else out.unmoved.push({ key: o.key, from });
-  }
-  const results = await RA.asWriter(writer, () => withTenant(orgId, () => RA.workspaceRecords(area.pack, orgId, RA.SYSTEM_ACTOR).batch([...ops, ...moves])));
-  out.keys = [...new Set(results.map((r) => r.key))];
+  const lc = area.lifecycle;
+  const person = origin.actor ?? RA.SYSTEM_ACTOR;
+  const writer = { by: "run" as const, id: `program:${h.program_id ?? "unknown"}:${h.id}` };
+  const { auditAtomic } = await import("./audit-trail.js");
+  const keys = await RA.asWriter(writer, () => auditAtomic(() => RA.inTransaction(orgId, async () => {
+    const server = RA.workspaceRecords(area.pack, orgId, RA.SYSTEM_ACTOR), starter = RA.workspaceRecords(area.pack, orgId, person);
+    const done: string[] = [];
+    for (const o of ops) {
+      const row = await RA.lockedWorkspaceRow(orgId, area, o.key);
+      const x = o as { title?: string; data: Record<string, unknown> };
+      if (rec.update_by === "key") {
+        if (!row) throw new PackError(`no ${area.name} record ${o.key} to update`, 404);
+        // Over the stored record: its encrypted fields and its state are left out (kept as stored), the rest carried.
+        const keep = Object.fromEntries(Object.entries(row.data).filter(([k]) => !k.startsWith("$") && k !== lc?.field && !area.fields.some((f) => f.name === k && f.encrypted)));
+        await starter.update(area.name, o.key, { title: x.title ?? row.title, data: { ...keep, ...x.data } });
+      } else await server.put(area.name, o.key, { ...(x.title !== undefined ? { title: x.title } : {}), data: x.data });
+      if (!done.includes(o.key)) done.push(o.key);
+      if (!rec.move_to || !lc) continue;
+      const from = String(row?.data[lc.field] ?? lc.initial);
+      if (from === rec.move_to) continue;
+      const since = row ? RA.stateEnteredAt(row.data, from) : null;
+      const moved = row && origin.started_at && since && since > origin.started_at;
+      const way = lc.transitions.some((t) => t.to === rec.move_to && (row ? Array.isArray(t.from) && t.from.includes(from) : t.from === "*" || t.from.includes(from)));
+      if (moved || !way) { out.unmoved.push({ key: o.key, from }); continue; }
+      await (row ? starter : server).move(area.name, o.key, rec.move_to);
+    }
+    return done;
+  })));
+  out.keys = keys;
   return out;
 }
 
-/** The ops whose fingerprint no other record of the area holds (and each fingerprint of the batch once). */
-async function dedupe(orgId: number, areaName: string, fields: readonly string[], ops: RecordOperation[], out: RecordsWritten): Promise<RecordOperation[]> {
+/** The ops whose fingerprint no other record of the area the reader sees holds (and each fingerprint of the batch once). */
+async function dedupe(orgId: number, areaName: string, fields: readonly string[], ops: RecordOperation[], out: RecordsWritten, reader: import("./record-areas.js").Actor): Promise<RecordOperation[]> {
   const RA = await import("./record-areas.js");
   const held = new Map<string, string>();
   let after: string | undefined;
-  for (let page = 0; page < 25; page++) {
-    const p = await RA.listFor(orgId, areaName, { limit: 200, ...(after ? { after } : {}) });
+  // Every record of the area the reader may see, page by page (no cap: a repeat past any limit is still a repeat).
+  for (;;) {
+    const p = await RA.listFor(orgId, areaName, { limit: 200, ...(after ? { after } : {}) }, reader);
     for (const r of p.records) { const f = fingerprintOf(r.data, fields); if (f && !held.has(f)) held.set(f, r.key); }
-    if (!p.next) break;
+    if (!p.next || !p.records.length) break;
     after = p.next;
   }
   const kept: RecordOperation[] = [];

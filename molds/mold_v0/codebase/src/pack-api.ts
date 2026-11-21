@@ -1618,6 +1618,9 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
       if (!lc) bad("a start_program action moves a record along its lifecycle: this area has none", i, x.move_to !== undefined ? "move_to" : "on_outcome");
       else {
         if (x.move_to !== undefined && !reached.has(x.move_to)) bad(`no transition of the lifecycle goes to ${x.move_to} (${[...reached].join(", ")})`, i, "move_to");
+        // The move on start is the person's own: a transition to it must be open to every role that may take the action.
+        else if (x.move_to !== undefined && !lc.transitions.some((t) => t.to === x.move_to && (!t.roles || (!!x.roles && x.roles.every((r) => t.roles!.includes(r))))))
+          bad(`the move to ${x.move_to} on start is made as the person who starts it: no transition to it is open to every role this action is for (narrow the action's roles, or open the transition to them)`, i, "move_to");
         for (const [o, st] of Object.entries(x.on_outcome ?? {})) if (st !== undefined && !reached.has(st)) bad(`no transition of the lifecycle goes to ${st} (${[...reached].join(", ")})`, i, "on_outcome", o);
       }
     }

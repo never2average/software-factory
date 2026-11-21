@@ -1,17 +1,27 @@
 /**
  * A record's state follows the runs started on it (mold_v0-334). A record page's start_program action
  * (src/pack-api.ts DetailActionSchema) may declare:
- *   move_to       the state the record moves to when a person starts the program on it ("improving")
+ *   move_to       the state the record moves to when a person starts the program on it ("improving"), moved as that
+ *                 person (the area's move permission and the transition's roles apply; refused, it stays)
  *   on_outcome    the state it moves to when the run settles, by outcome (RUN_OUTCOMES): its evaluation accepted
  *                 ("solved"), waits for a staff review ("in_review"), refused it ("open"); the version it made applied
  *                 or rolled back; the run finished with no evaluation, or failed, crashed or was stopped ("open")
  *   reason_field  a text field the outcome's reason is written into (the record's history shows the change)
  *
- * Who moves it: the server, never the agent, along the area's lifecycle only (a move no transition allows is left out).
- * With a move_to, an outcome moves the record only while it is where this action put it (`move_to`, or a state an
- * earlier outcome of the same action gave it), so a person's own move afterwards stands; without one, wherever a
- * transition allows. An outcome seen twice changes nothing (the record is already there). The run's settles call in here (src/nested-runs.ts: a decision, a staff review, an apply or a
- * rollback); a run that ended with no decision is found by the sweep (sweepRecordOutcomes, from nestedTick).
+ * Which runs: only a root session a person started with that action on that record (harness_sessions.record_action,
+ * sql/migrations/0075). A session merely linked to the record (an agent started from its page) moves nothing.
+ *
+ * Who moves it on an outcome: the server, as the run (the record's page links it), never the agent. Outcome moves are
+ * the app's own and role-free (a staff review or an apply is not the starter's act); they follow the area's lifecycle
+ * only. Each is guarded, in the record's own transaction (its row locked):
+ *   - each outcome of a session is applied once (harness_sessions.record_outcomes), never again;
+ *   - a session superseded by a newer one started on the same record moves nothing any more;
+ *   - with a move_to, only from where this action (or an earlier outcome of it) put the record, so a person's own move
+ *     afterwards stands; a run's end with no decision (succeeded, failed) only from move_to itself;
+ *   - the sweep takes in each ended session once (record_swept_at), and not while another root session on the record
+ *     is still live.
+ * The settles call in here (src/nested-runs.ts: a decision, a staff review, an apply or a rollback); a run that ended
+ * with no decision is found by the sweep (sweepRecordOutcomes, from nestedTick).
  */
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
@@ -19,38 +29,39 @@ import { pageActionId, RUN_OUTCOMES, type DetailAction, type RunOutcome } from "
 
 export { RUN_OUTCOMES, type RunOutcome };
 
-/** A run's link to the record it was started on, and the action that started it. */
-export interface OutcomeLink { orgId: number; area: string; key: string; session: string }
 export interface OutcomeMove { area: string; key: string; from: string; to: string; outcome: RunOutcome; reason: string }
 
 type Area = import("./record-areas.js").RecordArea;
 const RA = () => import("./record-areas.js");
 
+/** An area's page actions. */
+const actionsOf = (area: Pick<Area, "detail">) => ((area.detail as { actions?: DetailAction[] } | undefined)?.actions ?? []);
 /** The start_program actions of an area that move its records (declared move_to or on_outcome). */
 export function movingActions(area: Pick<Area, "detail">): DetailAction[] {
-  const acts = ((area.detail as { actions?: DetailAction[] } | undefined)?.actions ?? []);
-  return acts.filter((a) => a.kind === "start_program" && (a.move_to !== undefined || a.on_outcome !== undefined));
+  return actionsOf(area).filter((a) => a.kind === "start_program" && (a.move_to !== undefined || a.on_outcome !== undefined));
 }
-
-/** Which of them a run is: the one whose program it ran, else the area's only one. */
-export function actionFor(area: Pick<Area, "detail">, programs: readonly string[]): DetailAction | null {
-  const acts = movingActions(area);
-  return acts.find((a) => a.program && programs.includes(a.program)) ?? (acts.length === 1 ? acts[0]! : null);
+/** The moving action a session was started with, by its id (none: the session moves nothing). */
+export function actionFor(area: Pick<Area, "detail">, actionId: string | null | undefined): DetailAction | null {
+  return actionId ? movingActions(area).find((x) => pageActionId(x) === actionId) ?? null : null;
 }
+/** The action a record page started a session with, by its id (record-page-routes). */
+export const actionById = (area: Pick<Area, "detail">, id: string): DetailAction | null => actionsOf(area).find((x) => pageActionId(x) === id) ?? null;
 
-/** The state an outcome names for this action (stopped falls back to failed), or null: it does not move the record. */
+/** The state an outcome names for this action, or null: it does not move the record. */
 export const outcomeState = (a: DetailAction, outcome: RunOutcome): string | null => a.on_outcome?.[outcome] ?? null;
 
 /**
- * Whether the record, in `from`, moves to `to` for this action (pure): only from where the action put it (its move_to,
- * or a state one of its outcomes names), along a transition of the lifecycle, and never to where it already is.
+ * Whether the record, in `from`, moves to `to` for this outcome (pure): along a transition of the lifecycle, never to
+ * where it already is; with a move_to, only from where the action put it (move_to, or a state its outcomes name), and a
+ * run's end with no decision (succeeded, failed) only from move_to itself (a stale crash never undoes a later state).
  */
-export function mayMove(area: Pick<Area, "lifecycle">, a: DetailAction, from: string, to: string): boolean {
+export function mayMove(area: Pick<Area, "lifecycle">, a: DetailAction, from: string, to: string, outcome?: RunOutcome): boolean {
   const lc = area.lifecycle;
   if (!lc || from === to) return false;
-  // An action that moves the record on start owns it from there: its outcomes move it only from where it (or they) put it.
-  const placed = new Set([a.move_to, ...Object.values(a.on_outcome ?? {})].filter((x): x is string => typeof x === "string"));
-  if (a.move_to !== undefined && !placed.has(from)) return false;
+  if (a.move_to !== undefined) {
+    if (outcome === "succeeded" || outcome === "failed") { if (from !== a.move_to) return false; }
+    else if (![a.move_to, ...Object.values(a.on_outcome ?? {})].includes(from)) return false;
+  }
   return lc.transitions.some((t) => t.to === to && (t.from === "*" || t.from.includes(from)));
 }
 
@@ -68,46 +79,35 @@ export function outcomeWords(outcome: RunOutcome, detail?: string | null): strin
   }
 }
 
-/** Move one record for one outcome, as the server (writer: the run). Answers the move made, or null. */
-async function moveFor(link: OutcomeLink, programs: readonly string[], outcome: RunOutcome, detail: string | null, writer: string): Promise<OutcomeMove | null> {
-  const R = await RA();
-  const area = R.findArea(link.area);
-  if (!area || area.scope !== "workspace" || !area.lifecycle) return null;
-  const a = actionFor(area, programs);
-  if (!a) return null;
-  const to = outcomeState(a, outcome);
-  if (!to) return null;
-  const stored = (await R.workspaceStored(link.orgId, area, [link.key])).get(link.key);
-  if (!stored) return null;
-  const from = String(stored.data[area.lifecycle.field] ?? area.lifecycle.initial);
-  if (!mayMove(area, a, from, to)) return null;
-  const reason = outcomeWords(outcome, detail);
-  const ops: import("./pack-api.js").RecordOperation[] = [];
-  if (a.reason_field) {
-    const keep = Object.fromEntries(Object.entries(stored.data).filter(([k]) => !k.startsWith("$") && k !== area.lifecycle!.field && !area.fields.some((f) => f.name === k && f.encrypted)));
-    ops.push({ op: "update", area: area.name, key: link.key, title: stored.title, data: { ...keep, [a.reason_field]: reason.slice(0, 1000) } });
-  }
-  ops.push({ op: "move", area: area.name, key: link.key, to });
-  const { withTenant } = await import("./tenant-scope.js");
-  await R.asWriter({ by: "run", id: writer }, () => withTenant(link.orgId, () => R.workspaceRecords(area.pack, link.orgId, R.SYSTEM_ACTOR).batch(ops)));
-  return { area: area.name, key: link.key, from, to, outcome, reason };
-}
+/** A root session started on a record by a moving action: what an outcome needs (null: it moves nothing). */
+interface Link { orgId: number; session: string; area: string; key: string; action: string; outcomes: string[]; created_at: Date; wake: string | null }
 
-/** A root session's record link and the programs its tree ran (null: it was started on no record). */
-async function linkOf(orgId: number, sessionId: string): Promise<(OutcomeLink & { programs: string[]; wake: string | null }) | null> {
+async function linkOf(orgId: number, sessionId: string): Promise<Link | null> {
   return asPlatform(async () => {
     const db = await getDb();
-    const [s] = await db.query<{ id: string; root_id: string | null; record_area: string | null; record_key: string | null }>(
-      "SELECT id, root_id, record_area, record_key FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, sessionId]);
+    const [s] = await db.query<{ id: string; root_id: string | null }>("SELECT id, root_id FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, sessionId]);
     if (!s) return null;
-    const rootId = s.root_id ?? s.id;
-    const [root] = rootId === s.id ? [s] : await db.query<typeof s>("SELECT id, root_id, record_area, record_key FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, rootId]);
-    if (!root?.record_area || !root.record_key) return null;
-    const progs = await db.query<{ program_id: string }>(
-      "SELECT DISTINCT program_id FROM harness_children WHERE org_id = $1 AND root_id = $2 AND program_id IS NOT NULL UNION SELECT DISTINCT program_id FROM harness_evaluations WHERE org_id = $1 AND root_id = $2", [orgId, root.id]);
+    const [root] = await db.query<{ id: string; record_area: string | null; record_key: string | null; record_action: string | null; record_outcomes: string[] | null; created_at: Date }>(
+      "SELECT id, record_area, record_key, record_action, record_outcomes, created_at FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, s.root_id ?? s.id]);
+    if (!root?.record_area || !root.record_key || !root.record_action) return null;
     const [w] = await db.query<{ id: string }>("SELECT id FROM runs WHERE org_id = $1 AND harness_session_id = $2 ORDER BY created_at DESC LIMIT 1", [orgId, root.id]);
-    return { orgId, area: root.record_area, key: root.record_key, session: root.id, programs: progs.map((p) => p.program_id), wake: w?.id ?? null };
+    return { orgId, session: root.id, area: root.record_area, key: root.record_key, action: root.record_action, outcomes: root.record_outcomes ?? [], created_at: root.created_at, wake: w?.id ?? null };
   });
+}
+
+/** Whether a newer root session was started on the same record by a page action (it supersedes this one's outcomes). */
+async function superseded(l: Link): Promise<boolean> {
+  const rows = await asPlatform(async () => (await getDb()).query("SELECT 1 FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3 AND record_action IS NOT NULL AND id <> $4 AND created_at > $5 LIMIT 1",
+    [l.orgId, l.area, l.key, l.session, l.created_at]));
+  return rows.length > 0;
+}
+
+/** Claim one outcome of a session: true once, the first time (two settles at once claim it once). */
+async function claim(l: Link, outcome: RunOutcome): Promise<boolean> {
+  const rows = await asPlatform(async () => (await getDb()).query(
+    "/* the session's own row; src/record-outcomes.ts is the only writer of record_outcomes */ UPDATE harness_sessions SET record_outcomes = array_append(record_outcomes, $3) WHERE org_id = $1 AND id = $2 AND NOT ($3 = ANY (record_outcomes)) RETURNING id",
+    [l.orgId, l.session, outcome]));
+  return rows.length > 0;
 }
 
 /** Tell the run's trace what moved (nothing when the session has no wake to say it on). */
@@ -117,22 +117,63 @@ async function said(orgId: number, run: string | null, m: OutcomeMove) {
   await asPlatform(async () => H.runEvent(await getDb(), run, orgId, "record_moved", { area: m.area, key: m.key, from: m.from, to: m.to, outcome: m.outcome })).catch(() => {});
 }
 
+/** Apply one outcome of one session to its record, once, as the run. Answers the move made, or null. */
+async function applyOutcome(l: Link, outcome: RunOutcome, detail: string | null, writer: string): Promise<OutcomeMove | null> {
+  if (l.outcomes.includes(outcome)) return null;
+  const R = await RA();
+  const area = R.findArea(l.area);
+  if (!area || area.scope !== "workspace" || !area.lifecycle) return null;
+  const a = actionFor(area, l.action);
+  const to = a ? outcomeState(a, outcome) : null;
+  if (!a || !to) return null;
+  if (await superseded(l)) return null;
+  if (!(await claim(l, outcome))) return null;
+  const reason = outcomeWords(outcome, detail);
+  const lc = area.lifecycle;
+  const { auditAtomic } = await import("./audit-trail.js");
+  const moved = await R.asWriter({ by: "run", id: writer }, () => auditAtomic(() => R.inTransaction(l.orgId, async (): Promise<OutcomeMove | null> => {
+    // Read and decide on the locked row: no one moves it between the check and the move.
+    const row = await R.lockedWorkspaceRow(l.orgId, area, l.key);
+    if (!row) return null;
+    const from = String(row.data[lc.field] ?? lc.initial);
+    if (!mayMove(area, a, from, to, outcome)) return null;
+    const store = R.workspaceRecords(area.pack, l.orgId, R.SYSTEM_ACTOR);
+    if (a.reason_field) {
+      const keep = Object.fromEntries(Object.entries(row.data).filter(([k]) => !k.startsWith("$") && k !== lc.field && !area.fields.some((f) => f.name === k && f.encrypted)));
+      await store.update(area.name, l.key, { title: row.title, data: { ...keep, [a.reason_field]: reason.slice(0, 1000) } });
+    }
+    await store.move(area.name, l.key, to);
+    return { area: area.name, key: l.key, from, to, outcome, reason };
+  })));
+  if (moved) await said(l.orgId, l.wake, moved);
+  return moved;
+}
+
 /**
- * A start_program action has started a session on a record: moved to its move_to when a transition allows it from where
- * the record is (else it stays). Written as the person who started it; the action declared the move, so it is the app's.
+ * A start_program action has started a session on a record: the session is marked as this action's (only such a
+ * session's outcomes move the record), then the record moves to move_to as the person who started it, when the area's
+ * move permission and a transition open to their role allow it from where it is (else it stays).
  */
-export async function moveOnStart(orgId: number, areaName: string, key: string, action: DetailAction, by: { userId: string | null }): Promise<OutcomeMove | null> {
-  if (action.kind !== "start_program" || !action.move_to) return null;
+export async function moveOnStart(orgId: number, areaName: string, key: string, actionId: string, sessionId: string, actor: import("./record-areas.js").Actor): Promise<OutcomeMove | null> {
   const R = await RA();
   const area = R.findArea(areaName);
-  if (!area?.lifecycle || area.scope !== "workspace") return null;
-  const stored = (await R.workspaceStored(orgId, area, [key])).get(key);
-  if (!stored) return null;
-  const from = String(stored.data[area.lifecycle.field] ?? area.lifecycle.initial), to = action.move_to;
-  if (from === to || !area.lifecycle.transitions.some((t) => t.to === to && (t.from === "*" || t.from.includes(from)))) return null;
-  const { withTenant } = await import("./tenant-scope.js");
-  const writer = by.userId ? { by: "people" as const, id: by.userId } : { by: "run" as const, id: `program:${action.program ?? "unknown"}:start` };
-  await R.asWriter(writer, () => withTenant(orgId, () => R.workspaceRecords(area.pack, orgId, R.SYSTEM_ACTOR).move(area.name, key, to)));
+  const action = area ? actionById(area, actionId) : null;
+  if (!area || !action || action.kind !== "start_program" || area.scope !== "workspace") return null;
+  if (movingActions(area).includes(action))
+    await asPlatform(async () => (await getDb()).query("/* the session's own row */ UPDATE harness_sessions SET record_action = $3 WHERE org_id = $1 AND id = $2 AND record_area = $4 AND record_key = $5",
+      [orgId, sessionId, actionId, areaName, key]));
+  if (!action.move_to || !area.lifecycle) return null;
+  const lc = area.lifecycle, to = action.move_to;
+  const row = await R.getFor(orgId, area.name, key, actor).catch(() => null);
+  if (!row) return null;
+  const from = String(row.data[lc.field] ?? lc.initial);
+  if (from === to) return null;
+  try {
+    await R.workspaceRecords(area.pack, orgId, actor).move(area.name, key, to);
+  } catch (e) {
+    if ((e as { status?: number }).status && (e as { status: number }).status < 500) return null; // not this person's move, or not from there
+    throw e;
+  }
   return { area: area.name, key, from, to, outcome: "succeeded", reason: "started" };
 }
 
@@ -147,39 +188,37 @@ export async function afterEvaluation(orgId: number, evaluationId: string): Prom
   const detail = ev.review_decision ? `${ev.review_decision === "accept" ? "accepted" : "declined"} by staff${ev.review_reason ? `, ${ev.review_reason}` : ""}` : (ev.reasons ?? [])[0] ?? null;
   const link = await linkOf(orgId, ev.root_id);
   if (!link) return null;
-  const m = await moveFor(link, [ev.program_id, ...link.programs], outcome, detail, ev.handle_id ? `program:${ev.program_id}:${ev.handle_id}` : link.wake ?? `session:${link.session}`);
-  if (m) await said(orgId, link.wake, m);
-  return m;
+  return applyOutcome(link, outcome, detail, ev.handle_id ? `program:${ev.program_id}:${ev.handle_id}` : link.wake ?? `session:${link.session}`);
 }
 
 /** A version was applied or rolled back: the record its run was started on moves for that. */
 export async function afterVersion(versionId: string, outcome: "applied" | "rolled_back"): Promise<OutcomeMove | null> {
-  const [c] = await asPlatform(async () => (await getDb()).query<{ org_id: number; evaluation_id: string | null; program_id: string | null; applied_ref: string | null; rollback_reason: string | null }>(
-    "/* tenant: staff, by version id */ SELECT org_id, evaluation_id, program_id, applied_ref, rollback_reason FROM harness_champions WHERE id = $1", [versionId]));
+  const [c] = await asPlatform(async () => (await getDb()).query<{ org_id: number; evaluation_id: string | null; applied_ref: string | null; rollback_reason: string | null }>(
+    "/* tenant: staff, by version id */ SELECT org_id, evaluation_id, applied_ref, rollback_reason FROM harness_champions WHERE id = $1", [versionId]));
   if (!c?.evaluation_id) return null;
   const [ev] = await asPlatform(async () => (await getDb()).query<{ root_id: string; handle_id: string | null; program_id: string }>("SELECT root_id, handle_id, program_id FROM harness_evaluations WHERE org_id = $1 AND id = $2", [c.org_id, c.evaluation_id]));
   if (!ev) return null;
   const link = await linkOf(c.org_id, ev.root_id);
   if (!link) return null;
-  const m = await moveFor(link, [ev.program_id, ...link.programs], outcome, outcome === "applied" ? c.applied_ref : c.rollback_reason, ev.handle_id ? `program:${ev.program_id}:${ev.handle_id}` : link.wake ?? `session:${link.session}`);
-  if (m) await said(c.org_id, link.wake, m);
-  return m;
+  return applyOutcome(link, outcome, outcome === "applied" ? c.applied_ref : c.rollback_reason, ev.handle_id ? `program:${ev.program_id}:${ev.handle_id}` : link.wake ?? `session:${link.session}`);
 }
 
 /**
- * The runs that ended with no decision (finished, failed, crashed, stopped) in the last day, each on a record still where
- * its action put it on start: moved for "succeeded" or "failed". An ended run with a decided evaluation is moved for that
- * decision instead (a settle whose hook was lost). Never while another session on the same record is still live.
+ * Each root session a moving action started that ended in the last day and was not taken in yet, once: marked taken in
+ * first (so a session the sweep cannot move is never read again), then moved for its latest decided evaluation, else for
+ * its end (succeeded when it said done, failed otherwise). Not while another root session on the same record is live.
  */
 export async function sweepRecordOutcomes(now = new Date(), limit = 200): Promise<number> {
   const R = await RA();
   if (!R.recordAreas().some((a) => movingActions(a).length)) return 0;
   const ended = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; state: string; state_reason: string | null }>(
-    `/* tenant: platform sweep across workspaces; each row's own org_id */ SELECT s.id, s.org_id, s.state, s.state_reason FROM harness_sessions s
-      WHERE s.parent_id IS NULL AND s.record_area IS NOT NULL AND s.state IN ('stopped', 'failed') AND s.ended_at > $1::timestamptz - interval '1 day'
-        AND NOT EXISTS (SELECT 1 FROM harness_sessions o WHERE o.org_id = s.org_id AND o.parent_id IS NULL AND o.id <> s.id AND o.record_area = s.record_area AND o.record_key = s.record_key AND o.state NOT IN ('stopped', 'failed') AND o.created_at > s.created_at)
-        AND NOT EXISTS (SELECT 1 FROM harness_evaluations e WHERE e.org_id = s.org_id AND e.root_id = s.id AND e.status <> 'decided')
-      ORDER BY s.ended_at DESC LIMIT $2`, [now, limit]));
+    `/* tenant: platform sweep across workspaces; each row's own org_id */ UPDATE harness_sessions s SET record_swept_at = $1
+      WHERE s.id IN (SELECT x.id FROM harness_sessions x WHERE x.parent_id IS NULL AND x.record_action IS NOT NULL AND x.record_swept_at IS NULL
+        AND x.state IN ('stopped', 'failed') AND x.ended_at > $1::timestamptz - interval '1 day'
+        AND NOT EXISTS (SELECT 1 FROM harness_sessions o WHERE o.org_id = x.org_id AND o.parent_id IS NULL AND o.id <> x.id AND o.record_area = x.record_area AND o.record_key = x.record_key AND o.state NOT IN ('stopped', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM harness_evaluations e WHERE e.org_id = x.org_id AND e.root_id = x.id AND e.status <> 'decided')
+        ORDER BY x.ended_at LIMIT $2)
+      RETURNING s.id, s.org_id, s.state, s.state_reason`, [now, limit]));
   let moved = 0;
   for (const s of ended) {
     try {
@@ -188,13 +227,8 @@ export async function sweepRecordOutcomes(now = new Date(), limit = 200): Promis
       const link = await linkOf(s.org_id, s.id);
       if (!link) continue;
       const done = s.state === "stopped" && s.state_reason === "done";
-      const m = await moveFor(link, link.programs, done ? "succeeded" : "failed", done ? null : (s.state_reason ?? s.state), link.wake ?? `session:${link.session}`);
-      if (m) { moved++; await said(s.org_id, link.wake, m); }
+      if (await applyOutcome(link, done ? "succeeded" : "failed", done ? null : (s.state_reason ?? s.state), link.wake ?? `session:${link.session}`)) moved++;
     } catch (e) { console.error(`record outcomes: ${s.id}: ${(e as Error).message}`); }
   }
   return moved;
 }
-
-/** The action a record page started a session with, by its id (record-page-routes): what moveOnStart reads. */
-export const actionById = (area: Pick<Area, "detail">, id: string): DetailAction | null =>
-  (((area.detail as { actions?: DetailAction[] } | undefined)?.actions ?? []).find((x) => pageActionId(x) === id) ?? null);

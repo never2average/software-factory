@@ -236,6 +236,23 @@ async function q(): Promise<Queryable> {
   return t.tx;
 }
 
+/**
+ * mold_v0-334: inside inTransaction only, a workspace row locked until the transaction ends (SELECT … FOR UPDATE): its
+ * title and its data opened as stored, the state's entry times ($state_at) included, or null. A server move that checks
+ * where a record is (src/record-outcomes.ts, src/program-records.ts) reads it here, so no one moves it in between.
+ */
+export async function lockedWorkspaceRow(orgId: number, area: RecordArea, key: string): Promise<{ title: string | null; data: Record<string, unknown> } | null> {
+  if (!txScope.getStore()) throw new Error("lockedWorkspaceRow: inside a transaction only");
+  const [r] = await (await q()).query<Row>("SELECT key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 FOR UPDATE", [orgId, area.pack, area.name, checkKey(key)]);
+  if (!r) return null;
+  return { title: isSealed(r.title) ? await open(orgId, r.title as string) : r.title, data: await openJson(orgId, r.data) };
+}
+/** mold_v0-334: when a record's data says it entered `state` (its $state_at), or null. */
+export const stateEnteredAt = (data: Record<string, unknown>, state: string): Date | null => {
+  const at = stateTimes(data)[state];
+  return at ? new Date(at) : null;
+};
+
 // ---------- values ----------
 
 const KEY = RECORD_KEY;

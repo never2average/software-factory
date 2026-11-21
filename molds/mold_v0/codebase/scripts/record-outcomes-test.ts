@@ -2,19 +2,23 @@
 // (items with a lifecycle, notes about them, a catalog the items name), sessions, evaluations and versions written as the
 // nested runs write them.
 //   tsx scripts/record-outcomes-test.ts          (ONLY=<words> runs the items whose name has them)
-//   1. program records: update_by "key" updates the record a program was started for ($inputs.<key>), its fields written
-//      over the stored ones, moved along the lifecycle (move_to); a key with no record refuses; a move no transition allows
-//      is left out and said; dedupe_on leaves out a repeat of a kept record (and a batch's own); the checks when saved
-//   2. a start_program action's moves: the pack's checks; on start (move_to); on the evaluation's outcome (accepted,
-//      needs_review then a staff review, refused with its reason in the reason field), on a version applied, on a run that
-//      ended with no decision (the sweep); a person's own move afterwards stands; an outcome seen twice changes nothing
+//   1. program records: update_by "key" updates only the record the run was started on ($inputs.<key>; another key, an
+//      outputs key or a run on no record refused: M1), as its starter (one who left refuses), over the stored fields, moved
+//      along the lifecycle (move_to); a record a person moved since the run started is left where it is (L2); dedupe_on
+//      leaves out a repeat of a kept record (and a batch's own); the checks when saved
+//   2. a start_program action's moves: the pack's checks (M2: move_to reachable by a transition open to the action's
+//      roles); on start as the person (a viewer moves nothing); on the evaluation's outcome (accepted, needs_review then a
+//      staff review, refused with its reason), a version applied, a run that ended with no decision (the sweep, once); a
+//      stale run never undoes a newer one or a person's reopen, an outcome once per run (H1); a session no action started
+//      moves nothing, and a run's end waits while another session on the record is live (M3)
 //   3. a reference whose where holds for new picks only (filter_new_only): a record keeps a value retired since; a new
 //      pick of it is refused; without the flag, refused as before
 //   4. one run vocabulary: the server's and the console's words are the same; Active runs' status, whose decision, outcome
 //      and attention; the Finished view keeps a failed and a refused run
-//   5. access: a workspace key with an expiry (refused after it), the unused flag, invitations cancelled, neutral badges
+//   5. access: a workspace key with an expiry (refused after it; only a number of days: L8), the unused flag, invitations
+//      cancelled, neutral badges
 //   6. reminders: a result waiting on a staff review 3 days and a version accepted and not applied 7 days are notices
-//      (Open run), once a day
+//      (Open run), once a day, saying staff act; a superseded review and one past 14 days are not (L5)
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -86,33 +90,57 @@ try {
   let n = 0;
   const id = (p: string) => `${p}_${tag}${String(++n).padStart(3, "0")}`;
 
+  // Sessions and runs as the harness writes them: a root session (optionally on a record, started by someone), its wake.
+  const session = async (record: { area: string; key: string } | null, state = "parked", reason: string | null = null, startedBy: string | null = null) => {
+    const s = id("hss"), wake = id("run");
+    await asPlatform(async () => {
+      await db.query(`INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, state, state_reason, root_id, depth, record_area, record_key, started_by, ended_at, created_at)
+        VALUES ($1, $2, 'Improve it: a record', 'claude_code', 'model-large', 'anthropic', 2, $3, $4, $1, 0, $5, $6, $7, CASE WHEN $3 IN ('stopped', 'failed') THEN now() END, clock_timestamp())`, [s, A.orgId, state, reason, record?.area ?? null, record?.key ?? null, startedBy]);
+      await db.query(`INSERT INTO runs (id, org_id, pack, kind, status, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, harness_session_id)
+        VALUES ($1, $2, '_agent', 'wake', 'succeeded', '{}', 1, 600, 60, 1, $3)`, [wake, A.orgId, s]);
+    });
+    return { s, wake };
+  };
+  const end = (s: string, state: "stopped" | "failed", reason: string) => asPlatform(() => db.query("UPDATE harness_sessions SET state = $2, state_reason = $3, ended_at = now() WHERE id = $1", [s, state, reason]));
+  const OWNER = { role: "owner" as const, userId: null };
+
   // ---------- 1. program records ----------
   if (want("program records")) {
     const shapes = await PR.recordAreaShapes();
     const problems = (r: unknown) => PS.recordProblems(r, shapes);
     assert.deepEqual(problems({ area: "items", key: "$inputs.item_key", update_by: "key", move_to: "formalized", fields: { claim: "claim", metric: "metric" } }), []);
     assert.match(problems({ area: "items", key: "$inputs.item_key", fields: { claim: "claim" } })[0]!, /record\.key/, "$inputs is an update's key only");
-    assert.match(problems({ area: "items", update_by: "key", fields: { claim: "claim" } })[0]!, /give record\.key/);
+    assert.match(problems({ area: "items", update_by: "key", fields: { claim: "claim" } })[0]!, /record\.key is \$inputs/);
+    assert.match(problems({ area: "items", key: "id", update_by: "key", fields: { claim: "claim" } })[0]!, /record\.key is \$inputs/, "M1: an update never takes its key from the agent's outputs");
     assert.match(problems({ area: "items", key: "k", move_to: "nowhere", fields: { claim: "claim" } })[0]!, /no transition of items's lifecycle reaches nowhere/);
     assert.match(problems({ area: "catalog", key: "k", move_to: "ga", fields: { maturity: "m" } })[0]!, /catalog has no lifecycle/);
     assert.match(problems({ area: "items", key: "k", dedupe_on: ["nope"], fields: { claim: "claim" } })[0]!, /items has no field nope/);
     assert.match(problems({ area: "items", key: "$inputs.k", update_by: "key", dedupe_on: ["claim"], fields: { claim: "claim" } }).join(), /nothing to dedupe/);
 
     await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-1", { title: "Slow pages", data: { statement: "Pages are slow", target: "pages" } }));
+    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-other", { title: "Another", data: { statement: "Something else" } }));
     const upd = { area: "items", key: "$inputs.item_key", update_by: "key" as const, move_to: "formalized", fields: { claim: "claim", metric: "metric" } };
-    const w = await PR.writeProgramResult(A.orgId, { id: "hch_formal0001", program_id: "formalize", inputs: { item_key: "it-1" }, outputs: { claim: "Caching halves the load time", metric: "p95_ms" } }, upd);
+    const r0 = await session({ area: "items", key: "it-1" });
+    const w = await PR.writeProgramResult(A.orgId, { id: "hch_formal0001", program_id: "formalize", root_id: r0.s, inputs: { item_key: "it-1" }, outputs: { claim: "Caching halves the load time", metric: "p95_ms" } }, upd);
     assert.deepEqual(w.keys, ["it-1"]);
     const r1 = await RA.getFor(A.orgId, "items", "it-1");
     assert.deepEqual([r1?.data.status, r1?.data.claim, r1?.data.metric, r1?.data.statement, r1?.title], ["formalized", "Caching halves the load time", "p95_ms", "Pages are slow", "Slow pages"], "updated over the stored fields, moved to formalized, title kept");
-    // Seen twice: the same fields, and no move (it is there already).
-    const again = await PR.writeProgramResult(A.orgId, { id: "hch_formal0001", program_id: "formalize", inputs: { item_key: "it-1" }, outputs: { claim: "Caching halves the load time", metric: "p95_ms" } }, upd);
-    assert.deepEqual([again.keys, again.unmoved, await stateOf("items", "it-1")], [["it-1"], [], "formalized"]);
-    await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0002", program_id: "formalize", inputs: { item_key: "it-none" }, outputs: { claim: "x" } }, upd), /no items record it-none to update/);
-    // A person moved it on since: the result's fields are written, its move is not made, and it says so.
+    const again = await PR.writeProgramResult(A.orgId, { id: "hch_formal0001", program_id: "formalize", root_id: r0.s, inputs: { item_key: "it-1" }, outputs: { claim: "Caching halves the load time", metric: "p95_ms" } }, upd);
+    assert.deepEqual([again.keys, again.unmoved, await stateOf("items", "it-1")], [["it-1"], [], "formalized"], "seen twice: the same, no move");
+    // M1: an input the agent passed naming another record (a steered spawn) is refused; so is a run on no record.
+    await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0002", program_id: "formalize", root_id: r0.s, inputs: { item_key: "it-other" }, outputs: { claim: "Injected" } }, upd), /updates only the record its run was started on \(items it-1\), not items it-other/);
+    const loose = await session(null);
+    await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0003", program_id: "formalize", root_id: loose.s, inputs: { item_key: "it-1" }, outputs: { claim: "x" } }, upd), /updates only the record its run was started on/);
+    assert.equal((await RA.getFor(A.orgId, "items", "it-other"))?.data.claim, undefined, "the other record is untouched");
+    // M1: written as the person who started the run: one who left the workspace refuses the write.
+    const gone = await session({ area: "items", key: "it-1" }, "parked", null, "u-not-a-member");
+    await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0004", program_id: "formalize", root_id: gone.s, inputs: { item_key: "it-1" }, outputs: { claim: "x" } }, upd), /no longer a member/);
+    // L2: a person moved it on after the run started: the fields are written, the move is not made, and it says so.
+    const r2 = await session({ area: "items", key: "it-1" });
     await rec.move("items", "it-1", "rejected");
-    const late = await PR.writeProgramResult(A.orgId, { id: "hch_formal0003", program_id: "formalize", inputs: { item_key: "it-1" }, outputs: { claim: "Later claim", metric: "p95_ms" } }, upd);
-    assert.deepEqual([late.unmoved, await stateOf("items", "it-1"), (await RA.getFor(A.orgId, "items", "it-1"))?.data.claim], [[{ key: "it-1", from: "rejected" }], "rejected", "Later claim"]);
     await rec.move("items", "it-1", "open");
+    const late = await PR.writeProgramResult(A.orgId, { id: "hch_formal0005", program_id: "formalize", root_id: r2.s, inputs: { item_key: "it-1" }, outputs: { claim: "Later claim", metric: "p95_ms" } }, upd);
+    assert.deepEqual([late.unmoved, await stateOf("items", "it-1"), (await RA.getFor(A.orgId, "items", "it-1"))?.data.claim], [[{ key: "it-1", from: "open" }], "open", "Later claim"]);
 
     // dedupe_on: a repeat of a kept record (another key, other case and spaces) is left out, and a batch's own repeat once.
     const find = { area: "items", items: "found", dedupe_on: ["statement", "target"], fields: { statement: "statement", target: "target" } };
@@ -122,15 +150,13 @@ try {
     assert.deepEqual(d.deduped, [{ key: "hch_find000001-1", kept: "it-1" }, { key: "hch_find000001-3", kept: "hch_find000001-2" }]);
     const d2 = await PR.writeProgramResult(A.orgId, { id: "hch_find000002", program_id: "find", outputs: { found: [{ statement: "Search is down", target: "search" }] } }, find);
     assert.deepEqual([d2.keys, d2.deduped], [[], [{ key: "hch_find000002-1", kept: "hch_find000001-2" }]], "a second run files nothing new");
-    // The same key again replaces its own record (a settle seen twice), never counted as a repeat.
     const d3 = await PR.writeProgramResult(A.orgId, { id: "hch_find000001", program_id: "find", outputs: { found: [{ statement: "Pages are slow", target: "pages" }, { statement: "Search is down", target: "search" }] } }, find);
-    assert.deepEqual(d3.keys, ["hch_find000001-2"]);
-    ok("program records: update_by key ($inputs) writes over the stored fields and moves along the lifecycle; a missing key refuses; a move a person made since stands, said; dedupe_on leaves out repeats; the checks when saved");
+    assert.deepEqual(d3.keys, ["hch_find000001-2"], "the same key again replaces its own record");
+    ok("program records: an update takes only $inputs and writes only the run's own record, as its starter (M1); over the stored fields, moved along the lifecycle; a move a person made since stands, said (L2); dedupe_on leaves out repeats; the checks when saved");
   }
 
   // ---------- 2. a start_program action's moves ----------
   if (want("start_program")) {
-    // The pack's checks.
     const area = (actions: unknown[], over: Record<string, unknown> = {}) => ({ ...PACK.record_areas[0], ...over, detail: { ...PACK.record_areas[0]!.detail, actions } });
     const issues = (a: unknown) => PA.detailProblems(a as never).map((x) => x.message).join(" | ");
     assert.equal(issues(area(PACK.record_areas[0]!.detail!.actions)), "", "the fixture's action is right");
@@ -140,108 +166,139 @@ try {
     assert.match(issues(area([{ kind: "start_program", program: "improve-it", reason_field: "why" }])), /give on_outcome too/);
     assert.match(issues(area([{ kind: "edit", move_to: "solved" }])), /move_to is for a start_program action/);
     assert.match(issues(area([{ kind: "start_program", program: "improve-it", move_to: "improving" }], { lifecycle: undefined })), /this area has none/);
+    // M2: the move on start is the person's: a transition open to the action's roles must reach it.
+    const ownersOnly = { ...PACK.record_areas[0]!.lifecycle, transitions: PACK.record_areas[0]!.lifecycle!.transitions.map((t) => (t.to === "improving" ? { ...t, roles: ["owner"] } : t)) };
+    assert.match(issues(area([{ kind: "start_program", program: "improve-it", move_to: "improving" }], { lifecycle: ownersOnly })), /made as the person who starts it/);
+    assert.equal(issues(area([{ kind: "start_program", program: "improve-it", move_to: "improving", roles: ["owner"] }], { lifecycle: ownersOnly })), "", "an action for owners only may move along an owners' transition");
     assert.ok(PA.DetailActionSchema.safeParse({ kind: "start_program", program: "x", on_outcome: { sometime: "solved" } }).success === false, "an outcome is one of RUN_OUTCOMES");
 
     const itemsArea = RA.findArea("items")!, notesArea = RA.findArea("notes")!;
-    const action = RO.actionFor(itemsArea, ["improve-it"])!;
-    assert.equal(action.program, "improve-it");
-    // Pure: only from where the action put it, along a transition.
-    assert.equal(RO.mayMove(itemsArea, action, "improving", "solved"), true);
-    assert.equal(RO.mayMove(itemsArea, action, "rejected", "open"), false, "a person's own end state stands");
-    assert.equal(RO.mayMove(itemsArea, action, "solved", "solved"), false);
+    const action = PACK.record_areas[0]!.detail!.actions[0]!, noteAction = PACK.record_areas[1]!.detail!.actions[0]!;
+    const AID = PA.pageActionId(action as never), NID = PA.pageActionId(noteAction as never);
+    const parsed = RO.actionFor(itemsArea, AID)!;
+    assert.equal(parsed.program, "improve-it");
+    assert.equal(RO.actionFor(itemsArea, null), null, "M3: a session no action started has no action (no fallback)");
+    assert.equal(RO.mayMove(itemsArea, parsed, "improving", "solved", "accepted"), true);
+    assert.equal(RO.mayMove(itemsArea, parsed, "rejected", "open", "refused"), false, "a person's own end state stands");
+    assert.equal(RO.mayMove(itemsArea, parsed, "solved", "open", "failed"), false, "H1: a run's end with no decision moves only from move_to");
 
-    const session = async (record: { area: string; key: string } | null, state = "parked", reason: string | null = null) => {
-      const s = id("hss"), wake = id("run");
-      await asPlatform(async () => {
-        await db.query(`INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, state, state_reason, root_id, depth, record_area, record_key, ended_at)
-          VALUES ($1, $2, 'Improve it: Slow pages', 'claude_code', 'model-large', 'anthropic', 2, $3, $4, $1, 0, $5, $6, CASE WHEN $3 IN ('stopped', 'failed') THEN now() END)`, [s, A.orgId, state, reason, record?.area ?? null, record?.key ?? null]);
-        await db.query(`INSERT INTO runs (id, org_id, pack, kind, status, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, harness_session_id)
-          VALUES ($1, $2, '_agent', 'wake', 'succeeded', '{}', 1, 600, 60, 1, $3)`, [wake, A.orgId, s]);
-      });
-      return { s, wake };
-    };
-    const evaluation = async (root: string, program: string, outcome: "accepted" | "refused" | "needs_review", reasons: string[] = ["measured"], decidedDaysAgo = 0) => {
+    const evaluation = async (root: string, program: string, outcome: "accepted" | "refused" | "needs_review", reasons: string[] = ["measured"]) => {
       const e = id("hev");
       await asPlatform(() => db.query(`INSERT INTO harness_evaluations (id, org_id, program_id, program_version, root_id, target_kind, target_id, candidate, acceptance, status, outcome, reasons, decided_at)
-        VALUES ($1, $2, $3, 1, $4, 'mold_ref', 'example-mold', '{}', '{}', 'decided', $5, $6, now() - make_interval(days => $7))`, [e, A.orgId, program, root, outcome, JSON.stringify(reasons), decidedDaysAgo]));
+        VALUES ($1, $2, $3, 1, $4, 'mold_ref', 'example-mold', '{}', '{}', 'decided', $5, $6, now())`, [e, A.orgId, program, root, outcome, JSON.stringify(reasons)]));
       return e;
     };
-    const champion = async (evaluationId: string, daysAgo = 0) => {
+    const champion = async (evaluationId: string) => {
       const c = id("hcv");
-      await asPlatform(() => db.query(`INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, evaluation_id, program_id, candidate, created_by, created_at)
-        VALUES ($1, $2, 'mold_ref', $3, 1, 'champion', $4, 'improve-it', '{}', 'the guardian', now() - make_interval(days => $5))`, [c, A.orgId, `example-mold-${c}`, evaluationId, daysAgo]));
+      await asPlatform(() => db.query(`INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, evaluation_id, program_id, candidate, created_by)
+        VALUES ($1, $2, 'mold_ref', $3, 1, 'champion', $4, 'improve-it', '{}', 'the guardian')`, [c, A.orgId, `example-mold-${c}`, evaluationId]));
       return c;
     };
+    /** A person starts the action on a record: its session, then the action's move (as record-page-routes does). */
+    const start = async (key: string, actor: { role: "owner" | "member" | "viewer"; userId: string | null } = OWNER, areaName = "items", aid = AID) => {
+      const t = await session({ area: areaName, key });
+      const m = await RO.moveOnStart(A.orgId, areaName, key, aid, t.s, actor);
+      return { ...t, m };
+    };
+    const put = (area: string, key: string, title: string, data: Record<string, unknown> = {}) => RA.asWriter({ by: "people", id: "seed" }, () => rec.put(area, key, { title, data }));
 
-    // On start: open -> improving, as the person who started it.
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-2", { title: "Flaky checkout", data: { statement: "Checkout fails sometimes" } }));
-    const m0 = await RO.moveOnStart(A.orgId, "items", "it-2", action, { userId: "u-starter" });
-    assert.deepEqual([m0?.from, m0?.to, await stateOf("items", "it-2")], ["open", "improving", "improving"]);
-    assert.equal(await RO.moveOnStart(A.orgId, "items", "it-2", action, { userId: "u-starter" }), null, "already there: nothing moves");
+    // On start: open -> improving, as the person who started it (M2: one whose role may not move it leaves it where it is).
+    await put("items", "it-2", "Flaky checkout");
+    const viewer = await start("it-2", { role: "viewer", userId: "u-viewer" });
+    assert.deepEqual([viewer.m, await stateOf("items", "it-2")], [null, "open"], "M2: a viewer's start moves nothing");
+    const t1 = await start("it-2", { role: "member", userId: "u-starter" });
+    assert.deepEqual([t1.m?.from, t1.m?.to, await stateOf("items", "it-2")], ["open", "improving", "improving"]);
 
     // needs_review -> in_review; then staff accept -> solved (the review's own words in the reason field).
-    const t1 = await session({ area: "items", key: "it-2" });
     const e1 = await evaluation(t1.s, "improve-it", "needs_review", ["no current best to beat"]);
-    const m1 = await RO.afterEvaluation(A.orgId, e1);
-    assert.deepEqual([m1?.to, await stateOf("items", "it-2")], ["in_review", "in_review"]);
+    assert.equal((await RO.afterEvaluation(A.orgId, e1))?.to, "in_review");
     assert.match(String((await RA.getFor(A.orgId, "items", "it-2"))?.data.why), /waits for a staff review/);
     const N = await import("../src/nested-runs.js");
     await N.reviewEvaluation("staff-one", e1, { decision: "accept", reason: "Looks right" });
     assert.equal(await stateOf("items", "it-2"), "solved", "the staff accept moves it on (src/nested-runs.ts reviewEvaluation)");
     assert.match(String((await RA.getFor(A.orgId, "items", "it-2"))?.data.why), /accepted the result: accepted by staff, Looks right/);
     assert.equal(await RO.afterEvaluation(A.orgId, e1), null, "seen twice: nothing moves");
-    const ev = await asPlatform(() => db.query<{ type: string; data: any }>("SELECT type, data FROM run_events WHERE run_id = $1 AND type = 'record_moved' ORDER BY id", [t1.wake]));
+    const ev = await asPlatform(() => db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'record_moved' ORDER BY id", [t1.wake]));
     assert.deepEqual(ev.map((x) => [x.data.from, x.data.to, x.data.outcome]), [["improving", "in_review", "needs_review"], ["in_review", "solved", "accepted"]], "each move said on the run's trace");
     const hist = await (await import("../src/record-history.js")).recordHistory(A.orgId, itemsArea, "it-2");
     assert.equal(hist.lines.filter((l) => l.action === "moved").length, 3, "three moves: on start, in review, solved");
     assert.ok(hist.lines.some((l) => l.changes.some((c) => c.field === "why")), "the reason is in the history");
     assert.ok(hist.lines.some((l) => l.action === "moved" && l.by === "people:u-starter"), "the start's move is the person's");
 
-    // refused -> back to open, with its reason; a person's own move afterwards stands against a late outcome.
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-3", { title: "Wrong totals", data: { statement: "Totals are off" } }));
-    await RO.moveOnStart(A.orgId, "items", "it-3", action, { userId: null });
-    const t2 = await session({ area: "items", key: "it-3" });
+    // refused -> back to open, with its reason; a person's own move afterwards stands against a later outcome.
+    await put("items", "it-3", "Wrong totals");
+    const t2 = await start("it-3");
     await RO.afterEvaluation(A.orgId, await evaluation(t2.s, "improve-it", "refused", ["the candidate scored lower than the current best"]));
     const r3 = await RA.getFor(A.orgId, "items", "it-3");
     assert.deepEqual([r3?.data.status, r3?.data.why], ["open", "The evaluation refused the result: the candidate scored lower than the current best"]);
     await rec.move("items", "it-3", "rejected");
-    assert.equal(await RO.afterEvaluation(A.orgId, await evaluation(t2.s, "improve-it", "accepted")), null, "rejected by a person: a late accept does not move it");
+    assert.equal(await RO.afterEvaluation(A.orgId, await evaluation(t2.s, "improve-it", "accepted")), null, "rejected by a person: a later accept does not move it");
     assert.equal(await stateOf("items", "it-3"), "rejected");
 
-    // accepted -> solved; a version applied later: already solved, nothing more. A note's rule change accepted -> applied.
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("notes", "n-1", { title: "Stop retrying", data: { body: "Retries hide failures" } }));
-    const t3 = await session({ area: "notes", key: "n-1" });
-    const e3 = await evaluation(t3.s, "change-rule", "accepted");
-    assert.equal((await RO.afterEvaluation(A.orgId, e3))?.to, "applied");
-    assert.equal(await stateOf("notes", "n-1"), "applied", "a learning-like note is applied when its rule change is accepted");
-    assert.equal(RO.actionFor(notesArea, ["change-rule"])?.program, "change-rule");
+    // A note's rule change accepted -> applied (no move_to: from wherever a transition allows).
+    await put("notes", "n-1", "Stop retrying", { body: "Retries hide failures" });
+    const t3 = await start("n-1", OWNER, "notes", NID);
+    assert.equal((await RO.afterEvaluation(A.orgId, await evaluation(t3.s, "change-rule", "accepted")))?.to, "applied");
+    assert.equal(await stateOf("notes", "n-1"), "applied");
 
-    // A version applied by staff moves an item still in review to solved (applyChampion, a mold target).
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-4", { title: "Old tables", data: {} }));
-    await RO.moveOnStart(A.orgId, "items", "it-4", action, { userId: null });
-    const t4 = await session({ area: "items", key: "it-4" });
+    // A version applied by staff moves an item in review to solved (applyChampion, a mold target).
+    await put("items", "it-4", "Old tables");
+    const t4 = await start("it-4");
     const e4 = await evaluation(t4.s, "improve-it", "needs_review");
     await RO.afterEvaluation(A.orgId, e4);
-    assert.equal(await stateOf("items", "it-4"), "in_review");
-    const c4 = await champion(e4);
-    await N.applyChampion("staff-one", c4, { ref: "merged upstream" });
+    await N.applyChampion("staff-one", await champion(e4), { ref: "merged upstream" });
     assert.equal(await stateOf("items", "it-4"), "solved", "applied: solved");
 
-    // A run that ended with no decision: the sweep moves it back to open (failed), saying why; a newer live run holds it.
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-5", { title: "Lost run", data: {} }));
-    await RO.moveOnStart(A.orgId, "items", "it-5", action, { userId: null });
-    await session({ area: "items", key: "it-5" }, "failed", "crashed 3 times in a row: no sandbox");
-    await session({ area: "items", key: "it-5" }, "live");
-    await RO.sweepRecordOutcomes();
-    assert.equal(await stateOf("items", "it-5"), "improving", "a newer run on it is still live: it stays improving");
-    await RA.asWriter({ by: "people", id: "seed" }, () => rec.put("items", "it-6", { title: "Crashed run", data: {} }));
-    await RO.moveOnStart(A.orgId, "items", "it-6", action, { userId: null });
-    await session({ area: "items", key: "it-6" }, "failed", "crashed 3 times in a row: no sandbox");
+    // A run that ended with no decision: the sweep moves it back to open (failed), saying why, once.
+    await put("items", "it-6", "Crashed run");
+    const t6 = await start("it-6");
+    await end(t6.s, "failed", "crashed 3 times in a row: no sandbox");
     assert.ok(await RO.sweepRecordOutcomes() >= 1);
     const r6 = await RA.getFor(A.orgId, "items", "it-6");
     assert.deepEqual([r6?.data.status, r6?.data.why], ["open", "The run ended without a result: crashed 3 times in a row: no sandbox"]);
     assert.equal(await RO.sweepRecordOutcomes(), 0, "a second sweep moves nothing");
-    ok("a start_program action's moves: the pack's checks; on start; needs_review then a staff accept; refused with its reason; a person's move stands; a note applied; a version applied; the sweep for a run with no decision, held by a newer live run");
+
+    // H1: a stale run's crash never undoes what a newer run did, nor a person's reopen afterwards.
+    await put("items", "it-7", "Two runs");
+    const old = await start("it-7");
+    const fresh = await start("it-7");
+    await RO.afterEvaluation(A.orgId, await evaluation(fresh.s, "improve-it", "accepted"));
+    assert.equal(await stateOf("items", "it-7"), "solved", "the newer run's accept solves it");
+    await end(old.s, "failed", "crashed");
+    await end(fresh.s, "stopped", "done");
+    await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-7"), "solved", "H1: the older run, superseded, moves nothing");
+    await rec.move("items", "it-7", "open");
+    for (let i = 0; i < 3; i++) await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-7"), "open", "H1: a person's reopen stands, sweep after sweep");
+    const marks = await asPlatform(() => db.query<{ id: string; record_swept_at: Date | null; record_outcomes: string[] }>("SELECT id, record_swept_at, record_outcomes FROM harness_sessions WHERE id = ANY ($1::text[]) ORDER BY created_at", [[old.s, fresh.s]]));
+    assert.ok(marks.every((m) => m.record_swept_at), "each ended session taken in once");
+    assert.deepEqual(marks.map((m) => m.record_outcomes), [[], ["accepted"]], "only the newer run's outcome applied");
+
+    // H1: an outcome is applied once per session: a second accept of the same run (a lost hook replayed) changes nothing.
+    await put("items", "it-8", "Replayed");
+    const t8 = await start("it-8");
+    await RO.afterEvaluation(A.orgId, await evaluation(t8.s, "improve-it", "refused"));
+    await rec.move("items", "it-8", "improving");
+    assert.equal(await RO.afterEvaluation(A.orgId, await evaluation(t8.s, "improve-it", "refused")), null, "refused once: never again for this run");
+    assert.equal(await stateOf("items", "it-8"), "improving");
+
+    // M3: a session merely linked to the record (an agent started from its page, no action) moves nothing, ended or decided.
+    await put("items", "it-9", "Chat about it");
+    await rec.move("items", "it-9", "improving");
+    const chat = await session({ area: "items", key: "it-9" });
+    await RO.afterEvaluation(A.orgId, await evaluation(chat.s, "improve-it", "accepted"));
+    await end(chat.s, "failed", "crashed");
+    await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-9"), "improving", "M3: no action started it: nothing moves");
+    // M3: while another root session on the record is live, a run's end is not taken in yet.
+    await put("items", "it-10", "Busy");
+    const r10 = await start("it-10");
+    await session({ area: "items", key: "it-10" }, "live");
+    await end(r10.s, "failed", "crashed");
+    await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-10"), "improving", "another live session on it: it stays");
+    ok("a start_program action's moves: the pack's checks (M2 roles); on start as the person (a viewer moves nothing); needs_review then a staff accept; refused with its reason; a person's move stands; a note applied; a version applied; the sweep once; a stale run never undoes a newer one or a reopen (H1); an outcome once per run; a session no action started moves nothing (M3)");
   }
 
   // ---------- 3. new picks only ----------
@@ -325,6 +382,8 @@ try {
     assert.equal(admin.keyExpiry(undefined), null, "no expiry: never expires, as before");
     assert.throws(() => admin.keyExpiry(0), /whole number of days/);
     assert.throws(() => admin.keyExpiry(1000), /whole number of days/);
+    for (const v of [true, [30], "1e2", "30 days", {}]) assert.throws(() => admin.keyExpiry(v), /whole number of days/, `L8: ${JSON.stringify(v)} is not a number of days`);
+    assert.ok(admin.keyExpiry("30"), "a string of digits is");
     assert.ok(Math.abs(admin.keyExpiry(30)!.getTime() - Date.now() - 30 * 86_400_000) < 5000);
     const soon = await createApiKey(A.orgId, "expiring", null, new Date(Date.now() + 60_000));
     assert.ok(await resolveKey(soon), "a key before its expiry works");
@@ -366,6 +425,11 @@ try {
     };
     await ev(review, "needs_review", 4);
     await ev(fresh, "needs_review", 1);
+    // L5: a review a later decision on the same tree and target superseded, and one past the 14 days, are not reminded of.
+    const superseded = await mk("Superseded review"), old = await mk("Old review");
+    await ev(superseded, "needs_review", 5);
+    await ev(superseded, "accepted", 4);
+    await ev(old, "needs_review", 30);
     const ea = await ev(apply, "accepted", 9);
     await asPlatform(() => db.query(`INSERT INTO harness_champions (id, org_id, target_kind, target_id, version, status, evaluation_id, program_id, candidate, created_by, created_at)
       VALUES ($1, $2, 'mold_ref', 'example-mold-apply', 1, 'champion', $3, 'improve-it', '{}', 'the guardian', now() - interval '8 days')`, [id("hcv"), A.orgId, ea]));
@@ -377,6 +441,9 @@ try {
     assert.match(by(review)!.what!, /staff review/);
     assert.equal(by(apply)?.area, "run_apply", "a version accepted and not applied 7 days or more");
     assert.equal(by(fresh), undefined, "a review decided a day ago: not yet");
+    assert.equal(by(superseded), undefined, "L5: superseded by a later decision");
+    assert.equal(by(old), undefined, "L5: past the 14 days of reminders");
+    assert.match(by(review)!.what!, /Platform staff decide it; nothing is needed from you/, "L5: says staff act");
     assert.equal((await R.runReminders()).notices, 0, "once a day");
     const notices = readFileSync(path.join(ROOT, "web", "src", "features", "schedules", "notices-page.tsx"), "utf8");
     assert.ok(notices.includes("'Open run'") && notices.includes("n.href ??"), "the notice opens its run");

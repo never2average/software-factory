@@ -884,7 +884,8 @@ export async function archivePlan(actor: string, priceId: string) {
 export const KEY_EXPIRY_DAYS = { min: 1, max: 730 } as const;
 export function keyExpiry(days: unknown): Date | null {
   if (days === undefined || days === null || days === "") return null;
-  const n = Number(days);
+  // A number, or a string of digits; anything else (true, a list, "1e2") is refused, never read as a number.
+  const n = typeof days === "number" ? days : typeof days === "string" && /^\d{1,4}$/.test(days.trim()) ? Number(days.trim()) : Number.NaN;
   if (!Number.isInteger(n) || n < KEY_EXPIRY_DAYS.min || n > KEY_EXPIRY_DAYS.max) throw new AdminError(`expires_in_days: a whole number of days from ${KEY_EXPIRY_DAYS.min} to ${KEY_EXPIRY_DAYS.max}, or none (it never expires)`, 400);
   return new Date(Date.now() + n * 86_400_000);
 }

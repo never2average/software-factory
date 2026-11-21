@@ -110,8 +110,9 @@ export interface ProgramDock { section: string; label?: string; sub?: string; ic
  */
 export interface ProgramRecord { area: string; key?: string; title?: string; items?: string; fields: Record<string, string>;
   /**
-   * mold_v0-334: "key": each result updates the record its `key` names (it must exist; refused otherwise), the fields it
-   * maps written over the stored ones, never a new record. `key` may then read the program's inputs ($inputs.<name>).
+   * mold_v0-334: "key": the result updates the record its run was started on (`key` is $inputs.<name>, and must be the
+   * record the run's root session was started on; refused otherwise), the fields it maps written over the stored ones,
+   * as the person who started the run (their role and what they may see apply), never a new record.
    */
   update_by?: "key";
   /** mold_v0-334: the lifecycle state each record it writes is moved to (only along a transition; else left as it is). */
@@ -309,7 +310,8 @@ export function recordProblems(raw: unknown, areas?: readonly RecordAreaShape[] 
   if (raw.key !== undefined && !(typeof raw.key === "string" && (PATHLIKE.test(raw.key) || (raw.update_by === "key" && /^\$inputs\.[A-Za-z0-9_-]{1,64}$/.test(raw.key)))))
     out.push(`record.key: a dotted path in the outputs${raw.update_by === "key" ? " (or $inputs.<name>)" : ""}`);
   if (raw.update_by !== undefined && raw.update_by !== "key") out.push('record.update_by: "key" (each result updates the record its key names)');
-  if (raw.update_by === "key" && raw.key === undefined) out.push("record.update_by: an update names the record by its key: give record.key");
+  // mold_v0-334: an update names the record its run was started on, never a key the agent's outputs make up.
+  if (raw.update_by === "key" && !(typeof raw.key === "string" && raw.key.startsWith("$inputs."))) out.push("record.update_by: an update names the record its run was started on: record.key is $inputs.<name>");
   if (raw.update_by === "key" && raw.dedupe_on !== undefined) out.push("record.dedupe_on: an update writes no new record: nothing to dedupe");
   if (raw.move_to !== undefined && !(typeof raw.move_to === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(raw.move_to))) out.push("record.move_to: a state of the area's lifecycle");
   const dedupe = raw.dedupe_on;

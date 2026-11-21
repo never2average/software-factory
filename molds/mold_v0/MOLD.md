@@ -4546,16 +4546,20 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
 
 - **A program's records update and move** (`src/program-records.ts`, `src/program-spec.ts` ProgramRecord). A program's
   `record` mapping may now:
-  - `update_by: "key"`: each result updates the record its `key` names, the fields it maps written over the stored ones
-    (encrypted fields and the state kept as stored); `key` may be one of the program's inputs (`$inputs.<name>`: the
-    record it was started for). A key with no record refuses the whole write, said on the parent's trace.
-  - `move_to`: each record written is moved to that state when a transition of the area's lifecycle allows it from
-    where the record is; a record a person moved on since is left where it is (its fields still written), and the trace's
-    `child_records` event lists it under `unmoved`.
+  - `update_by: "key"`: the result updates the record its run was started on, the fields it maps written over the stored
+    ones (encrypted fields and the state kept as stored). `key` must be one of the program's inputs (`$inputs.<name>`),
+    and the key it gives must be the record the run's root session was started on: an input the agent passed naming any
+    other record (a steered spawn) refuses the whole write, said on the parent's trace. The update and its move are made
+    as the person who started the run (their role now, the area's permissions, the transitions' roles, what they may
+    see); one who has left the workspace refuses it. A new record (no `update_by`) is the server's, as before.
+  - `move_to`: each record written is moved to that state along a transition of the area's lifecycle; a record that was
+    there already only along a transition naming where it is (never a `"*"` one), and never when it entered that state
+    after the run started (a person moved it since: it stays, its fields still written, listed under `unmoved` on the
+    trace's `child_records` event). Reads and writes in one transaction, the rows locked.
   - `dedupe_on: [fields]` (1 to 5 plain fields; not with `update_by`): a new record whose values of those fields (text
     trimmed, spaces folded, case-blind) match a record the area keeps under another key is left out, the existing one
-    standing; a result's own repeats once. The event lists them under `deduped` (`{key, kept}`). Writing the same key again
-    still replaces its own record.
+    standing; a result's own repeats once. The area is read whole (no cap), as the person who started the run when there
+    is one. The event lists them under `deduped` (`{key, kept}`). Writing the same key again still replaces its own record.
 
   ```json
   { "record": { "area": "items", "key": "$inputs.item_key", "update_by": "key", "move_to": "formalized",
@@ -4566,7 +4570,9 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
   the area has and does not encrypt, `$inputs.` only for an update.
 - **A start_program action moves its record** (`src/record-outcomes.ts`; `DetailActionSchema` `move_to`, `on_outcome`,
   `reason_field`). On a record page's start_program action:
-  - `move_to`: the state the record moves to when a person starts it (written as that person; only along a transition).
+  - `move_to`: the state the record moves to when a person starts it, moved as that person (the area's move permission
+    and the transition's roles apply; refused, it stays). The build refuses a `move_to` that no transition open to every
+    role of the action reaches.
   - `on_outcome`: `{accepted, needs_review, refused, applied, rolled_back, succeeded, failed}` (each optional, a state):
     where the record goes when the run it started settles. The guardian's decision and a staff review
     (`src/nested-runs.ts` decide, reviewEvaluation) give accepted, needs_review or refused (a staff accept is accepted, a
@@ -4576,9 +4582,16 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
     failed (it failed, crashed, timed out or was stopped), unless a newer run on the same record is still live.
   - `reason_field`: a plain, optional text field of the area each outcome's reason is written into ("The evaluation
     refused the result: …", "The run ended without a result: crashed …"), so the record's history shows why.
-  With a `move_to`, an outcome moves the record only from where the action (or an earlier outcome) put it: a person's own
-  move afterwards stands, and an outcome seen twice changes nothing. The writer is the run (`run:program:<program>:<handle>`,
-  else the session's wake), so the record's page links it; each move is a `record_moved` event on the session's trace.
+  Only a root session a person started with that action moves the record: the start marks it
+  (`harness_sessions.record_action`); a session merely linked to the record (an agent started from its page) moves
+  nothing. Outcome moves are the app's own and role-free (a staff review or an apply is not the starter's act), made in
+  the record's own transaction with its row locked, and guarded: each outcome of a session is applied once
+  (`record_outcomes`); a session superseded by a newer one started on the same record moves nothing any more; with a
+  `move_to`, only from where the action (or an earlier outcome) put the record, and a run's end with no decision only
+  from `move_to` itself, so a stale crash never undoes a later state and a person's own move stands. The sweep takes in
+  each ended session once (`record_swept_at`), never while another root session on the record is live. The writer is the
+  run (`run:program:<program>:<handle>`, else the session's wake), so the record's page links it; each move is a
+  `record_moved` event on the session's trace.
   A learning-style area marks its record applied when its rule change is accepted the same way (`on_outcome: {accepted:
   "applied"}` on the action that starts the rule change).
 
@@ -4606,12 +4619,16 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
   Active / Finished switch, Finished listing the trees whose children all settled in the last 30 days (a failed or
   refused run no longer vanishes); cards Need attention (active) and Accepted or applied, Failed or refused, Waiting for
   staff (finished).
-- **Reminders** (`src/run-reminders.ts`, from the nested runs' sweep; `sql/migrations/0075_run_reminders.sql` adds the
-  notice kind `run`). A result waiting for a staff review 3 days, or a version accepted and neither applied nor proposed
-  in 7 days, is a workspace notice (area `run_review` / `run_apply`, the run's root session as its key; `/app/notices`
-  "Open run"), raised once a day while it waits, and one email to the workspace's owners listing the new ones (email kind
-  `run_reminder`, in the `due_dates` group). Rollback: `sql/rollback/0075_run_reminders.sql`.
-- **Access.** A workspace key staff issue may expire (`POST …/orgs/<slug>/keys {label, expires_in_days}`, 1 to 730 days;
+- **Reminders** (`src/run-reminders.ts`, from the nested runs' sweep; `sql/migrations/0075_record_outcomes.sql` adds the
+  notice kind `run` and the three session columns above). A result waiting for a staff review 3 days (and not
+  superseded by a later decision on the same tree and target), or a version accepted and neither applied nor proposed in
+  7 days, is a workspace notice (area `run_review` / `run_apply`, the run's root session as its key; `/app/notices` "Open
+  run"), raised once a day for at most 14 days, saying platform staff act and nothing is needed from the workspace, and
+  one email to the workspace's owners listing the new ones (email kind `run_reminder`, in the `due_dates` group). A run
+  started on a sealed area's record is named "An agent run", never by its session's title. Rollback:
+  `sql/rollback/0075_record_outcomes.sql`.
+- **Access.** A workspace key staff issue may expire (`POST …/orgs/<slug>/keys {label, expires_in_days}`, a whole number
+  of days from 1 to 730, a number or a string of digits;
   none: never, as before; the column is 0013's `api_keys.expires_at`, which every key's check already reads), and a key
   that expires is rotated into one with the same span; the staff key lists show Expires. An active key nobody used for 90
   days (or never, since it was made) carries `unused: true` (`src/member-keys.ts`) and a "Never used" / "Not used for 90
