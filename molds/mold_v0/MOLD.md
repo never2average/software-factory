@@ -4622,7 +4622,10 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
     and the key it gives must be the record the run's root session was started on: an input the agent passed naming any
     other record (a steered spawn) refuses the whole write, said on the parent's trace. The update and its move are made
     as the person who started the run (their role now, the area's permissions, the transitions' roles, what they may
-    see); one who has left the workspace refuses it. A new record (no `update_by`) is the server's, as before.
+    see; a run the account started acts with its key's own role); one who has left the workspace refuses it. A new
+    record (no `update_by`) is the server's, as before, even when its starter has left. A key from the outputs never
+    replaces a record that is there already unless this same run wrote it (its result seen again): any other is left as
+    it is and listed under `existing` on the trace.
   - `move_to`: each record written is moved to that state along a transition of the area's lifecycle; a record that was
     there already only along a transition naming where it is (never a `"*"` one), and never when it entered that state
     after the run started (a person moved it since: it stays, its fields still written, listed under `unmoved` on the
@@ -4653,14 +4656,17 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
     failed (it failed, crashed, timed out or was stopped), unless a newer run on the same record is still live.
   - `reason_field`: a plain, optional text field of the area each outcome's reason is written into ("The evaluation
     refused the result: …", "The run ended without a result: crashed …"), so the record's history shows why.
-  Only a root session a person started with that action moves the record: the start marks it
+  Only a root session a person started with that action moves the record: the session is written with it
   (`harness_sessions.record_action`); a session merely linked to the record (an agent started from its page) moves
   nothing. Outcome moves are the app's own and role-free (a staff review or an apply is not the starter's act), made in
   the record's own transaction with its row locked, and guarded: each outcome of a session is applied once
-  (`record_outcomes`); a session superseded by a newer one started on the same record moves nothing any more; with a
+  (`record_outcomes`, given back if its transaction fails); a session superseded by a newer one started on the same
+  record moves nothing any more; a record that entered its state after the session last moved it (`record_moved_at`,
+  else after the session started) was moved by someone else, and that move stands, with or without a `move_to`; with a
   `move_to`, only from where the action (or an earlier outcome) put the record, and a run's end with no decision only
-  from `move_to` itself, so a stale crash never undoes a later state and a person's own move stands. The sweep takes in
-  each ended session once (`record_swept_at`), never while another root session on the record is live. The writer is the
+  from `move_to` itself. The sweep takes in each end of a session once (`record_swept_at`; a continued session again
+  when it ends next), held while another session a page action started on the record is running (starting, live,
+  waking; not archived), and settled anyway 6 hours after it ended. The writer is the
   run (`run:program:<program>:<handle>`, else the session's wake), so the record's page links it; each move is a
   `record_moved` event on the session's trace.
   A learning-style area marks its record applied when its rule change is accepted the same way (`on_outcome: {accepted:
@@ -4691,7 +4697,8 @@ a pack that declares none of them behaves as before (`packs.py check` of existin
   refused run no longer vanishes); cards Need attention (active) and Accepted or applied, Failed or refused, Waiting for
   staff (finished).
 - **Reminders** (`src/run-reminders.ts`, from the nested runs' sweep; `sql/migrations/0075_record_outcomes.sql` adds the
-  notice kind `run` and the three session columns above). A result waiting for a staff review 3 days (and not
+  notice kind `run` and the four session columns above; on its branch it was first named `0075_run_reminders`, and no
+  preview or live deploy ran that branch, so no database recorded the old name). A result waiting for a staff review 3 days (and not
   superseded by a later decision on the same tree and target), or a version accepted and neither applied nor proposed in
   7 days, is a workspace notice (area `run_review` / `run_apply`, the run's root session as its key; `/app/notices` "Open
   run"), raised once a day for at most 14 days, saying platform staff act and nothing is needed from the workspace, and

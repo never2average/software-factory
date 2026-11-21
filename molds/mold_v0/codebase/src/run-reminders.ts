@@ -40,7 +40,7 @@ export async function runReminders(now = new Date()): Promise<RunReminderReport>
     `/* tenant: platform sweep across workspaces; each row's own org_id */ SELECT DISTINCT ON (e.org_id, e.root_id) e.org_id, e.root_id, s.title, s.record_area, e.decided_at AS at
        FROM harness_evaluations e JOIN harness_sessions s ON s.id = e.root_id AND s.org_id = e.org_id
       WHERE e.status = 'decided' AND e.outcome = 'needs_review' AND e.review_decision IS NULL AND e.decided_at < $1::timestamptz AND e.decided_at > $2::timestamptz
-        AND NOT EXISTS (SELECT 1 FROM harness_evaluations n WHERE n.org_id = e.org_id AND n.root_id = e.root_id AND n.target_kind = e.target_kind AND n.target_id = e.target_id AND n.status = 'decided' AND n.created_at > e.created_at)
+        AND NOT EXISTS (SELECT 1 FROM harness_evaluations n WHERE n.org_id = e.org_id AND n.root_id = e.root_id AND n.target_kind = e.target_kind AND n.target_id = e.target_id AND n.status = 'decided' AND n.id <> e.id AND (n.decided_at > e.decided_at OR (n.decided_at = e.decided_at AND n.created_at > e.created_at)))
       ORDER BY e.org_id, e.root_id, e.decided_at LIMIT 500`, [ago(REVIEW_DAYS), ago(REVIEW_DAYS + REMIND_FOR_DAYS)]));
   const apply = await asPlatform(() => db.query<{ org_id: number; root_id: string; title: string; record_area: string | null; at: Date }>(
     `/* tenant: platform sweep across workspaces; each row's own org_id */ SELECT DISTINCT ON (c.org_id, e.root_id) c.org_id, e.root_id, s.title, s.record_area, c.created_at AS at

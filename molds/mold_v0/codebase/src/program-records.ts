@@ -51,15 +51,20 @@ export const fingerprintOf = (data: Record<string, unknown>, fields: readonly st
 };
 
 /** What one settled result wrote: the keys written, those left out as repeats of a kept record, and moves it could not make. */
-export interface RecordsWritten { keys: string[]; deduped: { key: string; kept: string }[]; unmoved: { key: string; from: string }[] }
+export interface RecordsWritten { keys: string[]; deduped: { key: string; kept: string }[]; unmoved: { key: string; from: string }[];
+  /** mold_v0-334: keys of records that were there already, not this run's: left as they are, never replaced. */
+  existing: string[] }
 
-/** Where a run came from: the record its root session was started on, when, and the person who started it. */
-export interface RunOrigin { record: { area: string; key: string } | null; started_at: Date | null; actor: import("./record-areas.js").Actor | null }
+/**
+ * Where a run came from: the record its root session was started on, when, and who started it (`actor`), or why they no
+ * longer may (`refused`: asked for only when a write is theirs: an update or a move of a record that was there).
+ */
+export interface RunOrigin { record: { area: string; key: string } | null; started_at: Date | null; actor: import("./record-areas.js").Actor | null; refused?: string }
 
 /**
  * A tree's origin from its root session (null fields: no root given, as a test's direct call). The starter's role is
- * read now (a person who left the workspace refuses the write); a run the workspace's account started (a schedule, an
- * account key) acts as the account does.
+ * read now (a person who left the workspace: `refused`); a run the workspace's account started (a schedule, an account
+ * key) acts with that key's own role, which in a workspace's records is none (no role limits: src/record-areas.ts Actor).
  */
 export async function runOrigin(orgId: number, rootId: string | null | undefined): Promise<RunOrigin> {
   if (!rootId) return { record: null, started_at: null, actor: null };
@@ -69,13 +74,14 @@ export async function runOrigin(orgId: number, rootId: string | null | undefined
     "SELECT s.record_area, s.record_key, s.created_at, s.started_by, o.clerk_org_id FROM harness_sessions s JOIN organizations o ON o.id = s.org_id WHERE s.org_id = $1 AND s.id = $2", [orgId, rootId]));
   if (!r) throw new Error("its run's root session is gone");
   let actor: import("./record-areas.js").Actor;
-  if (!r.started_by || r.started_by === "account") actor = { role: "owner", userId: null };
+  const record = r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null;
+  if (!r.started_by || r.started_by === "account") actor = { role: null, userId: null };
   else {
     const role = await (await import("./auth.js")).memberRole(r.started_by, r.clerk_org_id);
-    if (!role) throw new Error("the person who started this run is no longer a member of the workspace");
+    if (!role) return { record, started_at: r.created_at, actor: null, refused: "the person who started this run is no longer a member of the workspace" };
     actor = { role, userId: r.started_by };
   }
-  return { record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null, started_at: r.created_at, actor };
+  return { record, started_at: r.created_at, actor };
 }
 
 /** Write one settled result's records in its workspace. Answers the keys written (writeProgramResult says what else). */
@@ -85,8 +91,10 @@ export async function writeProgramRecords(orgId: number, h: ResultHandle, rec: P
 type ResultHandle = { id: string; program_id: string | null; outputs: unknown; inputs?: unknown; root_id?: string | null };
 
 /**
- * mold_v0-334, who writes: a new record (put) the server, as before; an update (update_by) and every move of a record
- * that was there already, the person who started the run (their role, the area's permissions, the transitions' roles and
+ * mold_v0-334, who writes: a new record the server, as before; a record that is there already is never replaced by a
+ * key the agent's outputs give, only by the same run's own result seen again (its writer): any other is left as it is
+ * and said (`existing`). An update (update_by) and every move of a record that was there already, the person who started
+ * the run (their role, the area's permissions, the transitions' roles and
  * what they may see apply). An update writes only the record the run was started on. A move of a record that was there
  * already goes only along a transition that names where it is (never a "*" one), and never when it entered that state
  * after the run started (a person moved it since: it stays, said as unmoved). Reads and writes in one transaction, the
@@ -99,10 +107,11 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
   if (bad.length) throw new Error(bad.join("; "));
   const area = RA.findArea(rec.area)!;
   let ops = recordOps(rec, h.outputs ?? {}, h.id, h.inputs ?? {});
-  const out: RecordsWritten = { keys: [], deduped: [], unmoved: [] };
+  const out: RecordsWritten = { keys: [], deduped: [], unmoved: [], existing: [] };
   if (!ops.length) return out;
   const origin = await runOrigin(orgId, h.root_id);
   if (rec.update_by === "key") {
+    if (origin.refused) throw new Error(origin.refused);
     // Only the record the run was started on: an input the agent passed (it may be steered) names nothing else.
     const other = ops.find((o) => !origin.record || origin.record.area !== area.name || origin.record.key !== o.key);
     if (other) throw new Error(`a program updates only the record its run was started on${origin.record ? ` (${origin.record.area} ${origin.record.key})` : ""}, not ${area.name} ${other.key}`);
@@ -112,6 +121,9 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
   }
   const lc = area.lifecycle;
   const person = origin.actor ?? RA.SYSTEM_ACTOR;
+  // A record that is there already is replaced only by this same run's result seen again (a settle seen twice).
+  const writerText = `run:program:${h.program_id ?? "unknown"}:${h.id}`;
+  const prov = rec.update_by === "key" ? new Map() : await RA.workspaceProvenance(orgId, area, [...new Set(ops.map((o) => o.key))]);
   const writer = { by: "run" as const, id: `program:${h.program_id ?? "unknown"}:${h.id}` };
   const { auditAtomic } = await import("./audit-trail.js");
   const keys = await RA.asWriter(writer, () => auditAtomic(() => RA.inTransaction(orgId, async () => {
@@ -125,7 +137,8 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
         // Over the stored record: its encrypted fields and its state are left out (kept as stored), the rest carried.
         const keep = Object.fromEntries(Object.entries(row.data).filter(([k]) => !k.startsWith("$") && k !== lc?.field && !area.fields.some((f) => f.name === k && f.encrypted)));
         await starter.update(area.name, o.key, { title: x.title ?? row.title, data: { ...keep, ...x.data } });
-      } else await server.put(area.name, o.key, { ...(x.title !== undefined ? { title: x.title } : {}), data: x.data });
+      } else if (row && prov.get(o.key)?.written_by !== writerText) { if (!out.existing.includes(o.key)) out.existing.push(o.key); continue; }
+      else await server.put(area.name, o.key, { ...(x.title !== undefined ? { title: x.title } : {}), data: x.data });
       if (!done.includes(o.key)) done.push(o.key);
       if (!rec.move_to || !lc) continue;
       const from = String(row?.data[lc.field] ?? lc.initial);
@@ -134,6 +147,7 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
       const moved = row && origin.started_at && since && since > origin.started_at;
       const way = lc.transitions.some((t) => t.to === rec.move_to && (row ? Array.isArray(t.from) && t.from.includes(from) : t.from === "*" || t.from.includes(from)));
       if (moved || !way) { out.unmoved.push({ key: o.key, from }); continue; }
+      if (row && origin.refused) throw new PackError(origin.refused, 403);
       await (row ? starter : server).move(area.name, o.key, rec.move_to);
     }
     return done;

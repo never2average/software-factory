@@ -326,7 +326,7 @@ export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ def
  * start it, its instructions, model, budget, ceiling, turns, web, tools and files. `opts.record` (the server's own, from a
  * record page's start_agent action; never from a request's body) links it to that record.
  */
-export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string }; followOn?: { from: string; context: string }; permitProgram?: string } = {}): Promise<SessionDetail> {
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string; /** mold_v0-334: the page action that started it (src/record-outcomes.ts) */ action?: string }; followOn?: { from: string; context: string }; permitProgram?: string } = {}): Promise<SessionDetail> {
   needOn();
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
@@ -405,10 +405,10 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
       `INSERT INTO harness_session_counters (org_id, last_number) VALUES ($1, 1)
        ON CONFLICT (org_id) DO UPDATE SET last_number = harness_session_counters.last_number + 1 RETURNING last_number`, [orgId]);
     await q.query(
-      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref, session_number)
-       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key, root_id, ref, session_number, record_action)
+       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
       [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget, prof.id, prof.version,
-        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, nested ? sessionRef(n!.last_number) : null, n!.last_number]);
+        opts.record?.area ?? null, opts.record?.key ?? null, nested ? id : null, nested ? sessionRef(n!.last_number) : null, n!.last_number, opts.record?.area && opts.record.action ? opts.record.action.slice(0, 200) : null]);
     const files = await bindFiles(q, orgId, id, startedByOf(actor)!, fileList);
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name, attachments) VALUES ($1, $2, 'person', $3, 'pending', $4, $5, $6)",
       [id, orgId, message, actor.user, actor.name, JSON.stringify(attachmentsOf(files, repositories))]);
@@ -610,7 +610,8 @@ export async function messageSession(orgId: number, id: string, actor: Actor, bo
     if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "steer_queued", { length: message.length, by: actor.name });
     if (closed(x)) {
       // Open again: what ended it no longer applies, and its retention starts over when it ends next.
-      await q.query(`UPDATE harness_sessions SET state = 'parked', state_reason = 'continued', archived_at = NULL, ended_at = NULL, retention_until = NULL, crashes = 0,
+      // mold_v0-334: its end is taken in again when it ends next (src/record-outcomes.ts sweep); outcomes applied stay applied.
+      await q.query(`UPDATE harness_sessions SET state = 'parked', state_reason = 'continued', archived_at = NULL, ended_at = NULL, retention_until = NULL, crashes = 0, record_swept_at = NULL,
                             pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now() WHERE id = $1 AND org_id = $2`, [x.id, x.org_id]);
       await systemMessage(q, x, `Continued by ${actor.name ?? "someone"}.`);
       return "continued";

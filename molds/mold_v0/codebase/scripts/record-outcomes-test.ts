@@ -5,12 +5,16 @@
 //   1. program records: update_by "key" updates only the record the run was started on ($inputs.<key>; another key, an
 //      outputs key or a run on no record refused: M1), as its starter (one who left refuses), over the stored fields, moved
 //      along the lifecycle (move_to); a record a person moved since the run started is left where it is (L2); dedupe_on
-//      leaves out a repeat of a kept record (and a batch's own); the checks when saved
+//      leaves out a repeat of a kept record (and a batch's own); a record that is there already and not this run's is
+//      never replaced by an outputs key (M-c); a starter who left refuses updates and moves, not the server's new
+//      records (L5); the checks when saved
 //   2. a start_program action's moves: the pack's checks (M2: move_to reachable by a transition open to the action's
 //      roles); on start as the person (a viewer moves nothing); on the evaluation's outcome (accepted, needs_review then a
 //      staff review, refused with its reason), a version applied, a run that ended with no decision (the sweep, once); a
 //      stale run never undoes a newer one or a person's reopen, an outcome once per run (H1); a session no action started
-//      moves nothing, and a run's end waits while another session on the record is live (M3)
+//      moves nothing (M3); a run's end is held only by a running session a page action started, at most 6 hours (M-a);
+//      a person's move after the session last moved the record stands, with or without move_to (M-b); a continued
+//      session is taken in again (L4)
 //   3. a reference whose where holds for new picks only (filter_new_only): a record keeps a value retired since; a new
 //      pick of it is refused; without the flag, refused as before
 //   4. one run vocabulary: the server's and the console's words are the same; Active runs' status, whose decision, outcome
@@ -91,11 +95,11 @@ try {
   const id = (p: string) => `${p}_${tag}${String(++n).padStart(3, "0")}`;
 
   // Sessions and runs as the harness writes them: a root session (optionally on a record, started by someone), its wake.
-  const session = async (record: { area: string; key: string } | null, state = "parked", reason: string | null = null, startedBy: string | null = null) => {
+  const session = async (record: { area: string; key: string } | null, state = "parked", reason: string | null = null, startedBy: string | null = null, action: string | null = null) => {
     const s = id("hss"), wake = id("run");
     await asPlatform(async () => {
-      await db.query(`INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, state, state_reason, root_id, depth, record_area, record_key, started_by, ended_at, created_at)
-        VALUES ($1, $2, 'Improve it: a record', 'claude_code', 'model-large', 'anthropic', 2, $3, $4, $1, 0, $5, $6, $7, CASE WHEN $3 IN ('stopped', 'failed') THEN now() END, clock_timestamp())`, [s, A.orgId, state, reason, record?.area ?? null, record?.key ?? null, startedBy]);
+      await db.query(`INSERT INTO harness_sessions (id, org_id, title, flavour, model, provider, budget_usd, state, state_reason, root_id, depth, record_area, record_key, started_by, ended_at, created_at, record_action)
+        VALUES ($1, $2, 'Improve it: a record', 'claude_code', 'model-large', 'anthropic', 2, $3, $4, $1, 0, $5, $6, $7, CASE WHEN $3 IN ('stopped', 'failed') THEN now() END, clock_timestamp(), $8)`, [s, A.orgId, state, reason, record?.area ?? null, record?.key ?? null, startedBy, action]);
       await db.query(`INSERT INTO runs (id, org_id, pack, kind, status, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, harness_session_id)
         VALUES ($1, $2, '_agent', 'wake', 'succeeded', '{}', 1, 600, 60, 1, $3)`, [wake, A.orgId, s]);
     });
@@ -135,6 +139,12 @@ try {
     // M1: written as the person who started the run: one who left the workspace refuses the write.
     const gone = await session({ area: "items", key: "it-1" }, "parked", null, "u-not-a-member");
     await assert.rejects(PR.writeProgramResult(A.orgId, { id: "hch_formal0004", program_id: "formalize", root_id: gone.s, inputs: { item_key: "it-1" }, outputs: { claim: "x" } }, upd), /no longer a member/);
+    // L5: the server's own new records still go in when the starter left (only their updates and moves are refused).
+    const newOnly = await PR.writeProgramResult(A.orgId, { id: "hch_newonly01", program_id: "find", root_id: gone.s, outputs: { statement: "Brand new finding" } }, { area: "items", fields: { statement: "statement" } });
+    assert.deepEqual(newOnly.keys, ["hch_newonly01"], "L5: a new record is the server's");
+    // M-c: an outputs key naming a record that is there already (not this run's) never replaces it: left, and said.
+    const hijack = await PR.writeProgramResult(A.orgId, { id: "hch_hijack001", program_id: "find", root_id: r0.s, outputs: { key: "it-other", statement: "Overwritten" } }, { area: "items", key: "key", move_to: "rejected", fields: { statement: "statement" } });
+    assert.deepEqual([hijack.keys, hijack.existing, (await RA.getFor(A.orgId, "items", "it-other"))?.data.statement, await stateOf("items", "it-other")], [[], ["it-other"], "Something else", "open"], "M-c: another record is left as it is");
     // L2: a person moved it on after the run started: the fields are written, the move is not made, and it says so.
     const r2 = await session({ area: "items", key: "it-1" });
     await rec.move("items", "it-1", "rejected");
@@ -152,7 +162,7 @@ try {
     assert.deepEqual([d2.keys, d2.deduped], [[], [{ key: "hch_find000002-1", kept: "hch_find000001-2" }]], "a second run files nothing new");
     const d3 = await PR.writeProgramResult(A.orgId, { id: "hch_find000001", program_id: "find", outputs: { found: [{ statement: "Pages are slow", target: "pages" }, { statement: "Search is down", target: "search" }] } }, find);
     assert.deepEqual(d3.keys, ["hch_find000001-2"], "the same key again replaces its own record");
-    ok("program records: an update takes only $inputs and writes only the run's own record, as its starter (M1); over the stored fields, moved along the lifecycle; a move a person made since stands, said (L2); dedupe_on leaves out repeats; the checks when saved");
+    ok("program records: an update takes only $inputs and writes only the run's own record, as its starter (M1); over the stored fields, moved along the lifecycle; a move a person made since stands, said (L2); an outputs key never replaces another record (M-c); the server's new records go in when the starter left (L5); dedupe_on leaves out repeats; the checks when saved");
   }
 
   // ---------- 2. a start_program action's moves ----------
@@ -196,7 +206,7 @@ try {
     };
     /** A person starts the action on a record: its session, then the action's move (as record-page-routes does). */
     const start = async (key: string, actor: { role: "owner" | "member" | "viewer"; userId: string | null } = OWNER, areaName = "items", aid = AID) => {
-      const t = await session({ area: areaName, key });
+      const t = await session({ area: areaName, key }, "parked", null, null, aid);
       const m = await RO.moveOnStart(A.orgId, areaName, key, aid, t.s, actor);
       return { ...t, m };
     };
@@ -273,7 +283,7 @@ try {
     assert.equal(await stateOf("items", "it-7"), "open", "H1: a person's reopen stands, sweep after sweep");
     const marks = await asPlatform(() => db.query<{ id: string; record_swept_at: Date | null; record_outcomes: string[] }>("SELECT id, record_swept_at, record_outcomes FROM harness_sessions WHERE id = ANY ($1::text[]) ORDER BY created_at", [[old.s, fresh.s]]));
     assert.ok(marks.every((m) => m.record_swept_at), "each ended session taken in once");
-    assert.deepEqual(marks.map((m) => m.record_outcomes), [[], ["accepted"]], "only the newer run's outcome applied");
+    assert.deepEqual(marks.map((m) => m.record_outcomes), [["failed"], ["accepted"]], "each outcome considered once (the superseded one moved nothing)");
 
     // H1: an outcome is applied once per session: a second accept of the same run (a lost hook replayed) changes nothing.
     await put("items", "it-8", "Replayed");
@@ -291,14 +301,49 @@ try {
     await end(chat.s, "failed", "crashed");
     await RO.sweepRecordOutcomes();
     assert.equal(await stateOf("items", "it-9"), "improving", "M3: no action started it: nothing moves");
-    // M3: while another root session on the record is live, a run's end is not taken in yet.
+    // M-a: a parked conversation or an archived session on the record holds nothing: the run's end settles.
     await put("items", "it-10", "Busy");
     const r10 = await start("it-10");
-    await session({ area: "items", key: "it-10" }, "live");
+    await session({ area: "items", key: "it-10" }, "parked");
     await end(r10.s, "failed", "crashed");
     await RO.sweepRecordOutcomes();
-    assert.equal(await stateOf("items", "it-10"), "improving", "another live session on it: it stays");
-    ok("a start_program action's moves: the pack's checks (M2 roles); on start as the person (a viewer moves nothing); needs_review then a staff accept; refused with its reason; a person's move stands; a note applied; a version applied; the sweep once; a stale run never undoes a newer one or a reopen (H1); an outcome once per run; a session no action started moves nothing (M3)");
+    assert.equal(await stateOf("items", "it-10"), "open", "M-a: only a running session a page action started holds it");
+    // M-a: an older run still running holds a newer run's end, but only HOLD_MAX_MS: then it settles anyway.
+    await put("items", "it-11", "Held");
+    const runningOld = await start("it-11");
+    await asPlatform(() => db.query("UPDATE harness_sessions SET state = 'live' WHERE id = $1", [runningOld.s]));
+    const newer = await start("it-11");
+    await end(newer.s, "failed", "crashed");
+    await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-11"), "improving", "held while the other run is running");
+    await asPlatform(() => db.query("UPDATE harness_sessions SET ended_at = now() - interval '7 hours' WHERE id = $1", [newer.s]));
+    await RO.sweepRecordOutcomes();
+    assert.equal(await stateOf("items", "it-11"), "open", "M-a: settled anyway after 6 hours");
+    // L4: a continued session is taken in again when it ends next.
+    const cont = await asPlatform(() => db.query<{ record_swept_at: Date | null }>("SELECT record_swept_at FROM harness_sessions WHERE id = $1", [newer.s]));
+    assert.ok(cont[0]!.record_swept_at, "taken in");
+    const hs = readFileSync(path.join(ROOT, "src", "harness-sessions.ts"), "utf8");
+    assert.match(hs, /state_reason = 'continued'[^`]*record_swept_at = NULL/, "L4: continuing a session clears its sweep mark");
+
+    // M-b: a person's own move into a state an outcome names stands against a later review or apply.
+    await put("items", "it-12", "Hand move");
+    const t12 = await start("it-12");
+    const e12 = await evaluation(t12.s, "improve-it", "needs_review");
+    await RO.afterEvaluation(A.orgId, e12);
+    assert.equal(await stateOf("items", "it-12"), "in_review");
+    await new Promise((r) => setTimeout(r, 5));
+    await rec.move("items", "it-12", "open");
+    await N.reviewEvaluation("staff-one", e12, { decision: "accept", reason: "Fine" });
+    assert.equal(await stateOf("items", "it-12"), "open", "M-b: the person's in_review -> open stands against the staff accept");
+    // M-b: without a move_to too: a note a person reopened after the run started is not marked applied.
+    await put("notes", "n-2", "Hand reopened", { body: "x" });
+    const t13 = await start("n-2", OWNER, "notes", NID);
+    await new Promise((r) => setTimeout(r, 5));
+    await rec.move("notes", "n-2", "dismissed");
+    await rec.move("notes", "n-2", "new");
+    assert.equal(await RO.afterEvaluation(A.orgId, await evaluation(t13.s, "change-rule", "accepted")), null, "M-b: moved by a person since the run started");
+    assert.equal(await stateOf("notes", "n-2"), "new");
+    ok("a start_program action's moves: the pack's checks (M2 roles); on start as the person (a viewer moves nothing); needs_review then a staff accept; refused with its reason; a person's move stands; a note applied; a version applied; the sweep once; a stale run never undoes a newer one or a reopen (H1); an outcome once per run; a session no action started moves nothing (M3); only a running action session holds a run's end, at most 6 hours (M-a); a person's later move stands (M-b); a continued session is taken in again (L4)");
   }
 
   // ---------- 3. new picks only ----------

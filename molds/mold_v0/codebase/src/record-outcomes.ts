@@ -9,17 +9,22 @@
  *   reason_field  a text field the outcome's reason is written into (the record's history shows the change)
  *
  * Which runs: only a root session a person started with that action on that record (harness_sessions.record_action,
- * sql/migrations/0075). A session merely linked to the record (an agent started from its page) moves nothing.
+ * written with the session itself; sql/migrations/0075). A session merely linked to the record (an agent started from
+ * its page) moves nothing.
  *
  * Who moves it on an outcome: the server, as the run (the record's page links it), never the agent. Outcome moves are
  * the app's own and role-free (a staff review or an apply is not the starter's act); they follow the area's lifecycle
  * only. Each is guarded, in the record's own transaction (its row locked):
- *   - each outcome of a session is applied once (harness_sessions.record_outcomes), never again;
- *   - a session superseded by a newer one started on the same record moves nothing any more;
- *   - with a move_to, only from where this action (or an earlier outcome of it) put the record, so a person's own move
- *     afterwards stands; a run's end with no decision (succeeded, failed) only from move_to itself;
- *   - the sweep takes in each ended session once (record_swept_at), and not while another root session on the record
- *     is still live.
+ *   - each outcome of a session is applied once (harness_sessions.record_outcomes, claimed before its transaction and
+ *     given back if the transaction fails), never again;
+ *   - a session superseded by a newer one started on the same record moves nothing any more (checked with the row held);
+ *   - a record that entered its state after this session last moved it (record_moved_at; else after it started) was
+ *     moved by someone else: that move stands, with or without a move_to;
+ *   - with a move_to, only from where this action (or an earlier outcome of it) put the record; a run's end with no
+ *     decision (succeeded, failed) only from move_to itself;
+ *   - the sweep takes in each end of a session once (record_swept_at; a continued session again when it ends next),
+ *     held while another session a page action started on the record is running (starting, live, waking; not archived),
+ *     and settled anyway 6 hours after it ended.
  * The settles call in here (src/nested-runs.ts: a decision, a staff review, an apply or a rollback); a run that ended
  * with no decision is found by the sweep (sweepRecordOutcomes, from nestedTick).
  */
@@ -80,28 +85,38 @@ export function outcomeWords(outcome: RunOutcome, detail?: string | null): strin
 }
 
 /** A root session started on a record by a moving action: what an outcome needs (null: it moves nothing). */
-interface Link { orgId: number; session: string; area: string; key: string; action: string; outcomes: string[]; created_at: Date; wake: string | null }
+interface Link { orgId: number; session: string; area: string; key: string; action: string; outcomes: string[]; created_at: Date; moved_at: Date | null; wake: string | null }
 
 async function linkOf(orgId: number, sessionId: string): Promise<Link | null> {
   return asPlatform(async () => {
     const db = await getDb();
     const [s] = await db.query<{ id: string; root_id: string | null }>("SELECT id, root_id FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, sessionId]);
     if (!s) return null;
-    const [root] = await db.query<{ id: string; record_area: string | null; record_key: string | null; record_action: string | null; record_outcomes: string[] | null; created_at: Date }>(
-      "SELECT id, record_area, record_key, record_action, record_outcomes, created_at FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, s.root_id ?? s.id]);
+    const [root] = await db.query<{ id: string; record_area: string | null; record_key: string | null; record_action: string | null; record_outcomes: string[] | null; created_at: Date; record_moved_at: Date | null }>(
+      "SELECT id, record_area, record_key, record_action, record_outcomes, created_at, record_moved_at FROM harness_sessions WHERE org_id = $1 AND id = $2", [orgId, s.root_id ?? s.id]);
     if (!root?.record_area || !root.record_key || !root.record_action) return null;
     const [w] = await db.query<{ id: string }>("SELECT id FROM runs WHERE org_id = $1 AND harness_session_id = $2 ORDER BY created_at DESC LIMIT 1", [orgId, root.id]);
-    return { orgId, session: root.id, area: root.record_area, key: root.record_key, action: root.record_action, outcomes: root.record_outcomes ?? [], created_at: root.created_at, wake: w?.id ?? null };
+    return { orgId, session: root.id, area: root.record_area, key: root.record_key, action: root.record_action, outcomes: root.record_outcomes ?? [], created_at: root.created_at, moved_at: root.record_moved_at, wake: w?.id ?? null };
   });
 }
 
 /** Whether a newer root session was started on the same record by a page action (it supersedes this one's outcomes). */
-async function superseded(l: Link): Promise<boolean> {
-  const rows = await asPlatform(async () => (await getDb()).query("SELECT 1 FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3 AND record_action IS NOT NULL AND id <> $4 AND created_at > $5 LIMIT 1",
-    [l.orgId, l.area, l.key, l.session, l.created_at]));
+async function superseded(l: Link, q?: import("./db.js").Queryable): Promise<boolean> {
+  // Inside the record's transaction its own connection reads it (the tenant may read its workspace's sessions).
+  const rows = await (q ? q.query("SELECT 1 FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3 AND record_action IS NOT NULL AND id <> $4 AND created_at > $5 LIMIT 1",
+    [l.orgId, l.area, l.key, l.session, l.created_at]) : asPlatform(async () => (await getDb()).query("SELECT 1 FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3 AND record_action IS NOT NULL AND id <> $4 AND created_at > $5 LIMIT 1",
+    [l.orgId, l.area, l.key, l.session, l.created_at])));
   return rows.length > 0;
 }
 
+/** When this session last moved its record (a later entry into a state is someone else's move). */
+async function markMoved(orgId: number, session: string, at: Date) {
+  await asPlatform(async () => (await getDb()).query("/* the session's own row */ UPDATE harness_sessions SET record_moved_at = $3 WHERE org_id = $1 AND id = $2", [orgId, session, at]));
+}
+/** Give a claim back (its transaction failed: the outcome was not applied). */
+async function unclaim(l: Link, outcome: RunOutcome) {
+  await asPlatform(async () => (await getDb()).query("/* the session's own row */ UPDATE harness_sessions SET record_outcomes = array_remove(record_outcomes, $3) WHERE org_id = $1 AND id = $2", [l.orgId, l.session, outcome])).catch(() => {});
+}
 /** Claim one outcome of a session: true once, the first time (two settles at once claim it once). */
 async function claim(l: Link, outcome: RunOutcome): Promise<boolean> {
   const rows = await asPlatform(async () => (await getDb()).query(
@@ -126,17 +141,22 @@ async function applyOutcome(l: Link, outcome: RunOutcome, detail: string | null,
   const a = actionFor(area, l.action);
   const to = a ? outcomeState(a, outcome) : null;
   if (!a || !to) return null;
-  if (await superseded(l)) return null;
   if (!(await claim(l, outcome))) return null;
   const reason = outcomeWords(outcome, detail);
   const lc = area.lifecycle;
   const { auditAtomic } = await import("./audit-trail.js");
-  const moved = await R.asWriter({ by: "run", id: writer }, () => auditAtomic(() => R.inTransaction(l.orgId, async (): Promise<OutcomeMove | null> => {
+  let moved: OutcomeMove | null;
+  try {
+    moved = await R.asWriter({ by: "run", id: writer }, () => auditAtomic(() => R.inTransaction(l.orgId, async (): Promise<OutcomeMove | null> => {
     // Read and decide on the locked row: no one moves it between the check and the move.
     const row = await R.lockedWorkspaceRow(l.orgId, area, l.key);
     if (!row) return null;
+    if (await superseded(l, await R.recordQuery())) return null;
     const from = String(row.data[lc.field] ?? lc.initial);
     if (!mayMove(area, a, from, to, outcome)) return null;
+    // Someone else moved it since this session last did (or since it started): their move stands.
+    const entered = R.stateEnteredAt(row.data, from);
+    if (entered && entered > (l.moved_at ?? l.created_at)) return null;
     const store = R.workspaceRecords(area.pack, l.orgId, R.SYSTEM_ACTOR);
     if (a.reason_field) {
       const keep = Object.fromEntries(Object.entries(row.data).filter(([k]) => !k.startsWith("$") && k !== lc.field && !area.fields.some((f) => f.name === k && f.encrypted)));
@@ -145,23 +165,21 @@ async function applyOutcome(l: Link, outcome: RunOutcome, detail: string | null,
     await store.move(area.name, l.key, to);
     return { area: area.name, key: l.key, from, to, outcome, reason };
   })));
-  if (moved) await said(l.orgId, l.wake, moved);
+  } catch (e) { await unclaim(l, outcome); throw e; }
+  if (moved) { await markMoved(l.orgId, l.session, new Date()); await said(l.orgId, l.wake, moved); }
   return moved;
 }
 
 /**
- * A start_program action has started a session on a record: the session is marked as this action's (only such a
- * session's outcomes move the record), then the record moves to move_to as the person who started it, when the area's
- * move permission and a transition open to their role allow it from where it is (else it stays).
+ * A start_program action has started a session on a record (the session carries the action: harness-sessions.ts
+ * startSession's record.action): the record moves to move_to as the person who started it, when the area's move
+ * permission and a transition open to their role allow it from where it is (else it stays).
  */
 export async function moveOnStart(orgId: number, areaName: string, key: string, actionId: string, sessionId: string, actor: import("./record-areas.js").Actor): Promise<OutcomeMove | null> {
   const R = await RA();
   const area = R.findArea(areaName);
   const action = area ? actionById(area, actionId) : null;
   if (!area || !action || action.kind !== "start_program" || area.scope !== "workspace") return null;
-  if (movingActions(area).includes(action))
-    await asPlatform(async () => (await getDb()).query("/* the session's own row */ UPDATE harness_sessions SET record_action = $3 WHERE org_id = $1 AND id = $2 AND record_area = $4 AND record_key = $5",
-      [orgId, sessionId, actionId, areaName, key]));
   if (!action.move_to || !area.lifecycle) return null;
   const lc = area.lifecycle, to = action.move_to;
   const row = await R.getFor(orgId, area.name, key, actor).catch(() => null);
@@ -174,6 +192,7 @@ export async function moveOnStart(orgId: number, areaName: string, key: string, 
     if ((e as { status?: number }).status && (e as { status: number }).status < 500) return null; // not this person's move, or not from there
     throw e;
   }
+  await markMoved(orgId, sessionId, new Date());
   return { area: area.name, key, from, to, outcome: "succeeded", reason: "started" };
 }
 
@@ -203,22 +222,27 @@ export async function afterVersion(versionId: string, outcome: "applied" | "roll
   return applyOutcome(link, outcome, outcome === "applied" ? c.applied_ref : c.rollback_reason, ev.handle_id ? `program:${ev.program_id}:${ev.handle_id}` : link.wake ?? `session:${link.session}`);
 }
 
+/** How long a run's end may be held by another running session on its record before it is settled anyway. */
+export const HOLD_MAX_MS = 6 * 3_600_000;
 /**
- * Each root session a moving action started that ended in the last day and was not taken in yet, once: marked taken in
+ * Each root session a moving action started whose end was not taken in yet (in the last 7 days), once: marked taken in
  * first (so a session the sweep cannot move is never read again), then moved for its latest decided evaluation, else for
- * its end (succeeded when it said done, failed otherwise). Not while another root session on the same record is live.
+ * its end (succeeded when it said done, failed otherwise). Held while another session a page action started on the same
+ * record is running (starting, live or waking, not archived); settled anyway HOLD_MAX_MS after it ended.
  */
 export async function sweepRecordOutcomes(now = new Date(), limit = 200): Promise<number> {
   const R = await RA();
   if (!R.recordAreas().some((a) => movingActions(a).length)) return 0;
   const ended = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; state: string; state_reason: string | null }>(
     `/* tenant: platform sweep across workspaces; each row's own org_id */ UPDATE harness_sessions s SET record_swept_at = $1
-      WHERE s.id IN (SELECT x.id FROM harness_sessions x WHERE x.parent_id IS NULL AND x.record_action IS NOT NULL AND x.record_swept_at IS NULL
-        AND x.state IN ('stopped', 'failed') AND x.ended_at > $1::timestamptz - interval '1 day'
-        AND NOT EXISTS (SELECT 1 FROM harness_sessions o WHERE o.org_id = x.org_id AND o.parent_id IS NULL AND o.id <> x.id AND o.record_area = x.record_area AND o.record_key = x.record_key AND o.state NOT IN ('stopped', 'failed'))
+      WHERE s.record_swept_at IS NULL AND s.id IN (SELECT x.id FROM harness_sessions x WHERE x.parent_id IS NULL AND x.record_action IS NOT NULL AND x.record_swept_at IS NULL
+        AND x.state IN ('stopped', 'failed') AND x.ended_at > $1::timestamptz - interval '7 days'
+        AND (x.ended_at < $1::timestamptz - make_interval(secs => $3)
+          OR NOT EXISTS (SELECT 1 FROM harness_sessions o WHERE o.org_id = x.org_id AND o.parent_id IS NULL AND o.id <> x.id AND o.record_area = x.record_area AND o.record_key = x.record_key
+            AND o.record_action IS NOT NULL AND o.archived_at IS NULL AND o.state IN ('starting', 'live', 'waking')))
         AND NOT EXISTS (SELECT 1 FROM harness_evaluations e WHERE e.org_id = x.org_id AND e.root_id = x.id AND e.status <> 'decided')
-        ORDER BY x.ended_at LIMIT $2)
-      RETURNING s.id, s.org_id, s.state, s.state_reason`, [now, limit]));
+        ORDER BY x.ended_at LIMIT $2 FOR UPDATE SKIP LOCKED)
+      RETURNING s.id, s.org_id, s.state, s.state_reason`, [now, limit, HOLD_MAX_MS / 1000]));
   let moved = 0;
   for (const s of ended) {
     try {

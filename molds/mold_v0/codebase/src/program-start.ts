@@ -107,7 +107,7 @@ export interface StartProgramInput { inputs?: unknown; budget_usd?: unknown; tit
  * Start program `id` for `actor` in workspace `orgId`: refused in words when it is archived, not one people start, the
  * actor's role may not, or the inputs do not match. Returns the session that runs it (`opts.record` links it to a record).
  */
-export async function startProgram(orgId: number, actor: Actor, id: string, input: StartProgramInput, org?: Org, opts: { record?: { area: string; key: string } } = {}): Promise<{ session: SessionDetail; program: { id: string; version: number; via: StartVia["via"] } }> {
+export async function startProgram(orgId: number, actor: Actor, id: string, input: StartProgramInput, org?: Org, opts: { record?: { area: string; key: string; action?: string } } = {}): Promise<{ session: SessionDetail; program: { id: string; version: number; via: StartVia["via"] } }> {
   const P = await import("./programs.js");
   if (!P.programsOn()) throw new PackError("Programs are not on in this app", 404);
   const p = await P.readProgram(String(id));
