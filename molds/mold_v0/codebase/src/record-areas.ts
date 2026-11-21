@@ -42,6 +42,7 @@ import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
 import { membersFlagWrite, secretsToClear } from "./secret-binding.js";
+import * as health from "./connection-test-health.js";
 import { asViewerOf, mayShare, VISIBILITY_COLUMNS, visibilityForWrite, visibilityOf, visibilityShown, type StoredVisibility, type VisibilityWrite } from "./visibility.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -213,6 +214,8 @@ export const onRecordChangeInTransaction = (fn: TxListener["fn"], wants: TxListe
 // mold_v0-256: a laid-out area's change history (src/record-history.ts), in the change's own transaction; only for an area
 // whose page has a history section while record_pages is on (else no transaction of its own, as before).
 onRecordChangeInTransaction((c, tx) => writeHistory(findArea(c.area)!, c, tx), (name) => historyKept(findArea(name)));
+// mold_v0-332: an area with a one-only flag saves in a transaction of its own (its check takes the area's turn there).
+onRecordChangeInTransaction(async () => {}, (name) => { const a = findArea(name); return !!a && health.onlyOneOf(a).length > 0; });
 /** Run a single write as a transaction when a transaction listener wants its area (inside a batch: the batch's). */
 const atomic = <T>(orgId: number, area: string, fn: () => Promise<T>): Promise<T> =>
   !txScope.getStore() && txListeners.some((l) => l.wants(area)) ? auditAtomic(() => inTransaction(orgId, fn)) : fn();
@@ -229,6 +232,9 @@ async function changed(c: RecordChange) {
   if (t) { (t.changes ??= []).push(c); return; }
   await tell([c]);
 }
+/** mold_v0-332 (src/connection-test-health.ts): the record store's own queryable (a batch's transaction inside one), and whether one is open. */
+export const recordQuery = () => q();
+export const inRecordBatch = () => !!txScope.getStore();
 async function q(): Promise<Queryable> {
   const t = txScope.getStore();
   if (!t) return getDb();
@@ -572,7 +578,8 @@ const listForNow = async (orgId: number, name: string, opts: RecordQuery | { lim
   assertMay(a, "read", actor);
   if (a.scope === "platform") return listPlatform(a, opts);
   const page = await listWorkspace(orgId, a, opts);
-  return hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
+  const withClocks = hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
+  return { ...withClocks, records: await health.withHealth(orgId, a, withClocks.records) }; // mold_v0-332: each record's health now
 };
 export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> =>
   asViewerOf(actor, () => getForNow(orgId, name, key, actor));
@@ -581,7 +588,8 @@ const getForNow = async (orgId: number, name: string, key: string, actor: Actor)
   assertMay(a, "read", actor);
   if (a.scope === "platform") return getPlatform(a, key);
   const r = await getWorkspace(orgId, a, key);
-  return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
+  const c = r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
+  return c ? (await health.withHealth(orgId, a, [c]))[0]! : c; // mold_v0-332: its health now
 };
 // ---------- who sees a record: Share (mold_v0-259, flag teams; src/visibility.ts) ----------
 
@@ -1032,6 +1040,7 @@ const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } 
 export async function onSaveChecks(orgId: number, area: RecordArea, key: string, title: string | null, data: Record<string, unknown>, op: "create" | "update", actor: Actor) {
   // mold_v0-305 (flag workspace_storage): a workspace's own object storage names a bucket and an endpoint a service takes.
   await (await import("./workspace-storage.js")).checkStorageRecord(area.name, data);
+  await health.checkOnlyOne(orgId, area, key, data, actor); // mold_v0-332: one record marked, where only one may be
   const rules = (area as { on_save?: { check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] }[] }).on_save;
   if (!rules?.length || !featureSetting("record_rules")) return;
   const { answerCheck } = await import("./checks.js");
@@ -1079,6 +1088,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   assertCanSeal(area);
   // A writer must also be a reader: a write's answer (and its refusals) show the stored record.
   assertMay(area, "read", actor);
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332: a one-only area's writes take their turn first
   const prev = await readWorkspace(orgId, area, key);
   if (prev && mode === "create") throw new PackError(`${area.label} record ${key} already exists`, 409);
   if (prev && area.append_only) throw appendOnly(area, key); // mold_v0-195: added once, never changed
@@ -1094,8 +1104,9 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   // mold_v0-322: a connection's opt-in for members' sessions is an owner's, set by hand; another's write keeps it as
   // stored, refused when it gives another value, and turns it off when it changes where the secrets go.
   const members = membersFlagWrite(area, consentWriter(actor, meta), prev?.opened ?? null, own.input);
-  const given = members.input;
   Object.assign(carried, members.carried);
+  // mold_v0-332: a key typed or cleared, or what the test reads changed: the test's status resets, in this same write.
+  const given = health.healthWrite(area, prev?.opened ?? null, members.input, carried, key);
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
   // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
@@ -1144,6 +1155,7 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   assertMay(area, "read", actor);
   assertMay(area, "move", actor);
   checkKey(key);
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332
   const prev = await readWorkspace(orgId, area, key);
   if (!prev) throw new PackError(`no ${area.name} record ${key}`, 404);
   const field = area.lifecycle.field, from = stateOf(area, prev.opened);
@@ -1156,7 +1168,9 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  const after = { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, w = writerOf(actor, null);
+  // mold_v0-332: a move changing what a connection's test reads resets it; a one-only flag's `where` is checked.
+  const after = health.healthMove(area, prev.opened, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }), w = writerOf(actor, null);
+  await health.checkOnlyOne(orgId, area, key, after, actor, prev.opened);
   const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
   return r;
@@ -1171,6 +1185,7 @@ async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, nam
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
   if (area.append_only) throw appendOnly(area, key); // mold_v0-195
+  await health.lockOnlyOne(orgId, [area]); // mold_v0-332
   // A repository's writer deletes only rows it wrote itself (its prune).
   const gone = await withTenant(orgId, async () => (await (await q()).query(
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
@@ -1366,7 +1381,7 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   if (orgId !== null) await ensureOrgKey(orgId);
   const scope: { tx: Queryable; orgId: number | null; changes?: RecordChange[]; after?: (() => Promise<unknown>)[] } = { tx: null as unknown as Queryable, orgId };
   const run = async () => (await getDb()).transaction((tx) => txScope.run(Object.assign(scope, { tx }), fn));
-  const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run));
+  const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run)).catch(health.deadlockWords); // mold_v0-332: 40P01 said as a 409
   if (scope.changes?.length) await tell(scope.changes);
   // mold_v0-282: what waits for the commit (each on its own: one failing never stops the next).
   for (const fn of scope.after ?? []) { try { await fn(); } catch (e) { console.error(`after commit: ${(e as Error).message}`); } }
@@ -1381,6 +1396,8 @@ async function batchWorkspaceNow(orgId: number, pack: string, actor: Actor, raw:
   const ops = checkOps(raw, max);
   // The data trail (mold_v0-197): each operation's entry, written only when the whole batch commits.
   return auditAtomic(() => inTransaction(orgId, async () => {
+    // mold_v0-332: every one-only area the batch touches takes its turn once, first, in name order.
+    await health.lockOnlyOne(orgId, [...new Set(ops.map((o) => o.area))].flatMap((n) => { const a = findArea(n); return a && a.pack === pack ? [a] : []; }));
     const out: RecordOperationResult[] = [];
     for (const [i, o] of ops.entries()) {
       try {

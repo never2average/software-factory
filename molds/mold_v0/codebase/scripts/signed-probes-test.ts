@@ -836,7 +836,16 @@ try {
     const sent = seen.length;
     const r = await test("aws-1");
     assert.equal(r.outcome, "not_ready"); assert.match(r.words, /"Secret" is empty/); assert.equal(seen.length, sent);
-    assert.equal((await stored("aws-1")).status, "failing");
+    // mold_v0-332: the region change reset the status (untested, the tested day cleared), and a test that could not
+    // run (the secret empty) never says "failing": with no could-not-test option the status stays as it was.
+    assert.deepEqual([(await stored("aws-1")).status, (await stored("aws-1")).last_tested], ["untested", undefined], "reset by the region change, never failing");
+    // The keys typed again and an invalid region: could not test, so still not failing; a valid one works again.
+    await ra.asWriter({ by: "people", id: "owner" }, () => rec.update("fx_clouds", "aws-1", { title: "aws-1", data: { kind: "aws", key_id: AKID, secret: AWS_SECRET, token: AWS_TOKEN, region: "not-a-region" } }));
+    assert.equal((await test("aws-1")).outcome, "not_ready");
+    assert.equal((await stored("aws-1")).status, "untested", "a region that is not one: could not test, never failing");
+    await ra.asWriter({ by: "people", id: "owner" }, () => rec.update("fx_clouds", "aws-1", { title: "aws-1", data: { kind: "aws", key_id: AKID, secret: AWS_SECRET, token: AWS_TOKEN, region: "eu-west-1" } }));
+    assert.equal((await test("aws-1")).ok, true);
+    assert.equal((await stored("aws-1")).status, "working");
     const { recordHistory } = await import("../src/record-history.js");
     const { withTenant } = await import("../src/tenant-scope.js");
     const lines = (await Promise.all(["aws-1", "pg-1", "gcp-1"].map((k) => withTenant(A.orgId, () => recordHistory(A.orgId, area, k, { limit: 50 }))))).flatMap((h) => h.lines);
@@ -849,7 +858,7 @@ try {
       assert.ok(!history.includes(s) && !trail.includes(s), "nor the history or the data trail");
     }
     for (const s of SECRETS.slice(0, 11)) assert.ok(!rows.includes(s), "stored sealed");
-    ok("the record: status and date written as the app's action for each kind, a member who may not update has no test, a region changed without the keys clears them (nothing sent); no secret, signature, assertion or token in any answer, anything printed, the history, the data trail or the stored row");
+    ok("the record: status and date written as the app's action for each kind, a member who may not update has no test, a region changed without the keys clears them (nothing sent) and resets the status (mold_v0-332: a test that could not run is never failing); no secret, signature, assertion or token in any answer, anything printed, the history, the data trail or the stored row");
   }
   console.log("signed-probes-test: all passed");
 } finally {

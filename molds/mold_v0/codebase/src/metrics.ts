@@ -486,7 +486,7 @@ export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Ac
   const over = overOf(src);
   let got: Cells, partial = false;
   // A metric over a clock's status (mold_v0-191) is counted in code: a deadline is worked out per record, never in SQL.
-  if ("area" in src && orgId !== null && (opts.forceCode || m.clock || (await hasSealed(orgId, src.area)))) {
+  if ("area" in src && orgId !== null && (opts.forceCode || m.clock || m.needs_attention || (await hasSealed(orgId, src.area)))) {
     // One read of an area's sealed rows per request, shared by its metrics.
     const cache = opts.sealed ?? new Map<string, Promise<Sealed>>();
     if (!cache.has(src.area.name)) cache.set(src.area.name, sealedRows(orgId, src.area));
@@ -497,6 +497,8 @@ export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Ac
       const st = await (await import("./record-clocks.js")).clockStatuses(orgId, src.area, m.clock.name, rows, now);
       rows = rows.filter((r) => r.key !== undefined && m.clock!.is.includes(st.get(r.key) ?? "not_started"));
     }
+    // mold_v0-332: the connections needing attention now (worked out per record, never stored).
+    if (m.needs_attention) rows = await (await import("./connection-test-health.js")).needingAttention(orgId, src.area as never, rows, now);
     got = jsCells(m, src.area, rows, now);
   } else got = await runSql(orgId, m, src, now);
   const cells = got.cells;

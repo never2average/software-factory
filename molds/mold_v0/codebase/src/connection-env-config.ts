@@ -54,6 +54,16 @@ export const ConnectionEnvSchema = z.object({
    * go (a delivered field, a secret typed again) turns it off.
    */
   members_field: fieldName.optional(),
+  /**
+   * mold_v0-332: at most one record of the area (of those matching `where`) has `use` on: a save that turns it on while
+   * another has it on is refused, naming the other (not only at a session's start).
+   */
+  only_one: z.boolean().optional(),
+  /**
+   * mold_v0-332: a date field (set_by "action") the delivery stamps with the time a session's wake received this
+   * record's values (at most once an hour per record).
+   */
+  last_used: fieldName.optional(),
   // The names are checked by connectionEnvProblems (a key's own error here would only say "Invalid key").
   fields: z.record(z.string().min(1).max(64), fieldName)
     .refine((f) => Object.keys(f).length >= 1 && Object.keys(f).length <= CONNECTION_VARS_MAX, `1 to ${CONNECTION_VARS_MAX} variables`),
@@ -97,6 +107,18 @@ export function connectionEnvProblems(raw: unknown, areas: readonly unknown[], t
       if (m === c.use || Object.keys(c.where ?? {}).includes(m) || envVars(c).some((v) => v.field === m)) out.push(`${at}.members_field: ${m} is also the entry's use, where or a delivered field: give the owners' consent a field of its own`);
       if ((c.roles ?? []).includes("member")) out.push(`${at}.members_field: roles already gives members every record: leave member out of roles to let owners decide per record`);
     }
+    // mold_v0-332: one record marked at a time, enforced on save; when a session last received the record.
+    if (c.only_one && !c.use) out.push(`${at}.only_one: keeps one record marked: name the flag it reads (use)`);
+    if (c.last_used) {
+      const f = field(c.last_used), n = c.last_used;
+      if (!f) out.push(`${at}.last_used: ${c.area} has no field ${n}`);
+      else if (f.type !== "date" || f.encrypted || f.multiple) out.push(`${at}.last_used: ${n} is a plain date field (when a session last received the record)`);
+      else if (f.set_by !== "action") out.push(`${at}.last_used: ${n} is written by the app only: declare it set_by "action"`);
+      // Nor one a test writes (its status or health fields): the test and the delivery never write each other's.
+      const probe = ((a as { detail?: { actions?: { kind?: string; probe?: Record<string, unknown> }[] } }).detail?.actions ?? []).find((x) => x?.kind === "test_connection")?.probe;
+      if (probe && ["status", "tested", "tested_at", "result", "failing_since", "failures", "expires_on"].some((k) => probe[k] === n)) out.push(`${at}.last_used: ${n} is also a field the area's test writes: give it a field of its own`);
+      if (n === c.use || n === c.members_field || Object.keys(c.where ?? {}).includes(n) || envVars(c).some((v) => v.field === n)) out.push(`${at}.last_used: ${n} is also the entry's use, where, members_field or a delivered field: give it a field of its own`);
+    }
     if (reservedEnv(c.prefix) || reservedEnv(`${c.prefix}X`)) out.push(`${at}.prefix: ${c.prefix} starts names a program or the session reads itself: choose another prefix`);
     for (const v of envVars(c)) {
       const f = field(v.field);
@@ -131,6 +153,9 @@ export function membersFieldProblems(profiles: readonly unknown[], areas: readon
   });
   const named = (v: unknown, m: string) => JSON.stringify(v ?? null).includes(JSON.stringify(m));
   for (const { at, c } of entries) {
+    // mold_v0-332: an entry's last_used is never one of the object storage's fields (its status and health included).
+    const ls = objectStorage as { area?: string; fields?: Record<string, unknown> } | undefined;
+    if (c.last_used && ls?.area === c.area && Object.values(ls.fields ?? {}).includes(c.last_used)) out.push(`${at}.last_used: ${c.last_used} is one of the object storage's fields: give it a field of its own`);
     const m = c.members_field;
     if (!m) continue;
     for (const o of entries) if (o.c.area === c.area && (o.c.use === m || Object.keys(o.c.where ?? {}).includes(m)))
@@ -139,11 +164,13 @@ export function membersFieldProblems(profiles: readonly unknown[], areas: readon
     if (os?.area === c.area && Object.values(os.fields ?? {}).includes(m)) out.push(`${at}.members_field: ${m} is one of the object storage's fields: the owners' consent is a field of its own`);
     const area = (areas as { name?: string; clocks?: unknown }[]).find((a) => a?.name === c.area);
     if (area && named(area.clocks, m)) out.push(`${at}.members_field: a clock of ${c.area} names ${m}: nothing but an owner sets the consent`);
-    for (const a of areas as { name?: string; detail?: { actions?: { kind?: string; area?: string; input?: Record<string, unknown>; probe?: { status?: string; tested?: string } }[] } }[])
+    for (const o of entries) if (o.c.area === c.area && o.c.last_used === m) out.push(`${at}.members_field: ${m} is also ${o.at}'s last_used: the owners' consent is a field of its own`);
+    for (const a of areas as { name?: string; detail?: { actions?: { kind?: string; area?: string; input?: Record<string, unknown>; probe?: Record<string, unknown> }[] } }[])
       for (const x of a?.detail?.actions ?? []) {
         if (x?.kind === "create_record" && x.area === c.area && Object.prototype.hasOwnProperty.call(x.input ?? {}, m))
           out.push(`${at}.members_field: ${a.name}'s create_record action fills ${m}: nothing but an owner sets the consent`);
-        if (x?.kind === "test_connection" && a.name === c.area && (x.probe?.status === m || x.probe?.tested === m))
+        // mold_v0-332: and the health fields it writes (tested_at, result, failing_since, failures).
+        if (x?.kind === "test_connection" && a.name === c.area && ["status", "tested", "tested_at", "result", "failing_since", "failures"].some((k) => x.probe?.[k] === m))
           out.push(`${at}.members_field: ${a.name}'s test_connection writes ${m}: nothing but an owner sets the consent`);
       }
   }

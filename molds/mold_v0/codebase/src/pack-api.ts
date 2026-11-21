@@ -74,7 +74,7 @@ import { templateProblems } from "./text-template.js";
 import { configProblems, PackAgentProfileSchema, PackRecipeSchema, packRecipeProblems, PROFILE_ID, templateNames, DEFAULT_PROFILE } from "./agent-profile-spec.js";
 
 import { CheckSchema } from "./check-spec.js";
-import { ConnectionTestSchema, connectionTestProblems } from "./connection-test-config.js";
+import { ConnectionTestSchema, connectionTestProblems, healthDeclShape, healthFieldShape, healthProblems } from "./connection-test-config.js";
 import { connectionEnvProblems, membersFieldProblems } from "./connection-env-config.js";
 export { z };
 
@@ -115,6 +115,11 @@ export interface RecordRow {
   visibility?: RecordVisibility;
   /** A clock area's deadlines (mold_v0-191, src/record-clocks.ts): each clock's due_at, status and whether it is overdue. */
   clocks?: Record<string, ClockView>;
+  /**
+   * mold_v0-332 (src/connection-test-health.ts): a connection's health as read now (never stored): its status's outcome,
+   * when it was last tested, whether a working status is stale, and whether (and why) it needs attention.
+   */
+  health?: { field?: string; state: string | null; tested_at?: string; days?: number; stale?: true; attention: boolean; reasons: string[] };
 }
 export interface RecordPage { records: RecordRow[]; next: string | null }
 export interface RecordInput {
@@ -2333,6 +2338,11 @@ export const MetricSchema = z.object({
   where: z.array(MetricConditionSchema).max(10).optional(),
   /** Only the records whose clock (mold_v0-191) is in one of these states: overdue, due_soon, on_track, paused, met, missed, not_started. */
   clock: z.object({ name, is: z.array(z.enum(["overdue", "due_soon", "on_track", "paused", "met", "missed", "not_started"])).min(1).max(7) }).strict().optional(),
+  /**
+   * mold_v0-332: only the connection records that need attention now (src/connection-test-health.ts: failing, could not
+   * test, needs its key, a stale working test, a key expiring within 14 days, more than one marked where one may be).
+   */
+  needs_attention: z.literal(true).optional(),
   group_by: z.union([fieldRef, z.object({ due: name, soon_days: z.number().int().min(1).max(365).default(7) }).strict()]).optional(),
   group_by_list: z.enum(["first", "each"]).optional(),
   by_time: z.object({
@@ -3135,7 +3145,9 @@ export type McpSettings = z.output<typeof McpSettingsSchema>;
 export const ObjectStorageDeclSchema = z.object({
   area: name,
   where: z.record(name, z.union([z.string().max(200), z.number(), z.boolean()])).refine((w) => Object.keys(w).length <= 4, "at most 4 conditions").optional(),
-  fields: z.object({ bucket: name, endpoint: name, access_key_id: name, secret_access_key: name, use: name, status: name.optional(), tested: name.optional() }).strict(),
+  // mold_v0-332: and the test's health (tested_at, result, failing_since, failures, expires_on; outcomes, stale_after_days).
+  fields: z.object({ bucket: name, endpoint: name, access_key_id: name, secret_access_key: name, use: name, status: name.optional(), tested: name.optional(), ...healthFieldShape }).strict(),
+  ...healthDeclShape,
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type ObjectStorageDecl = z.output<typeof ObjectStorageDeclSchema>;
@@ -3168,9 +3180,12 @@ export function objectStorageProblems(decl: unknown, areas: readonly unknown[]):
     if (f.encrypted) return "is a plain field";
     if (!["text", "enum"].includes(f.type ?? "text")) return "is a text or enum field";
     const vals = (f.options ?? []).map((o) => (typeof o === "string" ? o : (o as { value?: string })?.value));
-    return f.type === "enum" && !(vals.includes("working") && vals.includes("failing")) ? "is an enum with the options working and failing (what the Test writes)" : null;
+    const wf = [d.outcomes?.working ?? "working", d.outcomes?.failing ?? "failing"];
+    return f.type === "enum" && !wf.every((v) => vals.includes(v)) ? `is an enum with the options ${wf.join(" and ")} (what the Test writes)` : null;
   });
   if (d.fields.tested) need("tested", d.fields.tested, (f) => (f.encrypted ? "is a plain field" : f.type !== "date" ? "is a date field" : null));
+  // mold_v0-332: the test's health fields.
+  for (const x of healthProblems((a.fields ?? []) as never, { ...d.fields, outcomes: d.outcomes, stale_after_days: d.stale_after_days })) out.push(`object_storage.${["outcomes", "stale_after_days"].includes(x.key) ? x.key : `fields.${x.key}`}: ${x.message}`);
   for (const n of Object.keys(d.where ?? {})) { const f = field(n); if (!f) out.push(`object_storage.where: ${d.area} has no field ${n}`); else if (f.encrypted) out.push(`object_storage.where: ${n} is encrypted: narrow by a plain field`); }
   const reveal = a.contract?.actions?.reveal as { none?: unknown } | undefined;
   if (!reveal || typeof reveal !== "object" || Array.isArray(reveal) || typeof reveal.none !== "string")
