@@ -153,15 +153,17 @@ export function RailHeading({ title, tone, status, context, trailing, level }: {
 }) {
   const H = level;
   return (
-    // From 34rem of room one row (the context truncating first). Narrower (a panel beside its list, a phone): the title
-    // has its own line, the context and the main action the next, so neither squeezes the title.
+    // The title on its first line; the "status · context" line under it in full (it wraps, never cut short); the main
+    // action and its neighbours at the right of both lines when the row has room (44rem), else on a line of their own
+    // under the context. One element each (a grid), so nothing is drawn twice.
     <div className='@container/rail-head min-w-0' data-rail-header=''>
-      <div className='flex min-w-0 flex-wrap items-center gap-x-[7px] gap-y-1 @[34rem]/rail-head:flex-nowrap'>
-        {tone && <span className={cn('size-[7px] shrink-0 rounded-full', DOT[tone])} data-status-dot={tone} title={status ?? undefined} aria-hidden />}
-        <H className={cn('m-0 min-w-0 shrink grow truncate text-base leading-tight font-semibold tracking-tight @[34rem]/rail-head:basis-auto @[34rem]/rail-head:[flex:0_1_auto]', tone ? 'basis-[calc(100%-14px)]' : 'basis-full')} data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
-        {context && <span className={cn('text-muted-foreground min-w-0 flex-1 truncate text-[13px] @[34rem]/rail-head:flex-none @[34rem]/rail-head:[flex:0_100000_auto]', tone && 'pl-[14px] @[34rem]/rail-head:pl-0')} title={context} data-rail-context=''>{context}</span>}
-        <span className='hidden min-w-1 flex-1 @[34rem]/rail-head:block' aria-hidden />
-        {trailing && <span className={cn('ml-auto flex shrink-0 items-center gap-2', !context && tone && 'pl-[14px]')}>{trailing}</span>}
+      <div className='grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-x-3 gap-y-1 @[44rem]/rail-head:grid-cols-[minmax(0,1fr)_auto]'>
+        <div className='flex min-w-0 items-center gap-[7px]'>
+          {tone && <span className={cn('size-[7px] shrink-0 rounded-full', DOT[tone])} data-status-dot={tone} title={status ?? undefined} aria-hidden />}
+          <H className='m-0 min-w-0 truncate text-base leading-tight font-semibold tracking-tight' data-testid={level === 'h2' ? 'detail-panel-title' : undefined} title={typeof title === 'string' ? title : undefined}>{title}</H>
+        </div>
+        {context && <p className={cn('text-muted-foreground m-0 min-w-0 text-[13px] leading-snug break-words @[44rem]/rail-head:col-start-1', tone && 'pl-[14px]')} data-rail-context=''>{context}</p>}
+        {trailing && <div className={cn('flex min-w-0 flex-wrap items-center gap-2 @[44rem]/rail-head:col-start-2 @[44rem]/rail-head:row-span-2 @[44rem]/rail-head:row-start-1 @[44rem]/rail-head:justify-end', tone && 'pl-[14px] @[44rem]/rail-head:pl-0')} data-rail-actions=''>{trailing}</div>}
       </div>
     </div>
   );
