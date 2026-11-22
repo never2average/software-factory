@@ -6,7 +6,7 @@
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { crumbParentProblems } from "./record-crumbs.js";
-import { conditionIssues, WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, isSourceColumn, sourceColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { conditionIssues, WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, hopProblems, linksBack, STATE_AT_SORT, stateAtProblem, relatedColumnId, isSourceColumn, sourceColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -343,10 +343,13 @@ export function checkViews(b: BuildViews): string[] {
         // mold_v0-256: a column computed from related records: their area points back here; latest:<field> one of its fields.
         const r = area(c.related.area), cw = `${w}: column ${relatedColumnId(c)}`;
         if (!r) { at(p, `${cw}: ${c.related.area} is not a record area of this build`); continue; }
-        const back = linksBack(r, a.name);
-        if (c.related.via !== undefined) { if (!back.includes(c.related.via)) at(p, `${cw}: ${c.related.area}'s field ${c.related.via} does not point at ${a.name}${back.length ? ` (its fields that do: ${back.join(", ")})` : ""}`); }
-        else if (!back.length) at(p, `${cw}: ${c.related.area} has no link back to ${a.name}: a related column counts or reads the records that point at each row`);
-        else if (back.length > 1) at(p, `${cw}: ${c.related.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
+        // mold_v0-337: through a first hop: its records point at each row, the column's at the hop's record.
+        const from = c.related.through ? hopProblems(b.areas as never, a.name, c.related.through, (m) => at(p, `${cw}: through: ${m}`)) : a.name;
+        if (from === null) continue;
+        const back = linksBack(r, from);
+        if (c.related.via !== undefined) { if (!back.includes(c.related.via)) at(p, `${cw}: ${c.related.area}'s field ${c.related.via} does not point at ${from}${back.length ? ` (its fields that do: ${back.join(", ")})` : ""}`); }
+        else if (!back.length) at(p, `${cw}: ${c.related.area} has no link back to ${from}: a related column counts or reads the records that point at each row${from === a.name ? "" : "'s hop record"}`);
+        else if (back.length > 1) at(p, `${cw}: ${c.related.area} points at ${from} through ${back.join(" and ")}: say which with via`);
         if (c.show.startsWith("latest:")) {
           const fn = c.show.slice(7), f = r.fields.find((x) => x.name === fn);
           if (!f) at(p, `${cw}: ${fn} is not one of ${c.related.area}'s fields`);
@@ -356,7 +359,8 @@ export function checkViews(b: BuildViews): string[] {
         if (c.sort) {
           if (c.show === "count") at(p, `${cw}: a count has no order: sort is for a latest column`);
           const f = r.fields.find((x) => x.name === c.sort!.field);
-          if (!f && !["updated_at", "title", "key"].includes(c.sort.field)) at(p, `${cw}: sort ${c.sort.field} is not one of ${c.related.area}'s fields (or updated_at, title, key)`);
+          if (c.sort.field === STATE_AT_SORT) { const m = stateAtProblem(r as never, c.related.area); if (m) at(p, `${cw}: ${m}`); }
+          else if (!f && !["updated_at", "title", "key"].includes(c.sort.field)) at(p, `${cw}: sort ${c.sort.field} is not one of ${c.related.area}'s fields (or updated_at, title, key, $state_at)`);
           else if (f && (f.encrypted || f.type === "json" || f.type === "file" || f.multiple)) at(p, `${cw}: sort ${c.sort.field} is ${f.encrypted ? "encrypted" : f.multiple ? "a list" : `a ${f.type} field`}: sort by a field with one plain value`);
         }
         if (c.where) for (const m of conditionIssues(r.fields, (r as { clocks?: { name: string }[] }).clocks ?? [], c.where, c.related.area)) at(p, `${cw}: where: ${m}`);
@@ -486,6 +490,7 @@ export function gapBuildProblems(b: Pick<BuildViews, "areas" | "checks" | "input
     }
     for (const [i, r] of ((a as { on_save?: { check: string; inputs: Record<string, unknown> }[] }).on_save ?? []).entries()) {
       const at = `pack ${a.pack}: record area ${a.name}: on_save[${i}]`;
+      if (!("check" in r)) continue; // mold_v0-337: a one-per-parent rule (unique) names no check
       const c = (b.checks ?? []).find((x) => x.name === r.check);
       if (!c) { problems.push(`${at}: names check ${r.check}, which no pack of the build declares`); continue; }
       for (const k of Object.keys(r.inputs)) if (!(k in c.inputs)) problems.push(`${at}: check ${c.name} takes no input ${k}`);

@@ -25,9 +25,16 @@ export type Op = (typeof OPS)[number];
 
 /** The part of an area's field this needs (src/pack-api.ts RecordFieldSchema). */
 export interface QField { name: string; type: string; multiple?: boolean; options?: (string | { value: string; label?: string })[]; min?: number; max?: number; max_length?: number; to?: string }
-type Target = "key" | "title" | "updated_at" | "field";
+type Target = "key" | "title" | "updated_at" | "field" | "state_at";
 export interface Cond { target: Target; name: string; field?: QField; op: Op; value: unknown }
-export interface SortSpec { target: Target; name: string; field?: QField; desc: boolean; text: string }
+/** `state` (target state_at, mold_v0-337): the lifecycle's field, whose value names the state the row's time is read for. */
+export interface SortSpec { target: Target; name: string; field?: QField; desc: boolean; text: string; state?: string }
+/**
+ * mold_v0-337: the time a row entered the state it is in now, for the memory engine (its rows are opened, their data
+ * holds no shell key): src/record-areas.ts sets it on every row it reads of an area with a lifecycle. A symbol, so no
+ * answer serialises it.
+ */
+export const ENTERED_AT = Symbol("entered_at");
 export interface Parsed { limit: number; conds: Cond[]; sort: SortSpec; after: { k: string } | null }
 
 const bad = (m: string) => new PackError(m, 400);
@@ -62,7 +69,8 @@ const ISO = /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
  * Parse a query against an area's fields. `fits(field, value)` and `fitsOne(field, value)` are the record store's own
  * type checks (a whole value; one element of a list field), so a filter value is checked as a stored one would be.
  */
-export function parseQuery(fields: readonly QField[], q: RecordQuery | undefined, fits: (f: QField, v: unknown) => boolean, fitsOne: (f: QField, v: unknown) => boolean): Parsed {
+export function parseQuery(fields: readonly QField[], q: RecordQuery | undefined, fits: (f: QField, v: unknown) => boolean, fitsOne: (f: QField, v: unknown) => boolean,
+  /** mold_v0-337: the area's lifecycle field, for a sort by $state_at (none: refused). */ stateField?: string): Parsed {
   const opts = (q ?? {}) as Record<string, unknown>;
   const n = opts.limit === undefined || opts.limit === "" ? 50 : Number(opts.limit);
   if (!Number.isInteger(n) || n < 1 || n > MAX_LIMIT) throw bad(`limit is 1 to ${MAX_LIMIT}`);
@@ -81,8 +89,11 @@ export function parseQuery(fields: readonly QField[], q: RecordQuery | undefined
     sortText = opts.sort;
   }
   const desc = sortText.startsWith("-");
-  const st = target(desc ? sortText.slice(1) : sortText, "sort");
-  const sort: SortSpec = { ...st, desc, text: sortText };
+  const sortName = desc ? sortText.slice(1) : sortText;
+  // mold_v0-337: when each row entered the state it is in now (else its last change), never a filter's.
+  if (sortName === "$state_at" && !stateField) throw bad("sort $state_at is when a record entered its state: this area has no lifecycle");
+  const st = sortName === "$state_at" ? { target: "state_at" as const, name: sortName } : target(sortName, "sort");
+  const sort: SortSpec = { ...st, desc, text: sortText, ...(sortName === "$state_at" ? { state: stateField } : {}) };
 
   // ---- filter ----
   let filter: unknown = opts.filter;
@@ -222,7 +233,9 @@ export function sqlParts(p: Parsed, params: unknown[], scope: { table: string; w
     if (p.after) where.push(`key ${cmp} ${$(p.after.k)}`);
     return { where, order: `key ${dir}` };
   }
-  const expr = s.target === "title" ? "COALESCE(title, '')" : s.target === "updated_at" ? "updated_at" : fieldExpr(s.name);
+  // mold_v0-337: $state_at is a time (its stamp for the row's state, else its last change), compared as one.
+  const expr = s.target === "title" ? "COALESCE(title, '')" : s.target === "updated_at" ? "updated_at"
+    : s.target === "state_at" ? `COALESCE((data -> '$state_at' ->> (data ->> ${$(s.state)}))::timestamptz, updated_at)` : fieldExpr(s.name);
   if (p.after) {
     const k = $(p.after.k);
     where.push(`(${expr}, key) ${cmp} ((SELECT ${expr} FROM ${scope.table} c WHERE ${[...scope.where, `c.key = ${k}`].join(" AND ")}), ${k})`);
@@ -248,6 +261,7 @@ const emptyValue = (v: unknown) => v === null || v === undefined || v === "" || 
 const same = (a: unknown, b: unknown) => compareValues(a, b) === 0 && rank(a) === rank(b);
 
 function sortValueOf(s: SortSpec, r: RecordRow): unknown {
+  if (s.target === "state_at") { const t = Date.parse(String((r as { [ENTERED_AT]?: unknown })[ENTERED_AT] ?? r.updated_at)); return Number.isNaN(t) ? 0 : t; }
   return s.target === "key" ? r.key : s.target === "title" ? r.title ?? "" : s.target === "updated_at" ? r.updated_at : r.data[s.name] ?? null;
 }
 function matches(c: Cond, r: RecordRow): boolean {
@@ -274,7 +288,7 @@ function matches(c: Cond, r: RecordRow): boolean {
 export function pageInMemory(p: Parsed, rows: RecordRow[]): { records: RecordRow[]; next: string | null } {
   const s = p.sort;
   const cmp = (a: RecordRow, b: RecordRow) => {
-    const d = s.target === "key" ? 0 : s.target === "field" ? compareValues(sortValueOf(s, a), sortValueOf(s, b)) : cmpKey(String(sortValueOf(s, a)), String(sortValueOf(s, b)));
+    const d = s.target === "key" ? 0 : s.target === "field" || s.target === "state_at" ? compareValues(sortValueOf(s, a), sortValueOf(s, b)) : cmpKey(String(sortValueOf(s, a)), String(sortValueOf(s, b)));
     return (d || cmpKey(a.key, b.key)) * (s.desc ? -1 : 1);
   };
   let list = rows.filter((r) => p.conds.every((c) => matches(c, r))).sort(cmp);

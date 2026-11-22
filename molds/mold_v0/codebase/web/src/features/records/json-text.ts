@@ -9,11 +9,13 @@
 //                       own key (an appId inside the application's own record); a field that only repeats its item's
 //                       name is not said twice
 //   short values        in words, with the credentials card's mapping (lib/value-words.ts: prod reads Production)
+//   a rule's logic      mold_v0-337: a JsonLogic expression in words ("documents is less than 2"; ./logic-words.ts)
 //
 // jsonView is what a record's page and an open row draw (json-value.tsx); jsonLine is the one line a list's cell, its
 // search text and a board's card read.
 
 import { valueWord } from '../../lib/value-words';
+import { logicWords } from './logic-words';
 
 export type JsonPart = { label: string; text: string };
 export type JsonItem = { name: string | null; parts: JsonPart[] };
@@ -58,6 +60,8 @@ function meaningful(o: Obj, recordKey?: string): [string, unknown][] {
 
 /** Any value flattened to one comma-joined line of its values (a nested object's labels left out). */
 function flat(v: unknown, recordKey?: string): string {
+  const logic = logicWords(v);
+  if (logic !== null) return logic;
   if (Array.isArray(v)) return v.map((x) => (isObj(x) ? itemLine(item(x, recordKey)) : flat(x, recordKey))).filter(Boolean).join(v.some(isObj) ? '; ' : ', ');
   if (isObj(v)) return meaningful(v, recordKey).map(([, x]) => flat(x, recordKey)).filter(Boolean).join(', ');
   return scalar(v);
@@ -81,6 +85,8 @@ const itemLine = (it: JsonItem) => {
 
 /** A json value as a record's page draws it: items, an object's fields, or (anything else) one line of text. */
 export function jsonView(v: unknown, recordKey?: string): JsonView {
+  const logic = logicWords(v);
+  if (logic !== null) return { kind: 'text', text: logic };
   if (Array.isArray(v) && v.some(isObj)) return { kind: 'items', items: v.map((x) => (isObj(x) ? item(x, recordKey) : { name: flat(x, recordKey), parts: [] })).filter((x) => x.name || x.parts.length) };
   if (isObj(v)) return { kind: 'fields', parts: meaningful(v, recordKey).map(([k, x]) => ({ label: keyLabel(k), text: flat(x, recordKey) })) };
   return { kind: 'text', text: flat(v, recordKey) };

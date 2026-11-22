@@ -423,7 +423,8 @@
               "move_to": "failed",
               "move_from": [
                 "running"
-              ]
+              ],
+              "stops_session": true
             }
           ],
           "$comment": "A clock with every key."
@@ -524,6 +525,26 @@
             {
               "field": "site",
               "link_text": "Open"
+            },
+            {
+              "label": "Grand",
+              "computed": {
+                "area": "mx_grand",
+                "via": "child",
+                "op": "latest",
+                "through": {
+                  "area": "mx_children",
+                  "via": "item",
+                  "where": {
+                    "field": "state",
+                    "equals": "READY"
+                  },
+                  "sort": {
+                    "field": "$state_at",
+                    "direction": "desc"
+                  }
+                }
+              }
             }
           ]
         },
@@ -785,6 +806,17 @@
                   "equals": "running"
                 },
                 "reason": "Already running."
+              },
+              {
+                "related": {
+                  "area": "mx_children",
+                  "via": "item",
+                  "where": {
+                    "field": "state",
+                    "equals": "BUILDING"
+                  }
+                },
+                "reason": "A child is still building."
               }
             ],
             "look": "link"
@@ -798,6 +830,15 @@
             "roles": [
               "owner"
             ]
+          },
+          {
+            "kind": "move",
+            "to_any": [
+              "running",
+              "done"
+            ],
+            "label_from_move": true,
+            "label": "Move on"
           },
           {
             "kind": "edit",
@@ -1922,6 +1963,26 @@
             ]
           },
           "id": "ready"
+        },
+        {
+          "related": {
+            "area": "mx_grand",
+            "via": "child",
+            "through": {
+              "area": "mx_children",
+              "via": "item",
+              "where": {
+                "field": "state",
+                "equals": "READY"
+              },
+              "sort": {
+                "field": "$state_at",
+                "direction": "desc"
+              }
+            }
+          },
+          "show": "latest",
+          "id": "grand"
         }
       ],
       "sparklines": [

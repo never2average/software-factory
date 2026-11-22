@@ -3,6 +3,8 @@
 // text's line diff; a record's files as a tree. Pure, so scripts/record-pages-test.ts reads it without a browser; the
 // sections draw it (./code-view.tsx, ./history-section.tsx, ./file-browser.tsx). Relative imports only.
 
+import { logicWords } from './logic-words';
+
 export type CodeLanguage = 'json' | 'yaml' | 'text';
 /** A token's kind: each its own colour (theme-mixed, legible in light and dark). */
 export type TokenKind = 'key' | 'string' | 'number' | 'literal' | 'punct' | 'comment' | 'plain';
@@ -143,7 +145,8 @@ export function cellText(v: unknown): string {
   if (typeof v === 'number') return v.toLocaleString('en', { maximumFractionDigits: 4 });
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (Array.isArray(v)) return v.map(cellText).join(', ');
-  if (typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${cellText(x)}`).join(', ');
+  // mold_v0-337: a rule's logic in words ("documents is less than 2"), else its pairs.
+  if (typeof v === 'object') return logicWords(v) ?? Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${cellText(x)}`).join(', ');
   return String(v);
 }
 /**

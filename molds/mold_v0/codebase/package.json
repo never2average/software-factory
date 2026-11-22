@@ -124,6 +124,7 @@
     "test:schedules": "tsx scripts/schedules-test.ts",
     "test:record-clocks": "tsx scripts/record-clocks-test.ts",
     "test:build-lifecycle": "tsx scripts/build-lifecycle-333-test.ts",
+    "test:apps-ui": "tsx scripts/apps-ui-337-test.ts",
     "test:features": "tsx scripts/features-test.ts",
     "test:teams": "tsx scripts/teams-test.ts && tsx scripts/teams-262-test.ts",
     "test:agent-harness": "tsx scripts/agent-harness-test.ts && tsx scripts/agent-credentials-test.ts && tsx scripts/agent-composer-test.ts",
