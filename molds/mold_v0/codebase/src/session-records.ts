@@ -20,6 +20,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
+import { ENV } from "./env-names.js";
 import { CREATES_SPECIAL, inputField, PackError, type RecordRow, type SessionCreates, type SessionEndReason } from "./pack-api.js";
 import { asAction, asWriter, findArea, getFor, listFor, shellMove, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
@@ -73,7 +74,7 @@ export async function makeCreated(orgId: number, c: SessionCreates, key: string,
   const area = findArea(c.area);
   if (!area || area.scope !== "workspace") throw new PackError(`no workspace area ${c.area}`, 404);
   // mold_v0-337: the test world's stand-in for a slow make (two presses racing); never outside it.
-  const slow = process.env.APP_TEST_WORLD === "1" && process.env.NODE_ENV !== "production" ? Number(process.env.APP_TEST_MAKE_DELAY_MS ?? 0) : 0;
+  const slow = ENV.APP_TEST_WORLD === "1" && process.env.NODE_ENV !== "production" ? Number(ENV.APP_TEST_MAKE_DELAY_MS ?? 0) : 0;
   if (slow > 0) await new Promise((r) => setTimeout(r, Math.min(slow, 5000)));
   return asAction(() => workspaceRecords(area.pack, orgId, actor).create(area.name, key, { title: plan.title, data: plan.data }));
 }
