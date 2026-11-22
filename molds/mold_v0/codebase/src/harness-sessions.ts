@@ -571,15 +571,15 @@ export async function recordsSessions(orgId: number, records: readonly { area: s
   if (!agentHarnessOn() || !records.length) return { total: 0, sessions: [] };
   const args = [orgId, records.map((r) => r.area), records.map((r) => r.key)];
   return read(async (q) => {
-    const rows = await q.query<SessionRow>(`SELECT ${COLS} FROM harness_sessions WHERE ${OF_RECORDS} ORDER BY last_activity_at DESC, id DESC LIMIT ${Math.min(Math.max(Math.trunc(limit) || 10, 1), 50)}`, args);
-    const [n] = await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM harness_sessions WHERE ${OF_RECORDS}`, args);
+    const rows = await q.query<SessionRow>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT ${COLS} FROM harness_sessions WHERE ${OF_RECORDS} ORDER BY last_activity_at DESC, id DESC LIMIT ${Math.min(Math.max(Math.trunc(limit) || 10, 1), 50)}`, args);
+    const [n] = await q.query<{ n: number }>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT count(*)::int AS n FROM harness_sessions WHERE ${OF_RECORDS}`, args);
     return { total: n?.n ?? rows.length, sessions: rows.map((r) => view(r, actor, null)) };
   });
 }
 /** mold_v0-340: the ids of those sessions that start a tree (no parent), newest first, at most 200: the runs a record's page lists. */
 export async function recordsSessionIds(orgId: number, records: readonly { area: string; key: string }[]): Promise<string[]> {
   if (!agentHarnessOn() || !records.length) return [];
-  return read(async (q) => (await q.query<{ id: string }>(`SELECT id FROM harness_sessions WHERE ${OF_RECORDS} AND parent_id IS NULL ORDER BY last_activity_at DESC, id DESC LIMIT 200`,
+  return read(async (q) => (await q.query<{ id: string }>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT id FROM harness_sessions WHERE ${OF_RECORDS} AND parent_id IS NULL ORDER BY last_activity_at DESC, id DESC LIMIT 200`,
     [orgId, records.map((r) => r.area), records.map((r) => r.key)])).map((r) => r.id));
 }
 

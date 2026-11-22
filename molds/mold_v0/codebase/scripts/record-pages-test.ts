@@ -225,12 +225,14 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
 // 7. The Access log as Billing's tab (mold_v0-209).
 {
   const billing = src("features/portal/billing.tsx").replace(/\/\/.*$/gm, "");
-  const triggers = [...billing.matchAll(/<TabsTrigger value='([^']+)'/g)].map((m) => m[1]);
-  assert.deepEqual(triggers, ["people", "teams", "rules", "access-log"], "Billing's tabs: People, Teams, Budget rules, then Access log");
+  // mold_v0-340: the strip is drawn from the tabs in their order (a pack's console.billing may name some first); without
+  // one, the shell's own: People, Teams (budget groups), Budget rules, then Access log.
+  assert.match(billing, /const rest = \['people', 'teams', 'rules', 'access-log'\]\.filter/, "Billing's tabs: People, Teams, Budget rules, then Access log");
+  assert.match(billing, /\{visible\.map\(\(t\) => <TabsTrigger key=\{t\.id\} value=\{t\.id\}/, "one trigger per tab shown");
   assert.match(billing, /const logTab = dataTrailOn\(\) && role === 'owner';/, "the Access log tab: audit.data on, owners only");
-  assert.match(billing, /\{logTab && <TabsTrigger value='access-log'[^>]*>Access log<\/TabsTrigger>\}/);
+  assert.match(billing, /'access-log': logTab \}/, "shown only where logTab holds");
   assert.match(billing, /<TabsContent value='access-log'><WorkspaceAccessLog \/><\/TabsContent>/, "the tab draws the same records table page");
-  assert.match(billing, /const BILLING_TABS = \['people', 'teams', 'rules', 'access-log'\];/, "?tab= opens each tab");
+  assert.match(billing, /const BILLING_TABS = \['spending', 'people', 'teams', 'rules', 'alerts', 'access-log'\];/, "?tab= opens each tab");
   assert.match(billing, /q\.set\('tab', tab\)/, "the open tab is kept in the address");
   const log = src("features/audit/access-log.tsx").replace(/\/\/.*$/gm, "");
   const body = log.slice(log.indexOf("export function WorkspaceAccessLog("), log.indexOf("export function OperatorAccessLogPage("));
