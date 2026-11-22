@@ -37,7 +37,7 @@ import { featureOn } from "./features.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { packs } from "./packs.js";
-import { personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
+import { HOP_RECORDS_MAX, type RecordsHop, personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
 import { lineLinks, recordWriters } from "./record-runs.js";
 import { asAction, findArea, getFor, inTransaction, recordQuery, recordStateTimes, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
@@ -357,6 +357,39 @@ const pointingAt = (target: RecordArea, field: string, key: string) => {
 /** The field a related list points back through: its `via`, else the target's one field pointing at `area`. */
 export const viaOf = (area: string, target: RecordArea, related: { via?: string }) => related.via ?? linksBack(target, area)[0] ?? null;
 
+/**
+ * mold_v0-340: a hop's records (RecordsHopSchema): the keys of every record of `hop.area` pointing at `key` of `from` that
+ * its `where` keeps, newest change first, at most HOP_RECORDS_MAX, read as the person; hidden when they may not read it.
+ */
+export async function hopKeys(org: number, from: string, key: string, hop: RecordsHop, actor: Actor): Promise<{ keys: string[] } | { hidden: true }> {
+  const hopArea = findArea(hop.area);
+  const via = hopArea ? viaOf(from, hopArea, hop) : null;
+  if (!hopArea || !via || !may(hopArea, "read", actor) || areaOpWithheld(hopArea.name, "list")) return { hidden: true };
+  const keys: string[] = [];
+  let after: string | undefined, read = 0;
+  while (keys.length < HOP_RECORDS_MAX && read < COMPUTED_COUNT_MAX) {
+    const page = await listFor(org, hopArea.name, { filter: pointingAt(hopArea, via, key), sort: "-updated_at", limit: 200, ...(after ? { after } : {}) }, actor);
+    read += page.records.length;
+    for (const row of page.records) if (!hop.where || holds(hop.where, row.data, (row as { clocks?: unknown }).clocks)) keys.push(row.key);
+    if (!page.next) break;
+    after = page.next;
+  }
+  return { keys: keys.slice(0, HOP_RECORDS_MAX) };
+}
+
+/**
+ * mold_v0-340: the records a sessions or runs section is about: this one, and each hop's (those the person may read),
+ * as {area, key} pairs (at most 1 + 4 x HOP_RECORDS_MAX).
+ */
+async function sectionRecords(org: number, area: RecordArea, key: string, hops: readonly RecordsHop[], actor: Actor): Promise<{ area: string; key: string }[]> {
+  const out = [{ area: area.name, key }];
+  for (const h of hops) {
+    const got = await hopKeys(org, area.name, key, h, actor);
+    if ("keys" in got) out.push(...got.keys.map((k) => ({ area: h.area, key: k })));
+  }
+  return out;
+}
+
 type Fact = NonNullable<NonNullable<Layout["header"]>["facts"]>[number];
 /** A computed fact's answer (mold_v0-256): a count, the latest related record's value, or hidden from this person. */
 export type ComputedAnswer = { hidden: true } | { op: "count"; value: number; capped: boolean; area: string; via: string }
@@ -517,6 +550,41 @@ async function historyOf(org: number, area: RecordArea, key: string, h: { fields
   return { more: got.more, changes: got.lines.map((l, i) => ({ id: l.id, at: l.at, action: l.action, by: changedByWords(l.by, person), ...(runs[i] ? { run: runs[i] } : {}), title: l.title, changes: l.changes })) };
 }
 
+/**
+ * mold_v0-340: a charts section's metrics for one record: each metric over a record area the section's `records` names,
+ * narrowed to the records whose field points at this record (or at any of a hop's records), counted as the person reads
+ * them (src/metrics.ts computeSpec: its roles and area; the records as the person may see them). A metric over an area the
+ * person may not read is refused as on an overview (403); one whose hop they may not read counts nothing.
+ */
+/** A value no record's key is (a key has no spaces): a hop with no records narrows a metric to none. */
+const NO_KEY = "no record";
+export async function recordMetrics(org: number, area: RecordArea, key: string, c: NonNullable<Layout["tabs"][number]["sections"][number]["charts"]>, actor: Actor) {
+  const M = await import("./metrics.js");
+  const { asViewerOf } = await import("./visibility.js");
+  const views = M.buildViews();
+  const names = [...new Set(c.charts.flatMap((n) => views.charts.find((x) => x.pack === area.pack && x.name === n)?.metrics ?? []))];
+  const keysOf = new Map<string, Promise<string[]>>();
+  return asViewerOf(actor, () => Promise.all(names.map(async (n): Promise<import("./metrics.js").MetricResult> => {
+    const spec = M.findMetric(n);
+    const scope = spec ? c.records.find((x) => x.area === spec.over) : undefined;
+    const target = scope ? findArea(scope.area) : null;
+    if (!spec || !scope || !target) return { name: n, error: "This chart is not counted for one record.", status: 404 };
+    const via = viaOf(scope.through?.area ?? area.name, target, scope);
+    if (!via) return { name: n, error: "This chart is not counted for one record.", status: 404 };
+    const id = JSON.stringify(scope.through ?? null);
+    if (!keysOf.has(id)) keysOf.set(id, scope.through ? hopKeys(org, area.name, key, scope.through, actor).then((h) => ("keys" in h ? h.keys : [])) : Promise.resolve([key]));
+    const keys = await keysOf.get(id)!;
+    try {
+      // The record's own records: one more condition, the metric's other conditions kept.
+      return await M.computeSpec(org, { ...spec, where: [...(spec.where ?? []), { field: via, op: "in", value: keys.length ? keys : [NO_KEY] }] } as typeof spec, actor);
+    } catch (e) {
+      if (e instanceof PackError) return { name: n, error: e.message, status: e.status };
+      console.error(`record metric ${n}: ${(e as Error).message}`);
+      return { name: n, error: "The metric could not be computed.", status: 500 };
+    }
+  })));
+}
+
 export function recordPageRouter(): Router {
   const r = express.Router();
   if (!recordAreas().length) return r;
@@ -600,7 +668,7 @@ export function recordPageRouter(): Router {
       const id = `${ti}-${si}`;
       if (s.related) {
         const target = findArea(s.related.area);
-        const via = target ? viaOf(area.name, target, s.related) : null;
+        const via = target ? viaOf(s.related.through?.area ?? area.name, target, s.related) : null;
         // mold_v0-256: matched on a field: their via holds this record's match_field value (nothing to match: none listed).
         const matchOn = s.related.match_field !== undefined ? record.data[s.related.match_field] : record.key;
         // The target area's read permission, and its list not withheld: else the section is not drawn at all.
@@ -608,6 +676,30 @@ export function recordPageRouter(): Router {
         const limit = s.related.limit ?? 5;
         const sortField = s.related.sort?.field ?? "updated_at";
         const sort = `${(s.related.sort?.direction ?? (s.related.sort ? "asc" : "desc")) === "desc" ? "-" : ""}${sortField}`;
+        // mold_v0-340: through a hop: the records pointing at any of the hop's records (each read as the person), with no
+        // Show all (the list's filter names one record).
+        if (s.related.through) {
+          const hop = await hopKeys(org, area.name, record.key, s.related.through, actor);
+          const hv = findArea(s.related.through.area) ? viaOf(s.related.through.area, target, s.related) : null;
+          if ("hidden" in hop || !hv) { sections[id] = { hidden: true }; continue; }
+          const f = target.fields.find((x) => x.name === hv);
+          const many = !!(f?.multiple || f?.type === "link");
+          const want = new Set(hop.keys);
+          const kept: RecordRow[] = [];
+          let after: string | undefined, read = 0;
+          while (hop.keys.length && kept.length <= limit && read < COMPUTED_COUNT_MAX) {
+            const page = await listFor(org, target.name, { filter: many ? {} : { [hv]: { in: hop.keys } }, sort, limit: 200, ...(after ? { after } : {}) }, actor);
+            read += page.records.length;
+            for (const row of page.records) { const v = row.data[hv]; if ((Array.isArray(v) ? v : [v]).some((x) => typeof x === "string" && want.has(x))) kept.push(row); }
+            if (!page.next) break;
+            after = page.next;
+          }
+          const rows = await withRefTitles(org, target, kept.slice(0, limit), actor);
+          sections[id] = { area: target.name, via: hv, match: null, more: kept.length > limit,
+            records: await Promise.all(rows.map(async (row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at, ...(row.ref_titles ? { ref_titles: row.ref_titles } : {}),
+              actions: await pageActions(target, row, actor, { withForms: false, org }) }))) };
+          continue;
+        }
         if (matchOn == null || matchOn === "" || typeof matchOn === "object") { sections[id] = { area: target.name, via, match: null, more: false, records: [] }; continue; }
         const page = await listFor(org, target.name, { filter: s.related.match_field !== undefined ? { [via]: matchOn } : pointingAt(target, via, record.key), sort, limit: limit + 1 }, actor);
         // mold_v0-262: each row's references' titles (its cells show them, linked).
@@ -633,6 +725,25 @@ export function recordPageRouter(): Router {
           ...(s.runs.wrote ? { wrote: [...(writers!.made ? [{ ...writers!.made, how: "Made" }] : []), ...writers!.changed.map((x) => ({ ...x, how: "Changed" }))] } : {}),
           ...(ss.total ? { sessions: { total: ss.total, rows: ss.sessions.map((x) => ({ id: x.id, title: x.title, phase: x.phase, profile: x.profile, started_by: x.mine ? "You" : x.started_by,
             spent_usd: x.spent_usd, budget_usd: x.budget_usd, created_at: x.created_at, last_activity_at: x.last_activity_at })) } } : {}) };
+      } else if (s.sessions || s.agent_runs) {
+        // mold_v0-340: the record's agent sessions (its own and its hops' records'), or the runs among them.
+        const spec = (s.sessions ?? s.agent_runs)!;
+        const H = await import("./harness-sessions.js");
+        if (!featureOn("agent_harness") || (s.agent_runs && !featureOn("nested_runs"))) { sections[id] = { hidden: true }; continue; }
+        const recs = await sectionRecords(org, area, record.key, spec.through ?? [], actor);
+        const limit = spec.limit ?? 10;
+        if (s.sessions) {
+          const ss = await H.recordsSessions(org, recs, H.actorOf(session(res)), limit);
+          sections[id] = { total: ss.total, rows: ss.sessions.map((x) => ({ id: x.id, title: x.title, phase: x.phase, profile: x.profile, started_by: x.mine ? "You" : x.started_by,
+            spent_usd: x.spent_usd, budget_usd: x.budget_usd, created_at: x.created_at, last_activity_at: x.last_activity_at })) };
+        } else {
+          const D = await import("./agent-dock.js");
+          const roots = await H.recordsSessionIds(org, recs);
+          const runs = roots.length ? await D.activeRuns(org, { roots }) : [];
+          sections[id] = { total: runs.length, rows: runs.slice(0, limit).map((x) => ({ id: x.id, ref: x.ref, title: x.title, status: x.status, needs: x.needs, why: x.why, outcome: x.outcome,
+            finished: x.finished, children: x.children, open: x.open, waiting: x.waiting, spent_usd: x.spent_usd + x.children_spent_usd, budget_usd: x.budget_usd,
+            last_activity_at: x.last_activity_at, settled_at: x.settled_at })) };
+        }
       } else if (s.history) {
         // mold_v0-256: the record's changes, read as the person (the record's own read: it read the record above).
         by ??= await byWords(session(res));
@@ -645,6 +756,15 @@ export function recordPageRouter(): Router {
     // mold_v0-339: a steps section's skipped states and a state_since fact read them too (a shared record's as well).
     const steps = needsStateTimes(layout) ? { state_at: await recordStateTimes(org, area, record.key) } : {};
     return { actions: await pageActions(area, record, actor, { org }), sections, facts, writers, ...steps };
+  }));
+
+  // mold_v0-340: a charts section's numbers: its charts' metrics counted over this record's records only, as the person.
+  r.get("/:area/:key/metrics", answer(async (req, res) => {
+    const { area, layout, record } = await recordOf(req, res);
+    const m = /^(\d{1,2})-(\d{1,2})$/.exec(String(req.query.section ?? ""));
+    const s = m ? layout.tabs[Number(m[1])]?.sections[Number(m[2])] : undefined;
+    if (!s?.charts) throw new PackError("section: a charts section of this page (<tab>-<section>)", 400);
+    return { metrics: await recordMetrics(session(res).org, area, record.key, s.charts, actorOf(res)) };
   }));
 
   // mold_v0-256: a history section's older lines (Show more): ?section=<tab>-<section>&before=<line id>.

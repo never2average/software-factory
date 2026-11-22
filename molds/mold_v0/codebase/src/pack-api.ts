@@ -1122,6 +1122,11 @@ export const DetailRelatedSchema = z.object({
   columns: z.array(z.union([name, z.object({ field: name, label: plainWords(40) }).strict()])).min(1).max(RELATED_COLUMNS_MAX, `at most ${RELATED_COLUMNS_MAX} columns: a related list's row is one line on a desktop`).optional(),
   sort: SortSchema.optional(),
   limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
+  /**
+   * mold_v0-340: through a first hop (RecordsHopSchema): the records of `area` whose `via` points at ANY record of the hop
+   * area pointing here (an application's learnings, through its problems), not at this record. Each read as the person.
+   */
+  through: z.lazy(() => RecordsHopSchema).optional(),
 }).strict();
 /**
  * A record's runs (mold_v0-254): a section listing the runs that ran on this record (started on it from its page, or
@@ -1298,6 +1303,42 @@ export const RelatedHopSchema = z.object({
   sort: SortSchema.optional(),
 }).strict();
 export type RelatedHop = z.output<typeof RelatedHopSchema>;
+/** mold_v0-340: the most records of a hop's area a section reads through (an application's builds, its problems). */
+export const HOP_RECORDS_MAX = 200;
+/**
+ * mold_v0-340: a hop to EVERY record of `area` pointing here (through `via`, needed only when it has several) that
+ * `where` keeps, at most HOP_RECORDS_MAX of them, newest change first, each read as the person: a related list's,
+ * a sessions or runs section's, a charts section's `through`. (RelatedHopSchema's hop is the first such record only.)
+ */
+export const RecordsHopSchema = z.object({ area: name, via: name.optional(), where: DetailConditionSchema.optional() }).strict();
+export type RecordsHop = z.output<typeof RecordsHopSchema>;
+/**
+ * mold_v0-340 (flag agent_harness): the workspace agent sessions of a record: those started from it or that made it, and
+ * (`through`, 1 to 4 hops) those started from or that made each record pointing here through a hop (an application's
+ * builds and problems), newest activity first, at most `limit` (default 10, at most 50). Listed as the Agents page lists
+ * them (to everyone in the workspace who may read this record); a hop's records only as the person may read them.
+ */
+export const DetailSessionsSchema = z.object({
+  through: z.array(RecordsHopSchema).min(1).max(4).optional(),
+  limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
+}).strict();
+/**
+ * mold_v0-340 (flags agent_harness and nested_runs): the runs among those sessions (a session handing work to other
+ * agents, as Active runs lists them), active and finished, each with its one status; the same `through` and `limit`.
+ */
+export const DetailAgentRunsSchema = DetailSessionsSchema;
+/** mold_v0-340: the most charts a charts section draws. */
+export const SECTION_CHARTS_MAX = 8;
+/**
+ * mold_v0-340: some of the pack's charts, their metrics counted over this record's records only (`records`): for each
+ * record area a chart's metrics are over, the field of it (`via`) pointing here, or (`through`) at any record of a hop
+ * pointing here: an application's traffic, its deployments' hourly reports. Read as the person (each metric's roles and
+ * area as on an overview, each hop's records as they may read them).
+ */
+export const DetailChartsSchema = z.object({
+  charts: z.array(name).min(1).max(SECTION_CHARTS_MAX).refine((c) => new Set(c).size === c.length, "each chart once"),
+  records: z.array(z.object({ area: name, via: name.optional(), through: RecordsHopSchema.optional() }).strict()).min(1).max(6),
+}).strict();
 export const DetailComputedSchema = z.object({
   area: name,
   via: name.optional(),
@@ -1309,7 +1350,7 @@ export const DetailComputedSchema = z.object({
   where: DetailConditionSchema.optional(),
 }).strict();
 /** The kinds of a section (each in place of fields): mold_v0-254's related and runs, mold_v0-256's log, history, code, table and files. */
-export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files", "versions", "steps"] as const;
+export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files", "versions", "steps", "sessions", "agent_runs", "charts"] as const;
 /**
  * mold_v0-331: how a section draws its content (optional; the default is the section's usual look):
  *   rows     a related list as ONE link row: the section's title, one plain line saying what is there ("3 builds",
@@ -1355,6 +1396,12 @@ export const DetailSectionSchema = z.object({
   versions: z.object({}).strict().optional(),
   /** mold_v0-331: a lifecycle's progress as numbered steps (DetailStepsSchema). */
   steps: DetailStepsSchema.optional(),
+  /** mold_v0-340: the record's workspace agent sessions, its own and its related records' (DetailSessionsSchema). */
+  sessions: DetailSessionsSchema.optional(),
+  /** mold_v0-340: the runs among them, active and finished (DetailAgentRunsSchema). */
+  agent_runs: DetailAgentRunsSchema.optional(),
+  /** mold_v0-340: some of the pack's charts over this record's records only (DetailChartsSchema). */
+  charts: DetailChartsSchema.optional(),
   /** mold_v0-331: how the section draws (DETAIL_SECTION_DISPLAYS): a related list as one link row, fields as numbers. */
   display: z.enum(DETAIL_SECTION_DISPLAYS).optional(),
   /**
@@ -1367,7 +1414,8 @@ export const DetailSectionSchema = z.object({
  * A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. mold_v0-298: `when`, the tab
  * only while this condition holds on the record (the notices' condition language); the first tab is always shown.
  */
-export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12), when: DetailConditionSchema.optional() }).strict();
+// mold_v0-340: up to 16 sections a tab (one Overview tab may hold what three tabs did).
+export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(16), when: DetailConditionSchema.optional() }).strict();
 /** A banner above the tabs while its condition holds on the record: its tone, an optional title and its words. */
 export const DetailNoticeSchema = z.object({
   when: DetailConditionSchema,
@@ -1713,7 +1761,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
         if (kinds.length > 1) bad(kinds.length === 2 && kinds.includes("related") && kinds.includes("runs") ? `section ${s.title} is a related list or the record's runs, not both`
           : `section ${s.title} is one kind of section: ${kinds.join(" or ")}, not ${kinds.length === 2 ? "both" : "several"}`, "tabs", ti, "sections", si);
         const what: Record<(typeof DETAIL_SECTION_KINDS)[number], string> = { related: "lists related records", runs: "lists runs", log: "shows a log", history: "lists the record's changes",
-          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files", versions: "lists the record's runs and versions", steps: "shows a lifecycle's steps" };
+          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files", versions: "lists the record's runs and versions", steps: "shows a lifecycle's steps",
+          sessions: "lists agent sessions", agent_runs: "lists runs", charts: "draws charts" };
         for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} ${what[kinds[0]!]}: it has no ${k}`, "tabs", ti, "sections", si, k);
         const at = (...p: (string | number)[]) => ["tabs", ti, "sections", si, ...p];
         const valueOf = (n: string, kind: string, types: readonly string[], ...p: (string | number)[]) => {
@@ -1979,7 +2028,11 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
       if (s.related) {
         const r = s.related, target = areas.find((x) => x.name === r.area);
         if (!target) { at(where, `${r.area} is not a record area of this build`); continue; }
-        const back = linksBack(target, a.name);
+        // mold_v0-340: through a hop, the list's records point at the hop's records (not a match on a field).
+        const from = r.through ? hopProblems(areas, a.name, r.through, (m) => at(where, `through: ${m}`)) : a.name;
+        if (from === null) continue;
+        if (r.through && r.match_field !== undefined) at(where, "a related list through a hop points at the hop's records: it has no match_field");
+        const back = linksBack(target, from);
         if (r.match_field !== undefined) {
           // mold_v0-256: matched on a field: via is a plain field of that area, match_field one of this area's.
           const mine = a.fields.find((f) => f.name === r.match_field), theirs = r.via ? target.fields.find((f) => f.name === r.via) : undefined;
@@ -1990,9 +2043,9 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
           else if (mine.encrypted || mine.type === "json" || mine.type === "file") at(where, `match_field ${r.match_field} is ${mine.encrypted ? "encrypted" : `a ${mine.type} field`}: a match is on one plain value`);
         } else if (r.via !== undefined) {
           if (!target.fields.some((f) => f.name === r.via)) at(where, `via ${r.via} is not one of ${r.area}'s fields`);
-          else if (!back.includes(r.via)) at(where, `${r.area}'s field ${r.via} does not point at ${a.name}: a related list shows the records that point back here (${back.length ? `its fields that do: ${back.join(", ")}` : `${r.area} has no reference or link field to ${a.name}`})`);
-        } else if (!back.length) at(where, `${r.area} has no link back to ${a.name}: a related list shows the records that point here, through a reference or link field of theirs to ${a.name}`);
-        else if (back.length > 1) at(where, `${r.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
+          else if (!back.includes(r.via)) at(where, `${r.area}'s field ${r.via} does not point at ${from}: a related list shows the records that point back ${from === a.name ? "here" : `at the ${from} records it goes through`} (${back.length ? `its fields that do: ${back.join(", ")}` : `${r.area} has no reference or link field to ${from}`})`);
+        } else if (!back.length) at(where, `${r.area} has no link back to ${from}: a related list shows the records that point ${from === a.name ? "here" : `at the ${from} records it goes through`}, through a reference or link field of theirs to ${from}`);
+        else if (back.length > 1) at(where, `${r.area} points at ${from} through ${back.join(" and ")}: say which with via`);
         for (const c of (r.columns ?? []).map(columnField)) {
           const f = target.fields.find((x) => x.name === c);
           if (!f) at(where, `column ${c} is not one of ${r.area}'s fields`);
@@ -2007,6 +2060,25 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
         }
       }
       if (s.runs) for (const k of s.runs.kinds ?? []) if (!kindOf(k)) at(where, `${k} is not a job kind of pack ${a.pack}`);
+      // mold_v0-340: a sessions or runs section's hops: each area points back here; one area once.
+      for (const k of ["sessions", "agent_runs"] as const) {
+        const hops = s[k]?.through ?? [];
+        for (const [j, h] of hops.entries()) hopProblems(areas, a.name, h, (m) => at(where, `${k}.through[${j}]: ${m}`));
+        if (new Set(hops.map((h) => `${h.area}/${h.via ?? ""}`)).size !== hops.length) at(where, `${k}.through names a hop twice`);
+      }
+      // mold_v0-340: a charts section's records: each area's field pointing here, or at the records of its hop.
+      for (const [j, x] of (s.charts?.records ?? []).entries()) {
+        const target = areas.find((y) => y.name === x.area);
+        const w = `charts.records[${j}]`;
+        if (!target) { at(where, `${w}: ${x.area} is not a record area of this build`); continue; }
+        const from = x.through ? hopProblems(areas, a.name, x.through, (m) => at(where, `${w}.through: ${m}`)) : a.name;
+        if (from === null) continue;
+        const back = linksBack(target, from).filter((f) => !target.fields.find((y) => y.name === f)?.multiple && target.fields.find((y) => y.name === f)?.type === "reference");
+        if (x.via !== undefined) { if (!back.includes(x.via)) at(where, `${w}: ${x.area}'s field ${x.via} is not a single reference to ${from} (${back.length ? `its fields that are: ${back.join(", ")}` : `it has none`})`); }
+        else if (!back.length) at(where, `${w}: ${x.area} has no single reference field to ${from}: a chart counts the records whose field points ${from === a.name ? "here" : `at the ${from} records it goes through`}`);
+        else if (back.length > 1) at(where, `${w}: ${x.area} points at ${from} through ${back.join(" and ")}: say which with via`);
+      }
+      if (s.charts && new Set(s.charts.records.map((x) => x.area)).size !== s.charts.records.length) at(where, "charts.records names an area twice: one way each area's records count");
     }
     // mold_v0-256: a computed fact's related records: their area, the field pointing back here, what it reads of them.
     for (const [i, x] of (d.header?.facts ?? []).entries()) {

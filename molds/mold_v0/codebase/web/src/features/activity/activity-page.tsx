@@ -143,41 +143,68 @@ function Technical({ r }: { r: WorkspaceReport }) {
   );
 }
 
-/** /app/activity: the workspace's runs, spend and people, then its technical details. */
-export function WorkspaceActivityPage() {
+/** The period, the report for it and the period's controls (the page's header action, or Spending's row). */
+function useActivity() {
   // mold_v0-260 (flag filters_in_address): the period kept in the address while it is on.
   const [range, setRange] = useDashboardRange();
+  const { data, error } = useReport((q) => apiClient<WorkspaceReport>(`/usage?${q}`), range);
+  const controls = featureOn('run_analytics') ? (
+    // mold_v0-260 (flag run_analytics): the runs broken down, for the same period.
+    <div className='flex flex-wrap items-center justify-end gap-2'>
+      <Button variant='outline' size='sm' render={<Link href={`/app/run-analytics?${rangeQuery(range)}`} />}><Icons.chartBar /> Run analytics</Button>
+      <DateRangePicker value={range} onChange={setRange} />
+    </div>
+  ) : <DateRangePicker value={range} onChange={setRange} />;
+  return { data, error, controls };
+}
+
+/** The figures: loading, the error, one empty state, or the plain figures then the technical details. */
+function ActivityFigures({ data, error }: { data: WorkspaceReport | null | undefined; error: Error | null | undefined }) {
+  // mold_v0-298 (finding A2): nothing at all in the period is one empty state with its next step, not empty boxes.
+  const nothing = !!data && data.totals.calls === 0 && data.runs.runs === 0 && data.members.length === 0;
+  // mold_v0-298 (finding A5): the console's standard loading and error states.
+  return error ? <ErrorState error={error} /> : !data ? <LoadingCards /> : nothing ? (
+    <EmptyState id='activity-empty' empty={{
+      // The page is Usage in the sidebar and the trail: the same word here, and the button says where Setup is.
+      title: 'No usage in this period',
+      text: `Usage shows once an agent connects or someone starts a ${data.words.run}. Pick a longer period above, or connect an agent.`,
+      cta: { label: 'Go to Setup', href: '/app' }
+    }} />
+  ) : (
+    <div className='flex flex-col'>
+      <Plain r={data} />
+      <Technical r={data} />
+    </div>
+  );
+}
+
+/** /app/activity: the workspace's runs, spend and people, then its technical details. */
+export function WorkspaceActivityPage() {
   // mold_v0-298 (finding A4): the breadcrumb's last crumb says the page's own name, not the address's word.
   const label = activityLabel();
   useBreadcrumbTitle(label);
-  const { data, error } = useReport((q) => apiClient<WorkspaceReport>(`/usage?${q}`), range);
+  const { data, error, controls } = useActivity();
   const w = data?.words;
-  // mold_v0-298 (finding A2): nothing at all in the period is one empty state with its next step, not empty boxes.
-  const nothing = !!data && data.totals.calls === 0 && data.runs.runs === 0 && data.members.length === 0;
   return (
     <PageContainer pageTitle={label}
       pageDescription={w ? `${cap(plural(w.run))}, spend and people in this ${w.workspace}, per ${w.member} and per ${w.run}.` : 'Runs, spend and people in this workspace.'}
-      pageHeaderAction={featureOn('run_analytics') ? (
-        // mold_v0-260 (flag run_analytics): the runs broken down, for the same period.
-        <div className='flex flex-wrap items-center justify-end gap-2'>
-          <Button variant='outline' size='sm' render={<Link href={`/app/run-analytics?${rangeQuery(range)}`} />}><Icons.chartBar /> Run analytics</Button>
-          <DateRangePicker value={range} onChange={setRange} />
-        </div>
-      ) : <DateRangePicker value={range} onChange={setRange} />}>
-      {/* mold_v0-298 (finding A5): the console's standard loading and error states. */}
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards /> : nothing ? (
-        <EmptyState id='activity-empty' empty={{
-          // The page is Usage in the sidebar and the trail: the same word here, and the button says where Setup is.
-          title: 'No usage in this period',
-          text: `Usage shows once an agent connects or someone starts a ${data.words.run}. Pick a longer period above, or connect an agent.`,
-          cta: { label: 'Go to Setup', href: '/app' }
-        }} />
-      ) : (
-        <div className='flex flex-col'>
-          <Plain r={data} />
-          <Technical r={data} />
-        </div>
-      )}
+      pageHeaderAction={controls}>
+      <ActivityFigures data={data} error={error} />
     </PageContainer>
+  );
+}
+
+/**
+ * mold_v0-340: the same figures as Billing's Spending tab (a pack's console.billing names spending; /app/activity then
+ * leads there): the period's controls in a row above them. What a person reads of colleagues' spend is the server's rule
+ * (GET /api/usage: everyone's for billing roles, else their own).
+ */
+export function WorkspaceActivityBody() {
+  const { data, error, controls } = useActivity();
+  return (
+    <div className='flex flex-col gap-4' data-activity-body=''>
+      <div className='flex justify-end' data-activity-controls=''>{controls}</div>
+      <ActivityFigures data={data} error={error} />
+    </div>
   );
 }

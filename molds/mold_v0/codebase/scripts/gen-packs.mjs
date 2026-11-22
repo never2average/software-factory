@@ -118,7 +118,7 @@ const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, ".
 const { connectPageProblems } = await import(pathToFileURL(path.join(HERE, "..", "src", "connect-page-config.ts")).href);
 const { clientSkillProblems, mergeClientSkill } = await import(pathToFileURL(path.join(HERE, "..", "src", "client-skill-config.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
-const { ADMIN_RECORDS_PAGES, adminRecordsEntries, adminRecordsMembers, CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, shownSections, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+const { ADMIN_RECORDS_PAGES, adminRecordsEntries, adminRecordsMembers, billingEntries, CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, shownSections, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
 // the words engine, so a pack's admin_mcp words are checked against them here.
 const { ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-tools.ts")).href);
@@ -1725,6 +1725,22 @@ const privateNetworkKindCount = !FEATURE_ON.onprem_runners ? 0
 for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
 const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
 /**
+ * mold_v0-340: Billing's in-page tabs as one pack's console.billing names them (src/console-pages.ts BILLING_TABS), resolved
+ * against the build: Alerts only with scheduled_alerts on, Settings' Teams only with teams on. null: Billing as it was.
+ */
+const BILLING = (() => {
+  const by = packs.filter((p) => p.json?.console?.billing !== undefined);
+  if (!by.length) return null;
+  if (by.length > 1) fail("packs", `console.billing: packs ${by.map((p) => p.id).join(" and ")} both declare Billing's tabs: declare them once`);
+  const tabs = billingEntries(by[0].json.console.billing)
+    .filter((t) => t.id !== "alerts" || FEATURE_ON.scheduled_alerts)
+    .map((t) => ({ id: t.id, ...(t.label ? { label: t.label } : {}), ...(t.settings_teams && FEATURE_ON.teams ? { settings_teams: true } : {}) }));
+  return { pack: by[0].id, tabs };
+})();
+const billingHas = (id) => !!BILLING?.tabs.some((t) => t.id === id);
+/** mold_v0-340: the Settings tabs that live in Billing instead (their id -> Billing's address for them). */
+const MOVED_SETTINGS = { ...(billingHas("alerts") ? { alerts: "/app/billing?tab=alerts" } : {}), ...(BILLING?.tabs.some((t) => t.settings_teams) ? { teams: "/app/billing?tab=teams" } : {}) };
+/**
  * The staff sidebar's Records group as declared (mold_v0-271, src/console-pages.ts ADMIN_RECORDS_PAGES): the profile's
  * console.admin_records, else the one pack's that says it; null when none does (the group lists every shared area, as
  * before). Resolved against the build where the sidebar is written (recordAdminNav).
@@ -2207,10 +2223,12 @@ const SETTINGS_TABS = (() => {
     { id: "email", label: "Email", group: "connections", kind: "email", on: FEATURE_ON.company_email },
     { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: !!developerFacts },
     { id: "integrations", label: "Inbound webhooks", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
-    { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
+    // mold_v0-340: unless a pack's console.billing puts it in Billing (read only there).
+    { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts && !MOVED_SETTINGS.alerts },
     // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
     // mold_v0-259: a workspace's teams (src/team-routes.ts), in Access after its shell tabs' credentials
-    { id: "teams", label: "Teams", group: "access", kind: "teams", on: !!FEATURE_ON.teams },
+    // mold_v0-340: unless Billing's teams tab takes it in (console.billing settings_teams).
+    { id: "teams", label: "Teams", group: "access", kind: "teams", on: !!FEATURE_ON.teams && !MOVED_SETTINGS.teams },
     { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },
   ].filter((t) => t.on).map(({ on: _o, ...t }) => t);
   const taken = new Set(shell.map((t) => t.id));
@@ -2582,6 +2600,33 @@ const profileSidebar = (() => {
   refuse();
   return out;
 })();
+/**
+ * mold_v0-340: pack.json console.sidebar_end, resolved: the pack's shown tabs with no group (each {tab}) and Settings
+ * ({settings: true}), in order. A tab it names is refused when it has a group, sits inside a page or Settings, or is not the
+ * pack's; with a declared sidebar (profile.json console.sidebar) the key is refused, the profile ordering everything.
+ */
+const SIDEBAR_END = (() => {
+  const out = [];
+  for (const p of packs.filter((x) => x.json?.console?.sidebar_end !== undefined)) {
+    const at = `packs/${p.id}/pack.json`;
+    if (profileConsole?.sidebar) { fail(at, "console.sidebar_end: the app's profile.json declares the whole sidebar (console.sidebar): order it there"); continue; }
+    for (const id of p.json.console.sidebar_end) {
+      if (id === "settings") { if (out.some((x) => x.settings)) fail(at, "console.sidebar_end: settings is named by another pack too"); else out.push({ settings: true }); continue; }
+      const t = packViews.tabs.find((x) => x.pack === p.id && x.id === id);
+      if (!t) { fail(at, `console.sidebar_end: ${id} is not one of the pack's tabs`); continue; }
+      if (t.group) { fail(at, `console.sidebar_end: tab ${id} has a group (${t.group}): the foot of the sidebar has no heading; drop its group`); continue; }
+      if (sectionParent(t) || t.inside) { fail(at, `console.sidebar_end: tab ${id} is ${t.inside ? "inside Settings" : "an in-page tab"}, not a sidebar entry`); continue; }
+      if (shownTabs().some((x) => x.pack === p.id && x.id === id)) out.push({ tab: { pack: p.id, id } });
+    }
+  }
+  return out;
+})();
+function isEndTab(t) { return !profileSidebar && SIDEBAR_END.some((x) => x.tab && x.tab.pack === t.pack && x.tab.id === t.id); }
+function sidebarEndUrls() {
+  if (profileSidebar) return [];
+  return SIDEBAR_END.map((x) => (x.settings ? "/app/settings" : (() => { const t = shownTabs().find((y) => y.pack === x.tab.pack && y.id === x.tab.id); return t.kind === "page" ? appPageUrl(t.page) : SHELL_PAGES[t.kind] ?? tabUrl(t); })()));
+}
+
 // Their console URLs (web/src/packs/<id>/routes.json): each rewritten to the shell's host page route, and their redirects.
 const PACK_ROUTES = { rewrites: [], redirects: [], declared: [] };
 {
@@ -2639,6 +2684,11 @@ const PACK_ROUTES = { rewrites: [], redirects: [], declared: [] };
   for (const t of shownTabs()) if (sectionParent(t)) redirects.push({ source: SHELL_PAGES[t.kind] ?? appPageUrl(t.id), destination: tabUrl(t), permanent: false });
   // A team or keys tab inside Settings (mold_v0-280): the shell's page of before leads to its Settings tab.
   for (const t of insideTabs()) redirects.push({ source: SHELL_PAGES[t.kind], destination: `/app/settings?tab=${t.id}`, permanent: false });
+  // mold_v0-340: Spending is Billing's tab (the Activity page's body): the Activity and Usage pages lead there; Alerts too,
+  // and its Settings group's page when nothing else is left in it.
+  for (const t of shownTabs()) if (billingHas("spending") && t.kind === "usage") fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: the Activity page is Billing's Spending tab (console.billing names spending): drop this tab, or spending`);
+  if (billingHas("spending")) for (const source of ["/app/activity", "/app/usage"]) redirects.push({ source, destination: "/app/billing?tab=spending", permanent: false });
+  if (MOVED_SETTINGS.alerts && !SETTINGS_TABS.some((t) => t.group === "automation")) redirects.push({ source: "/app/settings/automation", destination: MOVED_SETTINGS.alerts, permanent: false });
   if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
   redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
   refuse();
@@ -2908,6 +2958,13 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "\n/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */\n" +
   "export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }\n" +
   `export const alertRules: AlertRule[] = ${json(ALERT_RULES)};\n` +
+  "\n/** mold_v0-340: Billing's in-page tabs as a pack names them (console.billing), in order; null: Billing's own. */\n" +
+  "export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean }\n" +
+  `export const billingTabs: BillingTabSpec[] | null = ${json(BILLING?.tabs ?? null)};\n` +
+  "/** mold_v0-340: Settings tabs that live in Billing instead: their id -> their address there (an old ?tab= leads on). */\n" +
+  `export const movedSettingsTabs: Record<string, string> = ${json(MOVED_SETTINGS)};\n` +
+  "/** mold_v0-340: the foot of the /app sidebar (console.sidebar_end): its entries' addresses, /app/settings for Settings. */\n" +
+  `export const sidebarEnd: string[] = ${json(sidebarEndUrls())};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
   `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length, ...drainConsole() })};\n` +
   // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
@@ -2916,7 +2973,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   // and slash commands) adds no tool or run, so it alone does not count.
   // Under the shell's Insights heading, beside Usage (mold_v0-279: a heading "Activity" over its one entry Activity is refused).
   (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).some((k) => !(p.host && k === "mcp"))) ? "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
-    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Insights", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n`
+    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") || billingHas("spending") ? [] : [{ label: "Insights", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\n") +
   viewsModule());
 // The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
@@ -3155,12 +3212,18 @@ function viewsModule() {
   // Billing); the first tab that opens it keeps its entry, a later one is left out of the sidebar.
   // An in-page tab of a sections tab (mold_v0-175) is that page's, not the sidebar's; a tab inside Settings
   // (mold_v0-280) is Settings' (its entry, web/src/config/nav-config.ts withSettings).
-  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i && !sectionParent(x) && !x.url.startsWith("/app/settings?tab="))) {
+  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i && !sectionParent(x) && !x.url.startsWith("/app/settings?tab=") && !isEndTab(x))) {
     const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
     // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
     let g = groups.find((x) => x.label === label);
     if (!g) { g = { label, items: [] }; groups.push(g); }
     g.items.push({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles });
+  }
+  // mold_v0-340: console.sidebar_end's tabs: one group under no heading after every other, in its order (Settings joins
+  // it there: web/src/config/nav-config.ts withSettings).
+  if (!profileSidebar) {
+    const end = SIDEBAR_END.map((x) => (x.tab ? tabs.find((t) => t.pack === x.tab.pack && t.id === x.tab.id) : null)).filter(Boolean);
+    if (end.length) groups.push({ label: "", items: end.map((t) => ({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles })) });
   }
   return "\n/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */\n" +
     "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';\n  roles: string[];\n}\n" +

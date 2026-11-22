@@ -208,13 +208,16 @@ export const FINISHED_DAYS = 30;
  * Every root session with a child still at work, the newest first; with `finished` (mold_v0-334), the roots whose
  * children have all settled in the last FINISHED_DAYS days instead, so a failed or refused run does not vanish.
  */
-export async function activeRuns(orgId: number, opts: { finished?: boolean } = {}): Promise<ActiveRun[]> {
+export async function activeRuns(orgId: number, opts: { finished?: boolean; roots?: readonly string[] } = {}): Promise<ActiveRun[]> {
   needOn();
   const programs = await listDockPrograms();
   const nameOf = new Map(programs.map((p) => [p.id, p.name]));
   const purpose = await purposesOf(programs);
   const out = await read(async (q) => {
-    const open = opts.finished
+    // mold_v0-340: these trees only (a record page's runs), active and finished alike, whenever they ran.
+    const open = opts.roots
+      ? await q.query<{ root_id: string }>("SELECT DISTINCT root_id FROM harness_children WHERE org_id = $1 AND root_id = ANY ($2::text[]) LIMIT 200", [orgId, [...opts.roots]])
+      : opts.finished
       ? await q.query<{ root_id: string }>(`SELECT root_id FROM harness_children WHERE org_id = $1 GROUP BY root_id
           HAVING bool_and(settled_at IS NOT NULL) AND max(settled_at) > now() - make_interval(days => $2) ORDER BY max(settled_at) DESC LIMIT 200`, [orgId, FINISHED_DAYS])
       : await q.query<{ root_id: string }>("SELECT DISTINCT root_id FROM harness_children WHERE org_id = $1 AND settled_at IS NULL LIMIT 200", [orgId]);

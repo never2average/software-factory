@@ -34,10 +34,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { packTabs, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
+import { packCharts, packTabs, type PackChartSpec, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
 import { ErrorState, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { formatValue } from '@/features/tabs/charts';
+import { ChartCell, formatValue, type MetricResult } from '@/features/tabs/charts';
+import { OutcomeBadge, RunStatusBadge } from '@/features/agent/run-badges';
+import { RUN_STATUSES, type RunNeeds, type RunOutcomeBadge, type RunStatus } from '@/lib/run-status';
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
@@ -51,7 +53,7 @@ import {
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows, stateSince, sinceWords,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
-  type RelatedData, type RunsData
+  type RelatedData, type RunsData, type SessionsData, type AgentRunsData
 } from './detail-layout';
 import { RowActions, usePageActionsBar, type ActionHost, type RailActions } from './page-actions';
 import { CodeView, JsonTable } from './code-view';
@@ -291,7 +293,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   s: DetailSection; id: string; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; page: PageLoad;
   /** Its key in the page's answer (<tab>-<section>): a history section's Show older asks for it. */
   pageKey: string;
-  data: RelatedData | RunsData | HistoryData | undefined; changed: () => void;
+  data: RelatedData | RunsData | HistoryData | SessionsData | AgentRunsData | undefined; changed: () => void;
 }) {
   // Staff pages read no workspace's runs; their related lists are of shared areas only (mold_v0-271: the staff page's
   // own route answers a workspace area's list as hidden, and the section is not drawn).
@@ -300,6 +302,11 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   if (!sectionShown(s, record.data, record.clocks, page.data?.facts)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
+  // mold_v0-340: the record's agent sessions, the runs among them, and charts over its records (a workspace's only).
+  if ((s.sessions || s.agent_runs || s.charts) && base !== 'app') return null;
+  if (s.sessions) return <SessionsSection s={s} id={id} page={page} data={data as SessionsData | undefined} />;
+  if (s.agent_runs) return <AgentRunsSection s={s} id={id} page={page} data={data as AgentRunsData | undefined} />;
+  if (s.charts) return <ChartsSection s={s} id={id} area={area} record={record} pageKey={pageKey} />;
   // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
   if (s.versions) return featureOn('nested_runs') ? <TargetVersions target={record.key} title={s.title} empty={s.empty} /> : null;
   // mold_v0-331: a lifecycle's progress as numbered steps.
@@ -353,7 +360,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
  * A list section's card: its title, an optional link at the right (Show all), then its body. mold_v0-256: no count
  * beside the title (the list says what it holds; Show all stays a button).
  */
-function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' }) {
+function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' | 'sessions' | 'agent_runs' | 'charts' }) {
   const repeatsTab = useRepeatsTab(title);
   // mold_v0-331: the rail style: the small title (its link at the right), the content in a thin border (none round an empty line).
   if (useRail()) return (
@@ -562,6 +569,82 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   );
 }
 
+/** mold_v0-340: a record's agent sessions (its own and its related records'), newest activity first, each opening on the agent's page. */
+function SessionsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: SessionsData | undefined }) {
+  if (data?.hidden || (page.data && !data)) return null;
+  const rows = data && !data.hidden ? data.rows : [];
+  return (
+    <ListCard id={id} kind='sessions' title={s.title}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !rows.length ? <ListEmpty text={s.empty ?? 'No agent session has worked on this yet.'} />
+        : <RecordSessions rows={rows} total={data && !data.hidden ? data.total : rows.length} bare />}
+    </ListCard>
+  );
+}
+
+const asStatus = (v: string): RunStatus => ((RUN_STATUSES as readonly string[]).includes(v) ? (v as RunStatus) : 'running');
+/** mold_v0-340: the runs among a record's sessions (Active runs' rows), active and finished, each opening its own page. */
+function AgentRunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: AgentRunsData | undefined }) {
+  if (data?.hidden || (page.data && !data)) return null;
+  const rows = data && !data.hidden ? data.rows : [];
+  const total = data && !data.hidden ? data.total : 0;
+  return (
+    <ListCard id={id} kind='agent_runs' title={s.title}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !rows.length ? <ListEmpty text={s.empty ?? 'No run has worked on this yet.'} />
+        : (<>
+          {total > rows.length && <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>The newest {rows.length} of {total}</p>}
+          <ul className='divide-y' data-record-runs=''>
+            {rows.map((r) => (
+              <li key={r.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-run={r.id}>
+                <span className='flex min-w-0 flex-col gap-0.5'>
+                  <Link href={`/app/agent/runs/${encodeURIComponent(r.id)}`} className='font-medium break-words underline-offset-4 hover:underline'>
+                    {r.ref && <><span className='text-muted-foreground font-mono text-xs whitespace-nowrap'>{r.ref}</span><span className='text-muted-foreground' aria-hidden> · </span></>}{r.title}
+                  </Link>
+                  <span className='text-muted-foreground text-xs'>
+                    {r.finished ? <>Finished <DateText v={r.settled_at ?? r.last_activity_at} /></> : <>{r.open - r.waiting} of {r.children} at work · <DateText v={r.last_activity_at} /></>}
+                    {r.status === 'failed' && r.why ? <> · {r.why}</> : null}
+                  </span>
+                </span>
+                <span className='flex shrink-0 flex-wrap items-center gap-2 text-xs'>
+                  <RunStatusBadge status={asStatus(r.status)} needs={r.needs as RunNeeds | null} />
+                  {r.outcome && <OutcomeBadge outcome={r.outcome as RunOutcomeBadge} />}
+                  <span className='tabular-nums'>{formatValue(r.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(r.budget_usd, 'usd')}</span></span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>)}
+    </ListCard>
+  );
+}
+
+/** mold_v0-340: a charts section: the pack's charts, their numbers counted over this record's records (one request). */
+function ChartsSection({ s, id, area, record, pageKey }: { s: DetailSection; id: string; area: RecordAreaSpec; record: RecordRow; pageKey: string }) {
+  const charts = (s.charts?.charts ?? []).map((n) => packCharts.find((c) => c.pack === area.pack && c.name === n)).filter((c): c is PackChartSpec => !!c);
+  const url = `/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/metrics?section=${pageKey}`;
+  const { data, error } = useOrgLoad(async () => {
+    const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const body = (await res.json().catch(() => ({}))) as { metrics?: MetricResult[]; error?: string };
+    if (!res.ok) throw httpError(res.status, body);
+    return new Map((body.metrics ?? []).map((m) => [m.name, m]));
+  }, [url]);
+  const results = data ?? new Map<string, MetricResult>();
+  // A chart whose every metric this person may not read is left out (as on an overview); none left, no section.
+  const shown = charts.filter((c) => !c.metrics.every((n) => { const r = results.get(n); return !!r && 'error' in r && r.status === 403; }));
+  if (data && !shown.length) return null;
+  return (
+    <ListCard id={id} kind='charts' title={s.title}>
+      {error ? <div className='px-6 py-4'><ErrorState error={error} /></div>
+        : <div className='grid lg:grid-cols-2 [&>*]:border-0 [&>*]:border-b lg:[&>*:nth-child(odd)]:border-r' data-record-charts=''>
+          {shown.map((c) => <ChartCell key={`${c.pack}/${c.name}`} chart={c} results={results} />)}
+        </div>}
+    </ListCard>
+  );
+}
+
 /** The runs and agent sessions that made or changed a record (mold_v0-310, a runs section's `wrote`): each opens its page. */
 function RecordWriterList({ rows, top }: { rows: NonNullable<RunsData['wrote']>; top: boolean }) {
   return (
@@ -583,10 +666,10 @@ function RecordWriterList({ rows, top }: { rows: NonNullable<RunsData['wrote']>;
 }
 
 /** The workspace agent sessions started from a record (mold_v0-261): each opens on the agent's page. */
-function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions']>['rows']; total: number }) {
+function RecordSessions({ rows, total, bare = false }: { rows: NonNullable<RunsData['sessions']>['rows']; total: number; /** mold_v0-340: a sessions section's own list (no rule above, no heading but the count). */ bare?: boolean }) {
   return (
-    <div className='border-t' data-record-sessions=''>
-      <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>Agent sessions{total > rows.length ? ` (the newest ${rows.length} of ${total})` : ''}</p>
+    <div className={cn(!bare && 'border-t')} data-record-sessions=''>
+      {(!bare || total > rows.length) && <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>{bare ? `The newest ${rows.length} of ${total}` : `Agent sessions${total > rows.length ? ` (the newest ${rows.length} of ${total})` : ''}`}</p>}
       <ul className='divide-y'>
         {rows.map((x) => (
           <li key={x.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-session={x.id}>
@@ -675,7 +758,7 @@ function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: Detai
 }
 
 /** Whether a layout reads anything from the page's own route (mold_v0-254): actions, a related list, the record's runs. */
-const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
+const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs || s.sessions || s.agent_runs));
 
 async function getPage(url: string): Promise<PageData> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
