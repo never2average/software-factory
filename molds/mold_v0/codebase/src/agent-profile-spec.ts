@@ -171,6 +171,12 @@ export const PackAgentProfileSchema = z.object({
    * (src/connection-env-config.ts; checked against this pack's areas by validatePack), never in a prompt or a message.
    */
   connection_env: ConnectionEnvListSchema.optional(),
+  /**
+   * mold_v0-338: false leaves it out of the task picker of New chat and Start a session (a profile that builds,
+   * improvements, programs or schedules start, not a person). It still runs wherever those, or a start_agent action,
+   * name it. Absent: true.
+   */
+  start_from_chat: z.boolean().optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type PackAgentProfile = z.output<typeof PackAgentProfileSchema>;

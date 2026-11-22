@@ -39,7 +39,7 @@ export const ALLOW: [string, string, string][] = [
 const SHARED = new Set(["Button", "InputGroupButton", "LoadingButton", "SubmitButton", "ToolbarAction", "CopyButton", "Toggle", "ToggleGroupItem"]);
 const TRIGGER = /^(Popover|DropdownMenu|Collapsible|Sheet|Dialog|Drawer|Menu)Trigger$/;
 const OLD = new Set(["ExportCsvButton", "ExportRowsButton", "ExportButton", "ImportButton", "AskAiButton"]);
-const LABEL = /(^|[\s…])(Export|Import|Download|Ask AI)\b/;
+const LABEL = /(^|[\s…])(Export|Import|Download|Ask AI|Ask the agent)\b/;
 const ICON = /^(Icons\.(download|upload)|IconDownload|IconUpload|IconFileExport|IconFileImport)$/;
 
 const attr = (el: N, name: string) => el.attributes.properties.find((p: N) => ts.isJsxAttribute(p) && p.name.getText() === name);

@@ -2206,7 +2206,7 @@ const SETTINGS_TABS = (() => {
     { id: "allowed_origins", label: "Allowed origins", group: "access", kind: "allowed_origins", on: !!developerFacts },
     { id: "email", label: "Email", group: "connections", kind: "email", on: FEATURE_ON.company_email },
     { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: !!developerFacts },
-    { id: "integrations", label: "Integrations", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
+    { id: "integrations", label: "Inbound webhooks", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
     { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
     // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
     // mold_v0-259: a workspace's teams (src/team-routes.ts), in Access after its shell tabs' credentials
@@ -2975,15 +2975,15 @@ files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
     if (tabs[t.id]) fail("packs", `tabs ${t.id}: two packs' tabs of that id both declare agent: give one of them its own id`);
     tabs[t.id] = strip(t.agent);
   }
-  // An in-page tab of a sections tab (mold_v0-175) takes its page's: its own examples, else the page's; its own commands,
+  // An in-page tab of a sections tab (mold_v0-175) takes its page's: its own greeting and examples, else the page's; its own commands,
   // then the page's, one per name. A record opened from it (its area's tab) gets the same.
   if (on) for (const t of shownTabs()) {
     const parent = sectionParent(t), up = parent ? tabs[parent.id] : null;
     if (!up || parent.pack !== t.pack) continue;
     const own = tabs[t.id] ?? {}, names = new Set((own.commands ?? []).map((c) => c.name));
     const commands = [...(own.commands ?? []), ...(up.commands ?? []).filter((c) => !names.has(c.name))];
-    const examples = own.examples ?? up.examples;
-    tabs[t.id] = { ...(examples ? { examples } : {}), ...(commands.length ? { commands } : {}) };
+    const examples = own.examples ?? up.examples, greeting = own.greeting ?? up.greeting;
+    tabs[t.id] = { ...(greeting ? { greeting } : {}), ...(examples ? { examples } : {}), ...(commands.length ? { commands } : {}) };
   }
   if (!on && (declaring.length || packViews.tabs.some((t) => t.agent))) console.warn("gen-packs: agent_defaults and tabs[].agent are declared but features.agent_quick_commands is off (or agent_harness is): the console shows none of them");
   files.set(path.join(OUT, "web", "src", "config", "agent-prompts.generated.ts"), HEADER +

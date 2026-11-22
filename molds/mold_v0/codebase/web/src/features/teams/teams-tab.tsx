@@ -59,13 +59,9 @@ export function TeamsTab() {
       empty={<p className='text-muted-foreground text-sm' data-teams-empty=''>{data?.can_manage ? 'No teams yet. New team adds one; a record shared with a team is seen by its people.' : 'No teams yet. The workspace\'s owners add them.'}</p>}
       detailTitle={(t) => t.name}
       pageHref={(t) => teamUrl(t.id)}
-      detail={(t) => (
-        <dl className='grid gap-3 text-sm'>
-          {t.description && <div><dt className='text-muted-foreground'>About</dt><dd>{t.description}</dd></div>}
-          <div><dt className='text-muted-foreground'>People</dt><dd>{t.members}</dd></div>
-          <div><dt className='text-muted-foreground'>Leads</dt><dd>{t.leads.length ? t.leads.map(named).join(', ') : 'None'}</dd></div>
-        </dl>
-      )}
+      // mold_v0-338: the panel's header facts already say About, People and Leads: the body does not say them again; it
+      // points at the team's page (its people and what is shared with it).
+      detail={(t) => <p className='text-muted-foreground text-sm'>Its people and the records shared with it are on <Link className='text-foreground underline-offset-4 hover:underline' href={teamUrl(t.id)}>its page</Link>.</p>}
     />
   );
 }

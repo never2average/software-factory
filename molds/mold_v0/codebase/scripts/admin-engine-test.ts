@@ -53,7 +53,7 @@ try {
       for (const k of ["CLOUDFLARE_AI_MODEL", "DOCS_ANSWERS_DAILY_MAX", "EMAILS_ENABLED", "EMAIL_FROM"]) assert.ok(listed.includes(k), `${k} is the shell's own`);
       const cf = (await settings.listSettings()).find((s) => s.key === "CLOUDFLARE_AI_MODEL")!;
       assert.equal(cf.label, "Quick answers model", "the Cloudflare model under what it does without the engine");
-      assert.match(cf.help, /Ask AI/);
+      assert.match(cf.help, /Ask the docs/);
       assert.ok(!("readBy" in cf), "the API's rows carry no readBy");
       assert.deepEqual((await settings.listSettings({ all: true })).map((s) => s.key).filter((k) => engineKeys.includes(k)).sort(), [...engineKeys].sort(), "all: every setting");
       await settings.setSettings("test", { ORCHESTRATOR_MODEL: "claude-test-1" });

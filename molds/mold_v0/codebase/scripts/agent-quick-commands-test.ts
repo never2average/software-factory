@@ -47,8 +47,12 @@ const ex = (title: string, prompt = `${title} for {tab}.`) => ({ title, prompt }
   refused(TabAgentSchema, { examples: [ex("A <b>bold</b> one")] }, /no angle brackets/, "markup");
   refused(TabAgentSchema, { examples: Array.from({ length: 7 }, (_, i) => ex(`Example ${i}`)) }, /at most 6 example prompts/, "seven examples");
   refused(TabAgentSchema, { commands: Array.from({ length: 13 }, (_, i) => cmd(`c${i}`)) }, /at most 12 quick commands/, "thirteen commands");
-  refused(TabAgentSchema, {}, /names its examples, its commands or both/, "an empty tab agent");
-  refused(TabAgentSchema, { greeting: "Hi" }, /greeting|Unrecognized/i, "a greeting is the app's, not a tab's");
+  refused(TabAgentSchema, {}, /names its greeting, its examples, its commands or any of them/, "an empty tab agent");
+  // mold_v0-338: a tab may carry its own greeting (a new chat opened from it), checked as the app's is; an intro stays the app's.
+  assert.equal(TabAgentSchema.parse({ greeting: "Who needs access?" }).greeting, "Who needs access?", "a tab's own greeting");
+  refused(TabAgentSchema, { greeting: "x".repeat(81) }, /80|Too big|at most/i, "a tab's long greeting");
+  refused(TabAgentSchema, { greeting: "Look at {{tab}}" }, /single braces/, "a tab greeting's double braces");
+  refused(TabAgentSchema, { intro: "Hi", examples: [ex("One")] }, /intro|Unrecognized/i, "an intro is the app's, not a tab's");
   refused(AgentDefaultsSchema, { commands: [{ ...cmd("x"), shortcut: "k" }] }, /shortcut|Unrecognized/i, "a key that is not one");
   refused(AgentDefaultsSchema, { greeting: "x".repeat(81) }, /80|Too big|at most/i, "a long greeting");
   for (const t of ["Compare {first version} and {second version}", "Summarise {record_title} ({record_key}) in {area}", "No placeholder at all"])
@@ -63,7 +67,7 @@ const ex = (title: string, prompt = `${title} for {tab}.`) => ({ title, prompt }
 {
   const reg: Q.AgentPromptsRegistry = {
     defaults: { greeting: "Ask about {tab}", examples: [ex("App one"), ex("App two"), ex("App three"), ex("App four")], commands: [cmd("summarise", "App summary of {tab}."), cmd("draft"), cmd("export")] },
-    tabs: { findings: { examples: [ex("Tab one"), ex("Tab two"), ex("Tab three"), ex("Tab four"), ex("Tab five")], commands: [cmd("triage"), cmd("summarise", "Findings summary of {tab}.")] }, reports: { commands: [cmd("publish")] } },
+    tabs: { team: { greeting: "Who needs access to {tab}?" }, findings: { examples: [ex("Tab one"), ex("Tab two"), ex("Tab three"), ex("Tab four"), ex("Tab five")], commands: [cmd("triage"), cmd("summarise", "Findings summary of {tab}.")] }, reports: { commands: [cmd("publish")] } },
   };
   const none = { tab: null, record: null };
   assert.deepEqual(Q.examplesFor(reg, { tab: "findings", record: null }).map((e) => e.title), ["Tab one", "Tab two", "Tab three", "Tab four", "Tab five"], "a tab's own examples replace the app's");
@@ -95,9 +99,11 @@ const ex = (title: string, prompt = `${title} for {tab}.`) => ({ title, prompt }
   assert.equal(Q.slashQuery("//"), null);
   const g = Q.greetingFor(reg, { tab: "Findings" });
   assert.equal(g.title, "Ask about Findings", "the app's greeting, its {tab} filled");
+  assert.equal(Q.greetingFor(reg, { tab: "Findings" }, { tab: "findings", record: null }).title, "Ask about Findings", "a tab without a greeting: the app's");
+  assert.equal(Q.greetingFor(reg, { tab: "Users" }, { tab: "team", record: null }).title, "Who needs access to Users?", "mold_v0-338: the tab's own greeting over the app's");
   assert.equal(Q.greetingFor(empty, {}).title, "How can I help?");
   assert.equal(Q.greetingFor(empty, { tab: "Findings", record_title: "Late filing" }).title, "How can I help with Late filing?");
-  ok("offered: the tab's examples over the app's over the shell's (workspace, tab, record); commands the tab's first, the app's next, one per name; the filter and the typed slash; the greeting");
+  ok("offered: the tab's examples over the app's over the shell's (workspace, tab, record); commands the tab's first, the app's next, one per name; the filter and the typed slash; the greeting (the tab's, else the app's)");
 }
 
 // ---------- 3. filling ----------

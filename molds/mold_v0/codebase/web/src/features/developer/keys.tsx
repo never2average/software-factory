@@ -3,10 +3,17 @@
 // is made with a name, its scopes (each of read, write and run may be narrowed to one area or run kind), an expiry or
 // none, and a kind (a secret key holds any scopes; an integration key exactly one). It is shown once; the table keeps its
 // first characters to tell keys apart. Rotate makes a new key with the same name and scopes and keeps the old one working
-// for a grace period; Revoke stops a key at once.
+// for a grace period; Revoke stops a key at once. mold_v0-338: the same words and look as the workspace's other keys page
+// (web/src/lib/access-words.ts: the states with a capital, Never; four cards; New key as the toolbar's action; the unused
+// and expires-soon marks).
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { StatStrip } from '@/components/layout/section';
+import { Icons } from '@/components/icons';
+import { KeyMarks } from '@/features/keys/keys-page';
+import { ToolbarAction } from '@/features/tabs/tab-action';
+import { KEY_STATE_WORDS, UNUSED_DAYS, keyUnused } from '@/lib/access-words';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -38,7 +45,7 @@ const onceFor = (key: string, name: string, rotated?: boolean): Once => ({
 
 export function KeysTab({ offer }: { offer: Offer }) {
   const { data, error, reload } = useOrgLoad(() => dev<{ data: DevKey[] }>('GET', '/keys'));
-  const { lock } = useAccountRole();
+  const { lock, can } = useAccountRole();
   const [making, setMaking] = useState(false);
   const [rotating, setRotating] = useState<DevKey | null>(null);
   const [revoking, setRevoking] = useState<DevKey | null>(null);
@@ -50,20 +57,29 @@ export function KeysTab({ offer }: { offer: Offer }) {
       render: (k) => (k.kind === 'secret' ? 'Secret key' : 'Integration') },
     { key: 'scopes', label: 'Scopes', type: 'text', value: (k) => k.scopes.join(' '),
       render: (k) => <span className='flex flex-wrap gap-1'>{k.scopes.map((s) => <Badge key={s} variant='outline' className='font-mono'>{s}</Badge>)}</span> },
-    { key: 'state', label: 'State', type: 'select', keep: true, value: (k) => k.state, options: ['active', 'expired', 'revoked'].map((v) => ({ value: v })),
-      render: (k) => <Badge variant={STATE[k.state]}>{k.state}</Badge> },
-    { key: 'last_used', label: 'Last used', type: 'date', value: (k) => k.last_used_at, render: (k) => <When d={k.last_used_at} /> },
+    { key: 'state', label: 'State', type: 'select', keep: true, value: (k) => k.state, options: (['active', 'expired', 'revoked'] as const).map((v) => ({ value: v, label: KEY_STATE_WORDS[v] })),
+      render: (k) => <span className='flex flex-wrap items-center gap-1.5'><Badge variant={STATE[k.state]}>{KEY_STATE_WORDS[k.state]}</Badge><KeyMarks k={k} unused={keyUnused(k)} /></span> },
+    { key: 'last_used', label: 'Last used', type: 'date', value: (k) => k.last_used_at, render: (k) => (k.last_used_at ? <When d={k.last_used_at} /> : 'Never') },
     { key: 'expires', label: 'Expires', type: 'date', value: (k) => k.expires_at, render: (k) => (k.expires_at ? <When d={k.expires_at} /> : 'Never') },
     { key: 'created', label: 'Made', type: 'date', value: (k) => k.created_at, render: (k) => <When d={k.created_at} />, hidden: true },
     { key: 'version', label: 'API version', type: 'text', value: (k) => k.api_version, render: (k) => <span className='font-mono text-xs'>{k.api_version}</span>, hidden: true },
   ], []);
   if (error) return <ErrorState error={error} />;
+  const rows = data?.data ?? [];
+  const n = (st: DevKey['state']) => rows.filter((k) => k.state === st).length;
+  const unused = rows.filter((k) => keyUnused(k)).length;
   return (
     <>
       <RecordView<DevKey>
-        id='app-developer-keys' compact noun='keys' properties rows={data?.data ?? []} rowKey={(k) => String(k.id)} cols={cols} loading={!data}
-        searchText={(k) => `${k.name} ${k.key_prefix} ${k.scopes.join(' ')} ${k.state}`} searchPlaceholder='Search keys' defaultSort={[{ key: 'state', dir: 'asc' }]}
-        primary={<Allowed need='manage'><Button size='sm' onClick={() => setMaking(true)} data-new-key=''>New key</Button></Allowed>}
+        id='app-developer-keys' compact noun={rows.length === 1 ? 'key' : 'keys'} properties rows={rows} rowKey={(k) => String(k.id)} cols={cols} loading={!data}
+        summary={<StatStrip quad items={[
+          { label: 'Active', value: n('active'), said: `${n('active')} active ${n('active') === 1 ? 'key' : 'keys'}` },
+          { label: 'Expired', value: n('expired'), said: `${n('expired')} expired` },
+          { label: 'Revoked', value: n('revoked'), said: `${n('revoked')} revoked` },
+          { label: `Unused for ${UNUSED_DAYS} days`, value: unused, said: `${unused} active ${unused === 1 ? 'key' : 'keys'} not used for ${UNUSED_DAYS} days` },
+        ]} />}
+        searchText={(k) => `${k.name} ${k.key_prefix} ${k.scopes.join(' ')} ${KEY_STATE_WORDS[k.state]}`} searchPlaceholder='Search keys' defaultSort={[{ key: 'state', dir: 'asc' }]}
+        toolbarAction={data && can('manage') ? <div className='ml-auto flex shrink-0 gap-2' data-new-key=''><ToolbarAction label='New key' icon={<Icons.add />} onClick={() => setMaking(true)} /></div> : undefined}
         actions={(k) => (k.state !== 'active' ? [] : [
           lock({ label: 'Rotate', onSelect: () => setRotating(k) }, 'manage'),
           lock({ label: 'Revoke', destructive: true, onSelect: () => setRevoking(k) }, 'manage')

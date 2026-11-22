@@ -64,7 +64,7 @@ export const SETTINGS: SettingDef[] = [
     help: "The model each orchestrator thinks with (it plays the developer and drives the agents). Applies to orchestrators started after the change." },
   { key: "CLOUDFLARE_AI_MODEL", group: "models", label: "Research quick-pass model", kind: "text", default: "@cf/zai-org/glm-5.3-flash",
     help: "Cloudflare Workers AI model for the first, quick brief on an access request's company.",
-    withoutEngine: { label: "Quick answers model", help: "Cloudflare Workers AI model asked first for the docs' \"Ask AI\" answers (Claude answers when it does not). Used only while Cloudflare Workers AI is on in Key vault." } },
+    withoutEngine: { label: "Quick answers model", help: "Cloudflare Workers AI model asked first for the docs' \"Ask the docs\" answers (Claude answers when it does not). Used only while Cloudflare Workers AI is on in Key vault." } },
   { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5", readBy: "vertex",
     help: "Google Cloud region for Claude (and Gemini) on Vertex AI, e.g. us-east5, europe-west1, global. The project comes from the Vertex AI service-account key in Key vault." },
   // mold_v0-274: where each run's sandbox comes from (src/run-sandboxes.ts RUN_SANDBOXES.mode). Its default is the app's
@@ -82,9 +82,9 @@ export const SETTINGS: SettingDef[] = [
   { key: "BOAT_SANDBOX_SIZE", readBy: "engine", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
     help: "boat.dev machine size for orchestrators started after the change and their worker sandboxes." },
   { key: "DOCS_ANSWERS_DAILY_MAX", group: "docs", label: "Docs answers a day", kind: "int", default: 500, min: 0, max: 100000,
-    help: "Most model calls for \"Ask AI\" answers in the Cmd+K bar a UTC day, across all accounts and admins. Past it, people still get the matching docs sections, without the summary." },
+    help: "Most model calls for \"Ask the docs\" answers in the Cmd+K bar a UTC day, across all accounts and admins. Past it, people still get the matching docs sections, without the summary." },
   { key: "DOCS_ANSWERS_PER_MINUTE", group: "docs", label: "Docs answers a minute per person", kind: "int", default: 6, min: 0, max: 1000,
-    help: "Most \"Ask AI\" answers one person gets a minute; past it, the matching sections only." },
+    help: "Most \"Ask the docs\" answers one person gets a minute; past it, the matching sections only." },
   { key: "EMAILS_ENABLED", group: "email", label: "Send emails", kind: "choice", default: "on", options: ["on", "off"],
     help: "Off: nothing is sent (each email is logged as skipped). The Resend key is in Key vault; the log is on Emails." },
   { key: "EMAIL_FROM", group: "email", label: "From", kind: "text", format: "sender", default: defaultSender(), // the profile's sender (src/profile.ts)

@@ -55,7 +55,7 @@ import { PROFILE } from "./profile.js";
 import { attachmentMaxBytes, attachmentNote, bindFiles, COMPOSER_LIMITS, fileIds, filesAvailable, isSessionFile, openedFromOf, repositoryNames, sessionFileBytes, sessionRepositories, sessionUploads, sweepAttachments, type MessageAttachments } from "./agent-composer.js";
 import { domainAllowed, fetchRules } from "./agent-governance.js";
 import { programPurpose, purposeFromWords, type AgentLabel } from "./agent-purpose.js";
-import { messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
+import { askTitle, messageStep, TRACE_CONTENT_EVENTS, traceMarks, traceSteps, waitingOn, type TraceEventRow, type TraceMessageRow, type TraceRequestRow, type TraceSandboxRow, type TraceStep, type TraceWakeRow } from "./harness-trace.js";
 
 // ---------------------------------------------------------------- types
 
@@ -221,8 +221,14 @@ function toolWords(policy: AgentPolicy | null | undefined, name: string): string
   return policy?.workspace?.tools?.find((t) => t.name === own)?.title?.trim() || (workspaceToolOf(name) ? own.replaceAll("_", " ") : name);
 }
 
+/** mold_v0-338: what a tool request asks, as a title: the workspace tool's, else the request's own, else the name in words. */
+function requestTitle(policy: AgentPolicy | null | undefined, name: string, detail: Record<string, unknown> | null | undefined): string {
+  const own = workspaceToolOf(name) ?? name;
+  return askTitle(own, detail, policy?.workspace?.tools?.find((t) => t.name === own)?.title);
+}
+
 function requestView(q: { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: Date | null; reason: string | null; created_at: Date }, windowHours: number, policy?: AgentPolicy | null): RequestView {
-  return { id: q.id, kind: q.kind, subject: q.subject, subject_title: q.kind === "tool" ? toolWords(policy, q.subject) : q.subject, detail: q.detail ?? {}, status: q.status, decided_by: q.decided_by, decided_at: iso(q.decided_at), reason: q.reason,
+  return { id: q.id, kind: q.kind, subject: q.subject, subject_title: q.kind === "tool" ? requestTitle(policy, q.subject, q.detail) : q.subject, detail: q.detail ?? {}, status: q.status, decided_by: q.decided_by, decided_at: iso(q.decided_at), reason: q.reason,
     created_at: iso(q.created_at)!, expires_at: q.status === "pending" ? new Date(new Date(q.created_at).getTime() + windowHours * 3600_000).toISOString() : null };
 }
 
@@ -987,7 +993,8 @@ export async function sessionTrace(orgId: number | null, id: string, actor: Acto
     const grants = await q.query<{ id: string; from_usd: string; to_usd: string; reason: string; granted_by: string; created_at: Date }>(
       "SELECT id, from_usd, to_usd, reason, granted_by, created_at FROM harness_budget_grants WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
     const toolTitle = (name: string) => toolWords(r.policy, name);
-    const marks = traceMarks({ wakes, sandboxes, requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: g.created_at })), wakeIndex, toolTitle });
+    const marks = traceMarks({ wakes, sandboxes, requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: g.created_at })), wakeIndex, toolTitle,
+      askOf: (name, detail) => requestTitle(r.policy, name, detail) });
     const current = wakes.find((w) => w.id === r.current_run_id) ?? null;
     const sandbox = current ? [...sandboxes].reverse().find((s) => s.run_id === current.id) ?? null : null;
     const [waited] = current ? await q.query<{ reason: string | null }>("SELECT data->>'reason' AS reason FROM run_events WHERE org_id = $1 AND run_id = $2 AND type = 'waiting' ORDER BY id DESC LIMIT 1", [r.org_id, current.id]) : [];

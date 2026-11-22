@@ -14,6 +14,15 @@ import { dev, type Offer } from './api';
 
 interface Row { origin: string; from: 'app' | 'workspace' }
 
+/** mold_v0-338: what a page at an allowed address may do, in plain words ("…read this workspace's records for up to an hour at a time"). */
+const SCOPE_VERBS: Record<string, string> = { read: "read this workspace's records", write: "change this workspace's records", run: 'start runs' };
+const span = (s: number) => (s >= 3600 && s % 3600 === 0 ? (s === 3600 ? 'an hour' : `${s / 3600} hours`) : `${Math.max(1, Math.round(s / 60))} minutes`);
+export function originsHelp(c: { ttl_seconds: number; scopes: string[] }): string {
+  const verbs = c.scopes.map((x) => SCOPE_VERBS[x] ?? x);
+  const what = verbs.length <= 1 ? verbs[0] ?? "use this workspace" : `${verbs.slice(0, -1).join(', ')} and ${verbs.at(-1)}`;
+  return `Pages at these addresses may ${what} for up to ${span(c.ttl_seconds)} at a time.`;
+}
+
 export function OriginsTab({ offer }: { offer: Offer }) {
   const { data, error, reload } = useOrgLoad(() => dev<{ data: string[]; app: string[] }>('GET', '/origins'));
   const { lock, can } = useAccountRole();
@@ -37,7 +46,7 @@ export function OriginsTab({ offer }: { offer: Offer }) {
       <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void add(); }}>
         <Input className='w-80 font-mono text-xs' placeholder='https://app.yourcompany.com' value={origin} onChange={(e) => setOrigin(e.target.value)} aria-label='Origin to allow' disabled={!can('manage')} />
         <Allowed need='manage'><Button type='submit' size='sm' disabled={busy || !origin.trim()} data-add-origin=''>Allow origin</Button></Allowed>
-        <span className='text-muted-foreground text-xs'>Scheme, host and port only (https). A client session lives at most {Math.round(offer.client_sessions.ttl_seconds / 60)} minutes and holds at most {offer.client_sessions.scopes.join(', ')}.</span>
+        <span className='text-muted-foreground text-xs'>Scheme, host and port only (https). {originsHelp(offer.client_sessions)}</span>
       </form>
       <RecordView<Row>
         id='app-developer-origins' compact noun='origins' rows={rows} rowKey={(r) => r.origin} cols={cols} loading={!data}

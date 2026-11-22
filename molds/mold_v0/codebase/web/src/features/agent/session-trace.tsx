@@ -302,8 +302,10 @@ function withAgents(steps: TraceStep[]): TraceStep[] {
 }
 
 /** The stream. `dock` (the composer) floats over its bottom edge; the rows carry padding so nothing lives under it for good. */
-export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, dockHeight, empty }: {
+export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, dockHeight, empty, ended }: {
   sessionId: string; call: Call; steps: TraceStep[]; waitingOn: string | null; connected: boolean; live: boolean; pruned: boolean; dock: ReactNode; dockHeight: number;
+  /** mold_v0-338: the session has ended (stopped, failed, archived): an empty trace says nothing was recorded, not "yet". */
+  ended?: boolean;
   /** mold_v0-316: what shows while nothing is recorded (the blank screen's examples), instead of the plain line. */
   empty?: ReactNode;
 }) {
@@ -321,7 +323,7 @@ export function TraceStream({ sessionId, call, steps, waitingOn, pruned, dock, d
         <div ref={box} onScroll={onScroll} className='min-h-0 flex-1 overflow-y-auto overscroll-contain' style={{ paddingBottom: dockHeight + 24 }} role='log' aria-live='polite' aria-label='Trace' data-agent-transcript=''>
           {pruned && <p className='text-muted-foreground p-3 text-sm'>This session&apos;s conversation and trace were removed after their retention period; its spend and budget changes are kept.</p>}
           {!pruned && steps.length === 0
-            ? empty ?? <p className='text-muted-foreground p-3 text-sm' data-agent-waiting=''>{waitingOn ?? 'Nothing recorded yet: it appears here as the session works.'}</p>
+            ? empty ?? <p className='text-muted-foreground p-3 text-sm' data-agent-waiting=''>{waitingOn ?? (ended ? 'Nothing was recorded.' : 'Nothing recorded yet: it appears here as the session works.')}</p>
             : <ol className='mx-auto flex w-full max-w-4xl flex-col gap-0.5'>{rows}</ol>}
         </div>
       </ExpansionContext.Provider>

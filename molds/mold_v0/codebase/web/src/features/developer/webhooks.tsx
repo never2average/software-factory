@@ -26,7 +26,22 @@ import { dateTimeText } from '@/lib/display-format';
 const DSTATUS: Record<Delivery['status'], { label: string; variant: 'secondary' | 'outline' | 'destructive' }> = {
   succeeded: { label: 'Delivered', variant: 'secondary' }, pending: { label: 'Retrying', variant: 'outline' }, failed: { label: 'Failed', variant: 'destructive' }
 };
-const eventsWords = (e: Endpoint) => (e.events.length ? e.events.join(', ') : 'Every event');
+/**
+ * mold_v0-338: an endpoint's events in words, each by the developer surface's own description ("A problem, a learning or
+ * a deployment report was recorded"), else its name.
+ */
+const eventWords = (offer: Offer, name: string) => { const ev = offer.events.find((x) => x.name === name); return (ev?.description || ev?.about || name).trim().replace(/\.$/, ''); };
+const eventsWords = (offer: Offer, e: Endpoint) => (e.events.length ? e.events.map((n) => eventWords(offer, n)).join('; ') : 'Every event');
+/** mold_v0-338: why an endpoint is disabled, in a few words ("25 failures in a row", "Turned off by the workspace"). */
+export function disabledWhy(e: Pick<Endpoint, 'status' | 'disabled_reason' | 'failure_streak'>): string | null {
+  if (e.status !== 'disabled') return null;
+  const r = e.disabled_reason ?? '';
+  const after = /^disabled after (\d+) failed attempts? in a row/.exec(r);
+  if (after) return `${after[1]} failures in a row`;
+  if (/^disabled by the workspace/.test(r)) return 'Turned off by the workspace';
+  if (e.failure_streak > 0) return `${e.failure_streak} failures in a row`;
+  return r ? r.charAt(0).toUpperCase() + r.slice(1) : null;
+}
 
 export function WebhooksTab({ offer }: { offer: Offer }) {
   const { data, error, reload } = useOrgLoad(() => dev<{ data: Endpoint[] }>('GET', '/webhooks'));
@@ -40,16 +55,18 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
   const endpoints = data?.data ?? [];
   const logOf = endpoints.find((e) => e.id === log) ?? null;
   const cols = useMemo<RecordCol<Endpoint>[]>(() => [
-    { key: 'url', label: 'Endpoint', title: true, keep: true, type: 'text', className: 'min-w-56', value: (e) => e.url,
+    // mold_v0-338: the panel's title is the endpoint (its description, else its address): no Endpoint fact under it.
+    { key: 'url', label: 'Endpoint', title: true, keep: true, peek: false, type: 'text', className: 'min-w-56', value: (e) => e.url,
       render: (e) => <span className='flex min-w-0 flex-col gap-1'><span className='truncate font-mono text-xs'>{e.url}</span>{e.description && <span className='text-muted-foreground text-xs'>{e.description}</span>}</span> },
-    { key: 'events', label: 'Events', type: 'text', value: eventsWords, render: (e) => <span className='text-xs'>{eventsWords(e)}</span> },
+    { key: 'events', label: 'Events', type: 'text', value: (e) => eventsWords(offer, e), render: (e) => <span className='text-xs'>{eventsWords(offer, e)}</span> },
     { key: 'status', label: 'Status', type: 'select', keep: true, value: (e) => e.status, options: [{ value: 'enabled', label: 'Enabled' }, { value: 'disabled', label: 'Disabled' }],
-      render: (e) => <Badge variant={e.status === 'enabled' ? 'secondary' : 'destructive'}>{e.status === 'enabled' ? 'Enabled' : 'Disabled'}</Badge> },
+      render: (e) => <span className='flex flex-col items-start gap-1'><Badge variant={e.status === 'enabled' ? 'secondary' : 'destructive'}>{e.status === 'enabled' ? 'Enabled' : 'Disabled'}</Badge>
+        {disabledWhy(e) && <span className='text-muted-foreground text-xs' data-endpoint-disabled-why=''>{disabledWhy(e)}</span>}</span> },
     { key: 'failures', label: 'Failing in a row', type: 'number', value: (e) => e.failure_streak, render: (e) => (e.failure_streak ? e.failure_streak : '—') },
     { key: 'secret', label: 'Secret', type: 'date', value: (e) => e.secret_rotated_at ?? e.created_at,
       render: (e) => <span className='text-xs'>{e.secret_rotated_at ? <>rotated <When d={e.secret_rotated_at} /></> : <>made <When d={e.created_at} /></>}{e.secret_reveals ? `, revealed ${e.secret_reveals}×` : ''}</span> },
     { key: 'created', label: 'Added', type: 'date', value: (e) => e.created_at, render: (e) => <When d={e.created_at} />, hidden: true },
-  ], []);
+  ], [offer]);
   const patch = (e: Endpoint, body: Record<string, unknown>, done: string) => dev('PATCH', `/webhooks/${e.id}`, body).then(() => { toast.success(done); return reload(); }).catch(fail);
   const reveal = (e: Endpoint) => dev<{ data: { secret: string } }>('POST', `/webhooks/${e.id}/reveal`).then((r) => {
     setOnce({ title: 'Signing secret', label: 'Signing secret', secret: r.data.secret, description: 'This reveal is recorded (when, and by whom). Verify each delivery\'s webhook-signature with it; never send it anywhere.' });
@@ -74,7 +91,7 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
       <RecordView<Endpoint>
         id='app-developer-webhooks' compact noun='endpoints' properties rows={endpoints} rowKey={(e) => e.id} cols={cols} loading={!data}
         openKey={open} onOpenChange={setOpen}
-        searchText={(e) => `${e.url} ${e.description ?? ''} ${eventsWords(e)} ${e.status}`} searchPlaceholder='Search endpoints'
+        searchText={(e) => `${e.url} ${e.description ?? ''} ${e.events.join(' ')} ${eventsWords(offer, e)} ${e.status}`} searchPlaceholder='Search endpoints'
         primary={<Allowed need='manage'><Button size='sm' onClick={() => setAdding(true)} data-add-endpoint=''>Add endpoint</Button></Allowed>}
         actions={(e) => [
           lock({ label: 'Send test ping', onSelect: () => void ping(e), disabled: e.status !== 'enabled' }, 'manage'),
@@ -82,7 +99,7 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
           lock({ label: e.status === 'enabled' ? 'Disable' : 'Enable again', onSelect: () => void patch(e, { status: e.status === 'enabled' ? 'disabled' : 'enabled' }, e.status === 'enabled' ? 'Disabled' : 'Enabled again') }, 'manage'),
           lock({ label: 'Delete', destructive: true, separator: true, onSelect: () => void dev('DELETE', `/webhooks/${e.id}`).then(() => { toast.success('Endpoint deleted'); setOpen(null); return reload(); }).catch(fail) }, 'manage'),
         ]}
-        detailTitle={(e) => <span className='font-mono text-sm break-all'>{e.url}</span>}
+        detailTitle={(e) => (e.description ? e.description : <span className='font-mono text-sm break-all'>{e.url}</span>)}
         detail={(e) => <EndpointDetail key={e.id} e={e} offer={offer} onPatch={patch} onReveal={reveal} onRotate={rotate} onPing={ping} onLog={() => setLog(e.id)} />}
         empty={<p className='text-muted-foreground py-10 text-center text-sm'>No endpoints yet. Add the address on your server that should hear about changes here.</p>}
       />
