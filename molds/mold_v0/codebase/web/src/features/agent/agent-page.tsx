@@ -83,7 +83,9 @@ interface Offer {
   budget?: { default_usd: number; max_usd: number; ceiling_usd: number };
 }
 /** An agent profile this person may start (mold_v0-261), with its model and their budget range under it. */
-interface StartProfile { id: string; name: string; description: string; version: number; is_default: boolean; model: string; budget: { default_usd: number; max_usd: number; ceiling_usd: number }; harness?: string; keys?: number; uploads: number; governance?: string }
+interface StartProfile { id: string; name: string; description: string; version: number; is_default: boolean; model: string; budget: { default_usd: number; max_usd: number; ceiling_usd: number }; harness?: string; keys?: number; uploads: number; governance?: string;
+  /** mold_v0-338: false: builds, improvements, programs or schedules start it, not a person (left out of the task picker; an older server: absent). */
+  in_chat?: boolean }
 interface ListAnswer { sessions: Session[]; can_start?: boolean; offer: Offer; profiles?: StartProfile[] }
 
 function api(area: Area) {
@@ -108,7 +110,11 @@ const LIVE: Phase[] = ['starting', 'working', 'waiting', 'waking'];
 const usd = (n: number) => `$${n.toFixed(2)}`;
 /** What a workspace tool call wanted to send, as indented JSON when it is JSON. */
 const prettyInput = (s: string) => { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; } };
-const askWords = (r: Request) => r.kind === 'web' ? `Reach ${r.subject}` : r.kind === 'tool' ? `Use ${r.subject_title}` : `More budget (at ${r.subject})`;
+// mold_v0-338: a tool request reads as what it does ("Add an environment"): the tool's title, else the request's own, else
+// its name in words (src/harness-sessions.ts requestTitle), never "Use create_environment".
+const askWords = (r: Request) => r.kind === 'web' ? `Reach ${r.subject}` : r.kind === 'tool' ? r.subject_title : `More budget (at ${r.subject})`;
+/** A title in the middle of a sentence ("It asks to add an environment"): its first letter lowercase unless it starts an acronym. */
+export const midSentence = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 
 function PhaseBadge({ s }: { s: Pick<Session, 'phase' | 'pause_requested' | 'stop_requested'> }) {
   const words = s.stop_requested && LIVE.includes(s.phase) ? 'Stopping' : s.pause_requested && LIVE.includes(s.phase) ? 'Pausing' : PHASE_WORDS[s.phase];
@@ -171,25 +177,26 @@ function AgentList({ area }: { area: Area }) {
   </PageContainer>);
   // mold_v0-316: a new chat, for someone who may start a session (anyone else: the list, as before).
   if (fresh && data?.can_start) return (<PageContainer>
-    <NewChat key={`${from.tab}/${from.record?.area}/${from.record?.key}`} from={from} profiles={data.profiles ?? []} call={call}
+    <NewChat key={`${from.tab}/${from.record?.area}/${from.record?.key}`} from={from} profiles={(data.profiles ?? []).filter((p) => p.in_chat !== false)} call={call}
       onStarted={(sid) => void load().then(() => setOpen(sid))} onLeave={() => setOpen(null)} />
   </PageContainer>);
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
     // mold_v0-298: on a phone the list shows the session, its status and its last activity (max-sm:hidden on the rest), so
     // nothing is cut.
-    { key: 'ref', label: 'Number', type: 'text', className: 'max-sm:hidden', value: (s) => s.ref, render: (s) => <span className='font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span> },
+    // mold_v0-338: the short number is the title's muted prefix ("AGI-012 · Cut our build costs"), no column of its own (still searched).
     { key: 'title', label: 'Session', title: true, type: 'text', className: 'min-w-40 sm:min-w-56', value: (s) => s.title,
-      render: (s) => <span className='leading-snug font-medium'>{s.title}</span> },
+      render: (s) => <span className='leading-snug'><span className='text-muted-foreground font-mono text-xs whitespace-nowrap' data-agent-ref=''>{s.ref}</span><span className='text-muted-foreground' aria-hidden> · </span><span className='font-medium'>{s.title}</span></span> },
     // mold_v0-334: filtered by the one status (each word once), drawn with the session's own phase (Stopping, Pausing).
     { key: 'phase', label: 'Status', type: 'select', options: RUN_STATUSES.map((value) => ({ value, label: RUN_STATUS_WORDS[value] })), value: (s) => runStatusOf(s.phase), render: (s) => <PhaseBadge s={s} /> },
     ...(area === 'admin' ? [{ key: 'workspace', label: 'Workspace', type: 'text' as const, className: 'max-sm:hidden', value: (s: Session) => s.workspace?.slug ?? '', render: (s: Session) => <span className='font-mono text-xs'>{s.workspace?.slug}</span> }] : []),
-    { key: 'started_by', label: 'Started by', type: 'text', className: 'max-sm:hidden', value: (s) => s.started_by ?? '', render: (s) => <span className='break-all'>{s.mine ? 'You' : s.started_by}</span> },
+    { key: 'started_by', label: 'Started by', type: 'text', className: 'max-sm:hidden', value: (s) => s.started_by ?? '', render: (s) => <span className='block max-w-40 truncate' title={s.mine ? undefined : s.started_by ?? undefined}>{s.mine ? 'You' : s.started_by}</span> },
     { key: 'waiting_on', label: 'Waiting on', type: 'text', className: 'max-sm:hidden', value: (s) => (s.pending_request ? askWords(s.pending_request) : ''),
       render: (s) => (s.pending_request ? <span className='text-amber-700 dark:text-amber-300'>{askWords(s.pending_request)}</span> : '') },
-    { key: 'spent', label: 'Spent', type: 'number', className: 'max-sm:hidden', value: (s) => s.spent_usd, render: (s) => <span className='tabular-nums'>{usd(s.spent_usd)} <span className='text-muted-foreground'>of {usd(s.budget_usd)}</span></span> },
+    { key: 'spent', label: 'Spent', type: 'number', className: 'max-sm:hidden', value: (s) => s.spent_usd, render: (s) => <span className='tabular-nums whitespace-nowrap'>{usd(s.spent_usd)} <span className='text-muted-foreground'>of {usd(s.budget_usd)}</span></span> },
     { key: 'activity', label: 'Last activity', type: 'date', value: (s) => s.last_activity_at, render: (s) => <When d={s.last_activity_at} /> },
-    { key: 'wakes', label: 'Runs', type: 'number', className: 'max-sm:hidden', value: (s) => s.wakes, render: (s) => String(s.wakes) }
+    // mold_v0-338: the times the agent woke up are its turns ("a run" is a session handing work to other agents: Active runs).
+    { key: 'wakes', label: 'Turns', type: 'number', className: 'max-sm:hidden', value: (s) => s.wakes, render: (s) => String(s.wakes) }
   ];
   const n = (ps: Phase[]) => rows.filter((s) => ps.includes(s.phase)).length;
   const spent = rows.reduce((t, s) => t + s.spent_usd, 0);
@@ -263,8 +270,10 @@ type ComposerSend = import('./composer/agent-composer').ComposerSend;
 function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: {
   open: boolean; offer: Offer; profiles: StartProfile[]; preset: { profile: string | null; message: string | null }; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void;
 }) {
+  // mold_v0-338: the picker lists what a person starts; a start_agent action's own profile stays when it names one of the others.
+  const listed = profiles.filter((p) => p.in_chat !== false || p.id === preset.profile);
   // mold_v0-261: the profile chosen (the preset's when it is one this person may start, else the first: the Default).
-  const first = profiles.find((p) => p.id === preset.profile) ?? profiles[0] ?? null;
+  const first = profiles.find((p) => p.id === preset.profile) ?? profiles.find((p) => p.in_chat !== false) ?? null;
   const [profileId, setProfileId] = useState<string | null>(first?.id ?? null);
   const profile = profiles.find((p) => p.id === profileId) ?? null;
   const [message, setMessage] = useState('');
@@ -299,19 +308,20 @@ function StartDialog({ open, profiles, preset, call, onOpenChange, onStarted }: 
         <div className='grid gap-4'>
           <DialogHeader>
             <DialogTitle>Start a session</DialogTitle>
-            <DialogDescription className='sr-only'>Choose the task and say what the agent should do. The round button starts it.</DialogDescription>
+            <DialogDescription className='sr-only'>Choose the task and say what the agent should do.</DialogDescription>
           </DialogHeader>
-          {profiles.length > 0 && (
+          {listed.length > 0 && (
             <FormRow label='Task' htmlFor='agent-start-profile'>
               <NativeSelect id='agent-start-profile' className='w-full' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} data-agent-start-profile=''>
-                {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
+                {listed.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
               </NativeSelect>
             </FormRow>
           )}
-          <FormRow label='What should the agent do?' htmlFor='agent-start-message'>
-            <AgentComposer id='agent-start-message' label='What should the agent do?' value={message} onChange={setMessage} autoFocus session={null} busy={busy} disabledReason={null} sendLabel='Start'
+          {/* mold_v0-338: the box's one label, shown (no second label around it). */}
+          <div className='grid gap-2'>
+            <AgentComposer id='agent-start-message' label='What should the agent do?' showLabel value={message} onChange={setMessage} autoFocus session={null} busy={busy} disabledReason={null} sendLabel='Start'
               placeholder="Summarise this workspace's records and say what needs attention first." onSend={submit} commands={commands} context={ctx} menuInline />
-          </FormRow>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -345,7 +355,8 @@ function NewChat({ from, profiles, call, onStarted, onLeave }: { from: OpenedFro
   return (
     <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] flex-col gap-2' data-agent-new-chat='' data-opened-from={from.tab ?? ''}>
       <div className='flex min-w-0 items-center gap-2 sm:gap-3' data-agent-session-bar=''>
-        <h1 className='min-w-0 flex-1 truncate text-base font-medium'>New chat</h1>
+        {/* mold_v0-338: the breadcrumb's last crumb says "New chat": the heading is for screen readers only. */}
+        <h1 className='sr-only'>New chat</h1><span className='min-w-0 flex-1' aria-hidden />
         {profiles.length > 1 && <NativeSelect aria-label='Task' className='w-44 max-sm:w-36' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} data-agent-start-profile=''>
           {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
         </NativeSelect>}
@@ -636,6 +647,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   // The last model call failed and nothing has answered since: say so where the person is looking.
   const lastModel = [...trace.steps].reverse().find((s) => s.kind === 'model' && s.http_status !== undefined);
   const failing = live && lastModel?.status === 'error' ? (lastModel.error ?? 'The last model call failed.') : null;
+  // mold_v0-338: what it asks is said once: the bar above the chat box, not also the trace's own line for it.
+  const pendingAsk = d.pending_request ? `rq:${d.pending_request.id}:0` : null;
   return (
     <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem]' data-agent-session-page=''>
     <div className='flex min-w-0 flex-1 flex-col gap-2' data-agent-session={d.id} data-phase={d.phase}>
@@ -649,7 +662,8 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
       </div>
       {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['idle', 'paused', 'withdrawn', 'budget', 'continued'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
       <TraceStream empty={blank ? <SessionWelcome from={d.opened_from ?? null} onPick={(t, select) => setPrefill({ text: t, at: Date.now(), select })} /> : undefined}
-        sessionId={d.id} call={call} steps={trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
+        ended={['stopped', 'failed', 'archived'].includes(d.phase)}
+        sessionId={d.id} call={call} steps={pendingAsk ? trace.steps.filter((x) => x.id !== pendingAsk) : trace.steps} waitingOn={trace.waitingOn} connected={trace.connected} live={live} pruned={d.pruned} dockHeight={dockH}
         dock={<div ref={dockRef} className='bg-background/80 absolute inset-x-0 bottom-0 z-20 px-1 pt-2 pb-1 backdrop-blur-sm' data-agent-dock=''>
           <div className='mx-auto flex w-full max-w-4xl flex-col gap-2'>
             {d.pending_request && <RequestBar d={d} r={d.pending_request} call={call} onDone={changed} />}
@@ -735,7 +749,7 @@ function RequestBar({ d, r, call, onDone }: { d: Detail; r: Request; call: Call;
     catch (e) { fail(e); } finally { setBusy(false); }
   };
   const icon = r.kind === 'web' ? <Icons.world /> : r.kind === 'tool' ? <Icons.tool /> : <Icons.coin />;
-  const what = r.kind === 'web' ? <>It asks to read <span className='font-mono'>{r.subject}</span></> : r.kind === 'tool' ? <>It asks to use {r.subject_title}</> : <>It reached its {usd(d.budget_usd)} budget</>;
+  const what = r.kind === 'web' ? <>It asks to read <span className='font-mono'>{r.subject}</span></> : r.kind === 'tool' ? <>It asks to {midSentence(r.subject_title)}</> : <>It reached its {usd(d.budget_usd)} budget</>;
   const who = r.kind === 'budget' ? (d.can.raise ? null : 'A billing manager or an owner of the workspace can raise it.') : d.can.decide ? null : 'The person who started this session or an owner decides.';
   const hasInput = r.kind === 'tool' && typeof r.detail.input === 'string' && r.detail.input !== '{}';
   return (
@@ -760,7 +774,7 @@ function RequestBar({ d, r, call, onDone }: { d: Detail; r: Request; call: Call;
         <div className='flex max-h-[38dvh] flex-col gap-3 overflow-y-auto border-t pt-2.5 text-sm' data-approval-details=''>
           <p className='text-muted-foreground'>
             {r.kind === 'web' ? <>Approve lets this session read <span className='font-mono'>{r.subject}</span>, and nothing else new. {typeof r.detail.url === 'string' ? <>It wanted <span className='font-mono break-all'>{r.detail.url}</span>. </> : null}What it reads is treated as untrusted. Decline tells it no; it parks and is told at the next message.</>
-              : r.kind === 'tool' ? <>Approve lets this session use {r.subject_title} from now on, and it continues, {d.reach?.acts_as.kind === 'person' ? (d.mine ? 'acting as you' : `acting as ${d.reach.acts_as.name ?? 'the person who started it'}`) : 'acting as the account'}. Decline tells it no; it parks and is told at the next message.</>
+              : r.kind === 'tool' ? <>Approve lets this session {midSentence(r.subject_title)}, and use that tool from now on without asking; it continues, {d.reach?.acts_as.kind === 'person' ? (d.mine ? 'acting as you' : `acting as ${d.reach.acts_as.name ?? 'the person who started it'}`) : 'acting as the account'}. Decline tells it no; it parks and is told at the next message.</>
                 : <>It spent {usd(d.spent_usd)}. Raise its budget to let it continue where it stopped (up to {usd(d.ceiling_usd)}).</>}
             {r.expires_at ? <> Unanswered, the request expires <When d={r.expires_at} />.</> : null}
           </p>

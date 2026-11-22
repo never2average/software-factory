@@ -73,6 +73,8 @@ const RECORD_PAGE = /^\/app\/records\/([^/]+)\/([^/]+)$/;
 const areaListCrumbs = (list: string, area: string): BreadcrumbItem[] => IN_PAGE_AREAS.get(list) ?? [{ title: PACK_TITLES.get(list) ?? area, link: list }];
 
 const AGENT_PAGE = /^\/(app|admin)\/agent$/;
+/** Whether an address is an entry of the sidebar's own (not one nested under another entry). */
+const topEntry = (groups: ReturnType<typeof useActiveNavEntry>['groups'], url: string) => groups.some((g) => g.items.some((i) => i.url === url));
 
 /**
  * The trail of the page being drawn. `search` is the page's query (useNavSearch, drawn by the caller), so the group named
@@ -128,6 +130,10 @@ export function useBreadcrumbs(search = '') {
     // entry), and the area's home is named by its entry ("Overview"). A page outside the sidebar starts at its own name.
     let trail = crumbs.slice(1);
     if (!trail.length) trail = place ? [{ title: place.title, link: place.url }] : crumbs.slice(0, 1);
+    // mold_v0-338: an entry of the sidebar's own whose address sits under another's (Active runs, /app/agent/runs, beside
+    // Agents): the trail starts at that entry, as the sidebar has it, never inside the other ("Build / Active runs").
+    const at = place && topEntry(groups, place.url) ? trail.findIndex((c) => c.link === place.url) : -1;
+    if (at > 0) trail = trail.slice(at);
     // A page that names its own crumb (a record's page: the record's title, not the key in the address).
     if (ownTitle && trail.length) trail = [...trail.slice(0, -1), { ...trail.at(-1)!, title: ownTitle }];
     // mold_v0-290: an open session is the trail's last level, its short number; the page before it links back to the list.

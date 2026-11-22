@@ -47,7 +47,7 @@ export function openedFromWords(ctx: PromptContext): string | null {
 export function AgentWelcome({ from, ctx, onPick, className }: { from: OpenedFrom | null; ctx: PromptContext; onPick: (text: string, select: [number, number] | null) => void; className?: string }) {
   const at = from ?? { tab: null, record: null };
   const examples = useMemo(() => examplesFor(agentPrompts, at), [at.tab, at.record?.area, at.record?.key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const greeting = greetingFor(agentPrompts, ctx);
+  const greeting = greetingFor(agentPrompts, ctx, at);
   const where = openedFromWords(ctx);
   const pick = (e: AgentExample) => { const f = fillPrompt(e.prompt, ctx); onPick(f.text, f.select); };
   return (

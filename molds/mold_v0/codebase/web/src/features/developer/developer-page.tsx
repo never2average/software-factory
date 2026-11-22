@@ -7,7 +7,7 @@
 //   Allowed origins   Access: the browser origins client sessions may call from (the app's own, and the workspace's)
 //   Webhooks          Connections: endpoints, their events, the signing secret (revealed on purpose, and recorded),
 //                     rotated, a test ping, a delivery log and Enable again after an automatic disable
-//   Integrations      Connections: the sources for the app's inbound webhook receivers (their address, their secret,
+//   Inbound webhooks  Connections (mold_v0-338: "Integrations" before): the sources for the app's inbound webhook receivers (their address, their secret,
 //                     shown once, and the last deliveries), where the app takes webhooks in
 // Every role may read; the changes are an owner's (the API's `manage`), and the buttons say so for everyone else.
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';

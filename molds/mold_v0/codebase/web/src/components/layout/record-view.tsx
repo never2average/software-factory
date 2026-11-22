@@ -177,7 +177,7 @@ export function RecordView<T>({
   // mold_v0-294: Ask AI about the list, docked beside it as a row's record is (one panel at a time).
   const [asking, setAsking] = useState(false);
   const askContextRef = useRef<() => ListAskContext>(() => listAskContext({ list: noun, columns: [], rows: [] }));
-  const askPanel: RecordSidePanel | null = asking ? { key: 'ask-ai', title: 'Ask AI', onClose: () => setAsking(false), body: <ListAskPanel context={() => askContextRef.current()} />, fill: true } : null;
+  const askPanel: RecordSidePanel | null = asking ? { key: 'ask-ai', title: 'Ask the agent', onClose: () => setAsking(false), body: <ListAskPanel context={() => askContextRef.current()} />, fill: true } : null;
   // mold_v0-315: under a sections tab's in-page tabs, the strip is drawn at the top of this list's column, so a panel
   // beside the list starts level with it (features/tabs/in-page-tabs.tsx); null anywhere else.
   const tabStrip = useTabStrip();

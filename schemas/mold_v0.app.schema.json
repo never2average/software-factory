@@ -11869,6 +11869,9 @@
               "agent": {
                 "type": "object",
                 "properties": {
+                  "greeting": {
+                    "type": "string"
+                  },
                   "examples": {
                     "minItems": 1,
                     "maxItems": 6,
@@ -13635,6 +13638,9 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "start_from_chat": {
+                "type": "boolean"
               },
               "$comment": {
                 "type": "string",

@@ -163,12 +163,13 @@ export function RunView({ id, call, onAsk, onOpenChild }: { id: string; call: Do
   return (
     <div className='flex flex-col gap-5' data-run-view={run.root.id}>
       {run.root.agent && <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>Runs as <AgentName name={run.root.agent.name} purpose={run.root.agent.purpose} muted={false} /></span>}
-      <dl className='grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4'>
-        {[['Spent', `${usd(spent)} of ${usd(run.root.budget_usd)}`], ['Set aside for children', usd(run.root.carved_usd)], ['Children', String(run.children.filter((c) => c.kind !== 'machine').length)], ['Best improvement', lifts.length ? pct(Math.max(...lifts)) : 'None yet']].map(([k, v]) => (
+      <dl className='grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3'>
+        {/* mold_v0-338: the agents under it are counted by their section's title, not a fact of their own; the list's word, "agents". */}
+        {[['Spent', `${usd(spent)} of ${usd(run.root.budget_usd)}`], ['Set aside for agents under it', usd(run.root.carved_usd)], ['Best improvement', lifts.length ? pct(Math.max(...lifts)) : 'None yet']].map(([k, v]) => (
           <div key={k} className='flex min-w-0 flex-col gap-0.5'><dt className='text-muted-foreground text-xs'>{k}</dt><dd className='text-sm font-medium tabular-nums'>{v}</dd></div>
         ))}
       </dl>
-      <Block title='Children'>{run.children.length ? <Tree nodes={run.children} onOpen={onOpenChild ? (n) => onOpenChild(n.session_id!, n.name) : undefined} /> : <p className='text-muted-foreground text-xs'>It has started none yet.</p>}</Block>
+      <Block title={`Agents under it (${run.children.filter((c) => c.kind !== 'machine').length})`}>{run.children.length ? <Tree nodes={run.children} onOpen={onOpenChild ? (n) => onOpenChild(n.session_id!, n.name) : undefined} /> : <p className='text-muted-foreground text-xs'>It has started none yet.</p>}</Block>
       {run.decisions.length > 0 && <Block title='What was decided'>
         <ul className='flex flex-col gap-2'>{run.decisions.map((d) => (
           <li key={d.id} className='flex flex-col gap-1 rounded-md border px-3 py-2' data-run-decision=''>

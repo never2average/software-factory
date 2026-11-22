@@ -4,7 +4,7 @@
 // address) and can be revoked at any time. A key acts with its person's role. Owners also see and revoke every key of
 // the workspace, the older ones included. mold_v0-298: one name everywhere, the page's: "API keys" (the sidebar's, the
 // title's), or the label a pack gives its keys tab inside Settings; a workspace's own key belongs to "Whole workspace".
-import { UNUSED_DAYS } from '@/lib/access-words';
+import { EXPIRES_SOON_DAYS, KEY_STATE_WORDS, UNUSED_DAYS, keyExpiresSoon, unusedWords } from '@/lib/access-words';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -60,16 +60,23 @@ export function KeysPage() {
 
 /**
  * The page's name (default "API keys") and one of them ("API key"). A label with no plural to drop ("Access") calls one
- * of them "key" (mold_v0-298), never "New Access".
+ * of them "key" (mold_v0-298), never "New Access". mold_v0-338: in the middle of a sentence ("New agent key", "Search
+ * agent keys", "4 agent keys") a pack's label reads in lowercase, unless its first word is an acronym ("API keys").
  */
-const namesOf = (label: string) => { const one = singular(label); return { many: label, one: one === label ? 'key' : one }; };
+export const midLabel = (label: string) => (/^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label);
+const namesOf = (label: string) => { const one = singular(label); return { many: midLabel(label), one: one === label ? 'key' : midLabel(one) }; };
 
-const STATE_WORD: Record<Key['state'], string> = { active: 'Active', expired: 'Expired', revoked: 'Revoked' };
-/** mold_v0-334: an active key nobody used for UNUSED_DAYS days, in words: never used, or not used since. */
-const unusedWords = (k: Key) => (k.last_used_at ? `Not used for ${UNUSED_DAYS} days` : 'Never used');
-function UnusedChip({ k }: { k: Key }) {
-  if (!k.unused) return null;
-  return <Badge variant='outline' className='text-muted-foreground font-normal' data-key-unused='' title={`Revoke it if nothing needs it any more.`}>{unusedWords(k)}</Badge>;
+const STATE_WORD = KEY_STATE_WORDS;
+/**
+ * A key's marks beside its state (mold_v0-334, mold_v0-338: on both keys pages): unused for UNUSED_DAYS days, and expires
+ * within EXPIRES_SOON_DAYS days.
+ */
+export function KeyMarks({ k, unused }: { k: { state: string; last_used_at: string | null; expires_at: string | null }; unused: boolean }) {
+  const soon = keyExpiresSoon(k);
+  return (<>
+    {unused && <Badge variant='outline' className='text-muted-foreground font-normal' data-key-unused='' title='Revoke it if nothing needs it any more.'>{unusedWords(k)}</Badge>}
+    {soon && <Badge variant='outline' className='font-normal text-amber-700 dark:text-amber-300' data-key-expires-soon='' title={`It stops working within ${EXPIRES_SOON_DAYS} days: replace it before then if something still uses it.`}>Expires soon</Badge>}
+  </>);
 }
 
 /**
@@ -89,9 +96,10 @@ export function KeysPanel({ label = 'API keys' }: { label?: string }) {
   const cols: RecordCol<Key>[] = [
     { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-48', value: (k) => k.name, render: (k) => <span className='font-medium'>{k.name}</span> },
     ...(owners ? [{ key: 'owner', label: 'Belongs to', type: 'text' as const, value: belongsTo, render: belongsTo }] : []),
-    { key: 'kind', label: 'Kind', type: 'text', value: (k) => KIND[k.kind], render: (k) => KIND[k.kind] },
+    // mold_v0-338: Belongs to already tells a workspace key from a person's ("Whole workspace"): Kind is hidden beside it (the panel keeps it).
+    { key: 'kind', label: 'Kind', type: 'text', value: (k) => KIND[k.kind], render: (k) => KIND[k.kind], ...(owners ? { hidden: true } : {}) },
     { key: 'state', label: 'State', type: 'select', keep: true, options: Object.entries(STATE_WORD).map(([value, label]) => ({ value, label })), value: (k) => k.state,
-      render: (k) => <span className='flex flex-wrap items-center gap-1.5'><Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{STATE_WORD[k.state]}</Badge><UnusedChip k={k} /></span> },
+      render: (k) => <span className='flex flex-wrap items-center gap-1.5'><Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{STATE_WORD[k.state]}</Badge><KeyMarks k={k} unused={!!k.unused} /></span> },
     { key: 'last', label: 'Last used', type: 'date', value: (k) => k.last_used_at, render: (k) => (k.last_used_at ? <When d={k.last_used_at} /> : 'Never') },
     { key: 'expires', label: 'Expires', type: 'date', value: (k) => k.expires_at, render: (k) => (k.expires_at ? <When d={k.expires_at} /> : 'Never') },
   ];
@@ -116,7 +124,7 @@ export function KeysPanel({ label = 'API keys' }: { label?: string }) {
           <Field label='Kind'>{KIND[k.kind]}</Field>
           <Field label='What it is'>{KIND_ABOUT[k.kind]}</Field>
           <Field label='Starts with'><span className='font-mono text-xs'>{k.key_prefix}…</span></Field>
-          <Field label='State'>{STATE_WORD[k.state]}{k.unused ? ` · ${unusedWords(k)}` : ''}</Field>
+          <Field label='State'>{STATE_WORD[k.state]}{k.unused ? ` · ${unusedWords(k)}` : ''}{keyExpiresSoon(k) ? ' · Expires soon' : ''}</Field>
           <Field label='Created'><When d={k.created_at} /></Field>
           <Field label='Last used'>{k.last_used_at ? <When d={k.last_used_at} /> : 'Never'}</Field>
           <Field label='Expires'>{k.expires_at ? <When d={k.expires_at} /> : 'Never'}</Field>
