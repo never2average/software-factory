@@ -25,3 +25,23 @@ export function prefill(fields: readonly PrefillField[], search = typeof window 
 /** A Key made from a Title (mold_v0-256: an area with key_from_title): lowercase words joined by -, at most 64 characters. */
 export const keyFromTitle = (title: string) => title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64).replace(/-+$/, '');
 
+
+/**
+ * mold_v0-339: a number field kept as a share from 0 to 1 (unit "percent") is shown and typed as a percent in a form
+ * (0.8 reads 80; 80 typed is stored 0.8), as its value reads on the record's page ("80%"); "percent_100" and "%" are
+ * already 0 to 100 and only carry the % sign.
+ */
+interface UnitField { type: string; unit?: string | null }
+const unitOf = (f: UnitField) => (f.type === 'number' ? (f.unit ?? '').trim().toLowerCase() : '');
+export const isFractionPercent = (f: UnitField) => unitOf(f) === 'percent';
+export const showsPercentSign = (f: UnitField) => ['percent', 'percent_100', '%'].includes(unitOf(f));
+/** A stored share as the form shows it (0.8 -> "80"), else the value as it is. */
+export const percentInput = (f: UnitField, v: unknown): unknown => {
+  if (!isFractionPercent(f) || v === undefined || v === null || v === '') return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Number((n * 100).toPrecision(12))) : v;
+};
+/** A typed percent as it is stored (80 -> 0.8), else the number as it is. */
+export const percentStored = (f: UnitField, n: number) => (isFractionPercent(f) ? Number((n / 100).toPrecision(12)) : n);
+/** A bound of the field (its min or max, stored as a share) as the form's input takes it. */
+export const percentBound = (f: UnitField, b: number | null) => (b === null ? undefined : isFractionPercent(f) ? Number((b * 100).toPrecision(12)) : b);

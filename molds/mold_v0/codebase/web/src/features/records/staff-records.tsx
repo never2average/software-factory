@@ -31,7 +31,7 @@ import { ActionCard, FormHost, CardForm, CreateRecordForm, FieldsForm, ToolbarAc
 import { Sparklines } from '@/features/tabs/sparklines';
 import { ErrorState, fail, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { adminDataApi } from '@/lib/api-client';
+import { adminDataApi, adminRecordsApi } from '@/lib/api-client';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments } from './documents';
 import { singular } from '@/features/tabs/run-rows';
@@ -39,9 +39,10 @@ import { FieldValue, RecordEmpty, RecordTableView, type RecordRow } from './reco
 import { ImportRecordsForm } from './staff-import';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useVisibilityInput, type RecordVisibility } from '@/features/teams/visibility';
+import { percentInput } from '@/features/tabs/form-prefill';
 import { featureOn } from '@/config/features';
 import { useBreadcrumbTitle } from '@/lib/breadcrumb-leaf';
-import { layoutOf } from './detail-layout';
+import { layoutOf, optionWords } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
 import { ownsDatabase, RecordResources } from './record-resources';
 
@@ -57,6 +58,8 @@ interface StaffForm {
    * `fields` (the platform creates it: mold_v0-285, a schema of the record's own in the app's own database).
    */
   resources?: { repositories: { field: string; label: string }[]; databases: { field: string; label: string; provider: string }[] };
+  /** mold_v0-339: the area has a lifecycle staff move its rows along (Move items; POST /api/admin/records/<area>/<key>/move). */
+  moves?: boolean;
 }
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -84,7 +87,7 @@ export function nounOf(area: { name: string; label: string }): string {
 
 /** A staff row's write controls: Edit (Override on a repository's row) and Remove (Remove override) where the role may. */
 /** A staff row's Edit (or Override) and Remove: its record panel's ⋯ items (mold_v0-278). */
-function rowItems({ area, form, row, edit, removed }: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }): RowAction[] {
+function rowItems({ area, form, row, edit, removed, moved = removed }: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void; moved?: () => void }): RowAction[] {
   const fromRepository = row.provenance?.by === 'repository', overrides = !!row.provenance?.overrides;
   const remove = async () => {
     const name = row.title || row.key;
@@ -98,17 +101,30 @@ function rowItems({ area, form, row, edit, removed }: { area: RecordAreaSpec; fo
       removed();
     } catch (e) { fail(e); }
   };
+  // mold_v0-339: a shared area's lifecycle, moved by staff: one item per move open from where the row is (a repository's
+  // row is read only: Override it first). The server checks the move again and names it in the access log.
+  const lc = area.lifecycle, from = lc ? String(row.data[lc.field] ?? lc.initial) : null;
+  const stateField = lc ? area.fields.find((f) => f.name === lc.field) : undefined;
+  const moves = form?.moves && lc && !fromRepository ? [...new Map(lc.transitions.filter((t) => t.to !== from && (t.from === '*' || t.from.includes(from!))).map((t) => [t.to, t])).values()] : [];
+  const move = async (to: string) => {
+    try {
+      await adminRecordsApi('POST', `/${encodeURIComponent(area.name)}/${encodeURIComponent(row.key)}/move`, { to });
+      toast.success(`Moved to ${optionWords(stateField, to)}`);
+      moved();
+    } catch (e) { fail(e); }
+  };
   return [
+    ...moves.map((t) => ({ label: t.label ?? `Move to ${optionWords(stateField, t.to)}`, icon: <Icons.arrowRight />, testId: `row-move-${t.to}`, onSelect: () => void move(t.to) })),
     ...(form?.edit ? [{ label: fromRepository ? 'Override' : 'Edit', icon: <Icons.edit />, onSelect: edit }] : []),
     ...(form?.remove && !fromRepository ? [{ label: overrides ? 'Remove override' : 'Remove', icon: <Icons.trash />, destructive: true, separator: true, onSelect: () => void remove() }] : []),
   ];
 }
 
 /** The same on a staff record's own page: its header's buttons. */
-function RowActions(props: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }) {
+function RowActions(props: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void; moved?: () => void }) {
   return (<>{rowItems(props).map((a) => (
-    <Button key={a.label} variant='outline' size='sm' onClick={a.onSelect} data-row-edit={a.icon && !a.destructive ? (a.label === 'Override' ? 'override' : 'edit') : undefined}
-      data-row-remove={a.destructive ? '' : undefined}>{a.icon} {a.label}</Button>
+    <Button key={a.label} variant='outline' size='sm' onClick={a.onSelect} data-row-edit={a.icon && !a.destructive && !a.testId ? (a.label === 'Override' ? 'override' : 'edit') : undefined}
+      data-row-remove={a.destructive ? '' : undefined} data-testid={a.testId}>{a.icon} {a.label}</Button>
   ))}</>);
 }
 
@@ -215,7 +231,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
         ) : null}>
           <LaidOutRecord area={area} base='admin' layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
             provenance={data.record.provenance ? { by: data.record.provenance.by === 'repository' ? 'repository' : 'staff' } : null} where='Shared' credentials={null} onChanged={() => void reload()}
-            headerActions={form?.edit || form?.remove ? <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)}
+            headerActions={form?.edit || form?.remove ? <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)} moved={() => void reload()}
               removed={() => (data.record.provenance?.overrides ? void reload() : router.push(listHref))} /> : null} />
           <RecordResources area={area} recordKey={data.record.key} />
         </FormHost>
@@ -239,7 +255,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
             <CardTitle className='text-lg leading-snug break-words'>{data.record.title || data.record.key}</CardTitle>
             {(form?.edit || form?.remove) && (
               <CardAction className='flex gap-2'>
-                <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)}
+                <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)} moved={() => void reload()}
                   removed={() => (data.record.provenance?.overrides ? void reload() : router.push(listHref))} />
               </CardAction>
             )}
@@ -287,7 +303,7 @@ function formValue(f: FormField, v: unknown): unknown {
   if (f.type === 'enum' && f.multiple) return Array.isArray(v) ? v.map(String) : [String(v)];
   if (Array.isArray(v)) return v.map(String).join(', ');
   if (f.type === 'date') return String(v).slice(0, 10);
-  return String(v);
+  return String(percentInput(f, v)); // mold_v0-339: a share shows as a percent (0.8 -> 80)
 }
 
 /**

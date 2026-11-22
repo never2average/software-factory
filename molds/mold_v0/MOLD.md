@@ -4927,6 +4927,67 @@ Finished view, key expiry and the unused flag, the reminders), with `npm run tes
 `npm run test:console-tabs`, `npm run test:migrations`, `npm run check:rls`, `npm run check:tenant-sql`,
 `npm run test:words`, `npm run test:vocabulary` and `npm run check:vocabulary` unchanged.
 
+## Records: the main action that fits, regressed on repeat, deprecated since, skipped steps, percent edit (mold_v0-339)
+
+Five generic pieces, approved by the operator on 2026-11-22 for record panels whose main action depends on the record,
+programs that find a solved record again, and shared catalogs whose maturity changes. Every pack key is optional; a pack
+that names none builds and behaves as before, except the two console fixes (skipped steps, percent forms), which are the
+mold's for every app.
+
+- **The action that fits** (`show_when` on a page action, `src/pack-api.ts` DetailActionSchema; `src/record-page-routes.ts`
+  pageActions): a condition on the record (the notices' language: its fields and clocks) the action is offered under; left
+  out while it does not hold (where `unavailable` greys out one that does not fit now), and refused by the API (409, "… is
+  not offered on this record now"). Several actions may each be `place: "primary"` when every one of them has a
+  `show_when` (the build refuses two primaries otherwise): each is the main action of its own records ("Improve the
+  recipe" on a recipe's item, "Improve the rules" on a rule's). On a record where more than one holds, the first declared
+  is the primary and the others sit in the menu.
+- **A repeat moves the record it repeats** (`on_repeat: {from: [states], move_to}` on a program's `record`, beside
+  `dedupe_on`; `src/program-spec.ts` recordProblems, `src/program-records.ts` writeProgramResult): a new record dedupe_on
+  leaves out as a repeat of a stored one moves that stored record, when it is in one of `from`, to `move_to` (a solved
+  item found again is regressed). Guarded as an outcome's move: inside the result's transaction, the row locked and read
+  again; only from one of `from` (so once: from `move_to` it is no longer there); never when it entered its state after
+  the run started (a person moved it since: that move stands); along a transition naming where it is (never a `"*"` one);
+  as the person who started the run (their role now, the area's move permission and the transition's roles; one who left
+  the workspace, a viewer, or a run nobody started moves nothing). The run is the move's writer (its history names it);
+  the `child_records` trace event lists `repeated` (`{key, from, moved, why?}`). A batch's own repeats move nothing.
+  Checked when saved: dedupe_on given, `move_to` not one of `from`, a transition from each of `from` to `move_to`.
+
+  ```json
+  { "record": { "area": "items", "items": "found", "dedupe_on": ["statement"], "on_repeat": { "from": ["solved"], "move_to": "regressed" },
+                "fields": { "statement": "statement" } } }
+  ```
+- **A lifecycle on a shared (platform) area** (`src/pack-api.ts` the area's checks and its contract; `src/record-areas.ts`
+  putPlatform, movePlatform, platformStateTimes; `src/record-routes.ts`): moved by platform staff only. Its transitions
+  name no roles and it has no `supersedes` (refused at build); its contract's `move` is `{staff: "library"}` (a workspace
+  area's never is). A hand write over a stored row keeps the state (one naming another is refused, 409, "changes only by a
+  move"); a new row starts in the state it names (staff adding or importing an entry as it stands) or the initial one; a
+  repository's index carries the state its source gives. When a row enters each state is kept (`$state_at`, never written
+  by hand, never in an answer). Staff move it with **POST `/api/admin/records/<area>/<key>/move` `{to}`** ("library", the
+  staff tool `admin_update` not withheld): along a transition from where it is, never a repository's row (override it
+  first), compare-and-set on the stored row (changed meanwhile: 409); the request is in the access log and a `MOVE` line
+  names the record and both states (the platform trail too, when on). The staff record page's form leaves the state out
+  and offers one item per move open now (Move to …, or the transition's label). A workspace never moves one (its page
+  actions, data API and tools refuse a shared area's writes as before).
+- **"Deprecated since 3 Oct"** (a header fact `{state_since: true, label?}`): when the record entered the state it is in,
+  from the store's state times, labelled "<state's words> since" unless it names its own; left out while there is none (a
+  record from before the times were kept). A workspace record's or a shared one's; both pages (the workspace's and the
+  staff record page) read `state_at`. Refused: on an area without a lifecycle, with a field, computed, unit or link_text,
+  twice.
+- **Up to 12 facts in a rail layout** (`DETAIL_FACTS_RAIL_MAX`): a rail layout lists its facts as label and value rows, so it
+  takes up to 12 (a catalog entry's "Deprecated since" beside its others); the cards' header keeps 10, in rows of four.
+- **Steps a record never passed** (`web/src/features/records/detail-layout.ts` stepRows, `record-kit.tsx` RailSteps): a
+  step before where the record is (or where it stopped) that its state times show it never entered reads **Skipped** (a
+  dashed circle, "–"), no longer Done. Steps before the first one timed stay Done (a record from before the times).
+- **Percent fields in forms** (`src/tab-actions.ts` formField gives a number's `unit`; `web/src/features/tabs/form-prefill.ts`,
+  `tab-action.tsx`, `staff-records.tsx`): a number field kept as a share (`unit: "percent"`, 0 to 1) is shown and typed as
+  a percent in every create and edit form (0.8 reads 80, with a % sign; 80 typed is stored 0.8; its min and max too), as
+  its value reads on the record's page ("80%"). `percent_100` and `%` carry the sign only.
+
+Proof: `npm run test:records-339` (the keys and their refusals, the console's pure parts and wiring, then through the API
+in an embedded database: show_when offered and refused, on_repeat's moves and each guard, a shared area's lifecycle: hand
+writes, a repository's, the staff move route and its refusals, the access log, both pages' state times). The
+console-types fixture declares `show_when`, `state_since` and a shared area's lifecycle.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace

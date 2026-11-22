@@ -626,7 +626,9 @@ async function keepRecords(orgId: number, h0: HandleRow): Promise<void> {
     const w = await writeProgramResult(orgId, h, config.record);
     const r = await run();
     await tx((q) => runEvent(q, r, orgId, "child_records", { handle: h.id, area: config.record!.area, keys: w.keys.slice(0, 20), written: w.keys.length,
-      ...(w.deduped.length ? { deduped: w.deduped.slice(0, 20) } : {}), ...(w.unmoved.length ? { unmoved: w.unmoved.slice(0, 20) } : {}), ...(w.existing.length ? { existing: w.existing.slice(0, 20) } : {}) }));
+      ...(w.deduped.length ? { deduped: w.deduped.slice(0, 20) } : {}), ...(w.unmoved.length ? { unmoved: w.unmoved.slice(0, 20) } : {}), ...(w.existing.length ? { existing: w.existing.slice(0, 20) } : {}),
+      // mold_v0-339: the records a repeat moved (a solved one found again), or left where they were, and why.
+      ...(w.repeated?.length ? { repeated: w.repeated.slice(0, 20) } : {}) }));
   } catch (e) {
     const r = await run().catch(() => null);
     await tx((q) => runEvent(q, r, orgId, "child_records_refused", { handle: h.id, area: config.record!.area, error: maskSecrets((e as Error).message).slice(0, 300) })).catch(() => {});

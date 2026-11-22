@@ -1044,11 +1044,13 @@ export function contractProblems(a: {
   for (const k of CONTRACT_ACTIONS) {
     const x = g[k];
     if (Array.isArray(x) && new Set(x).size !== x.length) bad("a role is listed twice", "actions", k);
-    if (staff(x) && (!shared || ["read", "move", "reveal", "export"].includes(k))) bad(`{staff} is for a shared area's create, update, delete or import (platform staff write it)`, "actions", k);
+    // mold_v0-339: a shared area's lifecycle is moved by staff too ({staff} for move, with a lifecycle).
+    if (staff(x) && (!shared || ["read", "reveal", "export"].includes(k))) bad(`{staff} is for a shared area's create, update, move, delete or import (platform staff write it)`, "actions", k);
     if (Array.isArray(x) && shared && !["read", "export"].includes(k)) bad(`a shared (platform) area is written by platform staff only: ${k} is {staff: ...} or {none: reason}`, "actions", k);
     if (Array.isArray(x) && x.includes("viewer") && ["create", "update", "move", "delete", "import"].includes(k)) bad(`viewer is read-only in the platform: a contract cannot let a viewer ${k}`, "actions", k);
   }
   if (!none(g.move) && !a.lifecycle) bad("move is a lifecycle's: an area without one says {none: reason}", "actions", "move");
+  if (shared && a.lifecycle && !staff(g.move)) bad("a shared (platform) area's lifecycle is moved by platform staff: move is {staff: ...}", "actions", "move");
   if (!none(g.reveal) && !a.fields.some((f) => f.encrypted)) bad("reveal is for encrypted fields: an area without one says {none: reason}", "actions", "reveal");
   if (a.append_only) for (const k of ["update", "move", "delete"] as const) if (!none(g[k])) bad(`an append-only area's records are never changed: ${k} is {none: reason}`, "actions", k);
   // mold_v0-235: export is its own permission, never wider than read (a role exports only what it may read).
@@ -1087,6 +1089,8 @@ export const BADGE_COLORS = ["neutral", "info", "success", "warning", "danger", 
 export const NOTICE_TONES = ["info", "success", "warning", "danger"] as const;
 /** The most facts a record's header shows (mold_v0-253; 10 since mold_v0-329, was 8): rows of four on a desktop. */
 export const DETAIL_FACTS_MAX = 10;
+/** mold_v0-339: a rail layout lists its facts as label and value rows beside the tabs: up to 12 there. */
+export const DETAIL_FACTS_RAIL_MAX = 12;
 const plainWords = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets");
 const scalar = z.union([z.string().min(1).max(200), z.number().finite(), z.boolean()]);
 /** A field group: a few of the section's fields under an optional heading, laid out in the section's columns. */
@@ -1482,7 +1486,11 @@ export const UnavailableRelatedSchema = z.object({ area: name, via: name.optiona
  * (mold_v0-251's rule, "button", the default): only where declared.
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
- * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
+ * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). `show_when` (mold_v0-339) offers
+ * it only while a condition on the record holds (left out otherwise, and refused by the API, 409): the action that fits
+ * the record's data, where `unavailable` greys out one that does not fit now. Several actions may each be primary when
+ * every one of them has a show_when (each the main action of its own records); on a record where more than one holds,
+ * the first declared is the primary and the others sit in the menu. Shown only to the roles that may
  * take it; the API enforces the same.
  */
 export const DetailActionSchema = z.object({
@@ -1537,6 +1545,8 @@ export const DetailActionSchema = z.object({
   reason_field: name.optional(),
   /** mold_v0-336: a primary or secondary action drawn as a bare text link ("link") instead of the outlined button. */
   look: z.enum(PAGE_ACTION_LOOKS).optional(),
+  /** mold_v0-339: offered only while this condition on the record holds (its fields and clocks), else left out. */
+  show_when: DetailConditionSchema.optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1581,8 +1591,11 @@ export const RecordDetailSchema = z.object({
       // mold_v0-309: left out while it has no value (a count of 0, a latest with none), never a "—"; or shown only while `when` holds.
       hide_empty: z.boolean().optional(), when: DetailConditionSchema.optional(),
       // mold_v0-329: a web address fact (a url field) shown as these words, linked ("Open docs"), not as the address.
-      link_text: plainWords(40).optional() }).strict())
-      .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows them in rows of four`).optional(),
+      link_text: plainWords(40).optional(),
+      // mold_v0-339: when the record entered the state it is in ("Deprecated since 3 Oct"; label default "<state> since"),
+      // from the store's state times; left out while it has none (a record from before they were kept).
+      state_since: z.literal(true).optional() }).strict())
+      .max(DETAIL_FACTS_RAIL_MAX, `at most ${DETAIL_FACTS_RAIL_MAX} facts (a rail layout's rows; ${DETAIL_FACTS_MAX} in the cards' header)`).optional(),
   }).strict().optional(),
   notices: z.array(DetailNoticeSchema).max(6).optional(),
   tabs: z.array(DetailTabSchema).min(1, "a layout has at least one tab").max(8),
@@ -1650,9 +1663,18 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     else if (f) for (const v of Object.keys(b.colors ?? {})) if (!optionValues(f).includes(v)) bad(`${v} is not one of ${f.name}'s options`, "header", "badges", i, "colors", v);
     if ((h?.badges ?? []).findIndex((x) => x.field === b.field) !== i) bad(`${b.field} has two badges`, "header", "badges", i, "field");
   }
+  // mold_v0-339: the cards' header shows its facts in rows of four, at most 10; a rail layout lists up to 12 as rows.
+  if (d.style !== "rail" && (h?.facts?.length ?? 0) > DETAIL_FACTS_MAX) bad(`at most ${DETAIL_FACTS_MAX} facts: the header shows them in rows of four (a rail layout lists up to ${DETAIL_FACTS_RAIL_MAX})`, "header", "facts");
   for (const [i, x] of (h?.facts ?? []).entries()) {
     // mold_v0-309: a fact shown only while its condition holds (one over the record's own fields and clocks).
     if (x.when) condition(x.when, "header", "facts", i, "when");
+    // mold_v0-339: when the record entered its state: a lifecycle's, nothing of its own besides a label.
+    if (x.state_since) {
+      if (!a.lifecycle) bad("a state_since fact says when the record entered its lifecycle's state: this area has no lifecycle", "header", "facts", i, "state_since");
+      for (const k of ["field", "computed", "unit", "link_text"] as const) if (x[k] !== undefined) bad(`a state_since fact shows when the record entered its state: it takes no ${k}`, "header", "facts", i, k);
+      if ((h?.facts ?? []).findIndex((y) => y.state_since) !== i) bad("state_since is a fact twice", "header", "facts", i, "state_since");
+      continue;
+    }
     // mold_v0-256: a fact computed from related records (its area's fields are checked across the build).
     if (x.computed) {
       const c = x.computed;
@@ -1754,8 +1776,10 @@ const lastAt = (actions: DetailAction[], place: string) => actions.map((x) => x.
 function actionProblems(a: Parameters<typeof detailProblems>[0], actions: DetailAction[]): { message: string; path: (string | number)[] }[] {
   const out: { message: string; path: (string | number)[] }[] = [];
   const bad = (message: string, ...path: (string | number)[]) => out.push({ message, path: ["actions", ...path] });
-  const primaries = actions.filter((x) => x.place === "primary").length;
-  if (primaries > 1) bad(`${primaries} actions are primary: a record's page has one primary action (the others are secondary or in More)`, lastAt(actions, "primary"), "place");
+  const primaries = actions.filter((x) => x.place === "primary");
+  // mold_v0-339: several primaries only when each is shown on its own records (show_when): one is the main action there.
+  if (primaries.length > 1 && primaries.some((x) => x.show_when === undefined))
+    bad(`${primaries.length} actions are primary: a record's page has one primary action (the others are secondary or in More), or several each shown only while its condition holds (show_when on every one)`, lastAt(actions, "primary"), "place");
   const secondary = actions.filter((x) => x.place === "secondary").length;
   if (secondary > PAGE_SECONDARY_MAX) bad(`${secondary} actions are secondary: at most ${PAGE_SECONDARY_MAX} sit beside the primary (put the rest in More)`, lastAt(actions, "secondary"), "place");
   const fieldOf = (n: string) => a.fields.find((f) => f.name === n);
@@ -1889,6 +1913,8 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link" && x.kind !== "open_url") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
     for (const [j, u] of (x.unavailable ?? []).entries()) if (u.when)
       for (const m of conditionIssues(a.fields, (a as { clocks?: { name: string }[] }).clocks ?? [], u.when)) bad(m, i, "unavailable", j, "when", ...(/^\S+ is not one of the area's fields/.test(m) && !u.when.all && !u.when.any ? ["field"] : []));
+    // mold_v0-339: shown only while a condition on the record holds (the same language as unavailable's).
+    if (x.show_when) for (const m of conditionIssues(a.fields, (a as { clocks?: { name: string }[] }).clocks ?? [], x.show_when)) bad(m, i, "show_when", ...(/^\S+ is not one of the area's fields/.test(m) && !x.show_when.all && !x.show_when.any ? ["field"] : []));
     // mold_v0-337: a move's own states (to_any) and its name from the move open now (label_from_move).
     if (x.to_any !== undefined || x.label_from_move !== undefined) {
       if (x.kind !== "move") bad(`${x.to_any !== undefined ? "to_any" : "label_from_move"} is for a move action, not ${x.kind}`, i, x.to_any !== undefined ? "to_any" : "label_from_move");
@@ -2381,7 +2407,12 @@ export const RecordAreaSchema = z.object({
   }
   const lc = a.lifecycle;
   if (lc) {
-    if (a.scope !== "workspace") bad("a lifecycle is for a workspace's own records (a shared area is written by staff)", "lifecycle");
+    // mold_v0-339: a shared (platform) area's lifecycle is moved by platform staff only (its staff record page, the admin
+    // API): no transition names workspace roles, none replaces another, and a repository that fills it is read only.
+    if (a.scope === "platform") {
+      for (const [i, t] of lc.transitions.entries()) if (t.roles) bad("a shared (platform) area's records are moved by platform staff only: a transition names no roles", "lifecycle", "transitions", i, "roles");
+      if (lc.supersedes) bad("supersedes is for a workspace's own records: a shared area's records move only when staff move them", "lifecycle", "supersedes");
+    }
     const f = a.fields.find((x) => x.name === lc.field);
     if (!f || f.type !== "enum" || f.multiple) bad(`lifecycle.field must name one of the area's single-choice enum fields`, "lifecycle", "field");
     else {

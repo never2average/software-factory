@@ -545,6 +545,10 @@
                   }
                 }
               }
+            },
+            {
+              "state_since": true,
+              "label": "In this state since"
             }
           ]
         },
@@ -935,7 +939,13 @@
             "roles": [
               "member",
               "owner"
-            ]
+            ],
+            "show_when": {
+              "field": "priority",
+              "in": [
+                "high"
+              ]
+            }
           }
         ]
       },
@@ -1211,6 +1221,25 @@
           "label": "Store",
           "type": "database",
           "provider": "core"
+        },
+        {
+          "name": "maturity",
+          "label": "Maturity",
+          "type": "enum",
+          "options": [
+            {
+              "value": "preview",
+              "label": "Preview"
+            },
+            {
+              "value": "ga",
+              "label": "Generally available"
+            },
+            {
+              "value": "deprecated",
+              "label": "Deprecated"
+            }
+          ]
         }
       ],
       "samples": [
@@ -1241,7 +1270,7 @@
             "staff": "library"
           },
           "move": {
-            "none": "No lifecycle."
+            "staff": "library"
           },
           "delete": {
             "staff": "library"
@@ -1259,6 +1288,33 @@
         "primary_action": {
           "none": "Staff add entries."
         }
+      },
+      "lifecycle": {
+        "field": "maturity",
+        "initial": "preview",
+        "transitions": [
+          {
+            "from": [
+              "preview"
+            ],
+            "to": "ga",
+            "label": "Make generally available"
+          },
+          {
+            "from": [
+              "ga"
+            ],
+            "to": "deprecated",
+            "label": "Deprecate"
+          },
+          {
+            "from": [
+              "deprecated"
+            ],
+            "to": "ga",
+            "label": "Undeprecate"
+          }
+        ]
       }
     },
     {

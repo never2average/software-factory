@@ -49,7 +49,7 @@ import { RecordDocuments, isStoredFile } from './documents';
 import {
   addedByWords, BADGE_CLASS, staleWords, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
-  shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows,
+  shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows, stateSince, sinceWords,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
   type RelatedData, type RunsData
 } from './detail-layout';
@@ -109,6 +109,17 @@ function CopyButton({ text, what }: { text: string; what: string }) {
  * A date by the page's one rule (mold_v0-309, ./detail-layout.ts dateRule): within 7 days relative words, else the day
  * ("15 Nov 2026"); the other form on hover and focus (and to a screen reader, through <time>).
  */
+/** mold_v0-339: the day a record entered its state ("3 Oct"), the exact time on hover. */
+function SinceText({ at }: { at: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<time dateTime={at} tabIndex={0} className='decoration-muted-foreground/50 cursor-default underline decoration-dotted underline-offset-4 whitespace-nowrap' />}>
+        {sinceWords(at)}
+      </TooltipTrigger>
+      <TooltipContent>{new Date(at).toLocaleString()}</TooltipContent>
+    </Tooltip>
+  );
+}
 export function DateText({ v }: { v: unknown }) {
   const w = dateRule(v);
   if (!w) return <>{String(v)}</>;
@@ -746,7 +757,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
     // mold_v0-309: a fact with hide_empty left out while it has no value, one with `when` while it does not hold.
-    .filter((x) => (x.computed || !!x.f) && factShown(x, record.data, record.clocks, page.data?.facts?.[String(x.i)]));
+    .filter((x) => (x.computed || !!x.f || (!!x.state_since && !!stateSince(area, x, record.data, page.data?.state_at))) && factShown(x, record.data, record.clocks, page.data?.facts?.[String(x.i)]));
   const notices = shownNotices(layout, record.data, record.clocks, page.data?.facts); // mold_v0-298: a notice may test a computed fact
   const added = h.creator !== false && provenance?.by ? addedByWords(provenance.by) : null;
   const made = h.creator !== false ? page.data?.writers?.made ?? null : null, lastRun = h.creator !== false ? page.data?.writers?.changed[0] ?? null : null;
@@ -799,7 +810,11 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
           </div>
           {!!facts.length && (
             <dl className={cn('grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5', !inRecordPanel && 'sm:grid-cols-3 lg:grid-cols-4')} data-record-facts=''>
-              {facts.map((x) => x.computed ? (
+              {facts.map((x) => x.state_since ? (
+                <FieldCell key={`since-${x.i}`} label={stateSince(area, x, record.data, page.data?.state_at)!.label}>
+                  <span className='font-medium' data-state-since=''><SinceText at={stateSince(area, x, record.data, page.data?.state_at)!.at} /></span>
+                </FieldCell>
+              ) : x.computed ? (
                 <FieldCell key={`computed-${x.i}`} label={x.label ?? ''}>
                   <span className='font-medium' data-computed-fact={x.i}><ComputedValue fact={x} answer={page.data?.facts?.[String(x.i)]} loading={!page.data && !page.error} base={base} recordKey={record.key} /></span>
                 </FieldCell>
@@ -895,7 +910,9 @@ function RailBody({ area, base, layout, record, links, clockEvents, where, crede
   const rows: RailRow[] = [
     ...railBadges(layout).map((b): RailRow => { const f = field(b.field), v = record.data[b.field];
       return f && !isEmptyValue(v) ? { key: `badge-${b.field}`, label: f.label, value: <ToneBadge color={badgeColor(layout, b.field, v)}>{optionWords(f, v)}</ToneBadge>, attrs: { 'data-record-badge': b.field } } : null; }),
-    ...facts.filter((x) => x.computed || !said.has(x.field!)).map((x): RailRow => x.computed
+    ...facts.filter((x) => x.computed || !said.has(x.field!)).map((x): RailRow => x.state_since
+      ? (() => { const w = stateSince(area, x, record.data, page.data?.state_at)!; return { key: `since-${x.i}`, label: w.label, value: <span data-state-since=''><SinceText at={w.at} /></span> }; })()
+      : x.computed
       ? { key: `computed-${x.i}`, label: x.label ?? '', value: <span data-computed-fact={x.i}><ComputedValue fact={x} answer={page.data?.facts?.[String(x.i)]} loading={!page.data && !page.error} base={base} recordKey={record.key} /></span> }
       : { key: `fact-${x.field}`, label: x.label ?? x.f!.label, value: <LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} fact unit={x.unit} titles={record.ref_titles?.[x.field!]} linkText={x.link_text} />,
           copy: (() => { const c = copyOf(x.f!, record.data[x.field!]); return c ? <CopyLink what={c.what} onCopy={() => copyWithToast(c.text, `${c.what} copied`)} /> : undefined; })() }),

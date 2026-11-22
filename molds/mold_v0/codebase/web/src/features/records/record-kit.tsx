@@ -110,6 +110,7 @@ const CIRCLE: Record<StepState, string> = {
   now: 'border-primary text-primary bg-background',
   todo: 'text-muted-foreground bg-background',
   failed: 'border-destructive bg-destructive text-white',
+  skipped: 'border-dashed text-muted-foreground bg-background', // mold_v0-339: a state it never entered
 };
 
 /** Progress along a lifecycle: numbered circles, a thin connector (filled once done), the current step in the brand colour. */

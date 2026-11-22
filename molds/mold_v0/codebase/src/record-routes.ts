@@ -29,6 +29,9 @@
  *                                                                 preview (dry_run, the default) or the import itself
  *                                                                 ("library"; src/record-import.ts), each row it wrote
  *                                                                 an IMPORT line of the staff access log.
+ *                                 POST <area>/<key>/move {to}    mold_v0-339: a shared area's lifecycle, moved by
+ *                                                                 staff only ("library"; src/record-areas.ts
+ *                                                                 movePlatform), a MOVE line in the access log.
  *                                 GET _provenance                 mold_v0-236: per workspace area, how many rows each
  *                                                                 provenance wrote across the workspaces (counts only:
  *                                                                 src/record-areas.ts observedProvenance) and the ones
@@ -48,7 +51,7 @@ import { mergedPage } from "./record-merge.js";
 import { anyArea, discardSharedFile, mountFileRoutes, recordUploadMax, uploadMax, uploadSharedFile } from "./record-files.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
-import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
+import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, movePlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
 import { featureOn } from "./features.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -153,7 +156,9 @@ export function recordAdminRouter(): Router {
       repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
       // mold_v0-282 (flag record_resources): a database field takes no value (the platform creates it), so the form leaves
       // it out and says instead what is created (mold_v0-285: a schema of the record's own in the app's own database).
-      fields: a.fields.filter((f) => f.type !== "database" && personSets(f)).map(formField), // mold_v0-309: nor a field only the app's actions set
+      // mold_v0-339: nor a lifecycle's state (a new row starts in its initial state; staff move it with Move).
+      fields: a.fields.filter((f) => f.type !== "database" && personSets(f) && f.name !== a.lifecycle?.field).map(formField), // mold_v0-309: nor a field only the app's actions set
+      ...(a.lifecycle && stored && edit ? { moves: true } : {}),
       ...(resourcesShown(a) ? { resources: await (await import("./record-resources.js")).formResources(a) } : {}),
       // mold_v0-271: the most bytes a file staff upload into its file fields may have (null: it takes none).
       ...(uploadMax(a, true) !== null && (create || edit) ? { upload_max: uploadMax(a, true) } : {}),
@@ -216,6 +221,20 @@ export function recordAdminRouter(): Router {
   }));
   r.put("/:area/:key", need("library"), open("admin_create", "admin_update"), answer(async (req) =>
     ({ record: await putPlatform(null, platformArea(String(req.params.area)).name, String(req.params.key), req.body ?? {}) })));
+  // mold_v0-339: a shared record moved along its area's lifecycle, by staff only ("library", as its edits): the request
+  // is in the access log, and a MOVE line names the record and where it went (the platform trail too, when it is on).
+  r.post("/:area/:key/move", need("library"), open("admin_update"), answer(async (req, res) => {
+    const a = platformArea(String(req.params.area));
+    const moved = await movePlatform(a.name, String(req.params.key), (req.body as { to?: unknown } | undefined)?.to);
+    const who = String(res.locals.adminActor ?? "unknown").replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
+    const line = `/api/admin/records/${a.name}/${moved.record.key} ${moved.from} -> ${moved.to}`.slice(0, 300);
+    const { getDb } = await import("./db.js");
+    const { asPlatform } = await import("./tenant-scope.js");
+    await asPlatform(async () => (await getDb()).query("INSERT INTO admin_access_log (actor, method, path, status, ip) VALUES ($1, 'MOVE', $2, 200, $3)",
+      [who, line, String(req.ip ?? "").slice(0, 64)])).catch((e) => console.error(`admin access log: ${(e as Error).message}`));
+    (await import("./audit-trail.js")).auditStaffRows(who, String(res.locals.adminRole ?? ""), [line], "admin_console", "MOVE");
+    return { record: moved.record };
+  }));
   r.delete("/:area/:key", need("delete"), open("admin_delete"), answer(async (req) => {
     if (!(await deletePlatform(null, platformArea(String(req.params.area)).name, String(req.params.key)))) throw new PackError("Not found", 404);
   }));

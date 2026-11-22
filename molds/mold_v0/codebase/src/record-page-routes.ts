@@ -135,6 +135,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
   const { formField } = await import("./tab-actions.js");
   for (const x of layout.actions) {
     if (role !== null && x.roles && !x.roles.includes(role)) continue;
+    // mold_v0-339: an action offered only while its condition holds (the one that fits this record) is left out otherwise.
+    if (x.show_when && !holds(x.show_when, record.data, (record as { clocks?: unknown }).clocks)) continue;
     const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", ...(x.look === "link" ? { look: "link" as const } : {}), confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
     let unavailable = (x.unavailable ?? []).find((u) => u.when && holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
     // mold_v0-337: or while a related record is open (a build of this application still running): read as the shell.
@@ -315,8 +317,17 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       }
     }
   }
+  // mold_v0-339: several primaries each shown on their own records: where more than one holds, the first is the primary.
+  let primary = false;
+  for (const a of out) if (a.place === "primary") { if (primary) { a.place = "more"; delete a.look; } primary = true; }
   return out;
 }
+
+/** mold_v0-333/339: whether a page reads its record's state times (a steps section, a state_since fact). */
+const needsStateTimes = (layout: RecordDetailLayout) => layout.tabs.some((t) => t.sections.some((x) => x.steps)) || (layout.header?.facts ?? []).some((f) => f.state_since);
+
+/** mold_v0-339: whether a declared action is offered on this record now (its show_when holds, or it has none). */
+export const shownOn = (x: DetailAction, record: RecordRow) => !x.show_when || holds(x.show_when, record.data, (record as { clocks?: unknown }).clocks);
 
 /**
  * The record `area`'s link or reference field `field` names on `record` (mold_v0-256): its first key, in the area it
@@ -631,7 +642,8 @@ export function recordPageRouter(): Router {
     // mold_v0-310: the run or agent session that made the record and those that changed it since (the header's "Made by").
     writers ??= await recordWriters(org, area, record.key);
     // mold_v0-333: a steps section shows where a record that left the path stopped: when it entered each state.
-    const steps = layout.tabs.some((t) => t.sections.some((x) => x.steps)) ? { state_at: await recordStateTimes(org, area, record.key) } : {};
+    // mold_v0-339: a steps section's skipped states and a state_since fact read them too (a shared record's as well).
+    const steps = needsStateTimes(layout) ? { state_at: await recordStateTimes(org, area, record.key) } : {};
     return { actions: await pageActions(area, record, actor, { org }), sections, facts, writers, ...steps };
   }));
 
@@ -652,6 +664,8 @@ export function recordPageRouter(): Router {
     const id = String(req.params.id);
     const declared = (layoutOf(area)!.actions ?? []).find((x) => pageActionId(x) === id);
     if (!declared) throw new PackError("This page has no such action", 404);
+    // mold_v0-339: an action offered only while a condition holds is refused on a record it does not hold on.
+    if (!shownOn(declared, record)) throw new PackError(`${declared.label ?? id} is not offered on this record now.`, 409);
     const a = (await pageActions(area, record, actor, { org: session(res).org })).find((x) => x.id === id);
     const role = actor.role ? ACCOUNT_ROLE_LABELS[actor.role] : null;
     if (!a) throw new PackError(`${declared.label ?? id} is not open to the ${role ?? "caller's"} role on ${area.label} records.`, 403);
@@ -824,7 +838,7 @@ export function recordPageRouter(): Router {
  * a fact or a list of a workspace area is {hidden: true}, and its section is not drawn). No page actions: staff's own
  * Edit and Remove stand in the header. GET /api/admin/records/_page/<area>/<key>[?tab=<id>] (src/record-routes.ts).
  */
-export async function staffPageData(areaName: string, key: string, asked: string | null): Promise<{ actions: []; facts: Record<string, ComputedAnswer>; sections: Record<string, unknown> }> {
+export async function staffPageData(areaName: string, key: string, asked: string | null): Promise<{ actions: []; facts: Record<string, ComputedAnswer>; sections: Record<string, unknown>; state_at?: Record<string, string> }> {
   const area = findArea(areaName);
   const layout = area ? layoutOf(area) : null;
   if (!area || area.scope !== "platform" || !layout || !featureOn("record_pages") || areaOpWithheld(area.name, "admin_get")) throw new PackError("Not found", 404);
@@ -852,5 +866,7 @@ export async function staffPageData(areaName: string, key: string, asked: string
     sections[id] = { area: target.name, via, match: String(matchOn), more: page.records.length > limit,
       records: rows.map((row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at, ...(row.ref_titles ? { ref_titles: row.ref_titles } : {}), actions: [] })) };
   }
-  return { actions: [], facts, sections };
+  // mold_v0-339: when it entered each state (a state_since fact, a steps section), as on a workspace's page.
+  const { platformStateTimes } = await import("./record-areas.js");
+  return { actions: [], facts, sections, ...(needsStateTimes(layout) ? { state_at: await platformStateTimes(area, record.key) } : {}) };
 }

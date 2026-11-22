@@ -123,11 +123,21 @@ export interface ProgramRecord { area: string; key?: string; title?: string; ite
    * thing twice, whatever keys its agent makes up).
    */
   dedupe_on?: string[];
+  /**
+   * mold_v0-339: what a repeat does to the record it repeats (with dedupe_on): a new record dedupe_on leaves out moves the
+   * kept one, when it is in one of `from`, to `move_to` along a transition naming where it is (a solved item found again
+   * is regressed), as the person who started the run (their role, the area's move permission and the transition's
+   * roles), its row locked, never when a person moved it after the run started (that move stands), once (from there it
+   * is no longer in `from`). The run is its writer, so its history names the run; each move is said on the trace.
+   */
+  on_repeat?: { from: string[]; move_to: string };
 }
 /** What parseProgram may check a record against: the build's workspace record areas (src/record-areas.ts). */
 export interface RecordAreaShape { name: string; scope?: string; fields: readonly string[];
   /** mold_v0-334: the states a transition of its lifecycle reaches (none: no lifecycle), and its encrypted fields. */
-  states?: readonly string[]; encrypted?: readonly string[] }
+  states?: readonly string[]; encrypted?: readonly string[];
+  /** mold_v0-339: its lifecycle's transitions (on_repeat moves only along one naming where the record is). */
+  transitions?: readonly { from: "*" | readonly string[]; to: string }[] }
 
 export interface ProgramConfig {
   icon: string;
@@ -303,7 +313,7 @@ export function recordProblems(raw: unknown, areas?: readonly RecordAreaShape[] 
   if (!isObject(raw)) return ["record: {area, key?, title?, items?, fields: {field: path}}"];
   const out: string[] = [];
   const PATHLIKE = /^(\$\.)?[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){0,15}$/;
-  for (const k of Object.keys(raw)) if (!["area", "key", "title", "items", "fields", "update_by", "move_to", "dedupe_on"].includes(k)) out.push(`record.${k}: not a field of a record`);
+  for (const k of Object.keys(raw)) if (!["area", "key", "title", "items", "fields", "update_by", "move_to", "dedupe_on", "on_repeat"].includes(k)) out.push(`record.${k}: not a field of a record`);
   if (typeof raw.area !== "string" || !/^[a-z][a-z0-9_]{0,62}$/.test(raw.area)) out.push("record.area: the workspace record area its results are kept in");
   for (const k of ["title", "items"]) if (raw[k] !== undefined && !(typeof raw[k] === "string" && PATHLIKE.test(raw[k] as string))) out.push(`record.${k}: a dotted path in the outputs`);
   // mold_v0-334: an update's key may be one of the program's inputs ($inputs.<name>): the record it was started for.
@@ -317,6 +327,16 @@ export function recordProblems(raw: unknown, areas?: readonly RecordAreaShape[] 
   const dedupe = raw.dedupe_on;
   if (dedupe !== undefined && !(Array.isArray(dedupe) && dedupe.length >= 1 && dedupe.length <= 5 && dedupe.every((f) => typeof f === "string" && /^[a-z][a-z0-9_]{0,62}$/.test(f)) && new Set(dedupe).size === dedupe.length))
     out.push("record.dedupe_on: 1 to 5 of the area's fields, each once");
+  // mold_v0-339: a repeat moves the record it repeats: {from: [states], move_to: state}, only with dedupe_on.
+  const rep = raw.on_repeat;
+  const STATE = /^[A-Za-z0-9_-]{1,64}$/;
+  if (rep !== undefined) {
+    if (!isObject(rep) || Object.keys(rep).some((k) => k !== "from" && k !== "move_to") || !Array.isArray(rep.from) || !rep.from.length || rep.from.length > 12
+      || !rep.from.every((x) => typeof x === "string" && STATE.test(x)) || new Set(rep.from).size !== rep.from.length || typeof rep.move_to !== "string" || !STATE.test(rep.move_to))
+      out.push("record.on_repeat: {from: [1 to 12 states, each once], move_to: a state}");
+    else if ((rep.from as string[]).includes(rep.move_to)) out.push(`record.on_repeat: move_to ${rep.move_to} is one of from: a repeat moves the record out of those states`);
+    if (raw.dedupe_on === undefined) out.push("record.on_repeat: a repeat is what dedupe_on leaves out: give dedupe_on too");
+  }
   const fields = raw.fields;
   if (!isObject(fields) || !Object.keys(fields).length || Object.keys(fields).length > PROGRAM_LIMITS.record_fields || !Object.values(fields).every((p) => typeof p === "string" && PATHLIKE.test(p))) out.push(`record.fields: {field: dotted path in the outputs}, 1 to ${PROGRAM_LIMITS.record_fields}`);
   if (out.length || !areas) return out;
@@ -329,6 +349,11 @@ export function recordProblems(raw: unknown, areas?: readonly RecordAreaShape[] 
   for (const f of Array.isArray(dedupe) ? dedupe as string[] : []) {
     if (!area.fields.includes(f)) out.push(`record.dedupe_on: ${area.name} has no field ${f}`);
     else if (area.encrypted?.includes(f)) out.push(`record.dedupe_on: ${f} is encrypted: dedupe on a plain field`);
+  }
+  if (isObject(rep) && Array.isArray(rep.from) && typeof rep.move_to === "string" && area.states !== undefined) {
+    if (!area.states.length) out.push(`record.on_repeat: ${area.name} has no lifecycle: its records do not move`);
+    else for (const st of rep.from as string[]) if (area.transitions && !area.transitions.some((t) => t.to === rep.move_to && t.from !== "*" && t.from.includes(st)))
+      out.push(`record.on_repeat: no transition of ${area.name}'s lifecycle moves ${st} to ${rep.move_to} (a repeat moves its record only along one naming where it is)`);
   }
   return out;
 }

@@ -12,6 +12,9 @@
  *                    is (a person's later move is never undone by a result seen twice: from there it no longer moves)
  *   dedupe_on        a new record whose values of these fields match a record the area keeps under another key is left
  *                    out (text trimmed, case-blind); a batch's own repeats once
+ * mold_v0-339:
+ *   on_repeat        {from, move_to}: a repeat dedupe_on leaves out moves the stored record it repeats from one of `from`
+ *                    to `move_to`, as the run's starter, guarded as an outcome's move (writeProgramResult)
  */
 import { PackError, type RecordOperation } from "./pack-api.js";
 import { recordPath, recordProblems, type ProgramRecord, type RecordAreaShape } from "./program-spec.js";
@@ -23,7 +26,8 @@ export const MAX_RECORDS = 200;
 export async function recordAreaShapes(): Promise<RecordAreaShape[]> {
   const { recordAreas } = await import("./record-areas.js");
   return recordAreas().map((a) => ({ name: a.name, scope: a.scope, fields: a.fields.map((f) => f.name),
-    states: a.lifecycle ? [...new Set(a.lifecycle.transitions.map((t) => t.to))] : [], encrypted: a.fields.filter((f) => f.encrypted).map((f) => f.name) }));
+    states: a.lifecycle ? [...new Set(a.lifecycle.transitions.map((t) => t.to))] : [], encrypted: a.fields.filter((f) => f.encrypted).map((f) => f.name),
+    transitions: a.lifecycle?.transitions.map((t) => ({ from: t.from, to: t.to })) ?? [] }));
 }
 
 /** The record operations a result maps to (pure): refused in words when the outputs do not hold what the mapping names. */
@@ -53,7 +57,12 @@ export const fingerprintOf = (data: Record<string, unknown>, fields: readonly st
 /** What one settled result wrote: the keys written, those left out as repeats of a kept record, and moves it could not make. */
 export interface RecordsWritten { keys: string[]; deduped: { key: string; kept: string }[]; unmoved: { key: string; from: string }[];
   /** mold_v0-334: keys of records that were there already, not this run's: left as they are, never replaced. */
-  existing: string[] }
+  existing: string[];
+  /**
+   * mold_v0-339 (on_repeat): the kept records a repeat found in one of on_repeat.from: moved (to on_repeat.move_to), or
+   * left where they are and why (a person moved it since the run started, the starter may not make the move, or left).
+   */
+  repeated?: { key: string; from: string; moved: boolean; why?: string }[] }
 
 /**
  * Where a run came from: the record its root session was started on, when, and who started it (`actor`), or why they no
@@ -116,9 +125,14 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
     // Only the record the run was started on: an input the agent passed (it may be steered) names nothing else.
     const other = ops.find((o) => !origin.record || origin.record.area !== area.name || origin.record.key !== o.key);
     if (other) throw new Error(`a program updates only the record its run was started on${origin.record ? ` (${origin.record.area} ${origin.record.key})` : ""}, not ${area.name} ${other.key}`);
-  } else if (rec.dedupe_on?.length) {
-    ops = await dedupe(orgId, area.name, rec.dedupe_on, ops, out, origin.actor ?? RA.SYSTEM_ACTOR);
-    if (!ops.length) return out;
+  }
+  // mold_v0-339: the stored records a repeat names (never one of this result's own), moved below when on_repeat says so.
+  let repeats: string[] = [];
+  if (rec.update_by !== "key" && rec.dedupe_on?.length) {
+    const d = await dedupe(orgId, area.name, rec.dedupe_on, ops, out, origin.actor ?? RA.SYSTEM_ACTOR);
+    ops = d.kept;
+    if (rec.on_repeat && area.lifecycle) repeats = d.stored;
+    if (!ops.length && !repeats.length) return out;
   }
   const lc = area.lifecycle;
   const person = origin.actor ?? RA.SYSTEM_ACTOR;
@@ -151,14 +165,41 @@ export async function writeProgramResult(orgId: number, h: ResultHandle, rec: Pr
       if (row && origin.refused) throw new PackError(origin.refused, 403);
       await (row ? starter : server).move(area.name, o.key, rec.move_to);
     }
+    // mold_v0-339: a repeat moves the record it repeats (a solved item found again), guarded as an outcome's move: the
+    // row locked and read again here, only from one of on_repeat.from (so once: from move_to it is no longer there),
+    // never when a person moved it after the run started (that move stands), along a transition naming where it is,
+    // as the person who started the run (their role, the area's move permission, the transition's roles).
+    if (rec.on_repeat && lc) {
+      const rep = rec.on_repeat;
+      out.repeated = [];
+      for (const k of repeats) {
+        const row = await RA.lockedWorkspaceRow(orgId, area, k);
+        if (!row) continue;
+        const from = String(row.data[lc.field] ?? lc.initial);
+        if (!rep.from.includes(from)) continue;
+        const stay = (why: string) => out.repeated!.push({ key: k, from, moved: false, why });
+        const since = RA.stateEnteredAt(row.data, from);
+        if (!origin.actor) { stay(origin.refused ?? "no person or account started this run"); continue; }
+        if (origin.started_at && since && since > origin.started_at) { stay("a person moved it after the run started"); continue; }
+        const role = origin.actor.role;
+        const ways = lc.transitions.filter((t) => t.to === rep.move_to && Array.isArray(t.from) && t.from.includes(from));
+        if (!ways.length) { stay(`no transition moves ${from} to ${rep.move_to}`); continue; }
+        if (!RA.may(area, "move", origin.actor) || (role !== null && !ways.some((t) => !t.roles || t.roles.includes(role)))) { stay("the person who started the run may not make this move"); continue; }
+        await starter.move(area.name, k, rep.move_to);
+        out.repeated.push({ key: k, from, moved: true });
+      }
+    }
     return done;
   })));
   out.keys = keys;
   return out;
 }
 
-/** The ops whose fingerprint no other record of the area the reader sees holds (and each fingerprint of the batch once). */
-async function dedupe(orgId: number, areaName: string, fields: readonly string[], ops: RecordOperation[], out: RecordsWritten, reader: import("./record-areas.js").Actor): Promise<RecordOperation[]> {
+/**
+ * The ops whose fingerprint no other record of the area the reader sees holds (and each fingerprint of the batch once);
+ * mold_v0-339: and the stored records the left-out ones repeat (`stored`, each once; never one of the batch's own).
+ */
+async function dedupe(orgId: number, areaName: string, fields: readonly string[], ops: RecordOperation[], out: RecordsWritten, reader: import("./record-areas.js").Actor): Promise<{ kept: RecordOperation[]; stored: string[] }> {
   const RA = await import("./record-areas.js");
   const held = new Map<string, string>();
   let after: string | undefined;
@@ -169,13 +210,18 @@ async function dedupe(orgId: number, areaName: string, fields: readonly string[]
     if (!p.next || !p.records.length) break;
     after = p.next;
   }
-  const kept: RecordOperation[] = [];
+  const inStore = new Set(held.values());
+  const kept: RecordOperation[] = [], stored: string[] = [];
   for (const o of ops) {
     const f = fingerprintOf((o as { data: Record<string, unknown> }).data ?? {}, fields);
     const other = f ? held.get(f) : undefined;
-    if (other !== undefined && other !== o.key) { out.deduped.push({ key: o.key, kept: other }); continue; }
+    if (other !== undefined && other !== o.key) {
+      out.deduped.push({ key: o.key, kept: other });
+      if (inStore.has(other) && !ops.some((x) => x.key === other) && !stored.includes(other)) stored.push(other);
+      continue;
+    }
     if (f) held.set(f, o.key);
     kept.push(o);
   }
-  return kept;
+  return { kept, stored };
 }

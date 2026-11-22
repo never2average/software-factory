@@ -902,6 +902,7 @@ const stateTimes = (data: Record<string, unknown> | undefined): Record<string, s
 };
 /** mold_v0-333: when a workspace record last entered each state (a steps section's "where it stopped"); {} for none. */
 export async function recordStateTimes(orgId: number, area: RecordArea, key: string): Promise<Record<string, string>> {
+  if (area.lifecycle && area.scope === "platform") return platformStateTimes(area, key); // mold_v0-339
   if (!area.lifecycle || area.scope !== "workspace") return {};
   const r = await readWorkspace(orgId, area, key).catch(() => null);
   return r ? stateTimes(r.opened) : {};
@@ -1287,9 +1288,12 @@ export async function putPlatform(pack: string | null, name: string, key: string
   const area = platformAreaFor(pack, name);
   if (!meta && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
-  // mold_v0-334: a reference that holds for new picks only reads what the row named before (none for a new row).
-  const was = area.fields.some((f) => f.filter_new_only) ? (await asPlatform(async () => (await q()).query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key])))[0]?.data ?? null : null;
-  const data = await checkRecord(area, value?.data, null, SYSTEM_ACTOR, undefined, [], was);
+  // mold_v0-334: a reference that holds for new picks only reads what the row named before (none for a new row);
+  // mold_v0-339: and a lifecycle, the state it is in and when it entered each.
+  const lc = area.lifecycle;
+  const was = area.fields.some((f) => f.filter_new_only) || lc ? (await asPlatform(async () => (await q()).query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key])))[0]?.data ?? null : null;
+  let data = await checkRecord(area, lc ? platformStateInput(area, key, value?.data, was, meta) : value?.data, null, SYSTEM_ACTOR, undefined, [], was);
+  if (lc) data = withPlatformStateTimes(area, data, was);
   const version = value?.version === undefined || value.version === null ? null : String(value.version).slice(0, 120);
   const t = title(value?.title);
   // mold_v0-282 (flag record_resources): a repository a hand write names (new, or changed) is read through the platform's
@@ -1322,6 +1326,71 @@ export async function putPlatform(pack: string | null, name: string, key: string
   if (!meta && ownsResources(area) && area.fields.some((f) => f.type === "database")) await afterCommit(async () => (await resources()).ensureDatabases(area, key));
   return row;
 }
+/**
+ * mold_v0-339: a shared area's lifecycle. Its state changes only when platform staff move it (movePlatform): a hand write
+ * over a stored row keeps the state it is in (one naming another is refused, 409); a new row starts in the state it
+ * names (staff adding or importing a catalog's entry as it stands), else the initial one; a repository's index carries
+ * the state its source gives (the repository is the platform's own source of truth).
+ */
+function platformStateInput(area: RecordArea, key: string, given: unknown, was: Record<string, unknown> | null, meta: WriteMeta | null): unknown {
+  const lc = area.lifecycle!;
+  const input = given && typeof given === "object" && !Array.isArray(given) ? { ...(given as Record<string, unknown>) } : {};
+  const asked = input[lc.field];
+  const stored = was ? (was[lc.field] ?? lc.initial) : null;
+  if (asked === undefined || asked === null || asked === "") input[lc.field] = stored ?? lc.initial;
+  else if (was && !meta && asked !== stored)
+    throw new PackError(`${area.label} record ${key} is ${JSON.stringify(stored)}: its ${lc.field} changes only by a move (staff move it on its staff page)`, 409);
+  return input;
+}
+/** mold_v0-339: a shared row's state times: kept from the stored row, and now for a state it enters with this write. */
+function withPlatformStateTimes(area: RecordArea, data: Record<string, unknown>, was: Record<string, unknown> | null): Record<string, unknown> {
+  const lc = area.lifecycle!;
+  const state = String(data[lc.field] ?? lc.initial);
+  const times = stateTimes(was ?? undefined);
+  const before = was ? String(was[lc.field] ?? lc.initial) : null;
+  // A row from before its times were kept gets none invented for the state it was already in.
+  if (before !== state) times[state] = new Date().toISOString();
+  return { ...data, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) };
+}
+
+/**
+ * mold_v0-339: platform staff move a shared record along its area's lifecycle (POST /api/admin/records/<area>/<key>/move;
+ * the admin router's role check and access log, an access log line naming the move). Only a transition from where it is
+ * (or "*"), never on a repository's row (read only: override it first), compare-and-set on the stored row: a record
+ * changed meanwhile is refused (409), never moved over. When it enters the state is kept ($state_at).
+ */
+export async function movePlatform(name: string, key: string, to: unknown): Promise<{ record: RecordRow; from: string; to: string }> {
+  const area = platformAreaFor(null, name);
+  if (isReadOnlyArea(area)) throw readOnly(area);
+  const lc = area.lifecycle;
+  if (!lc) throw new PackError(`area ${area.name} has no lifecycle: its records do not move`, 400);
+  checkKey(key);
+  if (typeof to !== "string" || !to) throw new PackError("to must be a state", 400);
+  return asPlatform(async () => {
+    const db = await q();
+    const [row] = await db.query<{ data: Record<string, unknown>; source: string | null }>("SELECT data, source FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key]);
+    if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
+    if (row.source) throw new PackError(`${area.label} record ${key} comes from repository ${row.source}: read only (override it to move it)`, 409);
+    const from = String(row.data?.[lc.field] ?? lc.initial);
+    if (from === to) throw new PackError(`${area.label} record ${key} is ${JSON.stringify(to)} already`, 409);
+    if (!lc.transitions.some((t) => t.to === to && (t.from === "*" || t.from.includes(from)))) {
+      const can = movesFrom(area, from);
+      throw new PackError(`${area.label} record ${key} cannot move from ${JSON.stringify(from)} to ${JSON.stringify(to)}. ${can.length ? `From ${JSON.stringify(from)} it can move to: ${can.join(", ")}.` : `Nothing moves it from ${JSON.stringify(from)}.`}`, 409);
+    }
+    const after = { ...row.data, [lc.field]: to, [STATE_TIMES]: { ...stateTimes(row.data), [to]: new Date().toISOString() } };
+    const [r] = await db.query<Row>(`UPDATE platform_records SET data = $5, updated_at = now() WHERE pack = $1 AND area = $2 AND key = $3 AND source IS NULL AND data = $4::jsonb
+      RETURNING key, title, data, version, updated_at`, [area.pack, area.name, key, JSON.stringify(row.data), JSON.stringify(after)]);
+    if (!r) throw new PackError(`${area.label} record ${key} changed meanwhile: read it again, then move it`, 409);
+    return { record: await toRecord(area, r, null), from, to };
+  });
+}
+/** mold_v0-339: when a shared record entered each state ({} for none, or an area with no lifecycle). */
+export async function platformStateTimes(area: RecordArea, key: string): Promise<Record<string, string>> {
+  if (!area.lifecycle || area.scope !== "platform" || isLive(area)) return {};
+  const [r] = await asPlatform(async () => (await q()).query<{ data: Record<string, unknown> }>("SELECT data FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, checkKey(key)]));
+  return stateTimes(r?.data);
+}
+
 /**
  * Delete a shared row. A repository's writer (`source`) deletes only rows it wrote (its prune). A door (staff, a pack's
  * admin route) deletes only hand rows (mold_v0-221): a repository's row is read only (override it instead), and removing
