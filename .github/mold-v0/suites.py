@@ -81,6 +81,7 @@ SECONDS = {
     "test:console-hide": 22,
     "test:console-sidebar": 95,
     "test:console-tabs": 103,
+    "test:console-types": 40,
     "test:context-memory": 18,
     "test:credentials": 11,
     "test:data-api": 5,

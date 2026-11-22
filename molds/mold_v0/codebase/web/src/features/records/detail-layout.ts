@@ -110,6 +110,8 @@ export interface DetailLayout {
   actions?: DetailActionSpec[];
   /** mold_v0-262: false hides the automatic Linked records card. */
   linked?: boolean;
+  /** mold_v0-318: the reference field the breadcrumb leads through (src/record-crumbs.ts; the server reads it). */
+  parent?: string;
 }
 /** The console's area spec with its layout (the generated type names `detail` only in a build with record_pages on). */
 export type LaidOutArea = RecordAreaSpec & { detail?: DetailLayout };

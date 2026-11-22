@@ -339,6 +339,13 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   outside its `<id>_` names, writes grants, policies, roles, functions or DO blocks, or whose code imports any shell
   module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`
   (run programs under the pack's `runner` directory have their own rules: the runner boundary, mold_v0-054, below).
+- **Console types (mold_v0-335).** The console's generated files are typed (`RecordAreaSpec`, `RecordFieldSpec`, the
+  lifecycle, `DetailLayout`, `PackTabSpec`, the agent's prompts), and the shell's CI builds with zero packs, so a pack key
+  the console's type lacks would fail only an app's build. `npm run test:console-types` builds the maximal fixture
+  `scripts/fixtures/packs/fixture_console` (every key the pack.json schema accepts under the declarations the console
+  reads, at every depth, read from the zod schemas: a new key fails the test until the fixture declares it; every kind
+  once) with every feature flag on, and runs the console's `tsc` over the generated files. A new pack key that reaches
+  the console needs its type in `scripts/gen-packs.mjs` (or `web/src`) and a line in that fixture.
 - `definePack` (`src/pack-api.ts`): **tools** register on the customer MCP server after the shell's (`src/packs.ts`),
   each call run for the calling workspace under row-level security with its account permission; **routes** mount at
   `/api/packs/<id>` (the portal's own session check, `edit` for changes, a CSRF header on cookie writes) and

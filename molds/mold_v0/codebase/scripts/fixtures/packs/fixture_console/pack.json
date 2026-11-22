@@ -1,0 +1,2150 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "$comment": "mold_v0-335: every optional key the console's generated config carries, so scripts/console-types-test.ts typechecks the console's types against them. Keep it maximal: that test lists any key a pack may declare that this pack leaves out.",
+  "id": "fixture_console",
+  "name": "Fixture console",
+  "version": "0.1.0",
+  "description": "A pack declaring every console-facing key.",
+  "pages": [
+    {
+      "id": "board",
+      "area": "app",
+      "title": "Board",
+      "description": "A page of rows.",
+      "data": "/board",
+      "columns": [
+        {
+          "key": "name",
+          "label": "Name"
+        }
+      ],
+      "icon": "page",
+      "nav_group": "Work"
+    }
+  ],
+  "record_areas": [
+    {
+      "name": "mx_parents",
+      "label": "Parents",
+      "description": "The records items belong to.",
+      "icon": "building",
+      "role": "asset",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "title",
+          "label": "Title",
+          "type": "text"
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "active",
+            {
+              "value": "retired",
+              "label": "Retired"
+            }
+          ]
+        }
+      ],
+      "visibility": {
+        "modes": [
+          "workspace",
+          "team",
+          "private"
+        ],
+        "default": "team",
+        "collaborators": true,
+        "$comment": "Who sees a parent."
+      }
+    },
+    {
+      "name": "mx_items",
+      "label": "Items",
+      "description": "Every field type, a lifecycle, clocks and a laid-out page.",
+      "icon": "kanban",
+      "role": "check",
+      "scope": "workspace",
+      "$comment": "The main area.",
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "help": "One line.",
+          "required": true,
+          "max_length": 200,
+          "copyable": true
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "options": [
+            {
+              "value": "open",
+              "label": "Open"
+            },
+            {
+              "value": "running",
+              "label": "Running"
+            },
+            {
+              "value": "done",
+              "label": "Done"
+            },
+            {
+              "value": "failed",
+              "label": "Failed"
+            },
+            {
+              "value": "cancelled",
+              "label": "Cancelled"
+            }
+          ]
+        },
+        {
+          "name": "priority",
+          "label": "Priority",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "name": "tags",
+          "label": "Tags",
+          "type": "enum",
+          "multiple": true,
+          "options": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "name": "score",
+          "label": "Score",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "unit": "%"
+        },
+        {
+          "name": "due_on",
+          "label": "Due",
+          "type": "date"
+        },
+        {
+          "name": "started_on",
+          "label": "Started",
+          "type": "date"
+        },
+        {
+          "name": "urgent",
+          "label": "Urgent",
+          "type": "boolean"
+        },
+        {
+          "name": "stacks",
+          "label": "Stacks",
+          "type": "json",
+          "display": "chips",
+          "chip_words": true
+        },
+        {
+          "name": "rows",
+          "label": "Rows",
+          "type": "json"
+        },
+        {
+          "name": "output",
+          "label": "Output",
+          "type": "text"
+        },
+        {
+          "name": "kind_word",
+          "label": "Kind",
+          "type": "text",
+          "labels": {
+            "probe-a": "First probe"
+          }
+        },
+        {
+          "name": "result",
+          "label": "Result",
+          "type": "text",
+          "set_by": "action"
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "person"
+        },
+        {
+          "name": "backup",
+          "label": "Backup",
+          "type": "person"
+        },
+        {
+          "name": "parent",
+          "label": "Parent",
+          "type": "reference",
+          "to": "mx_parents",
+          "required": true,
+          "where": {
+            "field": "state",
+            "equals": "active"
+          },
+          "filter_new_only": true
+        },
+        {
+          "name": "peer",
+          "label": "Peer",
+          "type": "reference",
+          "to": "mx_parents",
+          "multiple": true,
+          "where": {
+            "all": [
+              {
+                "field": "state",
+                "in": [
+                  "active"
+                ]
+              },
+              {
+                "field": "title",
+                "empty": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "label": "Other",
+          "type": "reference",
+          "to": "mx_parents",
+          "where": {
+            "field": "state",
+            "not_in": [
+              "retired"
+            ]
+          }
+        },
+        {
+          "name": "related_link",
+          "label": "Related",
+          "type": "link"
+        },
+        {
+          "name": "attachment",
+          "label": "Attachment",
+          "type": "file",
+          "multiple": true
+        },
+        {
+          "name": "site",
+          "label": "Site",
+          "type": "url",
+          "preview": "document"
+        },
+        {
+          "name": "secret",
+          "label": "Secret",
+          "type": "text",
+          "encrypted": true,
+          "reveal_roles": [
+            "owner"
+          ],
+          "searchable": "equality"
+        },
+        {
+          "name": "stage",
+          "label": "Stage",
+          "type": "enum",
+          "options": [
+            "open",
+            "running",
+            "done"
+          ]
+        }
+      ],
+      "list_columns": [
+        "summary",
+        "status",
+        "priority",
+        "score",
+        "due_on",
+        "urgent",
+        "owner",
+        "parent",
+        "kind_word"
+      ],
+      "links": [
+        {
+          "field": "related_link",
+          "area": "mx_parents"
+        }
+      ],
+      "lifecycle": {
+        "field": "status",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "running",
+            "label": "Start",
+            "roles": [
+              "member",
+              "owner"
+            ]
+          },
+          {
+            "from": [
+              "running"
+            ],
+            "to": "done"
+          },
+          {
+            "from": [
+              "open",
+              "running"
+            ],
+            "to": "failed"
+          },
+          {
+            "from": [
+              "open",
+              "running"
+            ],
+            "to": "cancelled",
+            "roles": [
+              "member",
+              "owner"
+            ]
+          },
+          {
+            "from": "*",
+            "to": "open"
+          }
+        ]
+      },
+      "key_from_title": true,
+      "permissions": {
+        "read": [
+          "viewer",
+          "member",
+          "billing",
+          "owner"
+        ],
+        "create": [
+          "member",
+          "owner"
+        ],
+        "update": [
+          "member",
+          "owner"
+        ],
+        "move": [
+          "member",
+          "owner"
+        ],
+        "delete": [
+          "owner"
+        ]
+      },
+      "clocks": [
+        {
+          "name": "respond",
+          "label": "Respond by",
+          "starts": {
+            "event": "entered",
+            "state": "running"
+          },
+          "after": {
+            "by": "priority",
+            "values": {
+              "high": "1d",
+              "medium": "3d"
+            },
+            "default": "5d"
+          },
+          "not_later_than": "due_on",
+          "stops_when": {
+            "field": "status",
+            "in": [
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "at": "due_on"
+          },
+          "pauses_when": {
+            "field": "urgent",
+            "in": [
+              "false"
+            ]
+          },
+          "assignee": "owner",
+          "notify": [
+            "assignee",
+            "owner"
+          ],
+          "soon": "1d",
+          "remind": [
+            {
+              "before": "1d",
+              "notify": [
+                "assignee"
+              ]
+            }
+          ],
+          "escalate": [
+            {
+              "after": "0d",
+              "label": "Overdue",
+              "notify": [
+                "owner"
+              ],
+              "reassign": {
+                "field": "owner",
+                "from_field": "backup"
+              }
+            },
+            {
+              "after": "1d",
+              "label": "Timed out",
+              "move_to": "failed",
+              "move_from": [
+                "running"
+              ]
+            }
+          ],
+          "$comment": "A clock with every key."
+        },
+        {
+          "name": "start_by",
+          "label": "Start by",
+          "starts": {
+            "field": "started_on"
+          },
+          "after": "2d",
+          "escalate": [
+            {
+              "after": "0d",
+              "raise": {
+                "field": "stage",
+                "to": "done"
+              }
+            }
+          ]
+        },
+        {
+          "name": "made",
+          "label": "Made",
+          "starts": {
+            "event": "created"
+          },
+          "after": "7d"
+        }
+      ],
+      "detail": {
+        "style": "cards",
+        "header": {
+          "title": "summary",
+          "subtitle": "priority",
+          "badges": [
+            {
+              "field": "priority",
+              "colors": {
+                "high": "danger",
+                "medium": "warning",
+                "low": "neutral"
+              }
+            }
+          ],
+          "creator": true,
+          "facts": [
+            {
+              "field": "owner",
+              "label": "Owner",
+              "hide_empty": true
+            },
+            {
+              "field": "score",
+              "unit": "pts",
+              "when": {
+                "field": "urgent",
+                "equals": true
+              }
+            },
+            {
+              "label": "Children",
+              "computed": {
+                "area": "mx_children",
+                "via": "item",
+                "op": "count",
+                "where": {
+                  "any": [
+                    {
+                      "field": "state",
+                      "in": [
+                        "READY"
+                      ]
+                    },
+                    {
+                      "field": "state",
+                      "not_in": [
+                        "ERROR"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "label": "Latest child",
+              "computed": {
+                "area": "mx_children",
+                "via": "item",
+                "op": "latest",
+                "field": "state",
+                "sort": {
+                  "field": "made_on",
+                  "direction": "desc"
+                }
+              }
+            },
+            {
+              "field": "site",
+              "link_text": "Open"
+            }
+          ]
+        },
+        "notices": [
+          {
+            "when": {
+              "field": "due_on",
+              "before": "today"
+            },
+            "tone": "warning",
+            "title": "Late",
+            "text": "Past its date."
+          },
+          {
+            "when": {
+              "field": "due_on",
+              "after": "today"
+            },
+            "tone": "info",
+            "text": "Due later."
+          },
+          {
+            "when": {
+              "clock": "respond",
+              "is": "overdue"
+            },
+            "tone": "danger",
+            "text": "Overdue."
+          },
+          {
+            "when": {
+              "fact": 2,
+              "equals": 0
+            },
+            "tone": "success",
+            "text": "No children."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "status",
+                  "equals": "failed"
+                },
+                {
+                  "field": "output",
+                  "empty": false
+                }
+              ]
+            },
+            "tone": "danger",
+            "text": "It failed."
+          },
+          {
+            "when": {
+              "any": [
+                {
+                  "field": "due_on",
+                  "before": "today"
+                },
+                {
+                  "field": "due_on",
+                  "after": "today"
+                },
+                {
+                  "field": "due_on",
+                  "within_days": 2
+                },
+                {
+                  "clock": "respond",
+                  "is": "due_soon"
+                },
+                {
+                  "fact": 2,
+                  "empty": true
+                }
+              ]
+            },
+            "tone": "info",
+            "text": "Worth a look."
+          }
+        ],
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "About",
+                "columns": 2,
+                "fields": [
+                  "summary",
+                  "site",
+                  "stacks",
+                  "parent"
+                ],
+                "empty": "Nothing yet.",
+                "display": "numbers"
+              },
+              {
+                "title": "Grouped",
+                "groups": [
+                  {
+                    "title": "First",
+                    "fields": [
+                      "score",
+                      "due_on"
+                    ]
+                  },
+                  {
+                    "fields": [
+                      "urgent"
+                    ]
+                  }
+                ],
+                "when": {
+                  "field": "due_on",
+                  "within_days": 30
+                }
+              },
+              {
+                "title": "Children",
+                "related": {
+                  "area": "mx_children",
+                  "via": "item",
+                  "columns": [
+                    "state",
+                    {
+                      "field": "made_on",
+                      "label": "Made"
+                    }
+                  ],
+                  "sort": {
+                    "field": "made_on",
+                    "direction": "asc"
+                  },
+                  "limit": 5
+                },
+                "display": "rows"
+              },
+              {
+                "title": "Matched",
+                "related": {
+                  "area": "mx_children",
+                  "via": "label",
+                  "match_field": "summary"
+                }
+              },
+              {
+                "title": "Runs",
+                "runs": {
+                  "kinds": [
+                    "mx_check"
+                  ],
+                  "limit": 5,
+                  "wrote": true
+                }
+              },
+              {
+                "title": "Progress",
+                "steps": {
+                  "field": "status",
+                  "states": [
+                    "open",
+                    "running",
+                    "done"
+                  ],
+                  "failed_stage": "stage"
+                }
+              }
+            ]
+          },
+          {
+            "label": "Detail",
+            "when": {
+              "field": "status",
+              "not_in": [
+                "open"
+              ]
+            },
+            "sections": [
+              {
+                "title": "Log",
+                "log": {
+                  "field": "output",
+                  "live_when": {
+                    "field": "status",
+                    "equals": "running"
+                  }
+                }
+              },
+              {
+                "title": "History",
+                "history": {
+                  "fields": [
+                    "status"
+                  ],
+                  "limit": 20
+                }
+              },
+              {
+                "title": "Code",
+                "code": {
+                  "field": "rows",
+                  "language": "json"
+                },
+                "when": {
+                  "field": "rows",
+                  "empty": false
+                }
+              },
+              {
+                "title": "Table",
+                "table": {
+                  "field": "rows",
+                  "columns": [
+                    "name",
+                    {
+                      "key": "value",
+                      "label": "Value"
+                    }
+                  ]
+                }
+              },
+              {
+                "title": "Files",
+                "files": {
+                  "fields": [
+                    "attachment"
+                  ]
+                }
+              },
+              {
+                "title": "Versions",
+                "versions": {}
+              }
+            ]
+          }
+        ],
+        "unplaced": "show",
+        "linked": false,
+        "parent": "parent",
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Check",
+            "job_kind": "mx_check",
+            "input": {
+              "item": "$key",
+              "note": "$field:summary"
+            },
+            "target": {
+              "via": "parent"
+            },
+            "unavailable": [
+              {
+                "when": {
+                  "field": "status",
+                  "equals": "running"
+                },
+                "reason": "Already running."
+              }
+            ]
+          },
+          {
+            "kind": "move",
+            "place": "secondary",
+            "to": "cancelled",
+            "label": "Cancel",
+            "stops_session": true,
+            "roles": [
+              "owner"
+            ]
+          },
+          {
+            "kind": "edit",
+            "place": "secondary"
+          },
+          {
+            "kind": "delete",
+            "place": "more",
+            "confirm": "Delete it?"
+          },
+          {
+            "kind": "link",
+            "label": "Open site",
+            "field": "related_link"
+          },
+          {
+            "kind": "copy_link",
+            "label": "Copy link"
+          },
+          {
+            "kind": "create_record",
+            "label": "Add child",
+            "area": "mx_children",
+            "input": {
+              "item": "$key"
+            }
+          },
+          {
+            "kind": "start_agent",
+            "label": "Ask",
+            "profile": "mx-helper",
+            "first_message": "Look at {{title}}.",
+            "creates": {
+              "area": "mx_children",
+              "link": "item",
+              "title": "{{title}} child",
+              "fields": {
+                "session": "$session",
+                "by": "$person",
+                "made_on": "$today"
+              },
+              "on_session_end": {
+                "finished": "READY",
+                "failed": "ERROR",
+                "budget": "ERROR",
+                "crash": "ERROR",
+                "policy": "ERROR",
+                "stopped": "ERROR"
+              },
+              "reason_field": "error",
+              "children": [
+                {
+                  "area": "mx_grand",
+                  "via": "child",
+                  "field": "state",
+                  "from": [
+                    "BUILDING"
+                  ],
+                  "to": "CANCELED"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "open_url",
+            "label": "Visit",
+            "field": "site"
+          },
+          {
+            "kind": "start_program",
+            "label": "Improve",
+            "program": "mx-improve",
+            "move_to": "running",
+            "on_outcome": {
+              "accepted": "done",
+              "needs_review": "running",
+              "refused": "failed",
+              "applied": "done",
+              "rolled_back": "failed",
+              "succeeded": "done",
+              "failed": "failed"
+            },
+            "reason_field": "output",
+            "roles": [
+              "member",
+              "owner"
+            ]
+          }
+        ]
+      },
+      "contract": {
+        "provenance": [
+          "people",
+          "run"
+        ],
+        "actions": {
+          "read": [
+            "viewer",
+            "member",
+            "billing",
+            "owner"
+          ],
+          "create": [
+            "member",
+            "owner"
+          ],
+          "update": [
+            "member",
+            "owner"
+          ],
+          "move": [
+            "member",
+            "owner"
+          ],
+          "delete": [
+            "owner"
+          ],
+          "reveal": [
+            "owner"
+          ],
+          "export": [
+            "owner"
+          ],
+          "import": {
+            "none": "Encrypted fields never come from a file."
+          }
+        },
+        "primary_action": "create_record",
+        "$comment": "Who does what."
+      },
+      "visibility": {
+        "inherit": "parent",
+        "$comment": "As its parent."
+      }
+    },
+    {
+      "name": "mx_children",
+      "label": "Children",
+      "role": "check",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "BUILDING",
+            "READY",
+            "ERROR",
+            "CANCELED",
+            "SUPERSEDED"
+          ]
+        },
+        {
+          "name": "item",
+          "label": "Item",
+          "type": "reference",
+          "to": "mx_items"
+        },
+        {
+          "name": "label",
+          "label": "Label",
+          "type": "text"
+        },
+        {
+          "name": "session",
+          "label": "Session",
+          "type": "text",
+          "set_by": "action"
+        },
+        {
+          "name": "by",
+          "label": "By",
+          "type": "person",
+          "set_by": "action"
+        },
+        {
+          "name": "made_on",
+          "label": "Made",
+          "type": "date"
+        },
+        {
+          "name": "error",
+          "label": "Error",
+          "type": "text"
+        }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "BUILDING",
+        "transitions": [
+          {
+            "from": [
+              "BUILDING"
+            ],
+            "to": "READY"
+          },
+          {
+            "from": [
+              "BUILDING"
+            ],
+            "to": "ERROR"
+          },
+          {
+            "from": [
+              "BUILDING"
+            ],
+            "to": "CANCELED"
+          },
+          {
+            "from": [
+              "READY"
+            ],
+            "to": "SUPERSEDED"
+          }
+        ],
+        "supersedes": {
+          "scope_fields": [
+            "item"
+          ],
+          "when_enters": "READY",
+          "previous_to": "SUPERSEDED"
+        }
+      },
+      "detail": {
+        "style": "rail",
+        "header": {
+          "title": "label",
+          "status": "state",
+          "context": [
+            "label",
+            "made_on"
+          ]
+        },
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "About",
+                "fields": [
+                  "label",
+                  "error"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mx_grand",
+      "label": "Grandchildren",
+      "role": "check",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "BUILDING",
+            "READY",
+            "CANCELED"
+          ]
+        },
+        {
+          "name": "child",
+          "label": "Child",
+          "type": "reference",
+          "to": "mx_children"
+        }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "BUILDING",
+        "transitions": [
+          {
+            "from": [
+              "BUILDING"
+            ],
+            "to": "READY"
+          },
+          {
+            "from": [
+              "BUILDING"
+            ],
+            "to": "CANCELED"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mx_log",
+      "label": "Log",
+      "role": "check",
+      "scope": "workspace",
+      "append_only": true,
+      "chain": true,
+      "sealed": true,
+      "tenant": true,
+      "fields": [
+        {
+          "name": "entry",
+          "label": "Entry",
+          "type": "text"
+        },
+        {
+          "name": "on",
+          "label": "On",
+          "type": "date"
+        }
+      ],
+      "due": {
+        "field": "on",
+        "within_days": 3,
+        "notify": [
+          "owner"
+        ]
+      },
+      "on_save": [
+        {
+          "check": "mx_ok",
+          "inputs": {
+            "entry": "@entry"
+          },
+          "message": "Not allowed.",
+          "on": [
+            "create"
+          ]
+        }
+      ],
+      "settings": {
+        "group": "data_trust",
+        "label": "Log"
+      },
+      "action": false,
+      "action_reason": "Rows arrive from runs."
+    },
+    {
+      "name": "mx_catalog",
+      "label": "Catalog",
+      "role": "source",
+      "scope": "platform",
+      "rows": "one per entry",
+      "version": "2026-01",
+      "fields": [
+        {
+          "name": "title",
+          "label": "Title",
+          "type": "text"
+        },
+        {
+          "name": "code",
+          "label": "Code",
+          "type": "repository"
+        },
+        {
+          "name": "store",
+          "label": "Store",
+          "type": "database",
+          "provider": "core"
+        }
+      ],
+      "samples": [
+        {
+          "key": "first",
+          "title": "First",
+          "version": "1",
+          "data": {
+            "title": "First"
+          }
+        }
+      ],
+      "contract": {
+        "provenance": [
+          "staff"
+        ],
+        "actions": {
+          "read": [
+            "viewer",
+            "member",
+            "billing",
+            "owner"
+          ],
+          "create": {
+            "staff": "library"
+          },
+          "update": {
+            "staff": "library"
+          },
+          "move": {
+            "none": "No lifecycle."
+          },
+          "delete": {
+            "staff": "library"
+          },
+          "reveal": {
+            "none": "Nothing is encrypted."
+          },
+          "export": [
+            "owner"
+          ],
+          "import": {
+            "staff": "library"
+          }
+        },
+        "primary_action": {
+          "none": "Staff add entries."
+        }
+      }
+    },
+    {
+      "name": "mx_ledger",
+      "label": "Ledger",
+      "role": "check",
+      "scope": "workspace",
+      "repository": "mx_files",
+      "fields": [
+        {
+          "name": "line",
+          "label": "Line",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "name": "mx_storage",
+      "label": "Storage",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "bucket",
+          "label": "Bucket",
+          "type": "text"
+        },
+        {
+          "name": "endpoint",
+          "label": "Endpoint",
+          "type": "url"
+        },
+        {
+          "name": "access_key_id",
+          "label": "Access key",
+          "type": "text",
+          "encrypted": true
+        },
+        {
+          "name": "secret_access_key",
+          "label": "Secret key",
+          "type": "text",
+          "encrypted": true
+        },
+        {
+          "name": "in_use",
+          "label": "In use",
+          "type": "boolean"
+        },
+        {
+          "name": "health",
+          "label": "Health",
+          "type": "enum",
+          "options": [
+            "untested",
+            "working",
+            "failing",
+            "cant_test",
+            "needs_key"
+          ]
+        },
+        {
+          "name": "tested",
+          "label": "Tested",
+          "type": "date",
+          "set_by": "action"
+        },
+        {
+          "name": "tested_at",
+          "label": "Tested at",
+          "type": "date",
+          "set_by": "action"
+        },
+        {
+          "name": "health_result",
+          "label": "Result",
+          "type": "text",
+          "set_by": "action"
+        },
+        {
+          "name": "kind",
+          "label": "Kind",
+          "type": "enum",
+          "options": [
+            "object",
+            "other"
+          ]
+        },
+        {
+          "name": "failing_since",
+          "label": "Failing since",
+          "type": "date",
+          "set_by": "action"
+        },
+        {
+          "name": "failures",
+          "label": "Failures",
+          "type": "number",
+          "set_by": "action"
+        },
+        {
+          "name": "expires_on",
+          "label": "Expires",
+          "type": "date"
+        },
+        {
+          "name": "last_used",
+          "label": "Last used",
+          "type": "date",
+          "set_by": "action"
+        },
+        {
+          "name": "members",
+          "label": "Members may use",
+          "type": "boolean"
+        }
+      ],
+      "detail": {
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "Bucket",
+                "fields": [
+                  "bucket",
+                  "endpoint"
+                ]
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "test_storage",
+            "label": "Test"
+          },
+          {
+            "kind": "test_connection",
+            "label": "Test connection",
+            "probe": {
+              "probes": {
+                "*": {
+                  "kind": "http",
+                  "method": "GET",
+                  "url": "https://storage.example.com/{bucket}"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "contract": {
+        "provenance": [
+          "people"
+        ],
+        "actions": {
+          "read": [
+            "viewer",
+            "member",
+            "billing",
+            "owner"
+          ],
+          "create": [
+            "owner"
+          ],
+          "update": [
+            "owner"
+          ],
+          "move": {
+            "none": "No lifecycle."
+          },
+          "delete": [
+            "owner"
+          ],
+          "reveal": {
+            "none": "Keys are never shown again."
+          },
+          "export": {
+            "none": "Not exported."
+          },
+          "import": {
+            "none": "Keys never come from a file."
+          }
+        },
+        "primary_action": "create_record"
+      }
+    }
+  ],
+  "repositories": {
+    "mx_files": {
+      "kind": "workspace_files",
+      "store": "fixture_console",
+      "path": "ledger/main.jsonl",
+      "format": "jsonl",
+      "append_only": true,
+      "identity": "id"
+    }
+  },
+  "checks": [
+    {
+      "name": "mx_ok",
+      "label": "Is it allowed?",
+      "inputs": {
+        "entry": "string"
+      },
+      "rule": {
+        "area": "mx_parents",
+        "match": {
+          "title": "$entry"
+        },
+        "latest_by": "updated_at",
+        "require": [
+          {
+            "field": "state",
+            "eq": "active",
+            "label": "Active"
+          }
+        ]
+      }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "mx_check",
+      "label": "Check an item",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "item",
+          "label": "Item",
+          "type": "reference",
+          "to": "mx_items",
+          "required": true
+        },
+        {
+          "name": "note",
+          "label": "Note",
+          "type": "text"
+        }
+      ],
+      "budget_usd": 1,
+      "token_lifetime_seconds": 1800,
+      "workspace": true,
+      "agent": {
+        "repository": "https://git.example.com/agents/check-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "check.mjs",
+          "{item}"
+        ],
+        "args": {
+          "item": {
+            "from": "scope.item"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "out"
+        ],
+        "timeout_seconds": 600
+      },
+      "input_from_record": {
+        "item": "$key"
+      },
+      "private_network": true
+    },
+    {
+      "name": "mx_check2",
+      "label": "Check again",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "item",
+          "label": "Item",
+          "type": "reference",
+          "to": "mx_items",
+          "required": true
+        },
+        {
+          "name": "note",
+          "label": "Note",
+          "type": "text"
+        }
+      ],
+      "budget_usd": 1,
+      "token_lifetime_seconds": 1800,
+      "workspace": true,
+      "agent": {
+        "repository": "https://git.example.com/agents/check-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "check.mjs",
+          "{item}"
+        ],
+        "args": {
+          "item": {
+            "from": "scope.item"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "out"
+        ],
+        "timeout_seconds": 600
+      }
+    }
+  ],
+  "agent_profiles": [
+    {
+      "id": "mx-helper",
+      "name": "Helper",
+      "description": "Looks at items.",
+      "purpose": "general",
+      "connection_env": [
+        {
+          "area": "mx_storage",
+          "where": {
+            "kind": "object"
+          },
+          "use": "in_use",
+          "prefix": "STORAGE_",
+          "roles": [
+            "owner"
+          ],
+          "only_one": true,
+          "fields": {
+            "BUCKET": "bucket",
+            "ENDPOINT": "endpoint"
+          },
+          "last_used": "last_used",
+          "members_field": "members"
+        }
+      ]
+    }
+  ],
+  "programs": [
+    {
+      "id": "mx-improve",
+      "name": "Improve",
+      "description": "Makes an item better.",
+      "config": {}
+    }
+  ],
+  "recipes": [
+    {
+      "id": "mx-recipe",
+      "name": "Recipe",
+      "description": "A skill.",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "content": "# Skill\n"
+        },
+        {
+          "path": "config.json",
+          "json": {
+            "a": 1
+          }
+        },
+        {
+          "path": "run.sh",
+          "content": "echo hi\n",
+          "executable": true
+        }
+      ],
+      "$comment": "A recipe."
+    }
+  ],
+  "object_storage": {
+    "area": "mx_storage",
+    "where": {
+      "kind": "object"
+    },
+    "fields": {
+      "bucket": "bucket",
+      "endpoint": "endpoint",
+      "access_key_id": "access_key_id",
+      "secret_access_key": "secret_access_key",
+      "use": "in_use",
+      "status": "health",
+      "tested": "tested",
+      "tested_at": "tested_at",
+      "result": "health_result",
+      "failing_since": "failing_since",
+      "failures": "failures",
+      "expires_on": "expires_on"
+    },
+    "outcomes": {
+      "working": "working",
+      "failing": "failing",
+      "untested": "untested",
+      "cannot_test": "cant_test",
+      "needs_key": "needs_key"
+    },
+    "stale_after_days": 30,
+    "$comment": "Where a workspace keeps its bucket."
+  },
+  "onboarding": [
+    {
+      "id": "first_item",
+      "label": "Add a first item",
+      "help": "Any item.",
+      "prompt": "Add an item",
+      "done_when": "record:mx_items",
+      "how": "record:mx_items",
+      "where": {
+        "field": "status",
+        "in": [
+          "done"
+        ]
+      }
+    },
+    {
+      "id": "first_check",
+      "label": "Run a first check",
+      "done_when": "run:mx_check"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "mx_open",
+      "label": "Open items",
+      "description": "Items still open.",
+      "over": "mx_items",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "open"
+        }
+      ],
+      "mode": "current",
+      "unit": "count",
+      "roles": [
+        "member",
+        "owner"
+      ],
+      "$comment": "Now.",
+      "measure": "count"
+    },
+    {
+      "name": "mx_by_status",
+      "label": "By status",
+      "over": "mx_items",
+      "group_by": "status",
+      "limit": 6
+    },
+    {
+      "name": "mx_by_tag",
+      "label": "By tag",
+      "over": "mx_items",
+      "group_by": "tags",
+      "group_by_list": "each"
+    },
+    {
+      "name": "mx_due",
+      "label": "By due date",
+      "over": "mx_items",
+      "group_by": {
+        "due": "due_on",
+        "soon_days": 5
+      }
+    },
+    {
+      "name": "mx_score",
+      "label": "Score",
+      "over": "mx_items",
+      "measure": "sum",
+      "field": "score",
+      "unit": "number"
+    },
+    {
+      "name": "mx_avg",
+      "label": "Average score",
+      "over": "mx_items",
+      "measure": "average",
+      "field": "score",
+      "by_time": {
+        "at": "created",
+        "every": "week",
+        "last": 8
+      }
+    },
+    {
+      "name": "mx_rate",
+      "label": "Done rate",
+      "over": "mx_items",
+      "measure": "rate",
+      "rate": {
+        "where": [
+          {
+            "field": "status",
+            "op": "in",
+            "value": [
+              "done"
+            ]
+          }
+        ]
+      },
+      "unit": "percent"
+    },
+    {
+      "name": "mx_time",
+      "label": "Time to done",
+      "over": "mx_items",
+      "measure": "duration",
+      "duration": {
+        "from": "created",
+        "to": "state:done",
+        "stat": "median",
+        "unit": "hours"
+      }
+    },
+    {
+      "name": "mx_late",
+      "label": "Overdue",
+      "over": "mx_items",
+      "clock": {
+        "name": "respond",
+        "is": [
+          "overdue"
+        ]
+      }
+    },
+    {
+      "name": "mx_attention",
+      "label": "Need attention",
+      "over": "mx_storage",
+      "needs_attention": true
+    },
+    {
+      "name": "mx_status_week",
+      "label": "Status by week",
+      "over": "mx_items",
+      "group_by": "status",
+      "by_time": {
+        "at": "updated",
+        "every": "month",
+        "last": 6
+      }
+    }
+  ],
+  "charts": [
+    {
+      "name": "mx_status_chart",
+      "title": "Status",
+      "description": "Items by status.",
+      "type": "bar",
+      "metrics": [
+        "mx_by_status"
+      ],
+      "palette": "ordinal",
+      "$comment": "A bar."
+    },
+    {
+      "name": "mx_stack_chart",
+      "title": "Stacked",
+      "type": "stacked_bar",
+      "metrics": [
+        "mx_status_week"
+      ]
+    },
+    {
+      "name": "mx_line_chart",
+      "title": "Line",
+      "type": "line",
+      "metrics": [
+        "mx_avg"
+      ]
+    },
+    {
+      "name": "mx_area_chart",
+      "title": "Area",
+      "type": "area",
+      "metrics": [
+        "mx_avg"
+      ]
+    },
+    {
+      "name": "mx_number_chart",
+      "title": "Number",
+      "type": "number",
+      "metrics": [
+        "mx_open",
+        "mx_score"
+      ]
+    },
+    {
+      "name": "mx_table_chart",
+      "title": "Table",
+      "type": "table",
+      "metrics": [
+        "mx_by_tag"
+      ]
+    }
+  ],
+  "agent_defaults": {
+    "greeting": "Hello",
+    "intro": "Ask about your {tab}.",
+    "examples": [
+      {
+        "title": "Summarise",
+        "description": "A summary.",
+        "prompt": "Summarise {record_title}.",
+        "$comment": "An example."
+      }
+    ],
+    "commands": [
+      {
+        "name": "sum",
+        "label": "Summary",
+        "description": "Sum it up.",
+        "prompt": "Sum up {what to sum}.",
+        "send": false,
+        "$comment": "A command."
+      }
+    ],
+    "$comment": "The app's defaults."
+  },
+  "tabs": [
+    {
+      "id": "home",
+      "kind": "overview",
+      "label": "Home",
+      "description": "Start here.",
+      "icon": "dashboard",
+      "charts": [
+        "mx_status_chart",
+        "mx_line_chart"
+      ],
+      "include": [
+        "setup",
+        "notices"
+      ],
+      "rail": [
+        "recent_runs",
+        "attention",
+        "notices",
+        "chart:mx_number_chart"
+      ],
+      "sparklines": [
+        "mx_open",
+        "mx_score"
+      ],
+      "charts_title": "Numbers"
+    },
+    {
+      "id": "items",
+      "kind": "area",
+      "label": "Items",
+      "group": "Work",
+      "area": "mx_items",
+      "views": [
+        "table",
+        "board",
+        "timeline",
+        "detail"
+      ],
+      "board_by": "status",
+      "timeline_by": "due_on",
+      "charts": [
+        "mx_stack_chart"
+      ],
+      "columns": [
+        "summary",
+        "status",
+        {
+          "related": {
+            "area": "mx_children",
+            "via": "item"
+          },
+          "show": "count",
+          "label": "Children"
+        },
+        {
+          "related": {
+            "area": "mx_children",
+            "via": "item"
+          },
+          "show": "latest:state",
+          "sort": {
+            "field": "made_on",
+            "direction": "desc"
+          },
+          "where": {
+            "field": "state",
+            "in": [
+              "READY"
+            ]
+          },
+          "id": "ready"
+        }
+      ],
+      "sparklines": [
+        "mx_open"
+      ],
+      "roles": [
+        "member",
+        "owner"
+      ],
+      "empty": {
+        "text": "No items yet.",
+        "cta": {
+          "label": "Add one",
+          "action": "onboarding:first_item"
+        },
+        "$comment": "Empty."
+      },
+      "action": {
+        "kind": "create_record",
+        "label": "New item",
+        "area": "mx_items",
+        "$comment": "Add."
+      },
+      "agent": {
+        "examples": [
+          {
+            "title": "Find",
+            "prompt": "Find {what}."
+          }
+        ],
+        "commands": [
+          {
+            "name": "find",
+            "label": "Find",
+            "prompt": "Find it."
+          }
+        ],
+        "$comment": "The tab's agent."
+      },
+      "$comment": "The items."
+    },
+    {
+      "id": "open-items",
+      "kind": "area",
+      "area": "mx_items",
+      "filter": {
+        "status": "open"
+      },
+      "empty": {
+        "cta": {
+          "label": "Docs",
+          "href": "https://example.com/docs"
+        }
+      },
+      "action": {
+        "kind": "start_run",
+        "job_kinds": [
+          "mx_check",
+          "mx_check2"
+        ]
+      }
+    },
+    {
+      "id": "merged",
+      "kind": "area",
+      "areas": [
+        {
+          "area": "mx_parents",
+          "rows": "all",
+          "source": "Parents",
+          "$comment": "First."
+        },
+        {
+          "area": "mx_children",
+          "rows": "matched",
+          "filter": {
+            "state": "READY"
+          }
+        }
+      ],
+      "action": false,
+      "reason": "Rows come from two areas."
+    },
+    {
+      "id": "mx-runs",
+      "kind": "runs",
+      "filter": {
+        "kind": "mx_check"
+      },
+      "action": {
+        "kind": "start_run",
+        "job_kind": "mx_check"
+      },
+      "empty": {
+        "text": "No runs.",
+        "cta": {
+          "action": "run:mx_check"
+        }
+      }
+    },
+    {
+      "id": "mx-reports",
+      "kind": "reports",
+      "filter": {
+        "kind": {
+          "in": [
+            "mx_check"
+          ]
+        }
+      },
+      "action": {
+        "kind": "link",
+        "label": "Read more",
+        "href": "/app/guide"
+      }
+    },
+    {
+      "id": "mx-schedules",
+      "kind": "schedules",
+      "action": {
+        "kind": "new_schedule",
+        "job_kind": "mx_check"
+      }
+    },
+    {
+      "id": "mx-agent-list",
+      "kind": "schedules",
+      "action": {
+        "kind": "start_agent",
+        "profile": "mx-helper",
+        "first_message": "Hello."
+      },
+      "label": "Planned"
+    },
+    {
+      "id": "mx-creds",
+      "kind": "credentials"
+    },
+    {
+      "id": "mx-usage",
+      "kind": "usage"
+    },
+    {
+      "id": "mx-billing",
+      "kind": "billing"
+    },
+    {
+      "id": "mx-profile",
+      "kind": "profile"
+    },
+    {
+      "id": "mx-team",
+      "kind": "team",
+      "inside": "settings"
+    },
+    {
+      "id": "mx-keys",
+      "kind": "keys"
+    },
+    {
+      "id": "board-page",
+      "kind": "page",
+      "page": "board"
+    },
+    {
+      "id": "mx-files",
+      "kind": "files"
+    },
+    {
+      "id": "mx-agent",
+      "kind": "agent"
+    },
+    {
+      "id": "mx-agent-runs",
+      "kind": "agent_runs"
+    },
+    {
+      "id": "work",
+      "kind": "sections",
+      "label": "Work",
+      "sections": [
+        "items",
+        "open-items"
+      ]
+    }
+  ],
+  "schedules": [
+    {
+      "name": "mx_nightly",
+      "job_kind": "mx_check",
+      "cron": "0 3 * * *"
+    }
+  ],
+  "documents": {
+    "hosts": [
+      "docs.example.com"
+    ]
+  },
+  "credentials": [
+    {
+      "name": "mx_token",
+      "label": "Service token",
+      "bound_to": "workspace",
+      "deliver_as": {
+        "env": "MX_TOKEN"
+      },
+      "entries": {
+        "label": "Account",
+        "max": 5
+      }
+    }
+  ],
+  "email": {
+    "sender": {
+      "allow": true
+    }
+  },
+  "developer_surface": {
+    "events": [
+      {
+        "name": "record.created",
+        "description": "A record was created."
+      }
+    ],
+    "sdk_languages": [
+      "typescript"
+    ],
+    "client_sessions": {
+      "ttl_seconds": 900,
+      "allowed_origins": [
+        "https://app.example.com"
+      ],
+      "scopes": [
+        "read"
+      ]
+    }
+  }
+}

@@ -2713,7 +2713,9 @@ const nav = (area) => {
 };
 const allPages = packs.flatMap((p) => p.pages);
 /** A tab's icon when it declares none, by kind (the sidebar's entry for it). */
-const DEFAULT_ICONS = { agent_runs: "play", overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code" };
+const DEFAULT_ICONS = { agent_runs: "play", overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code",
+  // mold_v0-335: a sections tab without an icon of its own (its entry had none, and the console's type requires one).
+  sections: "dashboard" };
 /**
  * Each record area's icon (mold_v0-242; src/record-icons.ts): its own `icon`; else the icon of the customer tab that
  * shows it (the sidebar entry of the first shown tab over it alone, else of one that merges it: the tab itself, or the
@@ -2854,7 +2856,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n  /** mold_v0-289: the unit a number reads with (usd, s, min, %). */\n  unit?: string;\n  /** mold_v0-289: a chips field's values in plain words. */\n  chip_words?: boolean;\n  /** mold_v0-309: a text field's known values in words. */\n  labels?: Record<string, string>;\n  /** mold_v0-309: set only by the app's actions (never in a form). */\n  set_by?: 'action';\n" +
   (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
-  (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") +
+  (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n  /** mold_v0-334: the where applies to new picks only; a record keeps a value retired since. */\n  filter_new_only?: boolean;\n" : "") +
   (FEATURE_ON.record_resources ? "  /** mold_v0-285: a database field's provider: core, a schema of its own in the app's database. */\n  provider?: 'core';\n" : "") + "}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
     // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
