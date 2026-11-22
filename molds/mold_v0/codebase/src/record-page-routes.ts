@@ -132,7 +132,11 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
   for (const x of layout.actions) {
     if (role !== null && x.roles && !x.roles.includes(role)) continue;
     const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
-    const unavailable = (x.unavailable ?? []).find((u) => holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
+    let unavailable = (x.unavailable ?? []).find((u) => u.when && holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
+    // mold_v0-337: or while a related record is open (a build of this application still running): read as the shell.
+    if (!unavailable && opts.org !== undefined) for (const u of x.unavailable ?? []) {
+      if (u.related && (await relatedOpen(opts.org, area, record.key, u.related, 1)).length) { unavailable = u.reason; break; }
+    }
     const writes = area.scope === "workspace";
     switch (x.kind) {
       case "start_run": {
@@ -167,13 +171,17 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       }
       case "move": {
         if (!writes || !area.lifecycle || !may(area, "move", actor) || areaOpWithheld(area.name, "move")) continue;
-        const ways = movesFor(area, role, x.to);
+        // mold_v0-337: to_any keeps the states it offers (Remove is an action of its own).
+        const ways = movesFor(area, role, x.to).filter((t) => !x.to_any || x.to_any.includes(t.to));
         if (!ways.length) continue; // this role makes none of its moves, from any state
-        const from = record.data[area.lifecycle.field];
+        const from = record.data[area.lifecycle.field] ?? area.lifecycle.initial;
         const targets = [...new Set(ways.map((t) => t.to))];
+        const here = (t: { from: "*" | string[] }) => t.from === "*" || (typeof from === "string" && t.from.includes(from));
         const moves = targets.map((to) => {
-          const label = ways.find((t) => t.to === to && t.label)?.label ?? `Move to ${stateWords(area, to)}`;
-          const here = (t: { from: "*" | string[] }) => t.from === "*" || (typeof from === "string" && t.from.includes(from));
+          // mold_v0-337: named by the transition that applies from where the record is (Resume from suspended, Mark live
+          // from pending, both to active), else by any labelled one to it.
+          const label = (ways.find((t) => t.to === to && t.label && here(t)) ?? area.lifecycle!.transitions.find((t) => t.to === to && t.label && here(t)) ?? ways.find((t) => t.to === to && t.label))?.label
+            ?? `Move to ${stateWords(area, to)}`;
           const anyRole = (area.lifecycle!.transitions).filter((t) => t.to === to && here(t));
           const disabled = same(from, to) ? `It is already ${stateWords(area, to)}.`
             : ways.some((t) => t.to === to && here(t)) ? null
@@ -182,7 +190,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
           return { to, label, disabled };
         });
         const open = moves.filter((m) => !m.disabled);
-        const label = x.label ?? (x.to !== undefined ? moves[0]!.label : "Move");
+        // mold_v0-337: label_from_move: named by the one move open now (Suspend, Resume, Mark live, Add back).
+        const label = x.label_from_move && open.length === 1 ? open[0]!.label : x.label ?? (x.to !== undefined ? moves[0]!.label : "Move");
         const disabled = unavailable ?? (open.length ? null : x.to !== undefined ? moves[0]!.disabled : `Nothing you can do moves it from ${stateWords(area, from)}.`);
         // Without a state of its own, the states it can move to now (the rest stay listed, disabled, with why).
         out.push({ ...base, label, disabled, moves });
@@ -337,6 +346,19 @@ export type ComputedAnswer = { hidden: true } | { op: "count"; value: number; ca
  */
 export async function computedFact(org: number | null, area: RecordArea, record: RecordRow, fact: Fact, actor: Actor): Promise<ComputedAnswer> {
   const c = fact.computed!;
+  // mold_v0-337: through a first hop (the application's default environment): the fact is that record's, each hop read
+  // as the person (a hop they may not read hides the fact; no record there reads as none).
+  if (c.through) {
+    const hopArea = findArea(c.through.area);
+    if (org === null || !hopArea) return { hidden: true };
+    const hop = await relatedColumn(org, area, { related: { area: hopArea.name, via: c.through.via }, show: "latest", sort: c.through.sort, where: c.through.where }, [record.key], actor);
+    if ((hop as { hidden?: unknown }).hidden === true) return { hidden: true };
+    const mid = (hop as Record<string, { key: string; title: string | null } | null>)[record.key];
+    const target = findArea(c.area);
+    if (!mid || !target) return c.op === "count" ? { op: "count", value: 0, capped: false, area: c.area, via: (target && viaOf(hopArea.name, target, c)) ?? "" } : { op: "latest", value: null, area: c.area, field: c.field ?? null, record: null };
+    const { through: _t, ...next } = c;
+    return computedFact(org, hopArea, { area: hopArea.name, key: mid.key, title: mid.title, data: {} } as RecordRow, { ...fact, computed: next }, actor);
+  }
   const target = findArea(c.area);
   const via = target ? viaOf(area.name, target, c) : null;
   // mold_v0-271: staff (org null) read shared areas only, as their own record pages list them.
@@ -370,6 +392,27 @@ export async function computedFact(org: number | null, area: RecordArea, record:
   return { op: "latest", value: null, area: target.name, field: c.field ?? null, record: null };
 }
 
+/**
+ * mold_v0-337 (an action's unavailable `related`): the records of `rel.area` pointing at `key` (through `rel.via`) that
+ * `rel.where` keeps, at most `max` of them (oldest key first), read as the shell: every record of the workspace, whoever
+ * may see it (the action's reason is the pack's words and names none of them).
+ */
+export async function relatedOpen(org: number, area: RecordArea, key: string, rel: { area: string; via?: string; where?: DetailCondition }, max = COMPUTED_COUNT_MAX): Promise<string[]> {
+  const target = findArea(rel.area);
+  const via = target ? viaOf(area.name, target, rel) : null;
+  if (!target || !via || target.scope !== "workspace") return [];
+  const out: string[] = [];
+  let after: string | undefined;
+  for (let read = 0; read < COMPUTED_COUNT_MAX && out.length < max;) {
+    const page = await listForWorkspace(org, target.name, { filter: pointingAt(target, via, key), limit: 200, ...(after ? { after } : {}) });
+    read += page.records.length;
+    for (const row of page.records) if ((!rel.where || holds(rel.where, row.data, (row as { clocks?: unknown }).clocks)) && out.length < max) out.push(row.key);
+    if (!page.next) break;
+    after = page.next;
+  }
+  return out;
+}
+
 /** The record picker's page: at most PICK_MAX choices, from the PICK_SCAN newest records. */
 const PICK_MAX = 20, PICK_SCAN = 2000;
 /**
@@ -378,6 +421,21 @@ const PICK_MAX = 20, PICK_SCAN = 2000;
  * the newest one's field. A role that may not read that area: {hidden: true}.
  */
 async function relatedColumn(org: number, area: RecordArea, c: import("./pack-api.js").TabRelatedColumn, keys: string[], actor: Actor): Promise<Record<string, unknown> | { hidden: true }> {
+  // mold_v0-337: through a first hop: each row's hop record (its newest that the hop's where keeps), then the column
+  // over those, read back to each row; each hop read as the person.
+  const h = c.related.through;
+  if (h) {
+    const hopArea = findArea(h.area);
+    if (!hopArea) return { hidden: true };
+    const hop = await relatedColumn(org, area, { related: { area: hopArea.name, via: h.via }, show: "latest", sort: h.sort, where: h.where }, keys, actor);
+    if ((hop as { hidden?: unknown }).hidden === true) return { hidden: true };
+    const mid = new Map(keys.map((k) => [k, ((hop as Record<string, { key: string } | null>)[k])?.key ?? null]));
+    const { through: _t, ...related } = c.related;
+    const inner = await relatedColumn(org, hopArea, { ...c, related }, [...new Set([...mid.values()].filter((x): x is string => !!x))], actor);
+    if ((inner as { hidden?: unknown }).hidden === true) return { hidden: true };
+    const none = c.show === "count" ? 0 : null;
+    return Object.fromEntries(keys.map((k) => { const m = mid.get(k); return [k, m ? (inner as Record<string, unknown>)[m] ?? none : none]; }));
+  }
   const target = findArea(c.related.area);
   const via = target ? viaOf(area.name, target, c.related) : null;
   if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
@@ -620,21 +678,8 @@ export function recordPageRouter(): Router {
         if (declared.stops_session) {
           const S = await import("./session-records.js"), H = await import("./harness-sessions.js");
           const s = session(res);
-          const { made, started } = await H.read((q) => S.sessionsFor(q, s.org, area.name, record.key));
           const words = `${s.email ?? "Someone"} (moved ${record.title || record.key} to ${stateWords(area, m.to)})`;
-          let stopped = 0;
-          for (const [id, by] of [...made.map((id) => [id, { kind: "system" as const, user: null, name: words, role: null }] as const), ...started.map((id) => [id, H.actorOf(s)] as const)]) {
-            try {
-              await H.tx((q) => S.markStoppedFor(q, s.org, id, area.name, record.key));
-              await H.stopSession(s.org, id, by);
-              stopped++;
-            } catch (e) {
-              // Not this person's to stop: the mark goes (only where no stop was asked of it, nor did it end).
-              if ((e as { status?: number }).status === 403)
-                await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed') AND stop_requested_at IS NULL", [id, s.org]));
-              console.error(`${area.name}/${record.key}: session ${id} not stopped: ${(e as Error).message}`);
-            }
-          }
+          const stopped = await S.stopSessionsFor(s.org, area.name, record.key, words, H.actorOf(s));
           // Its children (deployments still building) close with it now, not when the session's wake ends.
           await S.closeChildrenFor(s.org, area.name, record.key).catch((e) => console.error(`${area.name}/${record.key}: children not closed: ${(e as Error).message}`));
           return { ...moved, stopped_sessions: stopped };
@@ -674,8 +719,22 @@ export function recordPageRouter(): Router {
           const message = fillTemplate(declared.first_message ?? "", { ...record, data: { ...record.data, created_key: key } });
           const link: import("./session-records.js").CreatedLink = { area: c.area, key, pack: target.pack,
             ...(c.on_session_end ? { on_session_end: c.on_session_end } : {}), ...(c.reason_field ? { reason_field: c.reason_field } : {}), ...(c.children ? { children: c.children } : {}) };
+          // mold_v0-337: a title's {{$n}}, one more than the records made from this one so far (counted as the shell).
+          const numbered = !!c.link && !!c.title && /\{\{\s*\$n\s*\}\}/.test(c.title);
+          const make = async (sid: string) => {
+            const n = numbered ? (await relatedOpen(s.org, area, record.key, { area: c.area, via: c.link })).length + 1 : undefined;
+            const made = await S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date(), n }, fillTemplate), actor);
+            // mold_v0-337: one at a time, checked again now it is made: of two pressed at the same moment, the later
+            // (by key: the time it was made, then a random tail) is taken back with the action's reason.
+            for (const u of declared.unavailable ?? []) {
+              if (!u.related || u.related.area !== c.area) continue;
+              const open = await relatedOpen(s.org, area, record.key, u.related);
+              if (open.some((k) => k !== key && k < key)) { await S.unmakeCreated(s.org, { area: c.area, key }); throw new PackError(u.reason, 409); }
+            }
+            return made;
+          };
           const made = await H.startSession(s.org, H.actorOf(s), { message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
-            { record: { area: area.name, key: record.key }, creates: { link, make: (sid) => S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date() }, fillTemplate), actor) } });
+            { record: { area: area.name, key: record.key }, creates: { link, make } });
           return { session: made, created: { area: c.area, key } };
         }
         return { session: await H.startSession(s.org, H.actorOf(s), { message: a.agent!.message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,

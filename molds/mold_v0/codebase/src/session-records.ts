@@ -45,8 +45,14 @@ export function createdKey(now = new Date()): string {
   return `${t}-${randomBytes(3).toString("hex")}`;
 }
 
-/** The record a start_agent action makes from `record` (pure): its title and fields, the link back to `record` set. */
-export function planCreated(c: SessionCreates, record: Pick<RecordRow, "key" | "title" | "data">, start: { session: string; person: string | null; now: Date }, fill: (t: string, r: Pick<RecordRow, "key" | "title" | "data">) => string): { title: string | null; data: Record<string, unknown> } {
+/** mold_v0-337: a day as a title says it: "22 Nov" (the day the record was made, UTC). */
+export const titleDay = (d: Date) => `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]}`;
+/**
+ * The record a start_agent action makes from `record` (pure): its title and fields, the link back to `record` set.
+ * mold_v0-337: its title's {{$n}} is `start.n` (one more than the records made from this one so far) and {{$today}}
+ * the day it is made ("22 Nov").
+ */
+export function planCreated(c: SessionCreates, record: Pick<RecordRow, "key" | "title" | "data">, start: { session: string; person: string | null; now: Date; n?: number }, fill: (t: string, r: Pick<RecordRow, "key" | "title" | "data">) => string): { title: string | null; data: Record<string, unknown> } {
   const data: Record<string, unknown> = {};
   for (const [k, src] of Object.entries(c.fields ?? {})) {
     let v: unknown;
@@ -58,7 +64,7 @@ export function planCreated(c: SessionCreates, record: Pick<RecordRow, "key" | "
     if (v !== undefined && v !== null && v !== "") data[k] = v;
   }
   if (c.link) data[c.link] = record.key;
-  const title = c.title ? fill(c.title, record) : record.title ?? record.key;
+  const title = c.title ? fill(c.title.replace(/\{\{\s*\$n\s*\}\}/g, String(start.n ?? 1)).replace(/\{\{\s*\$today\s*\}\}/g, titleDay(start.now)), record) : record.title ?? record.key;
   return { title: title || null, data };
 }
 
@@ -275,6 +281,33 @@ export async function sessionsFor(q: Queryable, orgId: number, area: string, key
   return { made: rows.filter((r) => r.made).map((r) => r.id), started: rows.filter((r) => !r.made).map((r) => r.id) };
 }
 
+/**
+ * Stop the open sessions working on a record (mold_v0-333 Cancel; mold_v0-337 a time limit's step with stops_session):
+ * the one that made it always, as the platform under `words` (it works only for the record), and, with `startedBy`,
+ * those started from it that this actor may stop under the session's own rules (theirs, or as an owner). Each stopped
+ * session is marked first (policy.stopped_for), so only its wakes' late moves of the record are ignored; one this
+ * actor may not stop loses the mark again. Returns how many were stopped.
+ */
+export async function stopSessionsFor(orgId: number, area: string, key: string, words: string, startedBy: import("./harness-sessions.js").Actor | null): Promise<number> {
+  const H = await import("./harness-sessions.js");
+  const { made, started } = await H.read((q) => sessionsFor(q, orgId, area, key));
+  let stopped = 0;
+  const system = { kind: "system" as const, user: null, name: words, role: null };
+  for (const [id, by] of [...made.map((id) => [id, system] as const), ...(startedBy ? started.map((id) => [id, startedBy] as const) : [])]) {
+    try {
+      await H.tx((q) => markStoppedFor(q, orgId, id, area, key));
+      await H.stopSession(orgId, id, by);
+      stopped++;
+    } catch (e) {
+      // Not this actor's to stop: the mark goes (only where no stop was asked of it, nor did it end).
+      if ((e as { status?: number }).status === 403)
+        await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed') AND stop_requested_at IS NULL", [id, orgId]));
+      console.error(`${area}/${key}: session ${id} not stopped: ${(e as Error).message}`);
+    }
+  }
+  return stopped;
+}
+
 /** Mark a session as stopped by a record's Cancel: only its wakes' late moves of that record are ignored. */
 export async function markStoppedFor(q: Queryable, orgId: number, id: string, area: string, key: string): Promise<void> {
   await q.query(`UPDATE harness_sessions SET policy = jsonb_set(policy, '{stopped_for}', $3::jsonb) WHERE id = $1 AND org_id = $2`, [id, orgId, JSON.stringify({ area, key })]);
@@ -284,6 +317,8 @@ export async function markStoppedFor(q: Queryable, orgId: number, id: string, ar
  * The states of `area` a stops_session move reaches (Cancel's): a record in one is no longer moved by the sessions that
  * move stopped (their late move is ignored, with a log line, instead of a refusal the agent would keep retrying).
  */
-export function stopStates(area: Pick<RecordArea, "name"> & { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }): string[] {
-  return (area.detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!);
+export function stopStates(area: Pick<RecordArea, "name"> & { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] }; clocks?: { escalate?: { move_to?: string; stops_session?: boolean }[] }[] }): string[] {
+  // mold_v0-337: and the states a time limit that stops the session moves it to.
+  const clocks = (area.clocks ?? []).flatMap((c) => (c.escalate ?? []).flatMap((e) => (e.move_to && e.stops_session ? [e.move_to] : [])));
+  return [...new Set([...(area.detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!), ...clocks])];
 }

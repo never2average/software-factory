@@ -34,7 +34,7 @@ import { areaLinks, DECLARABLE_ROLES, isFieldUrl, REPOSITORY_NAME, URL_MAX, opti
 import { packs } from "./packs.js";
 import { crumbChain, tabShownAreas, type CrumbHop, type CrumbTab } from "./record-crumbs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
-import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
+import { cursorOf, ENTERED_AT, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, inConsole, withTenant } from "./tenant-scope.js";
 import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
@@ -448,13 +448,16 @@ async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promi
   if (orgId !== null && needsMasking(area, raw)) raw = await maskFields(orgId, area, row.key, raw);
   const { data, drift } = conform(area, raw);
   const t = orgId !== null && isSealed(row.title) ? await open(orgId, row.title) : row.title;
-  return { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}),
+  const out: RecordRow = { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}),
     ...(orgId !== null && visibilityShown(area) ? { visibility: visibilityOf(row as StoredVisibility) } : {}) };
+  // mold_v0-337: when it entered the state it is in (a sort by $state_at in memory); a symbol, never in an answer.
+  if (area.lifecycle) { const at = stateTimes(raw)[String(raw[area.lifecycle.field] ?? area.lifecycle.initial)]; if (at) (out as { [ENTERED_AT]?: string })[ENTERED_AT] = at; }
+  return out;
 }
 
 /** A query (mold_v0-059) against an area's fields: limit, sort, filter, cursor (src/record-query.ts). */
 export const queryOf = (area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Parsed => {
-  const p = parseQuery(area.fields as QField[], opts as RecordQuery, fits as (f: QField, v: unknown) => boolean, fitsOne as (f: QField, v: unknown) => boolean);
+  const p = parseQuery(area.fields as QField[], opts as RecordQuery, fits as (f: QField, v: unknown) => boolean, fitsOne as (f: QField, v: unknown) => boolean, area.lifecycle?.field);
   // mold_v0-194: an encrypted field is filtered by equality only, through its blind index, and never sorted on.
   checkEncryptedQuery(area, p);
   return p;
@@ -1047,11 +1050,14 @@ export async function onSaveChecks(orgId: number, area: RecordArea, key: string,
   // mold_v0-305 (flag workspace_storage): a workspace's own object storage names a bucket and an endpoint a service takes.
   await (await import("./workspace-storage.js")).checkStorageRecord(area.name, data);
   await health.checkOnlyOne(orgId, area, key, data, actor); // mold_v0-332: one record marked, where only one may be
-  const rules = (area as { on_save?: { check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] }[] }).on_save;
+  // mold_v0-337: one record per parent (a unique value among siblings), the store's own rule (not under record_rules).
+  const U = await import("./record-unique.js");
+  if (U.uniqueOf(area).length) await U.checkUnique(orgId, area, key, data, actor, op === "create" ? null : (await workspaceStored(orgId, area, [key])).get(key)?.data ?? null);
+  const rules = (area as { on_save?: ({ check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] } | { unique: unknown; on?: undefined })[] }).on_save;
   if (!rules?.length || !featureSetting("record_rules")) return;
   const { answerCheck } = await import("./checks.js");
   for (const r of rules) {
-    if (r.on && !r.on.includes(op)) continue;
+    if (!("check" in r) || (r.on && !r.on.includes(op))) continue; // mold_v0-337: a unique rule is checked above
     const inputs: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(r.inputs)) {
       const got = typeof v !== "string" ? v : v === "$key" ? key : v === "$title" ? title : v.startsWith("@") ? data[v.slice(1)] : v.startsWith("$$") ? v.slice(1) : v;
@@ -1191,6 +1197,7 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   // mold_v0-332: a move changing what a connection's test reads resets it; a one-only flag's `where` is checked.
   const after = health.healthMove(area, prev.opened, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }), w = writerOf(actor, null);
   await health.checkOnlyOne(orgId, area, key, after, actor, prev.opened);
+  await (await import("./record-unique.js")).checkUnique(orgId, area, key, after, actor, prev.opened); // mold_v0-337
   const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
   await supersedeOthers(orgId, area, key, after);
@@ -1210,9 +1217,11 @@ async function stoppedFor(orgId: number, area: string, key: string): Promise<boo
       WHERE r.org_id = $1 AND r.id = $2 AND s.policy->'stopped_for'->>'area' = $3 AND s.policy->'stopped_for'->>'key' = $4 LIMIT 1`, [orgId, run, area, key]).catch(() => []);
   return rows.length > 0;
 }
-/** mold_v0-333: the states a stops_session move (Cancel) reaches on `area`'s page. */
-const lateStopStates = (area: RecordArea) =>
-  ((area as { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }).detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!);
+/** mold_v0-333: the states a stops_session move (Cancel) reaches on `area`'s page; mold_v0-337: or a time limit that stops it. */
+const lateStopStates = (area: RecordArea) => [
+  ...((area as { detail?: { actions?: { kind: string; to?: string; stops_session?: boolean }[] } }).detail?.actions ?? []).filter((a) => a.kind === "move" && a.stops_session && a.to).map((a) => a.to!),
+  ...((area as { clocks?: { escalate?: { move_to?: string; stops_session?: boolean }[] }[] }).clocks ?? []).flatMap((c) => (c.escalate ?? []).flatMap((e) => (e.move_to && e.stops_session ? [e.move_to] : []))),
+];
 /**
  * mold_v0-333 (lifecycle.supersedes): a record that entered `when_enters` replaces the others of its scope (the same
  * values of every scope field) still there and entered before it: each is moved to `previous_to` by the shell, along the

@@ -4543,8 +4543,71 @@ it; Cancel stopping the session and ignoring its late move; close-out for every 
 BUILDING deployment cancelled, once, a finished build left, the sweep settling a missed one; the clock moving a running
 build past 90 minutes to timed_out once; the steps' stop point; SUPERSEDED per scope and the serving pointer as a fact and
 a column; a list column's sort and where; a current-count card; the checklist step done only on READY. **Not covered:**
-two Start build presses at once (both make a build; "one at a time" is a pack's `unavailable` on the action); a
-rollback or promote action; a pointer across two hops (application → environment → deployment).
+a rollback or promote action (mold_v0-337 adds one build at a time, two-hop pointers and time limits that stop the
+session: the next section).
+
+## One at a time, one per parent, two hops (mold_v0-337)
+
+Shared pieces record pages were missing (every key optional, generic and neutral; a pack that names none builds and
+behaves as before):
+
+- **One at a time** (`src/pack-api.ts` `UnavailableRelatedSchema`, `src/record-page-routes.ts` `relatedOpen`): an
+  action's `unavailable` entry may test the records pointing here instead of this record: `{"related": {"area":
+  "builds", "via": "application", "where": {"field": "status", "in": ["queued", "running", "deploying"]}}, "reason": "A
+  build of it is still going: open it, or cancel it first."}` (an entry has `when` or `related`, one of them). Read as the
+  shell (every record of the workspace, whoever may see it: the reason is the pack's words and names none), when the
+  page is read (the button disabled with the reason) and when it is taken (409). A start_agent whose `creates` makes a
+  record of that area checks again once it is made: of two pressed at the same moment, the later (by key) is taken back
+  with the reason.
+- **One per parent** (`src/record-unique.ts`): an area's `on_save` entry `{"unique": {"field": "is_default", "value":
+  "default", "within": ["application"]}, "message"?}`: at most one record of the workspace with the same `within` values
+  holds the value (any value, without `value`). A create, edit, import or move making a second is refused (409) naming
+  the other record as the writer reads it ("another record (one you cannot see)" when they cannot), as a one-only flag's
+  refusal does: `Environments: "Production" is already Default for this application, and only one may: change it there
+  first.` A record that already held it before the write saves as it is; an empty `within` value has no siblings. The
+  area's writes take their turn (the one-only lock). The store's own rule, not under `record_rules`.
+- **Two hops** (`RelatedHopSchema`): a computed fact's `through` and a related column's `related.through`, `{area, via?,
+  where?, sort?}`: the first record of `area` pointing here that `where` keeps (in `sort`'s order); the fact or column
+  then reads the records pointing at THAT record: `{"label": "Serving", "computed": {"area": "deployments", "via":
+  "environment", "op": "latest", "where": {"field": "state", "equals": "READY"}, "through": {"area": "environments",
+  "via": "application", "where": {"field": "is_default", "equals": "default"}}}}`. Each hop is read as the person: a role
+  that may not read the hop's area does not see the fact; no hop record reads as none (0, or empty).
+- **Time limits that stop the agent**: a clock step's `stops_session: true` (with `move_to`): once the record is moved,
+  the session that made it (a start_agent's `creates`) is stopped as a Cancel stops it (as the platform; an
+  `escalate:<j>:stopped` event says how many), and its late moves of the record are ignored; sessions people started
+  from the record keep running. `src/session-records.ts` `stopSessionsFor` is the one stop, Cancel's and the clock's.
+- **Numbered titles**: a `creates.title` may say `{{$n}}` (one more than the records made from this one so far, counted
+  through its `link`, which it then needs) and `{{$today}}` (the day it is made, "22 Nov", UTC): `"{{title}} build {{$n}}
+  · {{$today}}"` reads "Shop build 7 · 22 Nov". Records made before keep their titles.
+- **Moves named from where the record is** (a fix): a move's choice of a state is named by the transition that applies
+  from the record's current state (Resume from suspended, Mark live from pending, both to active), no longer by the
+  first transition to that state. A move action's `to_any` (without `to`) offers only those states, so another move
+  (Remove) can be an action of its own; `label_from_move: true` names the button by the one move open now (else its
+  label).
+- **Sort by state time**: every `sort` of a related list, a computed fact, a hop and a related column may be
+  `{"field": "$state_at"}`: when each record entered the state it is in now (the store's stamp; a row without one by its
+  last change), so a BUILDING deployment counts for Last deploy. In the query engine (`src/record-query.ts`, SQL and
+  memory), for an area with a lifecycle only (else refused, at build and in a query).
+- **Rules in words** (`web/src/features/records/logic-words.ts`): a JsonLogic expression in a json value or a table cell
+  reads in words ("documents is less than 2"; `blocked is empty and (tier is "gold" or spend is more than 1000)`):
+  comparisons, between, and, or, not, set, in, if, missing, arithmetic, min, max, some, all and none; any other part is
+  shown as its JSON, never guessed. Copy as JSON still copies the JSON.
+
+Refused at build (with their paths): an unavailable entry with both or neither of `when` and `related`; a related area
+or a hop whose `via` does not point back, its `where` or `sort` off its fields; `to_any` beside `to`, naming a state no
+transition reaches, or a state twice; `to_any` or `label_from_move` on another kind; `{{$n}}` without a `link`, any
+other `{{$x}}`; a clock step's `stops_session` without `move_to`; a unique rule on a field the area lacks or one without
+one plain value, within itself, an enum value that is not an option, on a shared or sealed area; `$state_at` on an area
+without a lifecycle.
+
+Proof: `npm run test:apps-ui` (`scripts/apps-ui-337-test.ts`, offline, its own fixture pack): the refusals; Start build
+disabled with the reason while a build is open, refused when pressed anyway, open again once it ended, two presses at
+once leaving one open build and one session; numbered titles per parent; a time limit stopping the session (its late
+move ignored) and, without the key, leaving it; a second Default refused naming the other; the two-hop Serving as a fact
+and a column (hidden from a role that may not read the hop); Last deploy by `$state_at` (SQL and memory); moves named
+Resume and Mark live by where the record is, Remove on its own; rules in words. `npm run test:console-types` carries
+every new key. **Not covered:** a hop through a reference this record holds (only records pointing back); uniqueness
+between two rows of one import file.
 
 ## Programs that improve, keep records and start on their own (mold_v0-303, mold_v0-308)
 

@@ -269,6 +269,16 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
             `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
             [orgId, area.pack, area.name, row.key, c.name, `${s.id}:moved`, v.due_at, v.due_at, JSON.stringify({ moved }), now]);
+          // mold_v0-337: a step with stops_session stops the agent session that made the record (as a Cancel does);
+          // its late moves of it are ignored. Sessions people started from it are theirs and keep running.
+          if (c.escalate![s.index]?.stops_session) {
+            const words = `The time limit ${c.label ?? c.name} (moved ${row.title || row.key} to ${(moved as { to?: string }).to ?? "its next state"})`;
+            const n = await (await import("./session-records.js")).stopSessionsFor(orgId, area.name, row.key, words, null).catch((err) => { console.error(`${area.name}/${row.key}: session not stopped: ${(err as Error).message}`); return 0; });
+            if (n) await db.query(
+              `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
+              [orgId, area.pack, area.name, row.key, c.name, `${s.id}:stopped`, v.due_at, v.due_at, JSON.stringify({ stopped_sessions: n }), now]);
+          }
           await (await import("./session-records.js")).closeChildrenFor(orgId, area.name, row.key).catch((err) => console.error(`${area.name}/${row.key}: children not closed: ${(err as Error).message}`));
         }
       }

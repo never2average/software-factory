@@ -225,36 +225,41 @@ const pendingScope = new AsyncLocalStorage<Map<string, Record<string, unknown>>>
 export const withPendingRows = <T>(rows: Map<string, Record<string, unknown>>, fn: () => T): T => pendingScope.run(rows, fn);
 
 /**
+ * A read of the workspace's records as the shell reads them for a save check (mold_v0-332; mold_v0-337 shares it):
+ * every row, whoever may see it; in a batch on the write's own transaction (it sees what the batch wrote so far:
+ * app.viewer "*" for this one read, then the writer's again), else on its own.
+ */
+export async function shellRead<R>(orgId: number, sql: string, params: unknown[]): Promise<R[]> {
+  const { getDb } = await import("./db.js");
+  const { withTenant, withViewer } = await import("./tenant-scope.js");
+  const ra = await import("./record-areas.js");
+  if (!ra.inRecordBatch()) return withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<R & object>(sql, params))) as Promise<R[]>;
+  return withTenant(orgId, async () => {
+    const tx = await ra.recordQuery();
+    const [was] = await tx.query<{ v: string | null }>("SELECT current_setting('app.viewer', true) AS v");
+    await tx.query("SELECT set_config('app.viewer', '*', true)");
+    let got: R[];
+    try { got = await tx.query<R & object>(sql, params) as R[]; }
+    catch (e) {
+      // The read's own error is the one said (the transaction is then rolled back, the setting with it).
+      await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]).catch(() => undefined);
+      throw e;
+    }
+    await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]);
+    return got;
+  });
+}
+
+/**
  * The workspace's records of `area` with `use` on, as they stand for this write: every row (the shell's read: a row the
  * writer cannot see counts too; in a batch, as its transaction has them), and an import preview's pending rows over
  * them. Never limited: every marked row is counted.
  */
 async function marked(orgId: number, area: AreaLike, use: string): Promise<{ key: string; title: string | null; data: Record<string, unknown> }[]> {
-  const { getDb } = await import("./db.js");
-  const { withTenant, withViewer } = await import("./tenant-scope.js");
-  const ra = await import("./record-areas.js");
   const parse = (d: Record<string, unknown> | string) => (typeof d === "string" ? JSON.parse(d) : d) as Record<string, unknown>;
   const sql = "SELECT key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND data -> $4 = 'true'::jsonb";
   type R = { key: string; title: string | null; data: Record<string, unknown> | string };
-  let found: R[];
-  if (ra.inRecordBatch()) {
-    // On the write's own transaction (it sees what the batch wrote so far), as the shell reads: every record of the
-    // workspace, whoever may see it (app.viewer "*" for this one read, then the writer's again).
-    found = await withTenant(orgId, async () => {
-      const tx = await ra.recordQuery();
-      const [was] = await tx.query<{ v: string | null }>("SELECT current_setting('app.viewer', true) AS v");
-      await tx.query("SELECT set_config('app.viewer', '*', true)");
-      let got: R[];
-      try { got = await tx.query<R>(sql, [orgId, area.pack, area.name, use]); }
-      catch (e) {
-        // The read's own error is the one said (the transaction is then rolled back, the setting with it).
-        await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]).catch(() => undefined);
-        throw e;
-      }
-      await tx.query("SELECT set_config('app.viewer', $1, true)", [was?.v ?? ""]);
-      return got;
-    });
-  } else found = await withViewer(null, () => withTenant(orgId, async () => (await getDb()).query<R>(sql, [orgId, area.pack, area.name, use])));
+  const found = await shellRead<R>(orgId, sql, [orgId, area.pack, area.name, use]);
   const rows = new Map(found.map((r) => [r.key, { key: r.key, title: r.title, data: parse(r.data) }]));
   for (const [k, d] of pendingScope.getStore() ?? []) rows.set(k, { key: k, title: null, data: d });
   return [...rows.values()].filter((r) => r.data[use] === true);
@@ -312,7 +317,9 @@ export function onlyOneLast(area: AreaLike, writes: { data: Record<string, unkno
  * other half-way. Re-taking it in the same transaction is free.
  */
 export async function lockOnlyOne(orgId: number, areas: readonly (AreaLike & { scope?: string })[]): Promise<void> {
-  const mine = [...new Map(areas.filter((a) => a.scope === "workspace" && onlyOneOf(a).length > 0).map((a) => [`${a.pack}/${a.name}`, a])).values()]
+  // mold_v0-337: and an area with a one-per-parent rule (src/record-unique.ts).
+  const one = (a: AreaLike & { scope?: string; on_save?: readonly unknown[] }) => onlyOneOf(a).length > 0 || (a.on_save ?? []).some((r) => !!r && typeof r === "object" && "unique" in r);
+  const mine = [...new Map(areas.filter((a) => a.scope === "workspace" && one(a)).map((a) => [`${a.pack}/${a.name}`, a])).values()]
     .sort((x, y) => `${x.pack}/${x.name}`.localeCompare(`${y.pack}/${y.name}`));
   if (!mine.length) return;
   const ra = await import("./record-areas.js");

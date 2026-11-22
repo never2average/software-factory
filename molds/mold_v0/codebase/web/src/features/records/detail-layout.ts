@@ -68,7 +68,10 @@ export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
   kind: PageActionKind; place?: PageActionPlace; label?: string; job_kind?: string; input?: Record<string, string>; to?: string; field?: string;
-  roles?: string[]; unavailable?: { when: DetailCondition; reason: string }[]; confirm?: string;
+  /** mold_v0-337: or while a related record is one `where` keeps (`related`; the server checks it). */
+  roles?: string[]; unavailable?: { when?: DetailCondition; related?: { area: string; via?: string; where: DetailCondition }; reason: string }[]; confirm?: string;
+  /** mold_v0-337: a move's own states (to_any), and its name from the one move open now (label_from_move). */
+  to_any?: string[]; label_from_move?: boolean;
   /** mold_v0-256: a create_record action's area. */
   area?: string;
   /** mold_v0-256: a start_run on the record a link field names. */
@@ -86,7 +89,9 @@ export interface DetailActionSpec {
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
-export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition }
+export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition;
+  /** mold_v0-337: read through a first hop (the application's default environment); the server reads both. */
+  through?: { area: string; via?: string; where?: DetailCondition; sort?: { field: string; direction?: 'asc' | 'desc' } } }
 export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed;
   /** mold_v0-309: left out while it has no value (else "—"). */
   hide_empty?: boolean;
