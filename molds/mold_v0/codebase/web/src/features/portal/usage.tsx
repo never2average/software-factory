@@ -15,6 +15,9 @@ import { MultiSelectFilter, type FilterOption } from '@/components/layout/multi-
 import { Icons } from '@/components/icons';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, useOrgLoad } from './shared';
+import { runKindLabel } from '@/features/tabs/run-rows';
+import { RunStatusBadge } from '@/features/agent/run-badges';
+import { runStatusOf } from '@/lib/run-status';
 import { profile } from '@/config/profile.generated';
 import { text } from '@/lib/texts';
 import { fill } from '@/lib/vocabulary';
@@ -259,7 +262,11 @@ function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
 }
 
 /** The latest runs, one row each (shared with the neutral Activity page). */
-export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: string; title?: string | null; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
+/**
+ * Recent runs. mold_v0-340: each by its own title (an agent session's title, from the server), else its kind in the pack's
+ * words, never the stored kind; its status in the console's one status vocabulary, as a badge (web/src/lib/run-status.ts).
+ */
+export function RunTable({ rows, run = 'Run' }: { rows: { id: string; pack?: string; kind: string; title?: string | null; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
   if (!rows.length) return <Empty>No runs in this period.</Empty>;
   return (
     <Table>
@@ -268,8 +275,8 @@ export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: stri
       <TableBody>
         {rows.map((x) => (
           <TableRow key={x.id}>
-            <TableCell className='text-sm'>{x.title || x.kind}<div className='text-muted-foreground text-xs'>{shortDay(x.created_at.slice(0, 10))}</div></TableCell>
-            <TableCell>{x.status}</TableCell><TableCell>{x.by}</TableCell>
+            <TableCell className='text-sm' data-run-title=''>{x.title || runKindLabel(x.pack ?? '', x.kind)}<div className='text-muted-foreground text-xs'>{shortDay(x.created_at.slice(0, 10))}</div></TableCell>
+            <TableCell data-run-status=''><RunStatusBadge status={runStatusOf(x.status)} /></TableCell><TableCell>{x.by}</TableCell>
             <TableCell className='text-right tabular-nums'>{num(x.tool_calls)}</TableCell><TableCell className='text-right tabular-nums'>{num(x.requests)}</TableCell>
             <TableCell className='text-right tabular-nums'>{usd(x.cost_usd)}</TableCell>
           </TableRow>

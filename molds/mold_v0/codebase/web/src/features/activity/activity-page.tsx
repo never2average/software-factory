@@ -36,7 +36,7 @@ interface WorkspaceReport {
   members: { label: string; calls: number; errors: number; runs: number; run_tool_calls: number; run_cost_usd: number | null }[];
   runs: { runs: number; cost_usd: number; tool_calls: number; requests: number;
     by_kind: { kind: string; runs: number; tool_calls: number; cost_usd: number }[];
-    recent: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[] };
+    recent: { id: string; pack?: string; kind: string; title?: string | null; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[] };
 }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const plural = (s: string) => (s.endsWith('s') ? s : `${s}s`);

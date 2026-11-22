@@ -236,6 +236,14 @@ try {
     F.setFeaturesForTest({ record_pages: true, agent_harness: true, nested_runs: false });
     assert.deepEqual((await page(own.token, "shop", "runs")).sections["3-0"], { hidden: true }, "without nested runs: no runs section");
     F.setFeaturesForTest({ record_pages: true, agent_harness: true, nested_runs: true });
+    // Billing's Spending (GET /api/usage): each wake's run named by its session's title, never the stored kind.
+    const u = await app(own.token, "GET", "/api/usage?days=7");
+    assert.equal(u.status, 200, JSON.stringify(u.body).slice(0, 300));
+    const recent = u.body.runs.recent as { kind: string; title: string | null }[];
+    if (recent.length) {
+      assert.ok(recent.every((x) => typeof x.title === "string" && x.title !== "session"), `Recent runs by title: ${JSON.stringify(recent.map((x) => x.title))}`);
+      assert.ok(recent.some((x) => x.title === "Build Shop" || /Shop|Ask about|Improve/.test(String(x.title))), "a session's own title");
+    }
     ok("a record's sessions: those started from the app, its build and its problem, never another app's; the runs among them only once a session hands work on, active then finished, the app's own; none without nested runs");
   }
 
@@ -333,6 +341,30 @@ try {
     refuse("unknown-end", (p) => { p.console.sidebar_end = ["wallet"]; }, /console\.sidebar_end: wallet is not one of the pack's tabs/);
     refuse("usage-tab", (p) => { p.tabs.push({ id: "usage", kind: "usage", label: "Usage", group: "Build" }); }, /tab usage: the Activity page is Billing's Spending tab/);
     ok("the console: Billing's tabs in the pack's order and words (Spending, People, Teams, Budget rules, Alerts, Access log); Settings without Alerts, Teams and Automation; /app/activity, /app/usage and /app/settings/automation lead to Billing; Billing then Settings at the sidebar's foot (also --sidebar); without the keys all as before; refused: a foot tab with a group or not the pack's, a usage tab beside Spending");
+  }
+
+  // ---------- 6. the console's drawing rules (offline, from its source; the lane console measures them drawn) ----------
+  {
+    const src = (rel: string) => readFileSync(path.join(ROOT, "web", "src", rel), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const page = src("features/records/detail-page.tsx");
+    const strip = page.slice(page.indexOf("function RecordTabStrip("), page.indexOf("/** The first tab's end:"));
+    const cls = /export const RECORD_TAB_STRIP_CLASS = '([^']+)'/.exec(page)?.[1] ?? "";
+    assert.match(cls, /(^| )flex-wrap( |$)/, "the record's tab strip wraps to another row when its tabs do not fit");
+    assert.doesNotMatch(cls + strip, /flex-nowrap|overflow-x-auto|w-max|scrollLeft|mask-image/, "never a sideways scroller that clips a tab");
+    assert.match(strip, /<TabsTrigger [^>]*className='[^']*flex-none[^']*whitespace-nowrap/, "a tab's label never breaks inside itself");
+    const row = page.slice(page.indexOf("export function CompactRunRow("), page.indexOf("/** mold_v0-340: a record's agent sessions"));
+    assert.match(row, /title=\{whole\} className='[^']*\btruncate\b/, "a compact row's title: one line, cut with an ellipsis, the whole on hover");
+    assert.match(row, /\{title\}<\/Link>\s*<span className='flex [^']*'>\{state\}<span className='tabular-nums'>\{spend\}<\/span><\/span>\s*<span className='text-muted-foreground [^']*\btruncate\b[^']*'>\{meta\}<\/span>/, "then two lines: state and spend, then who and when (muted)");
+    assert.match(page, /const useCompactRows = \(\) => \{ const inPanel = useInRecordPanel\(\), full = useRecordPanelFull\(\); return inPanel && !full; \};/, "compact inside a record panel, not once it is expanded with room");
+    assert.equal((page.match(/compact \? \(\s*<CompactRunRow/g) ?? []).length, 2, "both the sessions and the runs lists use it");
+    const usage = src("features/portal/usage.tsx");
+    const table = usage.slice(usage.indexOf("export function RunTable("));
+    assert.match(table, /\{x\.title \|\| runKindLabel\(x\.pack \?\? '', x\.kind\)\}/, "Recent runs: a run's title, else its kind in the pack's words");
+    assert.match(table, /<RunStatusBadge status=\{runStatusOf\(x\.status\)\} \/>/, "its status in the one status vocabulary, as a badge");
+    assert.doesNotMatch(table, /<TableCell>\{x\.status\}<\/TableCell>/, "never the stored status word");
+    const route = readFileSync(path.join(ROOT, "src", "usage-routes.ts"), "utf8");
+    assert.match(route, /title: titles\.get\(x\.id\) \?\? \(x\.pack === AGENT_PACK \? "Agent session" : null\)/, "an agent session's run: its session's title, else Agent session");
+    ok("the console's drawing: the record's tab strip wraps (no scroller, no tab clipped, no label broken); sessions and runs in a record panel as compact rows (title on one line with an ellipsis and the whole on hover, state and spend, then who and when), the table layout once expanded; Recent runs by title and status words");
   }
 
   console.log("app nav (mold_v0-340): all checks passed");

@@ -5039,6 +5039,19 @@ The console (pack.json `console`, one pack's per build; `src/console-pages.ts` b
   (`sidebarEnd`, `web/src/config/nav-config.ts` withSettings). Refused: a tab with a group, one inside a page or Settings,
   one not the pack's, the key beside a declared sidebar (profile.json `console.sidebar`).
 
+Drawing (the shell's, every build):
+
+- **A record's tab strip wraps** (`web/src/features/records/detail-page.tsx` RecordTabStrip, `RECORD_TAB_STRIP_CLASS`):
+  tabs that do not fit go on to a second row, each whole (no label broken, never a sideways scroller that clips one), in a
+  record panel beside its list, expanded, and on a phone. (mold_v0-300's one-row scroller is gone.)
+- **Sessions and runs in a record panel are compact rows** (`CompactRunRow`): the title on one full-width line (cut with an
+  ellipsis, the whole on hover), the state and spend on the second, who and when muted on the third; expanded to the
+  list's full width (`useRecordPanelFull`) they keep the wide row.
+- **Recent runs** (Activity, Billing's Spending, Usage): each run by its own title (an agent session's title, else "Agent
+  session" for the workspace agent's wakes, else its kind in the pack's words), its status as the console's one status badge.
+- **A phone's list cards** (`StatStrip` `strip`): the strip is the containing block of each card's screen-reader words, so
+  they no longer widen the page past the window (a list and its record panel scrolled sideways at 390 px).
+
 Old addresses of pages a pack drops from its tabs keep working through its own `console.redirects` (mold_v0-140). The
 workspace agent's pages stay pages: `/app/agent` (every session opens there; the top bar's agent button) and
 `/app/agent/runs` (a run's page under it) are reachable with or without a sidebar entry.
