@@ -8,7 +8,7 @@
  * reads it, else "another record (one you cannot see)", as a one-only flag's does.
  */
 import { PackError, type OnSaveUnique } from "./pack-api.js";
-import { shellRead } from "./connection-test-health.js";
+import { pendingRows, shellRead } from "./connection-test-health.js";
 
 interface AreaLike { pack: string; name: string; label?: string; scope?: string; fields: readonly { name: string; label?: string; options?: unknown }[]; on_save?: readonly unknown[] }
 
@@ -40,13 +40,18 @@ export async function checkUnique(orgId: number, area: AreaLike, key: string, da
     if (prev && holds(u, prev) && same(prev[u.field], data[u.field]) && u.within.every((w) => same(prev[w], data[w]))) continue;
     const params: unknown[] = [orgId, area.pack, area.name, key, u.field, JSON.stringify(data[u.field])];
     const scope = u.within.map((w) => { params.push(w, JSON.stringify(data[w])); return `data -> $${params.length - 1} = $${params.length}::jsonb`; });
-    const rows = await shellRead<{ key: string }>(orgId,
-      `SELECT key FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key <> $4 AND data -> $5 = $6::jsonb AND ${scope.join(" AND ")} ORDER BY key LIMIT 1`, params);
-    if (!rows.length) continue;
+    // An import preview's own rows first (named by their key in that file), then the stored ones it does not replace.
+    const pending = pendingRows();
+    const sibling = (d: Record<string, unknown>) => holds(u, d) && same(d[u.field], data[u.field]) && u.within.every((w) => same(d[w], data[w]));
+    const inFile = [...(pending ?? new Map()).entries()].find(([k, d]) => k !== key && sibling(d))?.[0];
+    const rows = inFile ? [] : (await shellRead<{ key: string }>(orgId,
+      `SELECT key FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key <> $4 AND data -> $5 = $6::jsonb AND ${scope.join(" AND ")} ORDER BY key LIMIT 50`, params))
+      .filter((r) => !pending?.has(r.key));
+    if (!inFile && !rows.length) continue;
     const ra = await import("./record-areas.js");
     const { auditQuiet } = await import("./audit-trail.js");
-    const seen = await auditQuiet(() => ra.getFor(orgId, area.name, rows[0]!.key, actor as never)).catch(() => null);
-    const other = seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
+    const seen = inFile ? null : await auditQuiet(() => ra.getFor(orgId, area.name, rows[0]!.key, actor as never)).catch(() => null);
+    const other = inFile ? `"${inFile}" (a row of this file)` : seen ? `"${seen.title || seen.key}"` : "another record (one you cannot see)";
     // An option says itself ("is already Default"); any other value with its field ("already has region eu-west").
     const enumField = Array.isArray(area.fields.find((x) => x.name === u.field)?.options);
     const what = enumField ? `is already ${words(area, u.field, data[u.field])}` : `already has ${label(area, u.field)} ${words(area, u.field, data[u.field])}`;

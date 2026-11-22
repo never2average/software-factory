@@ -2015,6 +2015,11 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
       if (!u.related) continue;
       const where = `action ${pageActionId(x)}: unavailable[${j}].related`;
       hopProblems(areas, a.name, { area: u.related.area, via: u.related.via, where: u.related.where }, (m) => at(where, m));
+      // Read as the shell from the stored rows: no clock state, no sealed values.
+      const w = u.related.where;
+      if ([w, ...(w.all ?? []), ...(w.any ?? [])].some((c) => c.clock !== undefined)) at(where, "where: a related record's clock is not read here: test its fields");
+      const t = areas.find((y) => y.name === u.related!.area) as { sealed?: boolean; role?: string } | undefined;
+      if (t && (t.sealed || t.role === "asset")) at(where, `${u.related.area} is sealed: its values are not read where this is checked`);
     }
     // mold_v0-256: a create_record action's area: a workspace area of the build, each input a field it has.
     for (const x of d.actions ?? []) {

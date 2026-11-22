@@ -40,7 +40,7 @@ import { packs } from "./packs.js";
 import { personSets, ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
 import { lineLinks, recordWriters } from "./record-runs.js";
-import { asAction, findArea, getFor, recordStateTimes, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
+import { asAction, findArea, getFor, inTransaction, recordQuery, recordStateTimes, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 const listForWorkspace = listFor;
 import { formOffers } from "./secret-binding.js";
 import { withTenant } from "./tenant-scope.js";
@@ -405,22 +405,31 @@ export async function computedFact(org: number | null, area: RecordArea, record:
 }
 
 /**
- * mold_v0-337 (an action's unavailable `related`): the records of `rel.area` pointing at `key` (through `rel.via`) that
- * `rel.where` keeps, at most `max` of them (oldest key first), read as the shell: every record of the workspace, whoever
- * may see it (the action's reason is the pack's words and names none of them).
+ * mold_v0-337 (an action's unavailable `related`, a title's {{$n}}): the records of `rel.area` pointing at `key` (through
+ * `rel.via`) that `rel.where` keeps, at most `max` of them, in the order they were made, read as the shell: every
+ * record of the workspace, whoever may see it (a member's private build counts too; the action's reason is the pack's
+ * words and names none of them), on the write's own transaction when inside one (src/connection-test-health.ts
+ * shellRead). A page at a time, stopping at `max` matches or COMPUTED_COUNT_MAX read.
  */
 export async function relatedOpen(org: number, area: RecordArea, key: string, rel: { area: string; via?: string; where?: DetailCondition }, max = COMPUTED_COUNT_MAX): Promise<string[]> {
   const target = findArea(rel.area);
   const via = target ? viaOf(area.name, target, rel) : null;
   if (!target || !via || target.scope !== "workspace") return [];
+  const { shellRead } = await import("./connection-test-health.js");
+  type R = { id: string; key: string; data: Record<string, unknown> | string };
   const out: string[] = [];
-  let after: string | undefined;
-  for (let read = 0; read < COMPUTED_COUNT_MAX && out.length < max;) {
-    const page = await listForWorkspace(org, target.name, { filter: pointingAt(target, via, key), limit: 200, ...(after ? { after } : {}) });
-    read += page.records.length;
-    for (const row of page.records) if ((!rel.where || holds(rel.where, row.data, (row as { clocks?: unknown }).clocks)) && out.length < max) out.push(row.key);
-    if (!page.next) break;
-    after = page.next;
+  for (let read = 0, after = "0"; read < COMPUTED_COUNT_MAX && out.length < max;) {
+    const rows = await shellRead<R>(org,
+      `SELECT id::text AS id, key, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND id > $4::bigint
+         AND (data -> $5 = to_jsonb($6::text) OR (jsonb_typeof(data -> $5) = 'array' AND data -> $5 @> jsonb_build_array($6::text))) ORDER BY id LIMIT 200`,
+      [org, target.pack, target.name, after, via, key]);
+    read += rows.length;
+    for (const r of rows) {
+      const data = (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>;
+      if ((!rel.where || holds(rel.where, data)) && out.length < max) out.push(r.key);
+    }
+    if (rows.length < 200) break;
+    after = rows[rows.length - 1]!.id;
   }
   return out;
 }
@@ -691,7 +700,7 @@ export function recordPageRouter(): Router {
           const S = await import("./session-records.js"), H = await import("./harness-sessions.js");
           const s = session(res);
           const words = `${s.email ?? "Someone"} (moved ${record.title || record.key} to ${stateWords(area, m.to)})`;
-          const stopped = await S.stopSessionsFor(s.org, area.name, record.key, words, H.actorOf(s));
+          const { stopped } = await S.stopSessionsFor(s.org, area.name, record.key, words, H.actorOf(s));
           // Its children (deployments still building) close with it now, not when the session's wake ends.
           await S.closeChildrenFor(s.org, area.name, record.key).catch((e) => console.error(`${area.name}/${record.key}: children not closed: ${(e as Error).message}`));
           return { ...moved, stopped_sessions: stopped };
@@ -752,17 +761,19 @@ export function recordPageRouter(): Router {
             ...(c.on_session_end ? { on_session_end: c.on_session_end } : {}), ...(c.reason_field ? { reason_field: c.reason_field } : {}), ...(c.children ? { children: c.children } : {}) };
           // mold_v0-337: a title's {{$n}}, one more than the records made from this one so far (counted as the shell).
           const numbered = !!c.link && !!c.title && /\{\{\s*\$n\s*\}\}/.test(c.title);
+          // mold_v0-337: one at a time, made under a lock on (workspace, area, this record): the check and the make in one
+          // transaction, so of two presses at the same moment the second waits, then finds the first's record open and is
+          // refused with the action's reason; {{$n}} is counted inside the same lock.
+          const busy = (declared.unavailable ?? []).filter((u) => u.related && u.related.area === c.area).map((u) => ({ related: u.related!, reason: u.reason }));
           const make = async (sid: string) => {
-            const n = numbered ? (await relatedOpen(s.org, area, record.key, { area: c.area, via: c.link })).length + 1 : undefined;
-            const made = await S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date(), n }, fillTemplate), actor);
-            // mold_v0-337: one at a time, checked again now it is made: of two pressed at the same moment, the later
-            // (by key: the time it was made, then a random tail) is taken back with the action's reason.
-            for (const u of declared.unavailable ?? []) {
-              if (!u.related || u.related.area !== c.area) continue;
-              const open = await relatedOpen(s.org, area, record.key, u.related);
-              if (open.some((k) => k !== key && k < key)) { await S.unmakeCreated(s.org, { area: c.area, key }); throw new PackError(u.reason, 409); }
-            }
-            return made;
+            const { auditAtomic } = await import("./audit-trail.js");
+            return auditAtomic(() => inTransaction(s.org, async () => {
+              if (busy.length || numbered)
+                await (await recordQuery()).query("SELECT pg_advisory_xact_lock(hashtext($1))", [`made-from/${s.org}/${c.area}/${area.name}/${record.key}`]);
+              for (const u of busy) if ((await relatedOpen(s.org, area, record.key, u.related, 1)).length) throw new PackError(u.reason, 409);
+              const n = numbered ? (await relatedOpen(s.org, area, record.key, { area: c.area, via: c.link })).length + 1 : undefined;
+              return S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date(), n }, fillTemplate), actor);
+            }));
           };
           const made = await H.startSession(s.org, H.actorOf(s), { message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
             { record: { area: area.name, key: record.key }, creates: { link, make } });

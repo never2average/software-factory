@@ -17,21 +17,29 @@ const ARITHMETIC: Record<string, string> = { '+': '+', '-': '-', '*': '×', '/':
 export const LOGIC_OPERATORS = [...Object.keys(COMPARE), ...Object.keys(ARITHMETIC), 'var', 'and', 'or', '!', '!!', 'if', '?:', 'in', 'missing', 'missing_some', 'min', 'max', 'cat', 'some', 'all', 'none'] as const;
 const KNOWN = new Set<string>(LOGIC_OPERATORS);
 
-/** Whether a value is a JsonLogic expression whose top operator is one this reads (one key, a known operator). */
+/** The deepest an expression is read in words; past it, the rest is shown as its JSON. */
+export const LOGIC_DEPTH_MAX = 12;
+/** Whether a {"var": ...} appears anywhere inside (at most LOGIC_DEPTH_MAX deep). */
+const hasVar = (v: unknown, d = 0): boolean => d <= LOGIC_DEPTH_MAX && (Array.isArray(v) ? v.some((x) => hasVar(x, d + 1)) : isObj(v) && ('var' in v || Object.values(v).some((x) => hasVar(x, d + 1))));
+/**
+ * Whether a value is a JsonLogic expression this reads: one key, a known operator (not a bare var), and either a var
+ * somewhere inside or its operands a list. {"max": 10} is a setting (Max: 10), not a rule; {"<": [{"var": "n"}, 2]} is.
+ */
 export function isLogic(v: unknown): boolean {
   if (!isObj(v)) return false;
   const keys = Object.keys(v);
-  return keys.length === 1 && KNOWN.has(keys[0]!) && keys[0] !== 'var';
+  if (keys.length !== 1 || !KNOWN.has(keys[0]!) || keys[0] === 'var') return false;
+  return Array.isArray(v[keys[0]!]) || hasVar(v[keys[0]!]);
 }
 
 const raw = (v: unknown) => JSON.stringify(v);
 const args = (v: unknown): unknown[] => (Array.isArray(v) ? v : [v]);
 /** A literal in words: text quoted, a list joined, nothing as "nothing". */
-function literal(v: unknown): string {
+function literal(v: unknown, d = 0): string {
   if (v === null || v === undefined) return 'nothing';
   if (typeof v === 'string') return `"${v}"`;
   if (typeof v === 'boolean') return v ? 'true' : 'false';
-  if (Array.isArray(v)) return v.map(words).join(', ');
+  if (Array.isArray(v)) return d > LOGIC_DEPTH_MAX ? raw(v) : v.map((x) => words(x, d + 1)).join(', ');
   return String(v);
 }
 /** A variable's name: its path ("vendor.documents" reads vendor documents), "it" for the item in some/all/none. */
@@ -41,17 +49,18 @@ function variable(a: unknown): string {
   return String(name).replace(/[._]+/g, ' ');
 }
 /** A part inside another: and/or/if wrapped in brackets so the reading keeps its grouping. */
-function inner(v: unknown): string {
-  const w = words(v);
+function innerAt(v: unknown, d: number): string {
+  const w = words(v, d + 1);
   return isObj(v) && ['and', 'or', 'if', '?:'].includes(Object.keys(v)[0] ?? '') ? `(${w})` : w;
 }
 
 /** Any value in words: an expression read, a literal said, an operator this does not know as its JSON. */
-export function words(v: unknown): string {
-  if (!isObj(v)) return literal(v);
+export function words(v: unknown, depth = 0): string {
+  if (!isObj(v)) return literal(v, depth);
   const keys = Object.keys(v);
-  if (keys.length !== 1 || !KNOWN.has(keys[0]!)) return raw(v);
+  if (keys.length !== 1 || !KNOWN.has(keys[0]!) || depth > LOGIC_DEPTH_MAX) return raw(v);
   const op = keys[0]!, a = args(v[op]);
+  const inner = (x: unknown) => innerAt(x, depth);
   if (op === 'var') return variable(v[op]);
   if (op in COMPARE) {
     // A between: {"<": [1, x, 10]} is 1 < x < 10.
@@ -72,14 +81,14 @@ export function words(v: unknown): string {
       if (a.length % 2 === 1) parts.push(`else ${inner(a[a.length - 1])}`);
       return parts.join(', ');
     }
-    case 'in': return a.length === 2 ? (Array.isArray(a[1]) ? `${inner(a[0])} is one of ${literal(a[1])}` : `${inner(a[1])} contains ${inner(a[0])}`) : raw(v);
-    case 'missing': return `${a.map((x) => (typeof x === 'string' ? x.replace(/[._]+/g, ' ') : words(x))).join(', ')} ${a.length === 1 ? 'is' : 'are'} missing`;
-    case 'missing_some': return a.length === 2 && Array.isArray(a[1]) ? `fewer than ${literal(a[0])} of ${(a[1] as unknown[]).map((x) => String(x).replace(/[._]+/g, ' ')).join(', ')} are given` : raw(v);
+    case 'in': return a.length === 2 ? (Array.isArray(a[1]) ? `${inner(a[0])} is one of ${literal(a[1], depth + 1)}` : `${inner(a[1])} contains ${inner(a[0])}`) : raw(v);
+    case 'missing': return `${a.map((x) => (typeof x === 'string' ? x.replace(/[._]+/g, ' ') : words(x, depth + 1))).join(', ')} ${a.length === 1 ? 'is' : 'are'} missing`;
+    case 'missing_some': return a.length === 2 && Array.isArray(a[1]) ? `fewer than ${literal(a[0], depth + 1)} of ${(a[1] as unknown[]).map((x) => String(x).replace(/[._]+/g, ' ')).join(', ')} are given` : raw(v);
     case 'min': return `the least of ${a.map(inner).join(', ')}`;
     case 'max': return `the most of ${a.map(inner).join(', ')}`;
     case 'cat': return a.map(inner).join(' then ');
     case 'some': case 'all': case 'none':
-      return a.length === 2 ? `${op === 'some' ? 'some of' : op === 'all' ? 'every one of' : 'none of'} ${inner(a[0])} match: ${words(a[1])}` : raw(v);
+      return a.length === 2 ? `${op === 'some' ? 'some of' : op === 'all' ? 'every one of' : 'none of'} ${inner(a[0])} match: ${words(a[1], depth + 1)}` : raw(v);
   }
   return raw(v);
 }

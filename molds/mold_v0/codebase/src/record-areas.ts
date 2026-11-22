@@ -215,7 +215,8 @@ export const onRecordChangeInTransaction = (fn: TxListener["fn"], wants: TxListe
 // whose page has a history section while record_pages is on (else no transaction of its own, as before).
 onRecordChangeInTransaction((c, tx) => writeHistory(findArea(c.area)!, c, tx), (name) => historyKept(findArea(name)));
 // mold_v0-332: an area with a one-only flag saves in a transaction of its own (its check takes the area's turn there).
-onRecordChangeInTransaction(async () => {}, (name) => { const a = findArea(name); return !!a && health.onlyOneOf(a).length > 0; });
+// mold_v0-337: and one with a one-per-parent rule (src/record-unique.ts): its check and its write share the area's lock.
+onRecordChangeInTransaction(async () => {}, (name) => { const a = findArea(name); return !!a && (health.onlyOneOf(a).length > 0 || ((a as { on_save?: unknown[] }).on_save ?? []).some((r) => !!r && typeof r === "object" && "unique" in r)); });
 /** Run a single write as a transaction when a transaction listener wants its area (inside a batch: the batch's). */
 const atomic = <T>(orgId: number, area: string, fn: () => Promise<T>): Promise<T> =>
   !txScope.getStore() && txListeners.some((l) => l.wants(area)) ? auditAtomic(() => inTransaction(orgId, fn)) : fn();

@@ -72,6 +72,9 @@ export function planCreated(c: SessionCreates, record: Pick<RecordRow, "key" | "
 export async function makeCreated(orgId: number, c: SessionCreates, key: string, plan: { title: string | null; data: Record<string, unknown> }, actor: Actor): Promise<RecordRow> {
   const area = findArea(c.area);
   if (!area || area.scope !== "workspace") throw new PackError(`no workspace area ${c.area}`, 404);
+  // mold_v0-337: the test world's stand-in for a slow make (two presses racing); never outside it.
+  const slow = process.env.APP_TEST_WORLD === "1" && process.env.NODE_ENV !== "production" ? Number(process.env.APP_TEST_MAKE_DELAY_MS ?? 0) : 0;
+  if (slow > 0) await new Promise((r) => setTimeout(r, Math.min(slow, 5000)));
   return asAction(() => workspaceRecords(area.pack, orgId, actor).create(area.name, key, { title: plan.title, data: plan.data }));
 }
 
@@ -286,12 +289,13 @@ export async function sessionsFor(q: Queryable, orgId: number, area: string, key
  * the one that made it always, as the platform under `words` (it works only for the record), and, with `startedBy`,
  * those started from it that this actor may stop under the session's own rules (theirs, or as an owner). Each stopped
  * session is marked first (policy.stopped_for), so only its wakes' late moves of the record are ignored; one this
- * actor may not stop loses the mark again. Returns how many were stopped.
+ * actor may not stop loses the mark again. Returns how many were stopped, and how many of the one that made it could
+ * not be (a time limit tries those again on its next check).
  */
-export async function stopSessionsFor(orgId: number, area: string, key: string, words: string, startedBy: import("./harness-sessions.js").Actor | null): Promise<number> {
+export async function stopSessionsFor(orgId: number, area: string, key: string, words: string, startedBy: import("./harness-sessions.js").Actor | null): Promise<{ stopped: number; failed: number }> {
   const H = await import("./harness-sessions.js");
   const { made, started } = await H.read((q) => sessionsFor(q, orgId, area, key));
-  let stopped = 0;
+  let stopped = 0, failed = 0;
   const system = { kind: "system" as const, user: null, name: words, role: null };
   for (const [id, by] of [...made.map((id) => [id, system] as const), ...(startedBy ? started.map((id) => [id, startedBy] as const) : [])]) {
     try {
@@ -302,10 +306,11 @@ export async function stopSessionsFor(orgId: number, area: string, key: string, 
       // Not this actor's to stop: the mark goes (only where no stop was asked of it, nor did it end).
       if ((e as { status?: number }).status === 403)
         await H.tx((q) => q.query("UPDATE harness_sessions SET policy = policy - 'stopped_for' WHERE id = $1 AND org_id = $2 AND state NOT IN ('stopped', 'failed') AND stop_requested_at IS NULL", [id, orgId]));
+      if (by === system) failed++;
       console.error(`${area}/${key}: session ${id} not stopped: ${(e as Error).message}`);
     }
   }
-  return stopped;
+  return { stopped, failed };
 }
 
 /** Mark a session as stopped by a record's Cancel: only its wakes' late moves of that record are ignored. */

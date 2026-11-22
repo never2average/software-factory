@@ -21,6 +21,10 @@
 //      (both to active); to_any keeps Remove out of the menu; label_from_move names the button.
 //   8. Sort by state time (21): Last deploy (latest by $state_at) is the BUILDING deployment made after the READY one,
 //      where by deployed_at it is the READY one; the memory engine orders the same way.
+//  10. The review's cases: three presses at once with a slow make leave one open build (the lock around check and
+//      make); two concurrent saves of a second Default leave one; an import file's own rows count; a time limit's
+//      failed stop is tried again on the next check and recorded once it works.
+//  11. Teams on: a build private to another member keeps Start build disabled and refused for someone who cannot see it.
 //   9. Rules in words (23): JsonLogic's common operators read in words, an unknown one shown as its JSON; a table cell
 //      and a json field read them.
 import assert from "node:assert/strict";
@@ -312,6 +316,64 @@ try {
     ok("moves named from where the record is: Resume on a suspended record (not the first transition's Mark live), Mark live on a pending one; to_any keeps Remove out of the button (its own action); label_from_move names the button by the one move open now");
   }
 
+  // ---------- 10. the review's cases: a slow make racing, concurrent saves, a failed stop tried again ----------
+  {
+    // M2: three presses at once while each make is slow: the lock makes the others wait, find the open build and refuse.
+    process.env.APP_TEST_MAKE_DELAY_MS = "400";
+    const three = await Promise.all([press("blog"), press("blog"), press("blog")]);
+    delete process.env.APP_TEST_MAKE_DELAY_MS;
+    assert.deepEqual(three.map((x) => x.status).sort(), [200, 409, 409], `slow makes, three at once: one made (${JSON.stringify(three.map((x) => x.body.error ?? "ok"))})`);
+    assert.equal((await openBuilds("blog")).length, 1, "one open build of it");
+    await cancel(three.find((x) => x.status === 200)!.build);
+    // M3: two saves at the same moment, each a second Default of one app: one saves, one is refused.
+    await rec.put("ux_apps", "wiki", { title: "Wiki", data: {} });
+    const saves = await Promise.allSettled([rec.put("ux_envs", "wiki-a", { title: "A", data: { app: "wiki", is_default: "default" } }), rec.put("ux_envs", "wiki-b", { title: "B", data: { app: "wiki", is_default: "default" } })]);
+    assert.deepEqual(saves.map((x) => x.status).sort(), ["fulfilled", "rejected"], "concurrent saves: one Default");
+    assert.match(String((saves.find((x) => x.status === "rejected") as PromiseRejectedResult).reason?.message), /is already Default for this application/);
+    // An import preview's own rows count as siblings.
+    const CH = await import("../src/connection-test-health.js");
+    const U = await import("../src/record-unique.js");
+    await assert.rejects(CH.withPendingRows(new Map([["wiki-c", { app: "blog2", is_default: "default" }]]), () => U.checkUnique(W.orgId, ra.findArea("ux_envs")! as never, "wiki-d", { app: "blog2", is_default: "default" }, { role: "owner", userId: own.userId }, null)),
+      /"wiki-c" \(a row of this file\) is already Default/, "a row of the same import file");
+    // A stop the time limit could not make is tried again on the next check, and recorded once it is.
+    const rc = await import("../src/record-clocks.js");
+    const y = await press("wiki");
+    await rec.move("ux_builds", y.build, "running");
+    await ra.asWriter({ by: "shell", id: "clock" }, () => ra.shellMove(W.orgId, "fixture_apps_ui", "ux_builds", y.build, ["running"], "timed_out"));
+    const mark = new Date().toISOString();
+    for (const step of ["escalate:0", "escalate:0:moved", "escalate:0:stop_failed:1"])
+      await db.query("INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, 'fixture_apps_ui', 'ux_builds', $2, 'build_limit', $3, $4, $5, '{}', now())", [W.orgId, y.build, step, mark, mark]);
+    await rc.clockCheck(new Date(), { force: true, orgId: W.orgId });
+    const sy = await H.read((q) => H.rowOf(q, W.orgId, y.session.id));
+    assert.ok(sy.state === "stopped" || sy.stop_requested_at, `the stop tried again: stopped (${sy.state})`);
+    const evs = (await db.query<{ step: string }>("SELECT step FROM workspace_clock_events WHERE org_id = $1 AND record_key = $2 ORDER BY step", [W.orgId, y.build])).map((e) => e.step);
+    assert.ok(evs.includes("escalate:0:stopped"), `recorded once it worked: ${evs.join(", ")}`);
+    ok("a slow make racing: three presses at once leave one open build (the lock); two concurrent saves leave one Default; an import file's own rows count; a time limit's failed stop is tried again and recorded once it works");
+  }
+
+  // ---------- 11. teams on: another member's private build still counts ----------
+  {
+    const priv = clone(PACK) as any;
+    priv.record_areas[2].visibility = { modes: ["workspace", "private"], default: "private" };
+    install(priv);
+    F.setFeaturesForTest({ record_pages: true, agent_harness: true, scheduled_alerts: true, record_rules: true, teams: true });
+    const alice = await http.signInAs(W, "member"), bob = await http.signInAs(W, "member");
+    const { withViewer } = await import("../src/tenant-scope.js");
+    const mine = await withViewer(alice.userId, () => ra.asWriter({ by: "people", id: alice.userId }, () =>
+      ra.workspaceRecords("fixture_apps_ui", W.orgId, { role: "member", userId: alice.userId }).put("ux_builds", "alice-build", { title: "Alice's build", data: { app: "wiki" }, visibility: { mode: "private" } } as never)));
+    assert.equal(mine.visibility?.mode, "private", "Alice's build is private to her");
+    assert.equal(await withViewer(bob.userId, () => ra.getFor(W.orgId, "ux_builds", "alice-build", { role: "member", userId: bob.userId })), null, "Bob cannot see it");
+    const p = await app(bob.token, "GET", "/api/records/_page/ux_apps/wiki");
+    assert.equal(p.status, 200, JSON.stringify(p.body));
+    const a = p.body.actions.find((x: { kind: string }) => x.kind === "start_agent");
+    assert.equal(a?.disabled, "A build of it is still going: open it, or cancel it first.", "Bob's Start build: disabled by a build he cannot see (the reason names none)");
+    const r = await app(bob.token, "POST", `/api/records/_page/ux_apps/wiki/actions/${a.id}`, {});
+    assert.equal(r.status, 409, "and refused on the server");
+    F.setFeaturesForTest({ record_pages: true, agent_harness: true, scheduled_alerts: true, record_rules: true });
+    install(PACK);
+    ok("teams on: a build private to another member still keeps Start build disabled and refused for someone who cannot see it");
+  }
+
   // ---------- 9. rules in words ----------
   {
     const L = await web("features/records/logic-words.ts");
@@ -330,9 +392,13 @@ try {
     for (const [v, want] of cases) assert.equal(L.logicWords(v), want, JSON.stringify(v));
     assert.equal(L.logicWords({ regex: ["x"] }), null, "an operator it does not know at the top: not a rule (shown as any other value)");
     assert.equal(L.logicWords({ name: "x" }), null, "an object that is no rule");
+    assert.equal(L.logicWords({ max: 10 }), null, "a setting named like an operator ({max: 10}) is no rule");
+    const deep = Array.from({ length: 40 }).reduce((x: unknown) => ({ and: [x, { var: "b" }] }), { var: "a" }) as unknown;
+    const said = L.logicWords(deep); assert.ok(typeof said === "string" && said.includes("{\"and\""), "a very deep expression ends in its JSON, never a stack overflow");
     const C = await web("features/records/code-text.ts");
     assert.equal(C.cellText({ "<": [{ var: "documents" }, 2] }), "documents is less than 2", "a table's cell reads it");
     const J = await web("features/records/json-text.ts");
+    assert.equal(J.jsonLine({ max: 10 }), "Max: 10", "a setting reads as before");
     assert.equal(J.jsonLine([{ id: "two-docs", description: "Two documents", logic: { "<": [{ var: "documents" }, 2] } }]), "two-docs (Two documents, documents is less than 2)", "a json field's line reads it");
     ok("rules in words: JsonLogic's comparisons, and/or/not, in, between, if, missing and set read in words; an unknown part shown as its JSON; a table cell and a json field read them");
   }

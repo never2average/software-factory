@@ -223,6 +223,8 @@ export function asTestOf<T>(area: AreaLike, key: string, stored: Record<string, 
 /** Rows an import's preview is about to write (key: its data), so one-only marks are judged across the file. */
 const pendingScope = new AsyncLocalStorage<Map<string, Record<string, unknown>>>();
 export const withPendingRows = <T>(rows: Map<string, Record<string, unknown>>, fn: () => T): T => pendingScope.run(rows, fn);
+/** mold_v0-337: an import preview's pending rows (key -> data), for the save checks that count siblings; null outside one. */
+export const pendingRows = (): ReadonlyMap<string, Record<string, unknown>> | null => pendingScope.getStore() ?? null;
 
 /**
  * A read of the workspace's records as the shell reads them for a save check (mold_v0-332; mold_v0-337 shares it):

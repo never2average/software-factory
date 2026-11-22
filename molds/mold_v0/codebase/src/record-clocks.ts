@@ -165,7 +165,7 @@ export async function clockCheck(now = clockNow(), opts: { force?: boolean; orgI
     const told: Told[] = [];
     for (const area of areas) {
       if (isSealedArea(area) && !vaultUnlocked()) { report.sealed_skipped++; continue; }
-      try { await checkArea(orgId, area, now, report, told); }
+      try { await checkArea(orgId, area, now, report, told); await retryStops(orgId, area, now); }
       catch (e) {
         // Never the message: an error while a sealed row is open must not carry its value into a log.
         report.errors++;
@@ -270,15 +270,10 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
              ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
             [orgId, area.pack, area.name, row.key, c.name, `${s.id}:moved`, v.due_at, v.due_at, JSON.stringify({ moved }), now]);
           // mold_v0-337: a step with stops_session stops the agent session that made the record (as a Cancel does);
-          // its late moves of it are ignored. Sessions people started from it are theirs and keep running.
-          if (c.escalate![s.index]?.stops_session) {
-            const words = `The time limit ${c.label ?? c.name} (moved ${row.title || row.key} to ${(moved as { to?: string }).to ?? "its next state"})`;
-            const n = await (await import("./session-records.js")).stopSessionsFor(orgId, area.name, row.key, words, null).catch((err) => { console.error(`${area.name}/${row.key}: session not stopped: ${(err as Error).message}`); return 0; });
-            if (n) await db.query(
-              `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
-              [orgId, area.pack, area.name, row.key, c.name, `${s.id}:stopped`, v.due_at, v.due_at, JSON.stringify({ stopped_sessions: n }), now]);
-          }
+          // its late moves of it are ignored. Sessions people started from it are theirs and keep running. A stop that
+          // failed is tried again on the next check (retryStops).
+          if (c.escalate![s.index]?.stops_session)
+            await stopForStep(db, orgId, area, row.key, row.title, c, s.id, v.due_at, now, (moved as { to?: string }).to ?? null, 0);
           await (await import("./session-records.js")).closeChildrenFor(orgId, area.name, row.key).catch((err) => console.error(`${area.name}/${row.key}: children not closed: ${(err as Error).message}`));
         }
       }
@@ -298,6 +293,50 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
     told.push({ event: ev.id, area, key: row.key, title: row.title, clock: c, step: s.id, what: stepWords(area, c.name, s.id, detail), due_on: v.due_on!,
       roles: notify.filter((x): x is AccountRole => x !== "assignee"), people: [...new Set(people)] });
   }
+}
+
+/** mold_v0-337: the most a time limit tries to stop the session that made a record it moved. */
+export const STOP_TRIES = 5;
+/**
+ * mold_v0-337: stop the session that made a record a stops_session step moved: an ":stopped" event once it is (or none
+ * is open any more), else a ":stop_failed:<n>" event, tried again on the next checks up to STOP_TRIES times.
+ */
+async function stopForStep(db: Queryable, orgId: number, area: ClockArea, key: string, title: string | null, c: Clock, step: string, mark: unknown, now: Date, to: string | null, tries: number): Promise<boolean> {
+  const words = `The time limit ${c.label ?? c.name} (moved ${title || key}${to ? ` to ${to}` : ""})`;
+  const r = await (await import("./session-records.js")).stopSessionsFor(orgId, area.name, key, words, null)
+    .catch((err) => { console.error(`${area.name}/${key}: session not stopped: ${(err as Error).message}`); return { stopped: 0, failed: 1 }; });
+  const ok = r.failed === 0;
+  await db.query(
+    `INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, due_at, detail, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (org_id, pack, area, record_key, clock, step, mark) DO NOTHING`,
+    [orgId, area.pack, area.name, key, c.name, ok ? `${step}:stopped` : `${step}:stop_failed:${tries + 1}`, mark, mark, JSON.stringify(ok ? { stopped_sessions: r.stopped } : { tries: tries + 1 }), now]);
+  return ok;
+}
+/**
+ * mold_v0-337: the stops a stops_session step made that failed (a ":moved" event, no ":stopped" one, fewer than
+ * STOP_TRIES ":stop_failed" ones): tried again, once per check.
+ */
+async function retryStops(orgId: number, area: ClockArea, now: Date): Promise<void> {
+  const steps = (area.clocks ?? []).flatMap((c) => (c.escalate ?? []).flatMap((e, j) => (e.move_to && e.stops_session ? [{ c, step: `escalate:${j}` }] : [])));
+  if (!steps.length) return;
+  await withTenant(orgId, async () => {
+    const db = await getDb();
+    for (const { c, step } of steps) {
+      const rows = await db.query<{ record_key: string; mark: unknown; tries: number }>(
+        `SELECT m.record_key, m.mark, (SELECT count(*) FROM workspace_clock_events f WHERE f.org_id = m.org_id AND f.pack = m.pack AND f.area = m.area AND f.record_key = m.record_key
+             AND f.clock = m.clock AND f.mark = m.mark AND f.step LIKE $5)::int AS tries
+           FROM workspace_clock_events m WHERE m.org_id = $1 AND m.pack = $2 AND m.area = $3 AND m.clock = $4 AND m.step = $6
+             AND EXISTS (SELECT 1 FROM workspace_clock_events f WHERE f.org_id = m.org_id AND f.pack = m.pack AND f.area = m.area AND f.record_key = m.record_key AND f.clock = m.clock AND f.mark = m.mark AND f.step LIKE $5)
+             AND NOT EXISTS (SELECT 1 FROM workspace_clock_events d WHERE d.org_id = m.org_id AND d.pack = m.pack AND d.area = m.area AND d.record_key = m.record_key AND d.clock = m.clock AND d.mark = m.mark AND d.step = $7)
+           LIMIT 100`,
+        [orgId, area.pack, area.name, c.name, `${step}:stop_failed:%`, `${step}:moved`, `${step}:stopped`]);
+      for (const r of rows) {
+        if (r.tries >= STOP_TRIES) continue;
+        const rec = await getFor(orgId, area.name, r.record_key).catch(() => null);
+        await stopForStep(db, orgId, area, r.record_key, rec?.title ?? null, c, step, r.mark, now, null, r.tries);
+      }
+    }
+  });
 }
 
 /**
