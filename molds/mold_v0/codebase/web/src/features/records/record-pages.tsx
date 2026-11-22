@@ -218,7 +218,9 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         // its option words, its health's staleness).
         const by = bySource(f);
         if (by) {
-          const an = sourceArea(by, r), ra = findRecordArea(base, an), mf = ra?.fields.find((x) => x.name === by[an]), v = r.data[name];
+          const an = sourceArea(by, r);
+          if (!an) return dash; // mold_v0-336: a row of an area the column maps no field of
+          const ra = findRecordArea(base, an), mf = ra?.fields.find((x) => x.name === by[an]), v = r.data[name];
           const st = mf && r.health?.field === mf.name ? staleWords(r.health) : null;
           if (st) return <span className='flex flex-wrap gap-1' data-enum-cell={name} data-source-cell={an} data-stale=''><ToneBadge color='neutral'>{st}</ToneBadge></span>;
           if (v == null || v === '' || !mf) return dash;

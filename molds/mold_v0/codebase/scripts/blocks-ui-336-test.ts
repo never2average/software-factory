@@ -119,14 +119,15 @@ const page = withSource(tab, { next: null, records: [
   { key: 'mine', title: 'Mine', data: { provider: 'vercel', status: 'working' }, updated_at: '', areas: ['conns'] },
   { key: 'vercel', title: 'Vercel', data: { provider: 'vercel', maturity: 'preview' }, updated_at: '', areas: ['catalog'] },
   { key: 'both', title: 'Both', data: { status: 'untested', maturity: 'ga' }, updated_at: '', areas: ['conns', 'catalog'] },
-  { key: 'none', title: 'None', data: {}, updated_at: '', areas: ['catalog'] }] });
+  { key: 'none', title: 'None', data: {}, updated_at: '', areas: ['catalog'] },
+  { key: 'stray', title: 'Stray', data: { status: 'working', maturity: 'ga' }, updated_at: '', areas: ['other'] }] });
 const items = [1, 2, 3, 4].map((n) => ({ label: 'Card ' + n, value: String(n), spark: [1, 2, n] }));
 process.stdout.write('\\u0001' + JSON.stringify({
   field: a.fields.find((f: any) => f.name === 'state'), plural: (a as any).plural ?? null,
   values: page.records.map((x: any) => [x.key, x.data.state, x.data.source]),
   plurals: [tabPlural(tab), tabPlural({ ...tab, plural: 'rows' }), tabPlural({ area: 'conns' } as any), tabPlural({ area: 'other' } as any),
     tabPlural({ ...tab, areas: [...tab.areas, { area: 'other', rows: 'all', source: null }] })],
-  one: ['records', 'people', 'catalog entries', 'buckets', 'addresses', 'boxes', 'hosting accounts and catalog entries', 'access', 'keys, buckets and disks'].map(oneOf),
+  one: ['records', 'people', 'catalog entries', 'buckets', 'addresses', 'boxes', 'hosting accounts and catalog entries', 'access', 'terms and conditions'].map(oneOf),
   strip: r(<StatStrip quad strip items={items} />), grid: r(<StatStrip quad items={items} />),
 }));
 `);
@@ -145,11 +146,12 @@ process.stdout.write('\\u0001' + JSON.stringify({
   assert.deepEqual(f.options.map((o: { value: string }) => o.value), ["untested", "working", "ga", "preview"], "every mapped field's options, once");
   assert.deepEqual(f.by_source, { conns: "status", catalog: "maturity" });
   assert.equal(out.plural, null, "a merged tab's rows are not its own area's plural");
-  assert.deepEqual(out.values, [["mine", "working", "This workspace"], ["vercel", "preview", "Shared catalog"], ["both", "untested", "This workspace"], ["none", null, "Shared catalog"]],
-    "each row's State is its own area's field (a row both hold: the first area's), the source column as before");
+  assert.deepEqual(out.values, [["mine", "working", "This workspace"], ["vercel", "preview", "Shared catalog"], ["both", "untested", "This workspace"], ["none", null, "Shared catalog"], ["stray", null, null]],
+    "each row's State is its own area's field (a row both hold: the first area's; an area it maps nothing of: empty), the source column as before");
   assert.deepEqual(out.plurals, ["hosting accounts and catalog entries", "rows", "hosting accounts", null, null],
     "the rows' plural: the areas' joined, the tab's own, one area's, none declared (records), not every area declaring one (records)");
-  assert.deepEqual(out.one, ["record", "person", "catalog entry", "bucket", "address", "box", "hosting account or catalog entry", "access", "key, bucket or disk"]);
+  assert.deepEqual(out.one, ["record", "person", "catalog entry", "bucket", "address", "box", "hosting account or catalog entry", "access", "terms and condition"],
+    "one of each; areas' plurals joined by tabPlural said one at a time, a pack's own plural never split");
   ok("console: a source column's field and each row's value, the rows' plural, one of a plural");
 
   const strip = out.strip as string, grid = out.grid as string;
@@ -180,7 +182,9 @@ process.stdout.write('\\u0001' + JSON.stringify({
   const acts = src("features/records/page-actions.tsx");
   assert.match(acts, /if \(a\.kind === 'toggle'\) return <ToggleSwitch/, "a toggle in the header is a switch");
   assert.match(acts, /<DropdownMenuSwitchItem checked=\{!!a\.on\}/, "in a menu an on/off item");
-  assert.match(acts, /takeAction\(host\.area, host\.record\.key, a\.id, \{ on: !a\.on \}\)/, "it asks for the other way round");
+  assert.match(acts, /takeAction<\{ unchanged\?: boolean \}>\(host\.area, host\.record\.key, a\.id, \{ on: !a\.on \}\)/, "it asks for the other way round");
+  assert.match(acts, /if \(!r\.unchanged\) toast\.success/, "no toast when it was already so");
+  assert.match(pages, /if \(!an\) return dash;/, "a row of an area the column maps nothing of: —");
   assert.match(acts, /if \(a\.look === 'link'[\s\S]{0,120}<TextAction a=\{a\} busy=\{busy\} take=\{take\} primary rail \/>/, "the rail's main action as a bare link when declared");
   assert.match(acts, /<button type='button' data-text-action=''/);
   assert.match(src("components/ui/dropdown-menu.tsx"), /function DropdownMenuSwitchItem/);

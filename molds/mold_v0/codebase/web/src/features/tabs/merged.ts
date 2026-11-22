@@ -5,6 +5,7 @@
 // server merges the rows (/api/records/tabs/<pack>/<tab>, src/record-merge.ts); this only names what the views show.
 import type { PackTabSpec, RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { findRecordArea } from '@/features/records/registry';
+import { joinedPlural } from '@/components/layout/table-pager';
 import type { Page, RecordRow } from './board';
 
 export const SOURCE_COLUMN = 'source';
@@ -44,8 +45,8 @@ export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
 
 /** mold_v0-336: a field per source area (a merged tab's column, src/pack-api.ts TabSourceColumnSchema), or null. */
 export const bySource = (f: RecordFieldSpec | undefined) => ((f as { by_source?: Record<string, string> } | undefined)?.by_source ?? null);
-/** The area whose field a source column shows on a row: the first of the row's areas the column maps, else its first. */
-export const sourceArea = (by: Record<string, string>, r: Pick<RecordRow, 'areas'>) => r.areas?.find((a) => a in by) ?? Object.keys(by)[0]!;
+/** The area whose field a source column shows on a row: the first of the row's areas the column maps; null when it maps none (the cell is empty). */
+export const sourceArea = (by: Record<string, string>, r: Pick<RecordRow, 'areas'>): string | null => r.areas?.find((a) => a in by) ?? null;
 
 /**
  * mold_v0-336: what a merged tab's rows are called, plural (its footer's count): the tab's own, else (one area) its area's,
@@ -57,7 +58,7 @@ export function tabPlural(tab: Pick<PackTabSpec, 'plural' | 'area' | 'areas'>): 
   const words = names.map((n) => findRecordArea('app', n)?.plural);
   if (!words.length || words.some((w) => !w)) return null;
   const uniq = [...new Set(words as string[])];
-  return uniq.length === 1 ? uniq[0]! : `${uniq.slice(0, -1).join(', ')} and ${uniq[uniq.length - 1]}`;
+  return uniq.length === 1 ? uniq[0]! : joinedPlural(uniq);
 }
 
 /** Where a merged tab (or a filtered one, mold_v0-175) reads its rows (the server's merge or filter), or one area's list. */
@@ -72,5 +73,5 @@ export function withSource(tab: PackTabSpec, page: Page): Page {
   const sourced = !!tab.areas?.some((a) => a.source);
   // mold_v0-336: each source column's value: the field its row's area maps (absent: empty).
   return { ...page, records: page.records.map((r) => ({ ...r, data: { ...r.data, ...(sourced ? { [SOURCE_COLUMN]: word(r) } : {}),
-    ...Object.fromEntries(cols.map((c) => [c.id, r.data[c.by_source[sourceArea(c.by_source, r)]!] ?? null])) } })) };
+    ...Object.fromEntries(cols.map((c) => { const an = sourceArea(c.by_source, r); return [c.id, an ? r.data[c.by_source[an]!] ?? null : null]; })) } })) };
 }

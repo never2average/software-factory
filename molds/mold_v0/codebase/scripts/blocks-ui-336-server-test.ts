@@ -82,7 +82,10 @@ try {
     assert.equal(main.data.use_in_builds, false, "turned off");
     assert.equal(main.data.host, "main.example.com", "its other fields kept");
     assert.notEqual(main.data.api_token, null, "its key kept (read masked, left as stored)");
+    // An edit saved after the page was read is kept: the toggle writes only its field over the record as stored now.
+    await ra.asWriter({ by: "people", id: "other-tab" }, () => rec.update("deploy_keys", "spare", { title: "Spare (renamed)", data: { host: "new.example.com", api_token: "tok-spare", use_in_builds: false } }));
     const on = await act(owner, "spare", "toggle.use_in_builds", { on: true });
+    assert.equal((await stored("spare")).data.host, "new.example.com", "an edit saved meanwhile is kept, never undone");
     assert.equal(on.status, 200, JSON.stringify(on.body));
     assert.equal((await stored("spare")).data.use_in_builds, true, "now the other one may be on");
     const same = await act(owner, "spare", "toggle.use_in_builds", { on: true });
@@ -95,7 +98,7 @@ try {
     const hist = (await page(owner, "main")).body.sections as Record<string, { changes?: { by?: string; changes?: { field: string }[] }[] }>;
     const lines = Object.values(hist).flatMap((s) => s?.changes ?? []);
     assert.ok(lines.some((l) => (l.changes ?? []).some((c) => c.field === "use_in_builds")), `the history has the change: ${JSON.stringify(lines).slice(0, 400)}`);
-    ok("taken: the field the other way round (or to on), through the record store as the person; the other fields and the key kept; asking for what it is writes nothing; the history says it");
+    ok("taken: the field the other way round (or to on), through the record store as the person; the other fields and the key kept; an edit saved meanwhile kept; asking for what it is writes nothing; the history says it");
   }
 
   // 3b. The rest of the refusals.

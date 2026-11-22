@@ -670,14 +670,23 @@ export function recordPageRouter(): Router {
         return { deleted: await dataApi.delete(callerOf(res), area.name, record.key) };
       }
       case "toggle": {
-        // mold_v0-336: {on: true|false} (absent: the other way round). The record as read, its field set, written through
-        // the record store as the person: an encrypted field read masked keeps its value, the fields only actions set keep
-        // theirs, and its save checks (a connection's only_one: 409 in its words), history and health reset all apply.
+        // mold_v0-336: {on: true|false} (absent: the other way round). Only this field changes: the record is read again
+        // inside one transaction with its row locked (as a program's write over a stored record, src/program-records.ts),
+        // so an edit saved meanwhile is kept, never undone; its encrypted fields, its state and the $ keys are left out
+        // (kept as stored). Written through the record store as the person: its save checks (a connection's only_one: 409
+        // in its words), the owners-only rule, history and health reset all apply.
         if (a.disabled) throw new PackError(a.disabled, 409);
         const on = body.on === undefined ? !a.on : body.on;
         if (typeof on !== "boolean") throw new PackError("on: true or false", 400);
-        if (on === a.on) return { record, unchanged: true };
-        return dataApi.update(callerOf(res), area.name, record.key, { title: record.title, data: { ...record.data, [declared.field!]: on } });
+        const field = declared.field!, c = callerOf(res);
+        const RA = await import("./record-areas.js"), { auditAtomic } = await import("./audit-trail.js");
+        return RA.asWriterUnlessSet({ by: "people", id: c.userId ?? (c.role === null ? "key" : null) }, () => auditAtomic(() => RA.inTransaction(c.orgId, async () => {
+          const row = await RA.lockedWorkspaceRow(c.orgId, area, record.key);
+          if (!row) throw new PackError(`${area.label} has no record ${record.key}`, 404);
+          if ((row.data[field] === true) === on) return { record, unchanged: true };
+          const keep = Object.fromEntries(Object.entries(row.data).filter(([k]) => !k.startsWith("$") && k !== area.lifecycle?.field && !area.fields.some((f) => f.name === k && f.encrypted)));
+          return { record: await RA.workspaceRecords(area.pack, c.orgId, { role: c.role, userId: c.userId }).update(area.name, record.key, { title: row.title, data: { ...keep, [field]: on } }) };
+        })));
       }
       case "start_agent": {
         // The first message is the record's, filled here (whatever the browser sends); the session carries the record.

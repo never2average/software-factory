@@ -138,8 +138,9 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
       }
       if (a.kind === 'toggle') {
         // mold_v0-336: the field the other way round, through the record store (its only-one rule refused in its words).
-        await takeAction(host.area, host.record.key, a.id, { on: !a.on });
-        toast.success(`${a.label}: ${a.on ? 'off' : 'on'}`);
+        const r = await takeAction<{ unchanged?: boolean }>(host.area, host.record.key, a.id, { on: !a.on });
+        // Already so (someone else turned it meanwhile): no change to announce; the record is read again below.
+        if (!r.unchanged) toast.success(`${a.label}: ${a.on ? 'off' : 'on'}`);
       }
       if (a.kind === 'move') {
         await takeAction(host.area, host.record.key, a.id, { to });
