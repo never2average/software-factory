@@ -5038,6 +5038,12 @@ The console (pack.json `console`, one pack's per build; `src/console-pages.ts` b
   Settings entry, else directly below Overview), in that order, in one group under no heading after every other
   (`sidebarEnd`, `web/src/config/nav-config.ts` withSettings). Refused: a tab with a group, one inside a page or Settings,
   one not the pack's, the key beside a declared sidebar (profile.json `console.sidebar`).
+- **The foot's heading** (`console.sidebar_end_label`, mold_v0-341, optional): a short name in plain words (1 to 40
+  characters) over that group, drawn like the pack's other groups' headings, on a desktop and in the phone's sidebar (the
+  collapsed rail shows icons only, as for every group); Settings joins it when the foot names `settings`, alone too.
+  Without it the foot has no heading, as before. Refused: not plain words, the key without `console.sidebar_end`, in a
+  profile, one equal to another group's heading (any case), two packs naming different ones. Generated: `sidebarEndLabel`
+  (`''` for none).
 
 Drawing (the shell's, every build):
 

@@ -1,7 +1,7 @@
 import { isSettingsUrl, settingsNavItem, SETTINGS_URL, type SettingsTabSpec } from './settings';
 import { settingsTabs } from './pack-nav.generated';
 import { NavGroup } from '@/types';
-import { billingTabs, sidebarEnd, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
+import { billingTabs, sidebarEnd, sidebarEndLabel, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 import { featureOn } from './features';
 import { sessionEngine } from '@/features/admin/engine';
@@ -162,12 +162,13 @@ export function withSettings(groups: NavGroup[], tabs: readonly SettingsTabSpec[
   // those roles' too.
   const narrowed = tabs.every((t) => (t as { roles?: string[] }).roles) ? [...new Set(tabs.flatMap((t) => (t as { roles?: string[] }).roles!))] : null;
   const entry = { ...item, ...(own?.roles ? { roles: own.roles } : narrowed ? { roles: narrowed } : {}) };
-  // mold_v0-340: a pack's console.sidebar_end names Settings: it sits at the foot, in that group (under no heading), at its place.
+  // mold_v0-340: a pack's console.sidebar_end names Settings: it sits at the foot, in that group (under no heading, or
+  // mold_v0-341 console.sidebar_end_label's), at its place.
   const end = sidebarEnd.indexOf(SETTINGS_URL);
   if (end >= 0 && rest.length) {
     const last = rest[rest.length - 1]!;
-    const before = sidebarEnd.slice(0, end), isEnd = last.label === '' && last.items.every((i) => sidebarEnd.includes(i.url));
-    if (!isEnd) return [...rest, { label: '', items: [entry] }];
+    const before = sidebarEnd.slice(0, end), isEnd = last.label === sidebarEndLabel && last.items.every((i) => sidebarEnd.includes(i.url));
+    if (!isEnd) return [...rest, { label: sidebarEndLabel, items: [entry] }];
     const at = last.items.filter((i) => before.includes(i.url)).length;
     return [...rest.slice(0, -1), { ...last, items: [...last.items.slice(0, at), entry, ...last.items.slice(at)] }];
   }

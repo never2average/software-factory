@@ -139,6 +139,8 @@ export const billingTabs: BillingTabSpec[] | null = null;
 export const movedSettingsTabs: Record<string, string> = {};
 /** mold_v0-340: the foot of the /app sidebar (console.sidebar_end): its entries' addresses, /app/settings for Settings. */
 export const sidebarEnd: string[] = [];
+/** mold_v0-341: the foot's heading (console.sidebar_end_label); '' for none. */
+export const sidebarEndLabel: string = "";
 /** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */
 export const developerConsole = {
   "on": false,

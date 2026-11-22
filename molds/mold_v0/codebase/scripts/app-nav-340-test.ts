@@ -6,7 +6,9 @@
 //      section naming a chart that is not the pack's, a chart whose metric's area it does not narrow, a metric over runs,
 //      a records entry whose field is no single reference here; pack.json console.billing with an unknown tab, a tab
 //      twice, settings_teams off the teams tab, an unknown field; console.sidebar_end empty or with a bad entry; in a
-//      build: a sidebar_end tab with a group, one that is not the pack's, a usage tab beside a Spending tab.
+//      build: a sidebar_end tab with a group, one that is not the pack's, a usage tab beside a Spending tab;
+//      console.sidebar_end_label (mold_v0-341) not plain words, without sidebar_end, in a profile, or (in a build) another
+//      group's heading.
 //   2. Related through a hop: an app's learnings are those of ITS problems (not another app's, not another workspace's
 //      same keys), with no Show all; a role that may not read the hop's area does not see the list.
 //   3. A record's sessions: those started from the app, from its builds and from its problems, never another app's;
@@ -16,7 +18,8 @@
 //   5. The console (a build copy through gen-packs): Billing's tabs in the pack's order and words, Spending and Alerts in
 //      them; Settings without Alerts and Teams (and without Automation); /app/activity, /app/usage and
 //      /app/settings/automation leading to Billing's tabs; the moved Settings tabs' old ?tab= recorded; the sidebar's foot
-//      (Billing, then Settings) after every group, under no heading; without the keys, Billing and Settings as before.
+//      (Billing, then Settings) after every group, under no heading, or (mold_v0-341) under console.sidebar_end_label's;
+//      without the keys, Billing and Settings as before.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -144,8 +147,14 @@ try {
     assert.match(cp({ billing: { tabs: [] } }), /1 to 6 of spending/);
     assert.match(cp({ sidebar_end: [] }), /1 to 6 entries/);
     assert.match(cp({ sidebar_end: ["Billing"] }), /a tab's id, or "settings"/);
+    // mold_v0-341: the foot's heading.
+    assert.equal(cp({ sidebar_end: ["billing", "settings"], sidebar_end_label: "Workspace" }), "", "a foot with a heading");
+    for (const bad of ["", " Workspace", "Work/space", "x".repeat(41), 3, ["Workspace"]])
+      assert.match(cp({ sidebar_end: ["settings"], sidebar_end_label: bad }), /sidebar_end_label: a short name in plain words \(1 to 40 characters\)/, `label ${JSON.stringify(bad)}`);
+    assert.match(cp({ sidebar_end_label: "Workspace" }), /sidebar_end_label: the heading of console\.sidebar_end's group/, "a heading with no foot");
+    assert.match(C.consoleProblems({ sidebar_end_label: "Workspace" }, "profile.json").join("\n"), /sidebar_end_label is a pack's/);
     assert.match(C.consoleProblems({ billing: { tabs: ["people"] } }, "profile.json").join("\n"), /billing is a pack's/);
-    ok("refused at build: a hop that does not point here (a related list's, a sessions or runs section's), a list's via off the hop, match_field with a hop, a hop twice, five hops; a chart not the pack's, an area its records do not narrow, a metric over runs, a records field; console.billing's unknown tab, a tab twice, settings_teams off teams, an unknown field, none; sidebar_end empty or malformed; either in a profile");
+    ok("refused at build: a hop that does not point here (a related list's, a sessions or runs section's), a list's via off the hop, match_field with a hop, a hop twice, five hops; a chart not the pack's, an area its records do not narrow, a metric over runs, a records field; console.billing's unknown tab, a tab twice, settings_teams off teams, an unknown field, none; sidebar_end empty or malformed; sidebar_end_label not plain words or with no foot; each in a profile");
   }
 
   // ---------- the world ----------
@@ -339,8 +348,32 @@ try {
     };
     refuse("grouped-end", (p) => { p.tabs[2].group = "Money"; }, /console\.sidebar_end: tab billing has a group \(Money\)/);
     refuse("unknown-end", (p) => { p.console.sidebar_end = ["wallet"]; }, /console\.sidebar_end: wallet is not one of the pack's tabs/);
+    // mold_v0-341: the foot under a heading of its own: the same entries, Settings in it, the console's drawing unchanged.
+    const headed = clone(consolePack) as any;
+    headed.console.sidebar_end_label = "Workspace";
+    const gh = gen("with-heading", headed);
+    assert.equal(gh.status, 0, gh.out.slice(-2000));
+    const navh = gh.file("web/src/config/pack-nav.generated.ts");
+    assert.equal(valueIn(navh, "sidebarEndLabel"), "Workspace");
+    assert.deepEqual(valueIn(navh, "sidebarEnd"), ["/app/billing", "/app/settings"], "the same foot");
+    assert.deepEqual(valueIn(navh, "tabPortalNav").map((x: any) => [x.label, x.items.map((i: any) => i.url)]), [["", ["/app"]], ["Build", ["/app/apps"]], ["Workspace", ["/app/billing"]]], "Billing under Workspace, after every group");
+    const ghs = gen("with-heading-sidebar", headed, ["--sidebar"]);
+    assert.equal(ghs.status, 0, ghs.out.slice(-1500));
+    const apph = ghs.out.slice(ghs.out.indexOf("/app sidebar:"), ghs.out.indexOf("/admin sidebar:"));
+    assert.match(apph, /Build\n\s+Applications?\s+\/app\/apps\n\s+Workspace\n\s+Billing\s+\/app\/billing\n\s+Settings\s+\/app\/settings\s*$/, `--sidebar prints Billing then Settings under Workspace:\n${apph}`);
+    assert.doesNotMatch(apph, /\(no heading\)\n\s+Billing/, "no unheaded foot");
+    assert.equal(valueIn(nav, "sidebarEndLabel"), "", "without the heading: none (the foot as before)");
+    assert.equal(valueIn(nav0, "sidebarEndLabel"), "", "without the keys: none");
+    // Settings alone at the foot takes the heading too.
+    const alone = clone(headed) as any;
+    alone.console.sidebar_end = ["settings"];
+    const ga = gen("heading-settings-only", alone, ["--sidebar"]);
+    assert.equal(ga.status, 0, ga.out.slice(-2000));
+    const appa = ga.out.slice(ga.out.indexOf("/app sidebar:"), ga.out.indexOf("/admin sidebar:"));
+    assert.match(appa, /\n\s+Workspace\n\s+Settings\s+\/app\/settings\s*$/, `Settings alone under Workspace:\n${appa}`);
+    refuse("heading-is-a-group", (p) => { p.console.sidebar_end_label = "build"; }, /console\.sidebar_end_label: build is already a group's heading \(tab apps of pack fixture_app_nav\)/);
     refuse("usage-tab", (p) => { p.tabs.push({ id: "usage", kind: "usage", label: "Usage", group: "Build" }); }, /tab usage: the Activity page is Billing's Spending tab/);
-    ok("the console: Billing's tabs in the pack's order and words (Spending, People, Teams, Budget rules, Alerts, Access log); Settings without Alerts, Teams and Automation; /app/activity, /app/usage and /app/settings/automation lead to Billing; Billing then Settings at the sidebar's foot (also --sidebar); without the keys all as before; refused: a foot tab with a group or not the pack's, a usage tab beside Spending");
+    ok("the console: Billing's tabs in the pack's order and words (Spending, People, Teams, Budget rules, Alerts, Access log); Settings without Alerts, Teams and Automation; /app/activity, /app/usage and /app/settings/automation lead to Billing; Billing then Settings at the sidebar's foot (also --sidebar), under no heading or console.sidebar_end_label's (Settings alone too); without the keys all as before; refused: a foot tab with a group or not the pack's, a heading that is another group's, a usage tab beside Spending");
   }
 
   // ---------- 6. the console's drawing rules (offline, from its source; the lane console measures them drawn) ----------

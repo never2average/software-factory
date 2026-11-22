@@ -616,6 +616,8 @@ export const PackJsonSchema = z.object({
     }).strict().optional(),
     /** mold_v0-340: the foot of the /app sidebar, under no heading: the pack's tabs with no group (by id) and "settings", in order. */
     sidebar_end: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/)).min(1).max(6).optional(),
+    /** mold_v0-341: the foot's heading (else none), beside sidebar_end only; never another group's heading. */
+    sidebar_end_label: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/).optional(),
     /** Old console addresses kept working (mold_v0-140; they were its routes.json `redirects`): next.config redirects, in order. */
     redirects: z.array(z.object({
       source: z.string().regex(/^\/[A-Za-z0-9_\-/:*.]*$/, "a path on this site, starting with / (:name and :path* allowed)").max(200),
