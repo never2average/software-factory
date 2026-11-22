@@ -138,6 +138,7 @@ SECONDS = {
     "test:record-batch": 4,
     "test:record-clocks": 5,
     "test:build-lifecycle": 45,
+    "test:app-nav": 45,
     "test:apps-ui": 45,
     "test:records-339": 40,
     "test:record-contract": 1,

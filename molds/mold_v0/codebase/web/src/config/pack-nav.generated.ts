@@ -131,6 +131,14 @@ export const settingsTabs: SettingsTabSpec[] = [];
 /** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */
 export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }
 export const alertRules: AlertRule[] = [];
+
+/** mold_v0-340: Billing's in-page tabs as a pack names them (console.billing), in order; null: Billing's own. */
+export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean }
+export const billingTabs: BillingTabSpec[] | null = null;
+/** mold_v0-340: Settings tabs that live in Billing instead: their id -> their address there (an old ?tab= leads on). */
+export const movedSettingsTabs: Record<string, string> = {};
+/** mold_v0-340: the foot of the /app sidebar (console.sidebar_end): its entries' addresses, /app/settings for Settings. */
+export const sidebarEnd: string[] = [];
 /** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */
 export const developerConsole = {
   "on": false,

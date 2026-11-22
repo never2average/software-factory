@@ -12,7 +12,7 @@ import { useQueryState } from 'nuqs';
 import PageContainer from '@/components/layout/page-container';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { pageTabs, settingsLayout, settingsTabUrl, type SettingsTabSpec } from '@/config/settings';
-import { settingsTabs as ALL } from '@/config/pack-nav.generated';
+import { movedSettingsTabs, settingsTabs as ALL } from '@/config/pack-nav.generated';
 import { CredentialsTab } from '@/features/credentials/credentials-tab';
 import { EmailTab } from '@/features/email/email-tab';
 import { DeveloperTab } from '@/features/developer/developer-page';
@@ -61,7 +61,9 @@ export function SettingsPage({ group = null }: { group?: string | null }) {
   const first = tabs[0]?.id ?? '';
   const [selected, setSelected] = useQueryState('tab', { defaultValue: first });
   // Past 5 tabs, /app/settings itself leads to the asked tab's group page (or the first group's): its address stays good.
-  const lead = layout === 'groups' && !group ? settingsTabUrl(ALL.some((t) => t.id === selected) ? selected : ALL[0]!.id) : null;
+  // mold_v0-340: a tab that now lives in Billing (a pack's console.billing: Alerts, Teams): its old address leads there.
+  const moved = (movedSettingsTabs as Record<string, string>)[selected] ?? null;
+  const lead = moved ?? (layout === 'groups' && !group ? settingsTabUrl(ALL.some((t) => t.id === selected) ? selected : ALL[0]!.id) : null);
   useEffect(() => { if (lead) router.replace(lead); }, [lead, router]);
   if (lead || !tabs.length) return null;
   const tab = tabs.find((t) => t.id === selected) ?? tabs[0]!;

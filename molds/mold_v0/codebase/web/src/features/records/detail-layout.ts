@@ -43,7 +43,17 @@ export interface DetailSection {
   steps?: { field: string; states?: string[]; /** mold_v0-333 */ failed_stage?: string };
   /** mold_v0-331: a related list as one link row, or fields as numbers. */
   display?: 'rows' | 'numbers';
+  /** mold_v0-340: the record's agent sessions, its own and (through) its related records'. */
+  sessions?: DetailSessions;
+  /** mold_v0-340: the runs among those sessions, active and finished. */
+  agent_runs?: DetailSessions;
+  /** mold_v0-340: some of the pack's charts over this record's records only. */
+  charts?: { charts: string[]; records: { area: string; via?: string; through?: DetailHop }[] };
 }
+/** mold_v0-340: every record of `area` pointing here (through `via`) that `where` keeps. */
+export interface DetailHop { area: string; via?: string; where?: DetailCondition }
+/** mold_v0-340: a sessions or runs section: its hops (1 to 4) and how many rows it shows. */
+export interface DetailSessions { through?: DetailHop[]; limit?: number }
 /** A related list (mold_v0-254): another area's records that point back here, through `via`. */
 export interface DetailRelated {
   area: string; via?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; limit?: number;
@@ -51,6 +61,8 @@ export interface DetailRelated {
   columns?: (string | { field: string; label: string })[];
   /** mold_v0-256: their via holds this record's match_field value (not its key). */
   match_field?: string;
+  /** mold_v0-340: their via points at any record of this hop (not at this record). */
+  through?: DetailHop;
 }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number; /** mold_v0-310: also the runs and agent sessions that made or changed it. */ wrote?: boolean }
@@ -401,7 +413,12 @@ export type RunsData = { total: number; runs: RecordRun[];
     spent_usd: number; budget_usd: number; created_at: string; last_activity_at: string }[] };
   /** mold_v0-310 (`wrote`): the runs and agent sessions that made or changed the record. */
   wrote?: (RunLink & { how: 'Made' | 'Changed' })[] };
-export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | HistoryData | undefined>;
+/** mold_v0-340: a sessions section's rows (as a runs section's sessions). */
+export type SessionsData = { hidden: true } | { hidden?: false; total: number; rows: NonNullable<RunsData['sessions']>['rows'] };
+/** mold_v0-340: a runs section's rows: each run (a session handing work to other agents) with its one status. */
+export type AgentRunsData = { hidden: true } | { hidden?: false; total: number; rows: { id: string; ref: string | null; title: string; status: string; needs: string | null; why: string | null;
+  outcome: string | null; finished: boolean; children: number; open: number; waiting: number; spent_usd: number; budget_usd: number; last_activity_at: string; settled_at: string | null }[] };
+export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | HistoryData | SessionsData | AgentRunsData | undefined>;
   /** mold_v0-256: the header's computed facts, by their place among the facts. */
   facts?: Record<string, ComputedFact>;
   /** mold_v0-310: the run or agent session that made the record, and those that changed it. */

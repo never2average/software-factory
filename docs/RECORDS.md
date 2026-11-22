@@ -348,6 +348,14 @@ Where an area's list is drawn, and what it has:
     rule of its Filter menu). Each row opens its record and has a menu of **that area's own page actions** this person
     may take on it. The section's `empty` is its empty state. A role that may not read the area does not see the
     section at all, and the list is only ever the workspace's own records.
+  - **related through a hop** (mold_v0-340): with `through: {"area", "via"?, "where"?}`, the records of `area` whose
+    `via` points at ANY record of the hop area that points here (an application's learnings, through its problems), at
+    most 200 hop records, each read as the person, with no Show all.
+  - **sessions**, **agent_runs**, **charts** (mold_v0-340): the workspace agent sessions of this record and of its
+    hops' records (`{"through": [{"area": "builds", "via": "application"}], "limit": 20}`), the runs among them (active
+    and finished), and some of the pack's charts counted over this record's records only (`{"charts": [...],
+    "records": [{"area": "deployment_reports", "via": "deployment", "through": {"area": "deployments", "via":
+    "application"}}]}`). molds/mold_v0/MOLD.md "A record-centred console (mold_v0-340)" has the rules.
   - **runs**: the runs started on this record from its page, and those that targeted it (an asset area's record:
     `targets.asset`), of `kinds` (the area's pack's; default all), newest first, at most `limit`: each run's kind
     (linked to its pack's runs tab, the run open: `?run=<id>`), status, when it started, how long it took, its cost and

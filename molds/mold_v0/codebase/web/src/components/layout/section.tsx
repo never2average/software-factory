@@ -47,7 +47,9 @@ export function StatStrip({ items, className, quad, strip }: {
   const cols = n <= 1 ? 'grid-cols-1' : n === 2 ? 'grid-cols-2' : n === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4';
   return (
     <dl className={cn(quad ? (n >= 4 ? 'grid grid-cols-2 border-y lg:grid-cols-4' : cn('grid border-y', cols)) : 'grid grid-cols-2 border-y sm:flex sm:divide-x',
-      quad && strip && 'max-sm:flex max-sm:w-max max-sm:min-w-full', className)} data-strip={quad && strip ? '' : undefined}>
+      // mold_v0-340: relative, so each card's screen-reader words (an absolute sr-only) stay inside the strip's own scroller
+      // and never widen the page on a phone (a list's cards past the window's edge made the whole page scroll sideways).
+      quad && strip && 'max-sm:relative max-sm:flex max-sm:w-max max-sm:min-w-full', className)} data-strip={quad && strip ? '' : undefined}>
       {items.map((it, i) => {
         const body = (
           <>

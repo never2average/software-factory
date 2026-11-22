@@ -558,6 +558,31 @@ export async function recordSessions(orgId: number, record: { area: string; key:
   });
 }
 
+/** mold_v0-340: the SQL that keeps the sessions started from, or that made, one of some records (pairs $2 areas, $3 keys). */
+const OF_RECORDS = `org_id = $1 AND archived_at IS NULL AND (
+    (record_area, record_key) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+    OR (policy->'creates'->>'area', policy->'creates'->>'key') IN (SELECT * FROM unnest($2::text[], $3::text[])))`;
+/**
+ * mold_v0-340: the sessions of some records (a record page's sessions section: the record's own and its related records'),
+ * started from one of them or that made one, newest activity first, at most `limit`, with how many there are. Nothing
+ * while the flag is off. Each is shown as the Agents page shows it to this person.
+ */
+export async function recordsSessions(orgId: number, records: readonly { area: string; key: string }[], actor: Actor, limit = 10): Promise<{ total: number; sessions: SessionView[] }> {
+  if (!agentHarnessOn() || !records.length) return { total: 0, sessions: [] };
+  const args = [orgId, records.map((r) => r.area), records.map((r) => r.key)];
+  return read(async (q) => {
+    const rows = await q.query<SessionRow>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT ${COLS} FROM harness_sessions WHERE ${OF_RECORDS} ORDER BY last_activity_at DESC, id DESC LIMIT ${Math.min(Math.max(Math.trunc(limit) || 10, 1), 50)}`, args);
+    const [n] = await q.query<{ n: number }>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT count(*)::int AS n FROM harness_sessions WHERE ${OF_RECORDS}`, args);
+    return { total: n?.n ?? rows.length, sessions: rows.map((r) => view(r, actor, null)) };
+  });
+}
+/** mold_v0-340: the ids of those sessions that start a tree (no parent), newest first, at most 200: the runs a record's page lists. */
+export async function recordsSessionIds(orgId: number, records: readonly { area: string; key: string }[]): Promise<string[]> {
+  if (!agentHarnessOn() || !records.length) return [];
+  return read(async (q) => (await q.query<{ id: string }>(`/* tenant: OF_RECORDS starts with org_id = $1 */ SELECT id FROM harness_sessions WHERE ${OF_RECORDS} AND parent_id IS NULL ORDER BY last_activity_at DESC, id DESC LIMIT 200`,
+    [orgId, records.map((r) => r.area), records.map((r) => r.key)])).map((r) => r.id));
+}
+
 export async function readSession(orgId: number | null, id: string, actor: Actor): Promise<SessionDetail> {
   needOn();
   return read(async (q) => {

@@ -785,6 +785,91 @@
                 "versions": {}
               }
             ]
+          },
+          {
+            "label": "Activity",
+            "sections": [
+              {
+                "title": "Grandchildren",
+                "related": {
+                  "area": "mx_grand",
+                  "via": "child",
+                  "through": {
+                    "area": "mx_children",
+                    "via": "item",
+                    "where": {
+                      "field": "state",
+                      "equals": "READY"
+                    }
+                  },
+                  "columns": [
+                    "state"
+                  ],
+                  "limit": 5
+                },
+                "empty": "None of its children has any."
+              },
+              {
+                "title": "Agent sessions",
+                "sessions": {
+                  "through": [
+                    {
+                      "area": "mx_children",
+                      "via": "item",
+                      "where": {
+                        "field": "state",
+                        "in": [
+                          "BUILDING",
+                          "READY"
+                        ]
+                      }
+                    }
+                  ],
+                  "limit": 10
+                },
+                "empty": "No session yet."
+              },
+              {
+                "title": "Runs",
+                "agent_runs": {
+                  "through": [
+                    {
+                      "area": "mx_children",
+                      "via": "item"
+                    }
+                  ],
+                  "limit": 10
+                },
+                "empty": "No run yet."
+              },
+              {
+                "title": "Traffic",
+                "charts": {
+                  "charts": [
+                    "mx_children_chart",
+                    "mx_grand_chart"
+                  ],
+                  "records": [
+                    {
+                      "area": "mx_children",
+                      "via": "item"
+                    },
+                    {
+                      "area": "mx_grand",
+                      "via": "child",
+                      "through": {
+                        "area": "mx_children",
+                        "via": "item",
+                        "where": {
+                          "field": "state",
+                          "equals": "READY"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ],
         "unplaced": "show",
@@ -1869,6 +1954,17 @@
         "every": "month",
         "last": 6
       }
+    },
+    {
+      "name": "mx_children_by_state",
+      "label": "Children",
+      "over": "mx_children",
+      "group_by": "state"
+    },
+    {
+      "name": "mx_grand_count",
+      "label": "Grandchildren",
+      "over": "mx_grand"
     }
   ],
   "charts": [
@@ -1922,6 +2018,23 @@
       "type": "table",
       "metrics": [
         "mx_by_tag"
+      ]
+    },
+    {
+      "name": "mx_children_chart",
+      "title": "Children by state",
+      "description": "An item's children.",
+      "type": "bar",
+      "metrics": [
+        "mx_children_by_state"
+      ]
+    },
+    {
+      "name": "mx_grand_chart",
+      "title": "Grandchildren",
+      "type": "number",
+      "metrics": [
+        "mx_grand_count"
       ]
     }
   ],
@@ -2289,5 +2402,25 @@
         "read"
       ]
     }
+  },
+  "console": {
+    "$comment": "mold_v0-340: Billing's tabs and the sidebar's foot.",
+    "billing": {
+      "tabs": [
+        {
+          "id": "teams",
+          "label": "Teams",
+          "settings_teams": true
+        },
+        "alerts",
+        "people",
+        "rules",
+        "access-log"
+      ]
+    },
+    "sidebar_end": [
+      "mx-billing",
+      "settings"
+    ]
   }
 }

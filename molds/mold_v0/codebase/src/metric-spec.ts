@@ -459,6 +459,21 @@ export function checkViews(b: BuildViews): string[] {
   }
   // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.
   problems.push(...detailBuildProblems(b.areas, b.kinds ?? []));
+  // mold_v0-340: a record page's charts: the pack's own, each metric over a record area the section says how to narrow.
+  for (const a of b.areas) for (const t of (a as { detail?: { tabs: { sections: { title: string; charts?: { charts: string[]; records: { area: string }[] } }[] }[] } }).detail?.tabs ?? []) for (const s of t.sections) {
+    if (!s.charts) continue;
+    const w = `record area ${a.name}'s page: section ${s.title}: charts`;
+    for (const n of s.charts.charts) {
+      const c = b.charts.find((x) => x.pack === a.pack && x.name === n);
+      if (!c) { at(a.pack, `${w}: ${n} is not one of pack ${a.pack}'s charts`); continue; }
+      for (const mn of c.metrics) {
+        const m = b.metrics.find((x) => x.name === mn);
+        if (!m) continue;
+        if ((RUN_SOURCES as readonly string[]).includes(m.over)) at(a.pack, `${w}: chart ${n}'s metric ${mn} is over ${m.over}: a record's charts count record areas only`);
+        else if (!s.charts.records.some((r) => r.area === m.over)) at(a.pack, `${w}: chart ${n}'s metric ${mn} is over ${m.over}: say in records which of its records are this record's ({"area": "${m.over}", "via": "<its field pointing here>"})`);
+      }
+    }
+  }
   // mold_v0-318: a record page's breadcrumb parent (detail.parent): a single reference to another workspace area.
   problems.push(...crumbParentProblems(b.areas));
   // mold_v0-260: a reference's where, an area's checks on save, a kind's arguments from a record: what each names.

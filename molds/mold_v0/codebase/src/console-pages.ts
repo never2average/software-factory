@@ -60,8 +60,65 @@ export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
  *               names one of the pack's own console pages (its routes.json)
  *   components  the shell's console components a host pack's routes serve, shown only then (CONSOLE_COMPONENTS)
  *   redirects   old addresses kept working: [{source, destination, permanent}] (next.config redirects)
+ *   billing     mold_v0-340: Billing's in-page tabs, in order, and what joins them (billingProblems below)
+ *   sidebar_end mold_v0-340: the pack's ungrouped tabs (and Settings) at the foot of the /app sidebar (sidebarEndProblems)
  */
-export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects"] as const;
+export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects", "billing", "sidebar_end"] as const;
+
+/**
+ * mold_v0-340: Billing's in-page tabs (/app/billing?tab=<id>), as pack.json console.billing.tabs names them:
+ *   spending    the Activity page's body (spend, runs, people and calls over a period; what a member reads of others' spend
+ *               is the server's rule, GET /api/usage): /app/activity and /app/usage lead here
+ *   people      who is in the account (the first tab, and its default, unless spending comes first)
+ *   teams       the budget groups; with `settings_teams` (flag teams) Settings' Teams table above them, leaving Settings
+ *   rules       the budget rules (those who may change them)
+ *   alerts      Settings' Alerts (flag scheduled_alerts), read only, leaving Settings
+ *   access-log  the data trail (owners, where the profile turns audit.data on)
+ * The named tabs come first, in that order, each under its label when it gives one; the shell's others keep their place
+ * after them; spending and alerts show only when named.
+ */
+export const BILLING_TABS = ["spending", "people", "teams", "rules", "alerts", "access-log"] as const;
+export type BillingTab = (typeof BILLING_TABS)[number];
+export interface BillingTabSpec { id: BillingTab; label?: string; settings_teams?: boolean }
+const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/;
+/** console.billing's entries as {id, label?, settings_teams?} (strings become {id}). */
+export const billingEntries = (v: unknown): BillingTabSpec[] =>
+  (((v as { tabs?: unknown })?.tabs ?? []) as unknown[]).map((x) => (typeof x === "string" ? { id: x as BillingTab } : (x as BillingTabSpec)));
+export function billingProblems(v: unknown, where: string): string[] {
+  const at = `${where} console.billing`;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return [`${at}: an object, e.g. {"tabs": ["spending", "people"]}`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (k !== "tabs" && k !== "$comment") out.push(`${at}: unknown field ${k} (known: tabs)`);
+  const tabs = (v as { tabs?: unknown }).tabs;
+  if (!Array.isArray(tabs) || !tabs.length || tabs.length > BILLING_TABS.length) return [...out, `${at}.tabs: 1 to ${BILLING_TABS.length} of ${BILLING_TABS.join(", ")}`];
+  const seen = new Set<string>();
+  tabs.forEach((x, i) => {
+    const w = `${at}.tabs[${i}]`;
+    const e = typeof x === "string" ? { id: x } : x;
+    if (!e || typeof e !== "object" || Array.isArray(e)) { out.push(`${w}: a tab's id, or {"id", "label"}`); return; }
+    for (const k of Object.keys(e)) if (!["id", "label", "settings_teams"].includes(k)) out.push(`${w}: unknown field ${k} (known: id, label, settings_teams)`);
+    const { id, label, settings_teams } = e as { id?: unknown; label?: unknown; settings_teams?: unknown };
+    if (typeof id !== "string" || !(BILLING_TABS as readonly string[]).includes(id)) { out.push(`${w}: ${JSON.stringify(id).slice(0, 40)} is not one of Billing's tabs (${BILLING_TABS.join(", ")})`); return; }
+    if (seen.has(id)) out.push(`${w}: ${id} is named twice`);
+    seen.add(id);
+    if (label !== undefined && (typeof label !== "string" || !LABEL.test(label))) out.push(`${w}: label is a short name in plain words (up to 40 characters)`);
+    if (settings_teams !== undefined && (settings_teams !== true || id !== "teams")) out.push(`${w}: settings_teams is true, on the teams tab only`);
+  });
+  return out;
+}
+
+/**
+ * mold_v0-340: pack.json console.sidebar_end: entries at the foot of the /app sidebar, after every group, under no heading,
+ * in this order: the pack's own tabs with no group (by id) and "settings" (the Settings entry, else directly below Overview).
+ */
+export function sidebarEndProblems(v: unknown, where: string): string[] {
+  const at = `${where} console.sidebar_end`;
+  if (!Array.isArray(v) || !v.length || v.length > 6) return [`${at}: 1 to 6 entries: tab ids of the pack, or "settings"`];
+  const out: string[] = [];
+  v.forEach((x, i) => { if (typeof x !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(x)) out.push(`${at}[${i}]: a tab's id, or "settings"`); });
+  if (new Set(v).size !== v.length) out.push(`${at}: each entry once`);
+  return out;
+}
 /**
  * The shell's console components that read a host pack's own routes (mold_v0-140; they were its nav.ts `features`):
  *   research  a requester's company research on /admin access requests (its research routes and verdict)
@@ -199,6 +256,11 @@ export function consoleProblems(v: unknown, where: string): string[] {
   if (sidebar !== undefined && where === "profile.json") out.push(...sidebarProblems(sidebar, where));
   const records = (v as { admin_records?: unknown }).admin_records;
   if (records !== undefined) out.push(...adminRecordsProblems(records, where));
+  // mold_v0-340: Billing's tabs and the sidebar's foot (a pack's).
+  const billing = (v as { billing?: unknown }).billing;
+  if (billing !== undefined && where !== "profile.json") out.push(...billingProblems(billing, where));
+  const end = (v as { sidebar_end?: unknown }).sidebar_end;
+  if (end !== undefined && where !== "profile.json") out.push(...sidebarEndProblems(end, where));
   const hide = (v as { hide?: unknown }).hide;
   if (hide !== undefined) {
     if (!Array.isArray(hide)) out.push(`${where} console.hide: a list of page ids (${Object.keys(CONSOLE_PAGES).join(", ")})`);

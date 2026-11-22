@@ -88,8 +88,8 @@ export default function AppSidebar() {
       </SidebarHeader>
       {searchProbe}
       <SidebarContent className='overflow-x-hidden'>
-        {filteredGroups.map((group) => (
-          <SidebarGroup key={group.label || 'ungrouped'} className='py-0 group-data-[collapsible=icon]:py-1.5'>
+        {filteredGroups.map((group, gi) => (
+          <SidebarGroup key={`${group.label || 'ungrouped'}-${gi}`} className='py-0 group-data-[collapsible=icon]:py-1.5'>
             {/* A heading never repeats its first entry's name ("Overview" over Overview, even with Settings joined below it). */}
             {group.label && group.items[0]?.title !== group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
             <SidebarMenu>

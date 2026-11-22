@@ -33,10 +33,14 @@ export function usageAppRouter(): Router {
       // Spend per person is for billing roles (owners, billing managers), as on the Usage and Billing pages: everyone
       // else sees the workspace's figures, their own spend, and no colleague's.
       const billing = canAccount(s.accountRole, "billing");
+      // mold_v0-340: a run's own title in Recent runs: an agent session's title (as the Usage page's, mold_v0-289), else
+      // "Agent session" for the workspace agent's wakes; any other run is named by its kind on the page.
+      const titles = await (await import("./run-analytics.js")).sessionTitles(s.org, report.runs.recent.map((x) => x.id)).catch(() => new Map<string, string>());
+      const { AGENT_PACK } = await import("./agent-harness-config.js");
       const own = (id: string | null) => billing || (id != null && id === s.user);
       res.json({ ...report, members: report.members.map((m) => ({ ...m, run_cost_usd: own(m.user_id) ? m.run_cost_usd : null, label: label(m.user_id, m.key_id) })),
         runs: { ...report.runs, by_person: report.runs.by_person.filter((p) => own(p.user_id)).map((p) => ({ ...p, label: label(p.user_id, null) })),
-          recent: report.runs.recent.map((x) => ({ ...x, by: label(x.requested_by, null) })) } });
+          recent: report.runs.recent.map((x) => ({ ...x, by: label(x.requested_by, null), title: titles.get(x.id) ?? (x.pack === AGENT_PACK ? "Agent session" : null) })) } });
     } catch (e) { next(e); }
   });
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));

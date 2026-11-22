@@ -19,7 +19,7 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { CONSOLE_COMPONENTS, CONSOLE_PAGES, SHOWABLE_SECTIONS } from "./console-pages.js";
+import { BILLING_TABS, CONSOLE_COMPONENTS, CONSOLE_PAGES, SHOWABLE_SECTIONS } from "./console-pages.js";
 import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./account-context-words.js";
 import { JOURNEY_TABLES, JOURNEY_WEB_WORDS, JOURNEY_WORDS, MAX_STAGES, TIP_TABLES, TIP_WEB_WORDS, TIP_WORDS } from "./journeys-words.js";
 import { ACCESS_FIELD_TYPES, MAX_FORM_FIELDS } from "./access-request.js";
@@ -605,6 +605,17 @@ export const PackJsonSchema = z.object({
     nav: z.object({ $comment: z.string().max(2000).optional(), app: z.array(NavPlacementSchema("/app")).max(12).optional(), admin: z.array(NavPlacementSchema("/admin")).max(12).optional() }).strict().optional(),
     /** The shell's console components a host pack's routes serve (mold_v0-140; src/console-pages.ts CONSOLE_COMPONENTS): shown only then. */
     components: z.array(z.enum(CONSOLE_COMPONENTS)).max(CONSOLE_COMPONENTS.length).refine((c) => new Set(c).size === c.length, "each component once").optional(),
+    /**
+     * mold_v0-340: Billing's in-page tabs, in order (src/console-pages.ts BILLING_TABS): each an id or {id, label}; the
+     * teams tab may take Settings' Teams in (settings_teams). Spending (the Activity page) and Alerts (Settings') show only here.
+     */
+    billing: z.object({
+      $comment: z.string().max(2000).optional(),
+      tabs: z.array(z.union([z.enum(BILLING_TABS), z.object({ id: z.enum(BILLING_TABS), label: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/).optional(), settings_teams: z.literal(true).optional() }).strict()]))
+        .min(1).max(BILLING_TABS.length),
+    }).strict().optional(),
+    /** mold_v0-340: the foot of the /app sidebar, under no heading: the pack's tabs with no group (by id) and "settings", in order. */
+    sidebar_end: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/)).min(1).max(6).optional(),
     /** Old console addresses kept working (mold_v0-140; they were its routes.json `redirects`): next.config redirects, in order. */
     redirects: z.array(z.object({
       source: z.string().regex(/^\/[A-Za-z0-9_\-/:*.]*$/, "a path on this site, starting with / (:name and :path* allowed)").max(200),

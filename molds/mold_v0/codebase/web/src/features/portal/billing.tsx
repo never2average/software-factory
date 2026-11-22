@@ -40,7 +40,10 @@ import { text } from '@/lib/texts';
 import { IdentityName } from '@/components/identity-avatar';
 import { EmptyState } from '@/features/tabs/empty';
 import { ToolbarAction } from '@/features/tabs/tab-action';
-import { settingsTabs } from '@/config/pack-nav.generated';
+import { billingTabs, settingsTabs } from '@/config/pack-nav.generated';
+import { WorkspaceActivityBody } from '@/features/activity/activity-page';
+import { AlertsTab } from '@/features/settings/alerts-tab';
+import { TeamsTab } from '@/features/teams/teams-tab';
 import { settingsTabUrl } from '@/config/settings';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
@@ -107,11 +110,22 @@ function peopleInSettings(): { label: string; url: string; roles: string[] | nul
 }
 
 const urlParam = (k: string) => (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get(k));
-const BILLING_TABS = ['people', 'teams', 'rules', 'access-log'];
-/** The open tab in the address (?tab=<id>; People, the first, has none), so a reload or a shared link opens it again. */
-function tabToUrl(tab: string) {
+const BILLING_TABS = ['spending', 'people', 'teams', 'rules', 'alerts', 'access-log'];
+/** Each tab's own name (mold_v0-340: a pack's console.billing may give its own). */
+const TAB_LABELS: Record<string, string> = { spending: 'Spending', people: 'People', teams: 'Budget groups', rules: 'Budget rules', alerts: 'Alerts', 'access-log': 'Access log' };
+/**
+ * mold_v0-340: the tabs in their order: those a pack's console.billing names (Spending and Alerts only then), then the
+ * shell's others in their own order; each with its label.
+ */
+export function billingOrder(declared = billingTabs): { id: string; label: string; settings_teams?: boolean }[] {
+  const named = (declared ?? []).map((t) => ({ id: t.id, label: t.label ?? TAB_LABELS[t.id]!, ...(t.settings_teams ? { settings_teams: true } : {}) }));
+  const rest = ['people', 'teams', 'rules', 'access-log'].filter((id) => !named.some((t) => t.id === id)).map((id) => ({ id, label: TAB_LABELS[id]! }));
+  return [...named, ...rest];
+}
+/** The open tab in the address (?tab=<id>; the first, `first`, has none), so a reload or a shared link opens it again. */
+function tabToUrl(tab: string, first = 'people') {
   const q = new URLSearchParams(window.location.search);
-  if (tab === 'people') q.delete('tab'); else q.set('tab', tab);
+  if (tab === first) q.delete('tab'); else q.set('tab', tab);
   if (tab !== 'people') q.delete('filter');
   const qs = q.toString();
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
@@ -126,8 +140,8 @@ export function BillingPage() {
   // ?tab=people&filter=exceptions opens People with everyone who has their own settings.
   // (The tabs only render once billing has loaded, in the browser, so reading the URL here can't mismatch the server's HTML.)
   // ?tab=access-log opens the Access log (owners, where the profile turns audit.data on).
-  const [tab, setTabState] = useState(() => { const v = urlParam('tab'); return v && BILLING_TABS.includes(v) ? v : 'people'; });
-  const setTab = (v: string) => { setTabState(v); tabToUrl(v); };
+  const order = billingOrder();
+  const [tab, setTabState] = useState(() => { const v = urlParam('tab'); return v && BILLING_TABS.includes(v) && order.some((t) => t.id === v) ? v : order[0]!.id; });
   const { role, loaded: roleLoaded } = useAccountRole();
   const logTab = dataTrailOn() && role === 'owner';
   // mold_v0-298: people are managed in one place. With the Team page inside Settings, a viewer who can open that tab has
@@ -136,14 +150,20 @@ export function BillingPage() {
   const elsewhere = peopleInSettings();
   const seesElsewhere = !!elsewhere && (!elsewhere.roles || (roleLoaded && role !== null && elsewhere.roles.includes(role)));
   const peopleHere = !elsewhere || (roleLoaded && !seesElsewhere);
-  const first = peopleHere ? 'people' : 'teams';
+  // mold_v0-340: which tabs this person has, in their order (Spending and Alerts only when the pack names them).
+  const has: Record<string, boolean> = { spending: true, people: peopleHere, teams: true, rules: !!l?.can_manage, alerts: true, 'access-log': logTab };
+  const visible = order.filter((t) => has[t.id]);
+  const first = visible[0]?.id ?? 'teams';
+  const setTab = (v: string) => { setTabState(v); tabToUrl(v, order[0]!.id); };
+  const label = (id: string) => order.find((t) => t.id === id)?.label ?? TAB_LABELS[id]!;
+  const settingsTeams = order.some((t) => t.id === 'teams' && t.settings_teams);
   // Until /me answers, an asked-for Access log waits (it shows nothing); then a person who may not read it gets the first tab.
   // mold_v0-298: likewise Budget rules (?tab=rules, where /app/limits leads) for someone who may not change them, and People
   // when it lives in Settings.
   // Budget rules waits for /limits (a loading card), and falls back if it fails.
   const shown = (tab === 'access-log' && !logTab && (roleLoaded || !dataTrailOn())) || (tab === 'rules' && (limitsError || (l && !l.can_manage))) || (tab === 'people' && !peopleHere) ? first : tab;
   // mold_v0-298: a single tab left (a plain member with People in Settings) shows no tab strip.
-  const tabCount = (peopleHere ? 1 : 0) + 1 + (l?.can_manage ? 1 : 0) + (logTab ? 1 : 0);
+  const tabCount = visible.length;
   const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>(() => (urlParam('filter') === 'exceptions' ? 'exceptions' : 'all'));
   return (
     <PageContainer>
@@ -153,20 +173,28 @@ export function BillingPage() {
           {/* People, Budget groups, Budget rules and Access log as tabs: the tables get the full width and height they need. */}
           <Tabs value={shown} onValueChange={(v) => setTab(String(v))} className='gap-4'>
             <div className='flex flex-wrap items-center justify-between gap-x-6 gap-y-2'>
-              {tabCount > 1 ? <TabsList variant='line' className='gap-6 p-0'>
-                {peopleHere && <TabsTrigger value='people' className='flex-none px-0'>People</TabsTrigger>}
-                <TabsTrigger value='teams' className='flex-none px-0'>Budget groups</TabsTrigger>
-                {l?.can_manage && <TabsTrigger value='rules' className='flex-none px-0'>Budget rules</TabsTrigger>}
-                {logTab && <TabsTrigger value='access-log' className='flex-none px-0'>Access log</TabsTrigger>}
-              </TabsList> : <h2 className='text-base leading-none font-semibold'>Budget groups</h2>}
+              {tabCount > 1 ? <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto' data-billing-tabs=''>
+                {visible.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
+              </TabsList> : <h2 className='text-base leading-none font-semibold'>{label(first)}</h2>}
               {elsewhere && seesElsewhere && (
                 <Link href={elsewhere.url} className='text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline' data-billing-people-link=''>
                   People and invites: Settings › {elsewhere.label}
                 </Link>
               )}
             </div>
+            {/* mold_v0-340: Spending (the Activity page's body) and Alerts (Settings', read only), when the pack names them. */}
+            {order.some((t) => t.id === 'spending') && <TabsContent value='spending'><WorkspaceActivityBody /></TabsContent>}
+            {order.some((t) => t.id === 'alerts') && <TabsContent value='alerts'><AlertsTab /></TabsContent>}
             {peopleHere && <TabsContent value='people'><People t={t ?? undefined} l={l ?? undefined} reload={reload} filter={peopleFilter} setFilter={setPeopleFilter} /></TabsContent>}
-            <TabsContent value='teams'>{l ? <Teams l={l} reload={reload} people={peopleHere ? 'People' : elsewhere && seesElsewhere ? `Settings › ${elsewhere.label}` : null} /> : <LoadingCards count={1} />}</TabsContent>
+            <TabsContent value='teams'>
+              {/* mold_v0-340 (settings_teams, flag teams): the workspace's teams (who sees records) first, then the budget groups. */}
+              {settingsTeams ? (
+                <div className='flex flex-col gap-8'>
+                  <TeamsTab />
+                  <Block title={TAB_LABELS.teams!}>{l ? <Teams l={l} reload={reload} people={peopleHere ? label('people') : elsewhere && seesElsewhere ? `Settings › ${elsewhere.label}` : null} /> : <LoadingCards count={1} />}</Block>
+                </div>
+              ) : l ? <Teams l={l} reload={reload} people={peopleHere ? label('people') : elsewhere && seesElsewhere ? `Settings › ${elsewhere.label}` : null} /> : <LoadingCards count={1} />}
+            </TabsContent>
             {l?.can_manage && <TabsContent value='rules'><Rules l={l as AdminLimits} b={b} reload={reload} /></TabsContent>}
             {!l && tab === 'rules' && <TabsContent value='rules'><LoadingCards count={1} /></TabsContent>}
             {dataTrailOn() && <TabsContent value='access-log'><WorkspaceAccessLog /></TabsContent>}

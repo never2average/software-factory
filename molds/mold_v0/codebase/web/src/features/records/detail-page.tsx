@@ -25,7 +25,7 @@ import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
 import { RunLinkText } from './run-link';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -34,14 +34,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { packTabs, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
+import { packCharts, packTabs, type PackChartSpec, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
 import { ErrorState, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { formatValue } from '@/features/tabs/charts';
+import { ChartCell, formatValue, type MetricResult } from '@/features/tabs/charts';
+import { OutcomeBadge, RunStatusBadge } from '@/features/agent/run-badges';
+import { RUN_STATUSES, type RunNeeds, type RunOutcomeBadge, type RunStatus } from '@/lib/run-status';
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
-import { useInRecordPanel, usePanelHeaderSlots } from '@/components/layout/detail-panel';
+import { useInRecordPanel, usePanelHeaderSlots, useRecordPanelFull } from '@/components/layout/detail-panel';
 import { createPortal } from 'react-dom';
 import { CopyLink, LinkRow, NoticeLine, RailEmpty, RailFields, RailHeading, RailNumbers, RailSection, RailSteps, TextLink, type RailRow } from './record-kit';
 import { ClockSection, type ClockEvent } from './clocks';
@@ -51,7 +53,7 @@ import {
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows, stateSince, sinceWords,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
-  type RelatedData, type RunsData
+  type RelatedData, type RunsData, type SessionsData, type AgentRunsData
 } from './detail-layout';
 import { RowActions, usePageActionsBar, type ActionHost, type RailActions } from './page-actions';
 import { CodeView, JsonTable } from './code-view';
@@ -291,7 +293,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   s: DetailSection; id: string; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; page: PageLoad;
   /** Its key in the page's answer (<tab>-<section>): a history section's Show older asks for it. */
   pageKey: string;
-  data: RelatedData | RunsData | HistoryData | undefined; changed: () => void;
+  data: RelatedData | RunsData | HistoryData | SessionsData | AgentRunsData | undefined; changed: () => void;
 }) {
   // Staff pages read no workspace's runs; their related lists are of shared areas only (mold_v0-271: the staff page's
   // own route answers a workspace area's list as hidden, and the section is not drawn).
@@ -300,6 +302,11 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
   if (!sectionShown(s, record.data, record.clocks, page.data?.facts)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
+  // mold_v0-340: the record's agent sessions, the runs among them, and charts over its records (a workspace's only).
+  if ((s.sessions || s.agent_runs || s.charts) && base !== 'app') return null;
+  if (s.sessions) return <SessionsSection s={s} id={id} page={page} data={data as SessionsData | undefined} />;
+  if (s.agent_runs) return <AgentRunsSection s={s} id={id} page={page} data={data as AgentRunsData | undefined} />;
+  if (s.charts) return <ChartsSection s={s} id={id} area={area} record={record} pageKey={pageKey} />;
   // mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made.
   if (s.versions) return featureOn('nested_runs') ? <TargetVersions target={record.key} title={s.title} empty={s.empty} /> : null;
   // mold_v0-331: a lifecycle's progress as numbered steps.
@@ -353,7 +360,7 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
  * A list section's card: its title, an optional link at the right (Show all), then its body. mold_v0-256: no count
  * beside the title (the list says what it holds; Show all stays a button).
  */
-function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' }) {
+function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' | 'sessions' | 'agent_runs' | 'charts' }) {
   const repeatsTab = useRepeatsTab(title);
   // mold_v0-331: the rail style: the small title (its link at the right), the content in a thin border (none round an empty line).
   if (useRail()) return (
@@ -562,6 +569,108 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   );
 }
 
+/**
+ * mold_v0-340: whether a list of sessions or runs draws as compact stacked rows: inside a record panel beside its list
+ * (narrow whatever the screen), not when the panel is expanded to the list's full width with room.
+ */
+const useCompactRows = () => { const inPanel = useInRecordPanel(), full = useRecordPanelFull(); return inPanel && !full; };
+/**
+ * mold_v0-340: one compact row, as the other rail lists draw it: the title on one full-width line (cut with an ellipsis,
+ * the whole on hover), the state and spend on the second, who and when muted on the third.
+ */
+export function CompactRunRow({ id, title, href, state, spend, meta, kind }: { id: string; title: ReactNode; href: string; state: ReactNode; spend: ReactNode; meta: ReactNode; kind: 'session' | 'run' }) {
+  const whole = typeof title === 'string' ? title : undefined;
+  return (
+    <li className='flex min-w-0 flex-col gap-1 px-4 py-2.5' data-compact-row={kind} {...(kind === 'session' ? { 'data-record-session': id } : { 'data-record-run': id })}>
+      <Link href={href} title={whole} className='block min-w-0 truncate font-medium underline-offset-4 hover:underline' data-compact-title=''>{title}</Link>
+      <span className='flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs'>{state}<span className='tabular-nums'>{spend}</span></span>
+      <span className='text-muted-foreground min-w-0 truncate text-xs'>{meta}</span>
+    </li>
+  );
+}
+
+/** mold_v0-340: a record's agent sessions (its own and its related records'), newest activity first, each opening on the agent's page. */
+function SessionsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: SessionsData | undefined }) {
+  if (data?.hidden || (page.data && !data)) return null;
+  const rows = data && !data.hidden ? data.rows : [];
+  return (
+    <ListCard id={id} kind='sessions' title={s.title}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !rows.length ? <ListEmpty text={s.empty ?? 'No agent session has worked on this yet.'} />
+        : <RecordSessions rows={rows} total={data && !data.hidden ? data.total : rows.length} bare />}
+    </ListCard>
+  );
+}
+
+const asStatus = (v: string): RunStatus => ((RUN_STATUSES as readonly string[]).includes(v) ? (v as RunStatus) : 'running');
+/** mold_v0-340: the runs among a record's sessions (Active runs' rows), active and finished, each opening its own page. */
+function AgentRunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: AgentRunsData | undefined }) {
+  const compact = useCompactRows();
+  if (data?.hidden || (page.data && !data)) return null;
+  const rows = data && !data.hidden ? data.rows : [];
+  const total = data && !data.hidden ? data.total : 0;
+  return (
+    <ListCard id={id} kind='agent_runs' title={s.title}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !rows.length ? <ListEmpty text={s.empty ?? 'No run has worked on this yet.'} />
+        : (<>
+          {total > rows.length && <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>The newest {rows.length} of {total}</p>}
+          <ul className='divide-y' data-record-runs=''>
+            {rows.map((r) => compact ? (
+              <CompactRunRow key={r.id} id={r.id} kind='run' href={`/app/agent/runs/${encodeURIComponent(r.id)}`} title={r.ref ? `${r.ref} · ${r.title}` : r.title}
+                state={<><RunStatusBadge status={asStatus(r.status)} needs={r.needs as RunNeeds | null} />{r.outcome && <OutcomeBadge outcome={r.outcome as RunOutcomeBadge} />}</>}
+                spend={<>{formatValue(r.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(r.budget_usd, 'usd')}</span></>}
+                meta={<>{r.finished ? <>Finished <DateText v={r.settled_at ?? r.last_activity_at} /></> : <>{r.open - r.waiting} of {r.children} at work · <DateText v={r.last_activity_at} /></>}{r.status === 'failed' && r.why ? <> · {r.why}</> : null}</>} />
+            ) : (
+              <li key={r.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-run={r.id}>
+                <span className='flex min-w-0 flex-col gap-0.5'>
+                  <Link href={`/app/agent/runs/${encodeURIComponent(r.id)}`} className='font-medium break-words underline-offset-4 hover:underline'>
+                    {r.ref && <><span className='text-muted-foreground font-mono text-xs whitespace-nowrap'>{r.ref}</span><span className='text-muted-foreground' aria-hidden> · </span></>}{r.title}
+                  </Link>
+                  <span className='text-muted-foreground text-xs'>
+                    {r.finished ? <>Finished <DateText v={r.settled_at ?? r.last_activity_at} /></> : <>{r.open - r.waiting} of {r.children} at work · <DateText v={r.last_activity_at} /></>}
+                    {r.status === 'failed' && r.why ? <> · {r.why}</> : null}
+                  </span>
+                </span>
+                <span className='flex shrink-0 flex-wrap items-center gap-2 text-xs'>
+                  <RunStatusBadge status={asStatus(r.status)} needs={r.needs as RunNeeds | null} />
+                  {r.outcome && <OutcomeBadge outcome={r.outcome as RunOutcomeBadge} />}
+                  <span className='tabular-nums'>{formatValue(r.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(r.budget_usd, 'usd')}</span></span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>)}
+    </ListCard>
+  );
+}
+
+/** mold_v0-340: a charts section: the pack's charts, their numbers counted over this record's records (one request). */
+function ChartsSection({ s, id, area, record, pageKey }: { s: DetailSection; id: string; area: RecordAreaSpec; record: RecordRow; pageKey: string }) {
+  const charts = (s.charts?.charts ?? []).map((n) => packCharts.find((c) => c.pack === area.pack && c.name === n)).filter((c): c is PackChartSpec => !!c);
+  const url = `/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/metrics?section=${pageKey}`;
+  const { data, error } = useOrgLoad(async () => {
+    const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const body = (await res.json().catch(() => ({}))) as { metrics?: MetricResult[]; error?: string };
+    if (!res.ok) throw httpError(res.status, body);
+    return new Map((body.metrics ?? []).map((m) => [m.name, m]));
+  }, [url]);
+  const results = data ?? new Map<string, MetricResult>();
+  // A chart whose every metric this person may not read is left out (as on an overview); none left, no section.
+  const shown = charts.filter((c) => !c.metrics.every((n) => { const r = results.get(n); return !!r && 'error' in r && r.status === 403; }));
+  if (data && !shown.length) return null;
+  return (
+    <ListCard id={id} kind='charts' title={s.title}>
+      {error ? <div className='px-6 py-4'><ErrorState error={error} /></div>
+        : <div className='grid lg:grid-cols-2 [&>*]:border-0 [&>*]:border-b lg:[&>*:nth-child(odd)]:border-r' data-record-charts=''>
+          {shown.map((c) => <ChartCell key={`${c.pack}/${c.name}`} chart={c} results={results} />)}
+        </div>}
+    </ListCard>
+  );
+}
+
 /** The runs and agent sessions that made or changed a record (mold_v0-310, a runs section's `wrote`): each opens its page. */
 function RecordWriterList({ rows, top }: { rows: NonNullable<RunsData['wrote']>; top: boolean }) {
   return (
@@ -583,19 +692,26 @@ function RecordWriterList({ rows, top }: { rows: NonNullable<RunsData['wrote']>;
 }
 
 /** The workspace agent sessions started from a record (mold_v0-261): each opens on the agent's page. */
-function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions']>['rows']; total: number }) {
+const sessionTone = (phase: string): BadgeColor => (phase === 'failed' ? 'danger' : phase === 'awaiting_approval' || phase === 'waiting' ? 'warning' : ['working', 'waking'].includes(phase) ? 'info' : 'neutral');
+function RecordSessions({ rows, total, bare = false }: { rows: NonNullable<RunsData['sessions']>['rows']; total: number; /** mold_v0-340: a sessions section's own list (no rule above, no heading but the count). */ bare?: boolean }) {
+  const compact = useCompactRows();
   return (
-    <div className='border-t' data-record-sessions=''>
-      <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>Agent sessions{total > rows.length ? ` (the newest ${rows.length} of ${total})` : ''}</p>
+    <div className={cn(!bare && 'border-t')} data-record-sessions=''>
+      {(!bare || total > rows.length) && <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>{bare ? `The newest ${rows.length} of ${total}` : `Agent sessions${total > rows.length ? ` (the newest ${rows.length} of ${total})` : ''}`}</p>}
       <ul className='divide-y'>
-        {rows.map((x) => (
+        {rows.map((x) => compact ? (
+          <CompactRunRow key={x.id} id={x.id} kind='session' href={`/app/agent?session=${encodeURIComponent(x.id)}`} title={x.title}
+            state={<ToneBadge color={sessionTone(x.phase)}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>}
+            spend={<>{formatValue(x.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(x.budget_usd, 'usd')}</span></>}
+            meta={<>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} /></>} />
+        ) : (
           <li key={x.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-session={x.id}>
             <span className='flex min-w-0 flex-col gap-0.5'>
               <Link href={`/app/agent?session=${encodeURIComponent(x.id)}`} className='font-medium break-words underline-offset-4 hover:underline'>{x.title}</Link>
               <span className='text-muted-foreground text-xs'>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} /></span>
             </span>
             <span className='flex shrink-0 items-center gap-3 text-xs'>
-              <ToneBadge color={x.phase === 'failed' ? 'danger' : x.phase === 'awaiting_approval' || x.phase === 'waiting' ? 'warning' : ['working', 'waking'].includes(x.phase) ? 'info' : 'neutral'}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
+              <ToneBadge color={sessionTone(x.phase)}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
               <span className='tabular-nums'>{formatValue(x.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(x.budget_usd, 'usd')}</span></span>
             </span>
           </li>
@@ -675,7 +791,7 @@ function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: Detai
 }
 
 /** Whether a layout reads anything from the page's own route (mold_v0-254): actions, a related list, the record's runs. */
-const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
+const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs || s.sessions || s.agent_runs));
 
 async function getPage(url: string): Promise<PageData> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -970,45 +1086,16 @@ function RailBody({ area, base, layout, record, links, clockEvents, where, crede
 }
 
 /**
- * The record page's tab strip (mold_v0-300): always one row. When its tabs are wider than the page (a phone with seven
- * tabs) it scrolls sideways, the open tab scrolled into view, and the edge with more tabs past it fades out as a cue.
+ * The record page's tab strip (mold_v0-300; mold_v0-340: it wraps). Every tab is whole and in view: when the tabs are wider
+ * than the page or the panel (a phone, a record panel beside its list, eight tabs) they go on to a second row, never
+ * clipped and never in a sideways scroller. No tab's label breaks inside itself (each trigger keeps its width).
  */
-function RecordTabStrip({ tabs, open }: { tabs: DetailLayout['tabs']; open: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState<{ start: boolean; end: boolean }>({ start: false, end: false });
-  const measure = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const start = el.scrollLeft > 2, end = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
-    setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
-  }, []);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const active = el.querySelector<HTMLElement>('[data-active]');
-    if (active) {
-      // Only the strip scrolls (never the page): the open tab's box brought inside the strip's, with a little room.
-      const a = active.getBoundingClientRect(), b = el.getBoundingClientRect();
-      if (a.left < b.left + 16) el.scrollLeft -= b.left + 16 - a.left;
-      else if (a.right > b.right - 16) el.scrollLeft += a.right - (b.right - 16);
-    }
-    measure();
-  }, [open, measure]);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [measure]);
-  const fade = edges.start && edges.end ? '[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]'
-    : edges.end ? '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]'
-    : edges.start ? '[mask-image:linear-gradient(to_right,transparent,black_2rem)]' : '';
+export const RECORD_TAB_STRIP_CLASS = 'max-w-full flex-wrap justify-start gap-x-6 gap-y-1 p-0 group-data-horizontal/tabs:h-auto';
+function RecordTabStrip({ tabs }: { tabs: DetailLayout['tabs']; open: string }) {
   return (
-    <div ref={ref} onScroll={measure} className={cn('max-w-full overflow-x-auto overscroll-x-contain pb-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden', fade)}
-      data-tab-strip-room='' data-tab-strip-more={edges.end ? 'end' : edges.start ? 'start' : undefined}>
-      <TabsList variant='line' className='w-max max-w-none flex-nowrap justify-start gap-x-6 p-0 group-data-horizontal/tabs:h-auto' data-record-tabs=''>
-        {tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0'>{t.label}</TabsTrigger>)}
+    <div className='max-w-full pb-1.5' data-tab-strip-room='' data-tab-strip-wraps=''>
+      <TabsList variant='line' className={RECORD_TAB_STRIP_CLASS} data-record-tabs=''>
+        {tabs.map((t) => <TabsTrigger key={t.label} value={tabId(t.label)} className='h-9 flex-none px-0 whitespace-nowrap'>{t.label}</TabsTrigger>)}
       </TabsList>
     </div>
   );

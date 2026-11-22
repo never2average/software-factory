@@ -4988,6 +4988,83 @@ in an embedded database: show_when offered and refused, on_repeat's moves and ea
 writes, a repository's, the staff move route and its refusals, the access log, both pages' state times). The
 console-types fixture declares `show_when`, `state_since` and a shared area's lifecycle.
 
+## A record-centred console: per-record tabs, one Billing page (mold_v0-340)
+
+A record's panel can hold what used to be pages of their own (its agent sessions, its runs, its charts, its related
+records two hops away), and Billing can hold spending and members in one place. Every key is optional, generic and
+neutral; a pack that names none builds and behaves exactly as before (the zero-pack and no-key sidebars, Settings and
+Billing unchanged: `npm run test:console-tabs`, `test:console-sidebar`).
+
+Record page sections (`record_areas[].detail.tabs[].sections[]`, flag `record_pages`; a tab now takes up to 16 sections):
+
+- **A related list through a hop** (`related.through`, `src/pack-api.ts` RecordsHopSchema `{area, via?, where?}`): the
+  records of `area` whose `via` points at ANY record of the hop area pointing here (an application's learnings, through
+  its problems: `{"area": "learnings", "via": "problem", "through": {"area": "problems", "via": "application"}}`), at
+  most 200 hop records, each read as the person; no Show all (its list's filter names one record). Unlike a computed
+  fact's `through` (mold_v0-337: the FIRST hop record), this is every one.
+- **Agent sessions** (`sessions: {through?: [1 to 4 hops], limit?}`, flag `agent_harness`): the workspace agent sessions
+  started from this record or that made it (a start_agent's `creates`), and those of each hop's records (an
+  application's builds and problems), newest activity first (`src/harness-sessions.ts` recordsSessions). Listed as the
+  Agents page lists them, to anyone who may read this record; a hop's records only as the person may read them.
+- **Runs** (`agent_runs`, the same keys, flags `agent_harness` and `nested_runs`): the runs among those sessions (a session
+  that handed work to other agents, as Active runs lists them, `src/agent-dock.ts` activeRuns `roots`), active and
+  finished, each with its one status, outcome, agents at work and spend, opening `/app/agent/runs/<id>`.
+- **Charts** (`charts: {charts: [1 to 8 of the pack's charts], records: [{area, via?, through?}]}`): those charts, each
+  metric counted over this record's records only: for each area a chart's metrics are over, its single reference field
+  `via` pointing here, or (`through`) at any record of a hop (an application's traffic: its deployments' hourly reports,
+  `{"area": "deployment_reports", "via": "deployment", "through": {"area": "deployments", "via": "application"}}`).
+  `GET /api/records/_page/<area>/<key>/metrics?section=<tab>-<section>` (`recordMetrics`) adds one condition to each
+  metric and computes it as an overview does (its roles and area's read permission, the records as the person sees them,
+  the workspace's own scope); a hop the person may not read counts nothing.
+
+Refused at build (with their paths): a hop whose `via` does not point here, a related list's `via` that does not point
+at its hop's area, `match_field` beside `through`, a hop twice, more than 4; a charts section naming a chart that is not
+the pack's, a chart whose metric is over an area `records` does not narrow, a metric over runs or run results, a records
+field that is no single reference to its target, an area twice; a sessions, runs or charts section with fields.
+
+The console (pack.json `console`, one pack's per build; `src/console-pages.ts` billingProblems, sidebarEndProblems):
+
+- **Billing's tabs** (`console.billing.tabs`, each an id or `{id, label}`): `spending` (the Activity page's body: its
+  period, runs, spend and people; what a member reads of colleagues' spend is `GET /api/usage`'s rule, everyone's only for
+  billing roles), `people`, `teams` (the budget groups; `settings_teams: true` with flag `teams` puts Settings' Teams table
+  above them and takes it out of Settings), `rules`, `alerts` (Settings' Alerts, flag `scheduled_alerts`, read only;
+  out of Settings) and `access-log`. The named tabs come first in that order under their labels, the shell's others after
+  them; each is still shown only to whom it was (Budget rules to those who may change them, Access log to owners with
+  `audit.data`). With `spending`, `/app/activity` and `/app/usage` lead to `/app/billing?tab=spending`, the Activity entry
+  leaves the shell's sidebar and a `usage` tab is refused; with `alerts`, `/app/settings/automation` leads to
+  `?tab=alerts` once its group has no tab left; an old `/app/settings?tab=alerts` or `?tab=teams` leads to Billing's tab
+  (`movedSettingsTabs`). Generated: `billingTabs`, `movedSettingsTabs` (`web/src/config/pack-nav.generated.ts`).
+- **The sidebar's foot** (`console.sidebar_end`, 1 to 6): the pack's tabs with no group (by id) and `settings` (the
+  Settings entry, else directly below Overview), in that order, in one group under no heading after every other
+  (`sidebarEnd`, `web/src/config/nav-config.ts` withSettings). Refused: a tab with a group, one inside a page or Settings,
+  one not the pack's, the key beside a declared sidebar (profile.json `console.sidebar`).
+
+Drawing (the shell's, every build):
+
+- **A record's tab strip wraps** (`web/src/features/records/detail-page.tsx` RecordTabStrip, `RECORD_TAB_STRIP_CLASS`):
+  tabs that do not fit go on to a second row, each whole (no label broken, never a sideways scroller that clips one), in a
+  record panel beside its list, expanded, and on a phone. (mold_v0-300's one-row scroller is gone.)
+- **Sessions and runs in a record panel are compact rows** (`CompactRunRow`): the title on one full-width line (cut with an
+  ellipsis, the whole on hover), the state and spend on the second, who and when muted on the third; expanded to the
+  list's full width (`useRecordPanelFull`) they keep the wide row.
+- **Recent runs** (Activity, Billing's Spending, Usage): each run by its own title (an agent session's title, else "Agent
+  session" for the workspace agent's wakes, else its kind in the pack's words), its status as the console's one status badge.
+- **A phone's list cards** (`StatStrip` `strip`): the strip is the containing block of each card's screen-reader words, so
+  they no longer widen the page past the window (a list and its record panel scrolled sideways at 390 px).
+
+Old addresses of pages a pack drops from its tabs keep working through its own `console.redirects` (mold_v0-140). The
+workspace agent's pages stay pages: `/app/agent` (every session opens there; the top bar's agent button) and
+`/app/agent/runs` (a run's page under it) are reachable with or without a sidebar entry.
+
+Proof: `npm run test:app-nav` (`scripts/app-nav-340-test.ts`, offline: the refusals; an app's learnings through its
+problems and never another app's or workspace's, hidden from a role that may not read the hop; its sessions from the app,
+its build and its problem, the runs among them active then finished, none without nested runs; its charts over its own
+deployments' reports, another workspace's left out, a role that may not read the hop counting none; a gen-packs build
+with Billing's tabs, Settings without Alerts and Teams, the redirects and the sidebar's foot, and the same build without
+the keys as before), `npm run test:console-types` (the fixture declares every new key), with `test:console-tabs`,
+`test:console-sidebar`, `test:record-pages`, `test:access-pages`, `test:agent-dock`, `test:words` and
+`test:vocabulary` unchanged.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace
