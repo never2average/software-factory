@@ -47,6 +47,7 @@ import type { RowAction } from '@/components/layout/record-filters';
 import { createHref, placed, type PageAction } from './detail-layout';
 import type { RecordRow } from './record-pages';
 import { EditRecordForm } from './staff-records';
+import { percentInput } from '@/features/tabs/form-prefill';
 
 /** Take a page action on a record (POST /api/records/_page/<area>/<key>/actions/<id>). */
 export async function takeAction<T = unknown>(area: string, key: string, id: string, body: unknown = {}): Promise<T> {
@@ -423,7 +424,8 @@ function RecordRunForm({ host, a, onDone }: { host: ActionHost; a: PageAction; o
   const fixed = a.run?.from_record ?? [];
   const all = (a.run?.args ?? []) as FormField[];
   const fields = all.filter((f) => !fixed.includes(f.name));
-  const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(a.run?.values ?? {}).map(([k, v]) => [k, asInput(v)])));
+  // mold_v0-339: an argument kept as a share (unit percent) is shown as a percent, as fieldValues takes it back.
+  const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(a.run?.values ?? {}).map(([k, v]) => { const f = fields.find((x) => x.name === k); return [k, f ? percentInput(f, asInput(v)) : asInput(v)]; })));
   const envs = a.run?.environments ?? null;
   const [env, setEnv] = useState(envs?.[0] ?? '');
   const [busy, setBusy] = useState(false);

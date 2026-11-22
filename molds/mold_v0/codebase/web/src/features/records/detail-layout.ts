@@ -88,6 +88,8 @@ export interface DetailActionSpec {
   creates?: Record<string, unknown>; stops_session?: boolean;
   /** mold_v0-336: a primary or secondary action drawn as a bare text link ('link') instead of the outlined button. */
   look?: 'button' | 'link';
+  /** mold_v0-339: offered only while this condition on the record holds (the server leaves it out otherwise). */
+  show_when?: DetailCondition;
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
@@ -100,7 +102,9 @@ export interface DetailFact { field?: string; label?: string; unit?: string; com
   /** mold_v0-309: shown only while this condition holds on the record. */
   when?: DetailCondition;
   /** mold_v0-329: a url field's fact shown as these words, linked. */
-  link_text?: string }
+  link_text?: string;
+  /** mold_v0-339: when the record entered the state it is in ("Deprecated since 3 Oct"), from the store's state times. */
+  state_since?: boolean }
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
 /** An area's page layout as the build passes it on (pack.json record_areas[].detail). */
 export interface DetailLayout {
@@ -354,6 +358,8 @@ export const copyText = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(
 export interface PageFormField {
   name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
   multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: 'document';
+  /** mold_v0-339: a number's unit (a share, "percent", shown and typed as a percent). */
+  unit?: string;
 }
 /** A page action as this person may take it on this record (src/record-page-routes.ts ActionView). */
 export interface PageAction {
@@ -471,6 +477,8 @@ export type ComputedFact = { hidden: true } | { hidden?: false; op: 'count'; val
  */
 export function factShown(fact: DetailFact, data: Record<string, unknown>, clocks: ClockStates = null, answer?: ComputedFact | null): boolean {
   if (fact.computed && answer?.hidden) return false;
+  // mold_v0-339: a state_since fact is shown by its caller once the day is known (stateSince).
+  if (fact.state_since) return !fact.when || conditionHolds(fact.when, data, clocks);
   if (fact.when && !conditionHolds(fact.when, data, clocks)) return false;
   if (!fact.hide_empty) return true;
   if (fact.computed) return !answer || (!answer.hidden && (answer.op === 'count' ? answer.value > 0 : !isEmptyValue(answer.value)));
@@ -553,10 +561,13 @@ export const railHeaderFields = (layout: DetailLayout) => new Set([layout.header
 /** The badges a rail page still shows as facts: every one but the header's status and context. */
 export const railBadges = (layout: DetailLayout) => { const said = railHeaderFields(layout); return (layout.header?.badges ?? []).filter((b) => !said.has(b.field)); };
 
-/** A step's state on a lifecycle: done before the record's state, now at it, to do after it; mold_v0-333: stopped at it. */
-export type StepState = 'done' | 'now' | 'todo' | 'failed';
+/**
+ * A step's state on a lifecycle: done before the record's state, now at it, to do after it; mold_v0-333: stopped at it;
+ * mold_v0-339: skipped, a state before it the record never entered (the store's state times say so).
+ */
+export type StepState = 'done' | 'now' | 'todo' | 'failed' | 'skipped';
 /** The word at a step's right. */
-export const STEP_WORD: Record<StepState, string> = { done: 'Done', now: 'Now', todo: 'To do', failed: 'Stopped here' };
+export const STEP_WORD: Record<StepState, string> = { done: 'Done', now: 'Now', todo: 'To do', failed: 'Stopped here', skipped: 'Skipped' };
 /**
  * A steps section's rows (mold_v0-331): the declared states (else the field's options, in order), each done, now or to
  * do against the record's value. A value off the path (a failure state) is said apart; mold_v0-333: and the step it
@@ -581,14 +592,39 @@ export function stepRows(states: readonly string[], value: unknown, stop: { stag
       }
     }
   }
+  // mold_v0-339: a step before where it is (or stopped) that it never entered is skipped, not done: known from the state
+  // times once they start (a step before the first one timed may be from before they were kept: done, as before).
+  const times = stop.stateAt ?? null;
+  const first = times ? states.findIndex((s) => !!times[s]) : -1;
+  const passed = (i: number): StepState => (times && first >= 0 && i > first && !times[states[i]!] ? 'skipped' : 'done');
   return {
-    steps: states.map((s, i) => ({ value: s, state: stopAt >= 0 ? (i < stopAt ? 'done' : i === stopAt ? 'failed' : 'todo') : at < 0 ? 'todo' : i < at ? 'done' : i === at ? 'now' : 'todo' })),
+    steps: states.map((s, i) => ({ value: s, state: stopAt >= 0 ? (i < stopAt ? passed(i) : i === stopAt ? 'failed' : 'todo') : at < 0 ? 'todo' : i < at ? passed(i) : i === at ? 'now' : 'todo' })),
     off,
     stopped: stopAt >= 0 ? states[stopAt]! : null,
   };
 }
+
+/**
+ * mold_v0-339: a state_since fact's label and day: "<state's words> since" (or its own label) and when the record entered
+ * the state it is in, from the store's state times; null while there is none (a record from before they were kept).
+ */
+export function stateSince(area: RecordAreaSpec, fact: DetailFact, data: Record<string, unknown>, stateAt: Record<string, string> | null | undefined): { label: string; at: string } | null {
+  const lc = area.lifecycle;
+  if (!lc || !fact.state_since) return null;
+  const state = String(data[lc.field] ?? lc.initial);
+  const at = stateAt?.[state];
+  if (!at || !Number.isFinite(Date.parse(at))) return null;
+  const words = optionWords(area.fields.find((f) => f.name === lc.field), state);
+  return { label: fact.label ?? `${words} since`, at };
+}
+/** mold_v0-339: a day as a state_since fact says it: "3 Oct", with the year when it is not this one ("3 Oct 2025"). */
+export function sinceWords(iso: string, now = Date.now()): string {
+  const d = new Date(iso);
+  const sameYear = d.getUTCFullYear() === new Date(now).getUTCFullYear();
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), timeZone: 'UTC' });
+}
 /** What a step's circle shows: a check once done, otherwise its one-based number. */
-export const stepMark = (state: StepState, index: number) => (state === 'done' ? '✓' : state === 'failed' ? '✕' : String(index + 1));
+export const stepMark = (state: StepState, index: number) => (state === 'done' ? '✓' : state === 'failed' ? '✕' : state === 'skipped' ? '–' : String(index + 1));
 
 /**
  * A related list drawn as one link row (display "rows"): its line in words. "3 builds", "More than 5 builds" when the

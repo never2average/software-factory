@@ -37,7 +37,7 @@ import { fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { fill } from '@/lib/vocabulary';
 import { cn } from '@/lib/utils';
-import { keyFromTitle, prefill } from './form-prefill';
+import { keyFromTitle, percentBound, percentInput, percentStored, prefill, showsPercentSign } from './form-prefill';
 import { PanelCtx, SidePanelForm } from './side-panel';
 import { findRecordArea } from '@/features/records/registry';
 import { useVisibilityInput } from '@/features/teams/visibility';
@@ -56,6 +56,8 @@ export interface FormField {
   filter_new_only?: boolean;
   /** mold_v0-305: an encrypted field: a hidden input, never shown filled; left empty on an edit, the saved value stays. */
   secret?: true;
+  /** mold_v0-339: a number's unit ("percent": a share from 0 to 1, shown and typed as a percent). */
+  unit?: string;
 }
 interface StartKind { name: string; label: string; description: string | null; args: FormField[]; targets: { name: string; label: string }[] | null; environments: string[] | null }
 type ActionSpec =
@@ -331,7 +333,7 @@ export function fieldValues(fields: FormField[], raw: Record<string, unknown>): 
     if (f.type === 'number') {
       const n = Number(v);
       if (!Number.isFinite(n)) return { values, problem: `${f.label} is a number` };
-      values[f.name] = n;
+      values[f.name] = percentStored(f, n); // mold_v0-339: 80 typed for a share is stored 0.8
     } else if (f.type === 'boolean') values[f.name] = v === true;
     else if (f.type === 'json') {
       try { values[f.name] = JSON.parse(String(v)); } catch { return { values, problem: `${f.label} is not valid JSON` }; }
@@ -409,6 +411,13 @@ export function FieldsForm({ fields, values, set, idPrefix }: {
           ) : f.type === 'json' || (f.type === 'text' && (f.max_length === null || f.max_length > 200)) ? (
             <Textarea id={id} rows={f.type === 'json' ? 5 : 3} className={f.type === 'json' ? 'font-mono text-xs' : undefined} value={String(v ?? '')}
               maxLength={f.max_length ?? undefined} onChange={(e) => set(f.name, e.target.value)} required={f.required} placeholder={f.type === 'json' ? '{ }' : undefined} />
+          ) : showsPercentSign(f) ? (
+            // mold_v0-339: a percent field reads as the record's page says it (80%), stored as its unit keeps it.
+            <div className='flex items-center gap-2' data-percent-input=''>
+              <Input id={id} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)} required={f.required} type='number' step='any' inputMode='decimal'
+                min={percentBound(f, f.min)} max={percentBound(f, f.max)} />
+              <span className='text-muted-foreground text-sm' aria-hidden>%</span>
+            </div>
           ) : (
             <Input id={id} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)} required={f.required}
               type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : f.type === 'url' ? 'url' : 'text'} min={f.min ?? undefined} max={f.max ?? undefined}
@@ -628,7 +637,8 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
   const [title, setTitle] = useState('');
   // mold_v0-256: an area with key_from_title fills the Key from the Title until the person types a key of their own.
   const [keyTyped, setKeyTyped] = useState(false);
-  const [values, setValues] = useState<Record<string, unknown>>(() => ({ ...(initial ?? {}) }));
+  // mold_v0-339: a share filled in (from the address, or the record an action was taken on) shows as a percent.
+  const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(initial ?? {}).map(([k, v]) => { const f = area.fields.find((x) => x.name === k); return [k, f ? percentInput(f, v) : v]; })));
   const [busy, setBusy] = useState(false);
   const [uploads, setUploads] = useState<Record<string, UploadItem[]>>({});
   const fileFields = uploadMax ? area.fields.filter((f) => f.type === 'file') : [];
