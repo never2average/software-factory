@@ -507,7 +507,7 @@ function useBudgetDialogs(call: Call, onChange: () => unknown): BudgetDialogs {
     { label: 'Add $5', icon: <Icons.coin />, disabled: busy || !!hint(s, 5), hint: hint(s, 5), onSelect: () => void add(s, 5) },
     { label: 'Add $10', icon: <Icons.coin />, disabled: busy || !!hint(s, 10), hint: hint(s, 10), onSelect: () => void add(s, 10) },
     { label: 'Set budget…', icon: <Icons.coin />, disabled: !s.budget_change.allowed, hint: budgetBlocked(s.budget_change), onSelect: () => setDialog({ kind: 'set', s }) },
-    { label: 'Spending by run', icon: <Icons.history />, onSelect: () => setDialog({ kind: 'spending', s }) },
+    { label: 'Spending by turn', icon: <Icons.history />, onSelect: () => setDialog({ kind: 'spending', s }) },
   ];
   const close = (o: boolean) => { if (!o) setDialog(null); };
   const dialogs = dialog && (dialog.kind === 'set'
@@ -559,7 +559,7 @@ function SetBudgetDialog({ s, call, onChanged, onOpenChange }: { s: Session; cal
   );
 }
 
-/** Spending by run: what each wake (run) cost and how many tokens it used. */
+/** Spending by turn: what each wake (turn) cost and how many tokens it used. */
 function SpendingDialog({ id, title, call, onOpenChange }: { id: string; title: string; call: Call; onOpenChange: (o: boolean) => void }) {
   const [d, setD] = useState<Detail | null>(null);
   useEffect(() => { void call<{ session: Detail }>('GET', `/${id}`).then((r) => setD(r.session), fail); }, [call, id]);
@@ -567,16 +567,16 @@ function SpendingDialog({ id, title, call, onOpenChange }: { id: string; title: 
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className='sm:max-w-lg' data-agent-spending=''>
         <DialogHeader>
-          <DialogTitle>Spending by run</DialogTitle>
+          <DialogTitle>Spending by turn</DialogTitle>
           <DialogDescription>{title}</DialogDescription>
         </DialogHeader>
         {!d ? <p className='text-muted-foreground text-sm'>Reading…</p> : d.wakes_list.length === 0 ? <p className='text-muted-foreground text-sm'>It has not run yet.</p> : (
           <div className='max-h-[60vh] overflow-y-auto'>
             <table className='w-full text-sm tabular-nums'>
-              <thead><tr className='text-muted-foreground border-b text-left text-xs'><th className='py-1 font-medium'>Run</th><th className='py-1 font-medium'>Status</th><th className='py-1 text-right font-medium'>Tokens in</th><th className='py-1 text-right font-medium'>Tokens out</th><th className='py-1 text-right font-medium'>Cost</th></tr></thead>
+              <thead><tr className='text-muted-foreground border-b text-left text-xs'><th className='py-1 font-medium'>Turn</th><th className='py-1 font-medium'>Status</th><th className='py-1 text-right font-medium'>Tokens in</th><th className='py-1 text-right font-medium'>Tokens out</th><th className='py-1 text-right font-medium'>Cost</th></tr></thead>
               <tbody>{d.wakes_list.map((w, i) => (
                 <tr key={w.run_id} className='border-b last:border-b-0' data-wake-spend={w.run_id}>
-                  <td className='py-1.5'>Run {i + 1}</td>
+                  <td className='py-1.5'>Turn {i + 1}</td>
                   <td className='py-1.5'>{w.status}{w.end_reason ? <span className='text-muted-foreground'> ({w.end_reason})</span> : null}</td>
                   <td className='py-1.5 text-right'>{tokens(w.input_tokens)}</td>
                   <td className='py-1.5 text-right'>{tokens(w.output_tokens)}</td>
@@ -909,8 +909,8 @@ function Details({ d }: { d: Detail }) {
       ) : <p className='text-muted-foreground mt-1'>Nothing: it started before sessions could reach the workspace, and works in its own directory only.</p>}
       <h3 className='mt-4 font-medium'>Its own limits</h3>
       <dl className='mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-[auto_1fr]'>
-        <dt className='text-muted-foreground'>Turns per run</dt><dd>{d.policy.max_turns}</dd>
-        <dt className='text-muted-foreground'>Longest run</dt><dd>{d.policy.wake_max_minutes} minutes</dd>
+        <dt className='text-muted-foreground'>Steps per turn</dt><dd>{d.policy.max_turns}</dd>
+        <dt className='text-muted-foreground'>Longest turn</dt><dd>{d.policy.wake_max_minutes} minutes</dd>
         <dt className='text-muted-foreground'>Parks after</dt><dd>{d.policy.park_after_minutes} quiet minutes</dd>
         <dt className='text-muted-foreground'>Web</dt><dd>{d.policy.web_tools === 'off' ? 'Off' : `${d.policy.web_tools === 'search' ? 'Search and read' : 'Read'}: ${d.policy.web_hosts.join(', ') || 'asks for each host'} (${d.web_calls} of ${d.policy.web_calls_max} calls)`}</dd>
         <dt className='text-muted-foreground'>Its own tools</dt><dd>{d.policy.tools.join(', ')}</dd>
@@ -918,7 +918,7 @@ function Details({ d }: { d: Detail }) {
         <dt className='text-muted-foreground'>Instructions</dt><dd>{d.hooks.map((h) => `${h.event === 'on_start' ? 'On start' : h.event === 'on_resume' ? 'On resume' : 'Standing'}: ${h.source === 'unset' ? 'none' : h.source === 'harness' ? "the harness's own" : h.source === 'profile' ? "its profile's" : "this session's"}`).join(' · ')}{r ? ', and the workspace context above' : ''}</dd>
       </dl>
       {d.grants.length > 0 && <div className='mt-3'><p className='font-medium'>Budget raises</p><ul className='mt-1 flex flex-col gap-1'>{d.grants.map((g) => <li key={g.id}>{usd(g.from_usd)} to {usd(g.to_usd)} by {g.by}, <When d={g.at} />: {g.reason}</li>)}</ul></div>}
-      {d.wakes_list.length > 0 && <div className='mt-3'><p className='font-medium'>Runs</p><ul className='mt-1 flex flex-col gap-1'>{d.wakes_list.map((w, i) => <li key={w.run_id} className='flex flex-wrap gap-x-2'>{featureOn('record_pages') ? <Link href={`/app/runs/${encodeURIComponent(w.run_id)}`} className='underline-offset-4 hover:underline' data-wake-run={w.run_id}>Run {i + 1}</Link> : <span>Run {i + 1}</span>}<span>{w.status}</span>{w.end_reason && <span className='text-muted-foreground'>{w.end_reason}</span>}<span className='tabular-nums'>{usd(w.cost_usd)}</span></li>)}</ul></div>}
+      {d.wakes_list.length > 0 && <div className='mt-3'><p className='font-medium'>Turns</p><ul className='mt-1 flex flex-col gap-1'>{d.wakes_list.map((w, i) => <li key={w.run_id} className='flex flex-wrap gap-x-2'>{featureOn('record_pages') ? <Link href={`/app/runs/${encodeURIComponent(w.run_id)}`} className='underline-offset-4 hover:underline' data-wake-run={w.run_id}>Turn {i + 1}</Link> : <span>Turn {i + 1}</span>}<span>{w.status}</span>{w.end_reason && <span className='text-muted-foreground'>{w.end_reason}</span>}<span className='tabular-nums'>{usd(w.cost_usd)}</span></li>)}</ul></div>}
       {d.requests.filter((r) => r.status !== 'pending').length > 0 && <div className='mt-3'><p className='font-medium'>Decisions</p><ul className='mt-1 flex flex-col gap-1'>{d.requests.filter((r) => r.status !== 'pending').map((r) => <li key={r.id}>{askWords(r)}: {r.status}{r.decided_by ? ` by ${r.decided_by}` : ''}{r.reason ? ` (${r.reason})` : ''}</li>)}</ul></div>}
     </div>
   );

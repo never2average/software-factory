@@ -5066,7 +5066,10 @@ The shell's own words and layout (no key):
 
 - **Agents list.** The short number is the title's muted prefix ("AGI-012 · Cut our build costs", still searched), not
   a column; Started by is cut with its whole name on hover (never broken mid-word); Spent stays on one line; the
-  times the agent woke up are **Turns** (a "run" is a session handing work to other agents, Active runs').
+  times the agent woke up are **Turns** (a "run" is a session handing work to other agents, Active runs'). A session's
+  own page says the same: its **Turns** list ("Turn 1", ...), its menu's and dialog's **Spending by turn** ("Turn N"
+  rows), and under Its own limits **Steps per turn** (the model's steps in one wake, `policy.max_turns`) and **Longest
+  turn**.
 - **What a session asks** (`src/harness-trace.ts` askTitle, `src/harness-sessions.ts` requestTitle): a tool request reads
   as what it does: the workspace tool's title, else the request's own `detail.title`, else the tool's name in words
   ("Add environment", "It asks to add environment"), never "Use create_environment". The trace leaves out its own line
