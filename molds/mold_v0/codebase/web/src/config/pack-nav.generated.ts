@@ -34,6 +34,8 @@ export interface RecordAreaSpec {
   /** Its icon wherever it shows (mold_v0-242; src/record-icons.ts): its own, its customer tab's, else one picked from its name. */
   icon: NonNullable<NavItem['icon']>;
   role: 'source' | 'check' | 'asset';
+  /** mold_v0-336: what its records are called, plural (a list's footer counts with it); absent: records. */
+  plural?: string;
   scope: 'platform' | 'workspace';
   fields: RecordFieldSpec[];
   list_columns: string[];
@@ -174,6 +176,10 @@ export interface PackTabSpec {
   views?: ('table' | 'board' | 'timeline' | 'detail')[];
   /** An area tab's table columns: fields of its areas (a merged tab: also source). */
   columns?: string[];
+  /** mold_v0-336: a merged tab's columns of a field per source area (each id is among `columns`): its heading and, per area, the field it shows. */
+  source_columns?: { id: string; label: string; by_source: Record<string, string> }[];
+  /** mold_v0-336: what the tab's rows are called, plural (its footer's count). */
+  plural?: string;
   /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */
   areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];
   board_by?: string | null;

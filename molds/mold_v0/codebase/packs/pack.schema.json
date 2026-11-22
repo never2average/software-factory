@@ -374,6 +374,12 @@
               "userPen"
             ]
           },
+          "plural": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[^\\n\\r{}<>]*$"
+          },
           "role": {
             "type": "string",
             "enum": [
@@ -4691,7 +4697,8 @@
                         "open_url",
                         "start_program",
                         "test_storage",
-                        "test_connection"
+                        "test_connection",
+                        "toggle"
                       ]
                     },
                     "place": {
@@ -6243,6 +6250,13 @@
                     "reason_field": {
                       "type": "string",
                       "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "look": {
+                      "type": "string",
+                      "enum": [
+                        "button",
+                        "link"
+                      ]
                     }
                   },
                   "required": [
@@ -10100,9 +10114,46 @@
                     "show"
                   ],
                   "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "by_source": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      }
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[^\\n\\r{}<>]*$"
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    }
+                  },
+                  "required": [
+                    "by_source",
+                    "label"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             }
+          },
+          "plural": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[^\\n\\r{}<>]*$"
           },
           "views": {
             "minItems": 1,

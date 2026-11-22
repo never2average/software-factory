@@ -23,10 +23,35 @@ export function usePaged<T>(items: readonly T[], initialSize = 25): Paged<T> {
 
 /** "21–40 of 137 · Rows [25] · ‹ 2 / 7 ›"; an empty table still shows its footer ("0 items"). With `of` (the unfiltered count)
  * a filtered table reads "12 of 340 requests"; `count` overrides the row count shown (grouped tables page their headers too). */
+/**
+ * mold_v0-336: nouns that are several areas' plurals joined (features/tabs/merged.ts tabPlural registers each with its
+ * parts), so oneOf says them one at a time ("1 hosting account or catalog entry"); any other noun, a pack's own plural
+ * such as "terms and conditions" included, is never split.
+ */
+const JOINED = new Map<string, string[]>();
+export function joinedPlural(parts: string[]): string {
+  const noun = parts.length < 3 ? parts.join(' and ') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  JOINED.set(noun, parts);
+  return noun;
+}
+
+/**
+ * One of a plural noun (mold_v0-289: "1 person", "1 account"; mold_v0-336: a pack's own plural, "1 catalog entry", and
+ * several areas' plurals joined by joinedPlural said one at a time: "1 hosting account or catalog entry").
+ */
+export function oneOf(noun: string): string {
+  const parts = JOINED.get(noun);
+  if (parts) { const w = parts.map(oneOf); return w.length < 3 ? w.join(' or ') : `${w.slice(0, -1).join(', ')} or ${w[w.length - 1]}`; }
+  if (noun === 'people') return 'person';
+  if (/[^aeiou]ies$/.test(noun)) return noun.slice(0, -3) + 'y';
+  if (/(ss|x|ch|sh)es$/.test(noun)) return noun.slice(0, -2);
+  return noun.endsWith('s') && !noun.endsWith('ss') ? noun.slice(0, -1) : noun;
+}
+
 export function TablePager<T>({ p, noun = 'items', className, of, count, loading }: { p: Paged<T>; noun?: string; className?: string; of?: number; count?: number; loading?: boolean }) {
   const from = (p.page - 1) * p.size + 1, to = Math.min(p.total, p.page * p.size), n = count ?? p.total;
   // mold_v0-289: one thing is singular: "1 person", "1 account".
-  const word = n === 1 && !of ? (noun === 'people' ? 'person' : noun.endsWith('s') ? noun.slice(0, -1) : noun) : noun;
+  const word = n === 1 && !of ? oneOf(noun) : noun;
   return (
     <div className={cn('text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-2 py-2 text-xs', className)}>
       <span className='tabular-nums' data-pager-count=''>

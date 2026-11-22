@@ -23,6 +23,7 @@ import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad, When } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useExportCsv } from '@/features/tabs/export';
+import { bySource, sourceArea } from '@/features/tabs/merged';
 import { useImportAction } from './workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
@@ -213,6 +214,27 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         }
         const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
+        // mold_v0-336: a merged tab's column of a field per source area: the row's own area's cell (its badge colours,
+        // its option words, its health's staleness).
+        const by = bySource(f);
+        if (by) {
+          const an = sourceArea(by, r);
+          if (!an) return dash; // mold_v0-336: a row of an area the column maps no field of
+          const ra = findRecordArea(base, an), mf = ra?.fields.find((x) => x.name === by[an]), v = r.data[name];
+          const st = mf && r.health?.field === mf.name ? staleWords(r.health) : null;
+          if (st) return <span className='flex flex-wrap gap-1' data-enum-cell={name} data-source-cell={an} data-stale=''><ToneBadge color='neutral'>{st}</ToneBadge></span>;
+          if (v == null || v === '' || !mf) return dash;
+          if (mf.type === 'enum' && !mf.encrypted) {
+            const rl = featureOn('record_pages') && ra ? layoutOf(ra) : null;
+            return (
+              <span className='flex flex-wrap gap-1' data-enum-cell={name} data-source-cell={an}>
+                {(Array.isArray(v) ? v as unknown[] : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(rl, mf.name, x)}>{optionWords(mf, x)}</ToneBadge>)}
+              </span>
+            );
+          }
+          if (mf.type === 'date' && typeof v === 'string') return <span data-source-cell={an}><When d={v} /></span>;
+          return <span className='line-clamp-2' data-source-cell={an}>{shownText(mf, v, r.key) || '—'}</span>;
+        }
         // mold_v0-332: a working test older than its pack's stale_after_days: neutral, "Tested N days ago".
         const stale = r.health?.field === name ? staleWords(r.health) : null;
         if (stale) return <span className='flex flex-wrap gap-1' data-enum-cell={name} data-stale=''><ToneBadge color='neutral'>{stale}</ToneBadge></span>;
@@ -322,8 +344,10 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowActions, detailNote, related }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowActions, detailNote, related, noun: plural }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
+  /** mold_v0-336: what the rows are called, plural (the footer's count; a merged tab's, features/tabs/merged.ts tabPlural): default the area's own plural, else "records". */
+  noun?: string | null;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
   /** Above the toolbar: a tab's four cards (mold_v0-181, features/tabs/sparklines.tsx; mold_v0-208: cards, search, table). */
@@ -430,11 +454,18 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const shown = data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
-  const laidOut = (r: RecordRow) => !source && !detailNote && recordArea(r) === area.name && featureOn('record_pages') && !!layoutOf(area);
+  // mold_v0-336: a merged tab's row from a later area (a shared catalog's entry beside the workspace's own rows) opens that
+  // area's own record (its laid-out page, else its own fields), as from its own list: never the tab's columns, which are
+  // mostly the first area's fields.
+  const rowArea = (r: RecordRow): RecordAreaSpec => (recordArea(r) === area.name ? area : findRecordArea(base, recordArea(r)) ?? area);
+  const foreign = (r: RecordRow) => rowArea(r) !== area;
+  const laidOut = (r: RecordRow) => !source && !detailNote && featureOn('record_pages') && !!layoutOf(rowArea(r));
+  // mold_v0-336: the rows' own word ("8 hosting accounts"), the pack's plural; absent, "records" as before.
+  const noun = source?.noun ?? plural ?? area.plural ?? 'records';
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
-      id={id} compact={compact} noun={source?.noun ?? 'records'} summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
+      id={id} compact={compact} noun={noun} summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
       initialRules={initialRules} onRulesChange={(r) => {
         if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
         if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);
@@ -443,7 +474,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data} wide={featureOn('wide_lists') && cols.filter((c) => !c.hidden).length > 9}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
-      filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
+      filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {noun}: search and sort cover these</span> : undefined}
       // mold_v0-294: Import and Export (every list's, empty or not; the view's rows when narrowed, mold_v0-217) are items
       // of the search row's Actions ▾ menu, with Ask AI, before the primary action.
       imports={importAction ? [importAction] : undefined}
@@ -457,8 +488,9 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       panelMenu={base === 'app' && !source ? (r, items) => (recordArea(r) === area.name ? <RowCreateMenu area={area} recordKey={r.key} items={items} name={r.title || r.key} /> : undefined) : undefined}
       pageHref={detailHref}
       // A record whose area declares its page's layout (flag record_pages): the laid-out record itself in the panel.
-      properties={(r) => source?.properties !== false && !laidOut(r)}
-      detail={(r) => source?.detail ? source.detail(r) : laidOut(r) ? <RecordDetailBody area={area} recordKey={r.key} base={base} inPanel /> : (<>
+      properties={(r) => source?.properties !== false && !laidOut(r) && !foreign(r)}
+      detail={(r) => source?.detail ? source.detail(r) : laidOut(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
+        : foreign(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel /> : (<>
         <dl>
           {detailNote?.(r)}
           {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}

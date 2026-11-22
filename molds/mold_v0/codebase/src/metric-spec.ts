@@ -6,7 +6,7 @@
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { crumbParentProblems } from "./record-crumbs.js";
-import { conditionIssues, WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, hopProblems, linksBack, STATE_AT_SORT, stateAtProblem, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { conditionIssues, WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, hopProblems, linksBack, STATE_AT_SORT, stateAtProblem, relatedColumnId, isSourceColumn, sourceColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -52,7 +52,8 @@ export function tabField(t: Pick<Tab, "kind" | "area" | "areas">, areas: readonl
  */
 export function tabColumns(t: Pick<Tab, "kind" | "area" | "areas" | "columns">, areas: readonly SpecArea[]): string[] {
   // mold_v0-256: a column computed from related records is not a field: tabRelatedColumns lists those.
-  if (t.columns) return t.columns.filter((c): c is string => typeof c === "string");
+  // mold_v0-336: a column of a field per source area (a merged tab's) is listed by its id, in its place.
+  if (t.columns) return t.columns.flatMap((c) => (typeof c === "string" ? [c] : isSourceColumn(c) ? [sourceColumnId(c)] : []));
   const list = tabAreas(t);
   const cols: string[] = list.length > 1 && list.some((a) => a.source) ? [TAB_SOURCE_COLUMN] : [];
   for (const a of list) for (const c of areas.find((x) => x.name === a.area)?.list_columns ?? []) if (!cols.includes(c)) cols.push(c);
@@ -338,6 +339,7 @@ export function checkViews(b: BuildViews): string[] {
       }
       for (const c of t.columns ?? []) {
         if (typeof c === "string") { if (!a.fields.some((f) => f.name === c)) at(p, `${w}: column ${c} is not a field of area ${a.name}`); continue; }
+        if (isSourceColumn(c)) continue; // mold_v0-336: refused on a tab of one area (src/pack-api.ts TabSchema)
         // mold_v0-256: a column computed from related records: their area points back here; latest:<field> one of its fields.
         const r = area(c.related.area), cw = `${w}: column ${relatedColumnId(c)}`;
         if (!r) { at(p, `${cw}: ${c.related.area} is not a record area of this build`); continue; }
@@ -396,6 +398,21 @@ export function checkViews(b: BuildViews): string[] {
         if (f && f.type !== "date") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
       }
       for (const c of t.columns ?? []) if (typeof c === "string") shown(c, "column");
+      // mold_v0-336: a column of a field per source area: each a field of its area, one type in all, its id no field's.
+      for (const c of t.columns ?? []) {
+        if (!isSourceColumn(c)) continue;
+        const id = sourceColumnId(c), cw = `${w}: column ${id}`;
+        const mapped = Object.entries(c.by_source).map(([an, fn]) => ({ an, fn, f: as.find((a) => a.name === an)?.fields.find((f) => f.name === fn) }));
+        for (const m of mapped) {
+          if (!as.some((a) => a.name === m.an)) at(p, `${cw}: by_source names ${m.an}, which is not one of the tab's areas`);
+          else if (!m.f) at(p, `${cw}: ${m.fn} is not a field of area ${m.an}`);
+          else if (m.f.encrypted || m.f.type === "json" || m.f.type === "file") at(p, `${cw}: ${m.an}.${m.fn} is ${m.f.encrypted ? "encrypted" : `a ${m.f.type} field`}: a cell shows one plain value`);
+        }
+        const kinds = [...new Set(mapped.filter((m) => m.f).map((m) => kind(m.f!)))];
+        if (kinds.length > 1) at(p, `${cw}: ${mapped.filter((m) => m.f).map((m) => `${m.an}.${m.fn} is ${kind(m.f!)}`).join(" and ")}: the fields one column shows are one type`);
+        const clashes = as.filter((a) => a.fields.some((f) => f.name === id)).map((a) => a.name);
+        if (clashes.length || (id === TAB_SOURCE_COLUMN && sourced)) at(p, `${cw}: ${clashes.length ? `area ${clashes.join(", ")} has a field` : "the tab's source column is"} named ${id}: give the column its own id`);
+      }
     }
     if (t.kind === "runs" || t.kind === "reports") { if (!b.jobKinds) at(p, `${w}: the build has no job kind, so there are no runs to show`); }
     if (t.kind === "schedules" && !b.jobKinds) at(p, `${w}: the build has no job kind to schedule, so it has no Schedules page`);

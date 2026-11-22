@@ -63,7 +63,7 @@ export interface RunLink { kind: 'run' | 'session'; id: string; title: string; s
 export interface RecordWriters { made: RunLink | null; changed: RunLink[] }
 /** "the run Build app", "the agent session Fix the tests", "the program Find problems in the agent session …" in words (no link). */
 export const runLinkKind = (l: Pick<RunLink, 'kind' | 'program'>) => (l.kind === 'run' ? 'the run' : l.program ? `the program ${l.program} in the agent session` : 'the agent session');
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage' | 'test_connection';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url' | 'start_program' | 'test_storage' | 'test_connection' | 'toggle';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
@@ -86,6 +86,8 @@ export interface DetailActionSpec {
   move_to?: string; on_outcome?: Partial<Record<'accepted' | 'needs_review' | 'refused' | 'applied' | 'rolled_back' | 'succeeded' | 'failed', string>>; reason_field?: string;
   /** mold_v0-333: start_agent's record made at start, and a move that stops the record's sessions. */
   creates?: Record<string, unknown>; stops_session?: boolean;
+  /** mold_v0-336: a primary or secondary action drawn as a bare text link ('link') instead of the outlined button. */
+  look?: 'button' | 'link';
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
@@ -375,6 +377,10 @@ export interface PageAction {
   agent?: { profile: string; name: string; version: number; message: string };
   /** open_url (mold_v0-262): the web address it opens in a new tab. */
   url?: string | null;
+  /** toggle (mold_v0-336): whether its boolean field is on now. */
+  on?: boolean;
+  /** mold_v0-336: drawn as a bare text link (its declared look). */
+  look?: 'link';
 }
 /** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
 export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;

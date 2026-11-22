@@ -183,7 +183,7 @@ assert.equal(sw.trendWords({ series: [null, 0.5, null, 0.25], unit: "percent", m
 assert.equal(sw.trendWords({ series: [100, 103], unit: "number", mode: "latest" }, W, fmt), "Week by week: steady over the last 12 weeks, at 103.");
 assert.equal(sw.trendWords({ series: [null, 3, null], unit: "count", mode: "weekly" }, W, fmt), "No trend yet over the last 12 weeks.");
 const cards = src("features/tabs/sparklines.tsx");
-assert.match(cards, /<StatStrip quad items=\{items\} \/>/, "the cards are the console's headline numbers (StatStrip), four across or two by two");
+assert.match(cards, /<StatStrip quad strip=\{strip\} items=\{items\} \/>/, "the cards are the console's headline numbers (StatStrip), four across or two by two (mold_v0-336: one compact scrolling row on a phone)");
 assert.match(cards, /\/api\/sparklines\//, "numbers from the server, for this workspace and role");
 assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: its cards as the table's summary");
 assert.match(tab, /!table && <TabSparklines tab=\{tab\} \/>/, "a board or a timeline: above it");
@@ -981,7 +981,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   //    action's reason on hover and focus; Show all and a run's link only with the flag (the lists as before without it).
   const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const pa = strip(src("features/records/page-actions.tsx")), dp = strip(src("features/records/detail-page.tsx"));
-  assert.doesNotMatch(pa, /<button\b|<(?:Dialog|Sheet|Drawer|AlertDialog)\b/, "no raw button, no dialog, sheet or drawer of its own");
+  // mold_v0-336: the one raw button is a declared look: "link" action (scripts/console-outlines.ts ALLOW says why).
+  assert.equal((pa.match(/<button type='button' data-text-action=''/g) ?? []).length, 1, "one declared text-link action");
+  assert.doesNotMatch(pa.replace("<button type='button' data-text-action=''", ""), /<button\b|<(?:Dialog|Sheet|Drawer|AlertDialog)\b/, "no other raw button, no dialog, sheet or drawer of its own");
   assert.match(pa, /<ConfirmDialog\b/, "confirmations are the console's ConfirmDialog (ConfirmButton's question)");
   assert.match(src("features/admin/ui.tsx"), /export function ConfirmButton[\s\S]*?<ConfirmDialog /, "the same one ConfirmButton asks");
   assert.match(pa, /<ActionCard\b[\s\S]*?<EditRecordForm\b/, "edit: the existing edit form, a full card");
