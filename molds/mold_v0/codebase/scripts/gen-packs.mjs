@@ -1328,7 +1328,7 @@ function readDefinitions() {
 import { readFileSync } from "node:fs";
 const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles, staffApi, checkSpecApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
-const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
+const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack, sourceColumnId } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
 const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAction, areaListAction, tabAreas, tabColumns, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
 const { fillWith } = await import(pathToFileURL(wordsApi).href);
@@ -1395,8 +1395,11 @@ if (loaded.length === entries.length) {
     tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b),
       ...(t.kind === "area" ? { columns: tabColumns(t, b.areas) } : {}), ...(t.areas ? { area: tabAreas(t)[0].area, areas: tabAreas(t) } : {}),
       // mold_v0-256: columns computed from related records (their place among the tab's columns), read by the console's table.
-      ...(t.kind === "area" && (t.columns ?? []).some((c) => typeof c !== "string")
-        ? { related_columns: t.columns.map((c, at) => (typeof c === "string" ? null : { ...c, at })).filter(Boolean) } : {}) })) };
+      ...(t.kind === "area" && (t.columns ?? []).some((c) => c && typeof c === "object" && "related" in c)
+        ? { related_columns: t.columns.map((c, at) => (c && typeof c === "object" && "related" in c ? { ...c, at } : null)).filter(Boolean) } : {}),
+      // mold_v0-336: a merged tab's columns of a field per source area (their ids are among the columns, in place).
+      ...(t.kind === "area" && (t.columns ?? []).some((c) => c && typeof c === "object" && "by_source" in c)
+        ? { source_columns: t.columns.filter((c) => c && typeof c === "object" && "by_source" in c).map((c) => ({ id: sourceColumnId(c), label: c.label, by_source: c.by_source })) } : {}) })) };
 }
 // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
 // pack's mcp settings name real tools, names fit, no two take one name, and none takes a name of the shell's own tools
@@ -1642,7 +1645,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     documents: () => areas.some((a) => (a.fields ?? []).some((x) => x.type === "file" || x.preview === "document")),
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
     layouts: () => areas.some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((x) => x.copyable === true || x.display === "chips"))
-      || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object"))),
+      || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object" && "related" in c))),
     // mold_v0-260 (src/features.ts gapAsks says the same for the server, lib/features.py for the factory).
     record_inputs: () => kinds.some((k) => !!k.input_from_record),
     wide_lists: () => areas.some((a) => (a.list_columns?.length ?? 0) > 8) || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns?.length ?? 0) > 8)),
@@ -2839,6 +2842,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n" +
   "  /** Its icon wherever it shows (mold_v0-242; src/record-icons.ts): its own, its customer tab's, else one picked from its name. */\n  icon: NonNullable<NavItem['icon']>;\n" +
   "  role: 'source' | 'check' | 'asset';\n" +
+  "  /** mold_v0-336: what its records are called, plural (a list's footer counts with it); absent: records. */\n  plural?: string;\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
   "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[]; supersedes?: { scope_fields: string[]; when_enters: string; previous_to: string } } | null;\n" +
   "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
@@ -2858,7 +2862,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
   (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n  /** mold_v0-334: the where applies to new picks only; a record keeps a value retired since. */\n  filter_new_only?: boolean;\n" : "") +
   (FEATURE_ON.record_resources ? "  /** mold_v0-285: a database field's provider: core, a schema of its own in the app's database. */\n  provider?: 'core';\n" : "") + "}\n\n" +
-  `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
+  `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], ...(a.plural ? { plural: a.plural } : {}), role: a.role,
     // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
     scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, display: _d, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
@@ -3110,6 +3114,8 @@ function viewsModule() {
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : t.inside === "settings" ? `/app/settings?tab=${t.id}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}),
+      // mold_v0-336: a column of a field per source area; what the tab's rows are called (its footer's count).
+      ...(t.source_columns?.length ? { source_columns: t.source_columns } : {}), ...(t.plural ? { plural: t.plural } : {}),
       // mold_v0-256 (flag record_pages): a column computed from related records: its id, heading, area and what it shows.
       ...(FEATURE_ON.record_pages && t.related_columns?.length ? { related_columns: t.related_columns.map((c) => {
         const r = recordAreas.find((a) => a.name === c.related.area), fn = c.show.startsWith("latest:") ? c.show.slice(7) : null;
@@ -3167,6 +3173,9 @@ function viewsModule() {
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
     (FEATURE_ON.record_pages ? "  /** Columns computed from related records (mold_v0-256): each one's place among the columns, heading, area and what it shows. */\n  related_columns?: { id: string; at: number; area: string; show: string; label: string }[];\n" : "") +
+    "  /** mold_v0-336: a merged tab's columns of a field per source area (each id is among `columns`): its heading and, per area, the field it shows. */\n" +
+    "  source_columns?: { id: string; label: string; by_source: Record<string, string> }[];\n" +
+    "  /** mold_v0-336: what the tab's rows are called, plural (its footer's count). */\n  plural?: string;\n" +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
     "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +

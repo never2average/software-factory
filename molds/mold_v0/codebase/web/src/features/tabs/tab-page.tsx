@@ -41,7 +41,7 @@ import { ChartBody, ChartCell, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
 import { useExportCsv } from './export';
 import { ActionsMenu } from '@/components/layout/actions-menu';
-import { tabRecordsUrl, viewArea, withSource } from './merged';
+import { tabPlural, tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { RecentRecordsCard } from './recent-records-card';
 import { RunsTable } from './runs';
@@ -160,7 +160,7 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
   }
   // No notices section under the checklist (mold_v0-216): the Due soon card and the Notices page show them.
   // mold_v0-325: a log drain silent for hours is said at the top of the home page too (never its other states).
-  const sparks = top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined;
+  const sparks = top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' strip={false} /> : undefined;
   const head = !drainsInBuild() ? sparks : sparks ? <div className='flex flex-col gap-4'><DrainStatus silentOnly />{sparks}</div> : <DrainStatus silentOnly />;
   return <SetupPage rail={rail} cards={cards} top={head} />;
 }
@@ -282,7 +282,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
             exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined} importAction={imp.item}
-            related={relatedColumnsOf(tab)}
+            related={relatedColumnsOf(tab)} noun={tabPlural(tab)}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>

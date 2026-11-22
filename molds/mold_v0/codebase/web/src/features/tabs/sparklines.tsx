@@ -6,6 +6,7 @@
 // console's headline numbers (StatStrip, the Health and Spend pages' cards): four across on a wide screen, two by two
 // below, a fixed height with placeholders while they load, and each card's value and trend said in words.
 import { useMemo } from 'react';
+import { useScrollsSideways } from '@/hooks/use-scrolls-sideways';
 import { StatStrip } from '@/components/layout/section';
 import type { PackTabSpec } from '@/config/pack-nav.generated';
 import { useOrgLoad } from '@/features/portal/shared';
@@ -37,12 +38,15 @@ const labelPulse = <span className='bg-muted inline-block h-3 w-24 animate-pulse
  * The four cards of a list tab, for the RecordView's `summary` (below its toolbar) or above a board or timeline; or a home
  * tab's headline row (mold_v0-203: `count` cards, its declared 1 to 4, the same strip at the top of the Overview).
  */
-export function TabSparklines({ tab, count = 4, label = 'Key numbers' }: { tab: Pick<PackTabSpec, 'pack' | 'id'>; count?: number; label?: string }) {
-  return <Sparklines url={`/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`} tag={`${tab.pack}/${tab.id}`} count={count} label={label} />;
+export function TabSparklines({ tab, count = 4, label = 'Key numbers', strip = true }: { tab: Pick<PackTabSpec, 'pack' | 'id'>; count?: number; label?: string; strip?: boolean }) {
+  return <Sparklines url={`/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`} tag={`${tab.pack}/${tab.id}`} count={count} label={label} strip={strip} />;
 }
 
 /** Cards from any route that answers as /api/sparklines does (mold_v0-205: the Access log's, /api/audit/<trail>/sparklines). */
-export function Sparklines({ url, tag, count = 4, label = 'Key numbers' }: { url: string; tag: string; count?: number; label?: string }) {
+export function Sparklines({ url, tag, count = 4, label = 'Key numbers', strip = true }: { url: string; tag: string; count?: number; label?: string;
+  /** mold_v0-336: a list's cards on a phone: one compact row that scrolls sideways (false: two by two, a home tab's headline row). */
+  strip?: boolean }) {
+  const { ref, scrollRegion } = useScrollsSideways<HTMLElement>();
   const { data, error } = useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as SparkAnswers & { error?: string };
@@ -64,9 +68,11 @@ export function Sparklines({ url, tag, count = 4, label = 'Key numbers' }: { url
   // Cards that cannot be read at all (the API predates them, a network failure) leave the list as it was.
   if (error || (data && !data.cards.length)) return null;
   return (
-    <section aria-label={label} aria-busy={!data || undefined} data-sparklines={tag}>
+    // mold_v0-336: on a phone the cards' one row scrolls inside this section (a keyboard reaches it while it scrolls).
+    <section ref={ref} aria-label={label} aria-busy={!data || undefined} data-sparklines={tag} className={strip && count !== 5 ? 'max-sm:overflow-x-auto max-sm:overscroll-x-contain' : undefined}
+      {...(strip && count !== 5 ? scrollRegion(label) : {})}>
       {/* mold_v0-260 (flag overview_cards): a home tab's fifth number, five across on a wide screen (the odd one full width on a phone). */}
-      {count === 5 ? <StatStrip quad items={items} className='lg:grid-cols-5 max-lg:[&>*:last-child]:col-span-2' /> : <StatStrip quad items={items} />}
+      {count === 5 ? <StatStrip quad items={items} className='lg:grid-cols-5 max-lg:[&>*:last-child]:col-span-2' /> : <StatStrip quad strip={strip} items={items} />}
     </section>
   );
 }
