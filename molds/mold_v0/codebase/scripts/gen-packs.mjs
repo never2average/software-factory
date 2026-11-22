@@ -2621,6 +2621,22 @@ const SIDEBAR_END = (() => {
   }
   return out;
 })();
+/**
+ * mold_v0-341: pack.json console.sidebar_end_label: the foot group's heading ("" with none, as before). Refused when it is
+ * another sidebar group's heading (a pack tab's group), any case, or when packs name two.
+ */
+const SIDEBAR_END_LABEL = (() => {
+  let out = "";
+  if (profileSidebar) return out;
+  for (const p of packs.filter((x) => x.json?.console?.sidebar_end_label !== undefined && x.json?.console?.sidebar_end !== undefined)) {
+    const at = `packs/${p.id}/pack.json`, label = p.json.console.sidebar_end_label;
+    if (out && out !== label) { fail(at, `console.sidebar_end_label: another pack names the foot's heading (${out})`); continue; }
+    const same = packViews.tabs.find((t) => t.group && t.group.toLowerCase() === label.toLowerCase());
+    if (same) { fail(at, `console.sidebar_end_label: ${label} is already a group's heading (tab ${same.id} of pack ${same.pack}): name the foot otherwise`); continue; }
+    out = label;
+  }
+  return out;
+})();
 function isEndTab(t) { return !profileSidebar && SIDEBAR_END.some((x) => x.tab && x.tab.pack === t.pack && x.tab.id === t.id); }
 function sidebarEndUrls() {
   if (profileSidebar) return [];
@@ -2965,6 +2981,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const movedSettingsTabs: Record<string, string> = ${json(MOVED_SETTINGS)};\n` +
   "/** mold_v0-340: the foot of the /app sidebar (console.sidebar_end): its entries' addresses, /app/settings for Settings. */\n" +
   `export const sidebarEnd: string[] = ${json(sidebarEndUrls())};\n` +
+  "/** mold_v0-341: the foot's heading (console.sidebar_end_label); '' for none. */\n" +
+  `export const sidebarEndLabel: string = ${json(SIDEBAR_END_LABEL)};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
   `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length, ...drainConsole() })};\n` +
   // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
@@ -3219,11 +3237,11 @@ function viewsModule() {
     if (!g) { g = { label, items: [] }; groups.push(g); }
     g.items.push({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles });
   }
-  // mold_v0-340: console.sidebar_end's tabs: one group under no heading after every other, in its order (Settings joins
-  // it there: web/src/config/nav-config.ts withSettings).
+  // mold_v0-340: console.sidebar_end's tabs: one group after every other, in its order, under no heading or (mold_v0-341)
+  // console.sidebar_end_label's (Settings joins it there: web/src/config/nav-config.ts withSettings).
   if (!profileSidebar) {
     const end = SIDEBAR_END.map((x) => (x.tab ? tabs.find((t) => t.pack === x.tab.pack && t.id === x.tab.id) : null)).filter(Boolean);
-    if (end.length) groups.push({ label: "", items: end.map((t) => ({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles })) });
+    if (end.length) groups.push({ label: SIDEBAR_END_LABEL, items: end.map((t) => ({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles })) });
   }
   return "\n/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */\n" +
     "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours' | 'ms';\n  roles: string[];\n}\n" +

@@ -2421,6 +2421,7 @@
     "sidebar_end": [
       "mx-billing",
       "settings"
-    ]
+    ],
+    "sidebar_end_label": "Account"
   }
 }

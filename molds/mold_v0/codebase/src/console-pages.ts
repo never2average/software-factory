@@ -62,8 +62,9 @@ export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
  *   redirects   old addresses kept working: [{source, destination, permanent}] (next.config redirects)
  *   billing     mold_v0-340: Billing's in-page tabs, in order, and what joins them (billingProblems below)
  *   sidebar_end mold_v0-340: the pack's ungrouped tabs (and Settings) at the foot of the /app sidebar (sidebarEndProblems)
+ *   sidebar_end_label mold_v0-341: that foot group's heading, beside sidebar_end only (sidebarEndLabelProblems)
  */
-export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects", "billing", "sidebar_end"] as const;
+export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects", "billing", "sidebar_end", "sidebar_end_label"] as const;
 
 /**
  * mold_v0-340: Billing's in-page tabs (/app/billing?tab=<id>), as pack.json console.billing.tabs names them:
@@ -118,6 +119,16 @@ export function sidebarEndProblems(v: unknown, where: string): string[] {
   v.forEach((x, i) => { if (typeof x !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(x)) out.push(`${at}[${i}]: a tab's id, or "settings"`); });
   if (new Set(v).size !== v.length) out.push(`${at}: each entry once`);
   return out;
+}
+/**
+ * mold_v0-341: pack.json console.sidebar_end_label: the heading over the sidebar's foot (else none), a short name in plain
+ * words; only beside console.sidebar_end. One equal to another group's heading is refused at build (scripts/gen-packs.mjs).
+ */
+export function sidebarEndLabelProblems(v: unknown, end: unknown, where: string): string[] {
+  const at = `${where} console.sidebar_end_label`;
+  if (typeof v !== "string" || !LABEL.test(v)) return [`${at}: a short name in plain words (1 to 40 characters), e.g. "Workspace"`];
+  if (end === undefined) return [`${at}: the heading of console.sidebar_end's group: name the foot's entries there too`];
+  return [];
 }
 /**
  * The shell's console components that read a host pack's own routes (mold_v0-140; they were its nav.ts `features`):
@@ -261,6 +272,8 @@ export function consoleProblems(v: unknown, where: string): string[] {
   if (billing !== undefined && where !== "profile.json") out.push(...billingProblems(billing, where));
   const end = (v as { sidebar_end?: unknown }).sidebar_end;
   if (end !== undefined && where !== "profile.json") out.push(...sidebarEndProblems(end, where));
+  const endLabel = (v as { sidebar_end_label?: unknown }).sidebar_end_label;
+  if (endLabel !== undefined && where !== "profile.json") out.push(...sidebarEndLabelProblems(endLabel, end, where));
   const hide = (v as { hide?: unknown }).hide;
   if (hide !== undefined) {
     if (!Array.isArray(hide)) out.push(`${where} console.hide: a list of page ids (${Object.keys(CONSOLE_PAGES).join(", ")})`);
