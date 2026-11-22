@@ -5030,7 +5030,7 @@ words and specific to the console page the agent was opened from. Nothing either
   and on a tab `"agent": {"examples": [...], "commands": [...]}` (one or both). Up to 6 examples and 12 commands each; a
   command's `name` is what follows the "/" (lowercase, digits, -), `label` and `description` plain words, `prompt` up to
   2000 characters; `send` may only be `false`. Refused in words: a command that would send, a name twice, `{{x}}` or a
-  stray brace, angle brackets, a tab agent with neither list, a greeting on a tab, an unknown key, a second pack's
+  stray brace, angle brackets, a tab agent with none of greeting, examples or commands, an intro on a tab, an unknown key, a second pack's
   `agent_defaults`. An in-page tab without its own takes its page's (its own commands first). Examples where nothing
   is declared: the tab's examples, else the app's, else the shell's (workspace, tab or record ones); commands: the
   app's, else the shell's five (Summarise, What changed, Find, Next steps, Draft an update).
@@ -5042,6 +5042,65 @@ Proof: `npm run test:agent-quick-commands` (config and its refusals, merge and d
 active tab and the address both ways, `opened_from` checked), `tsx scripts/agent-composer-test.ts` (a session keeps its
 `opened_from`; a malformed one refused), with `npm run test:agent-dock`, `npm run test:console-tabs`,
 `npm run test:declarative-packs` and `scripts/detail-action-keys-test.ts` unchanged.
+
+## Agents, runs and settings: plain words, page-aware chats (mold_v0-338)
+
+The shared screens of the workspace agent, Active runs and Settings › Access and Connections say each thing once, in
+plain words. Two pack keys, both optional (a pack that declares neither builds as before):
+
+- **A tab's own greeting** (`tabs[].agent.greeting`, `src/pack-api.ts` TabAgentSchema, up to 80 characters, checked as
+  the app's greeting is). A new chat opened from that tab is headed by it ("Who needs access?"), over
+  `agent_defaults.greeting` (`quick-commands.ts` greetingFor takes the opened-from tab's first). An in-page tab without
+  one takes its page's (gen-packs). An intro stays the app's.
+- **Profiles started by builds, not people** (`agent_profiles[].start_from_chat: false`, `src/agent-profile-spec.ts`).
+  `GET /api/agent` answers each startable profile's `in_chat`; New chat's and Start a session's task picker leave the
+  others out. They still run as children of builds, improvements, programs and schedules, and a list's start_agent
+  action naming one still opens Start a session with it. Never part of the stored profile config.
+
+  ```json
+  "tabs": [{ "id": "team", "kind": "team", "agent": { "greeting": "Who needs access?" } }],
+  "agent_profiles": [{ "id": "incident-triage", "name": "Incident triage", "start_from_chat": false }]
+  ```
+
+The shell's own words and layout (no key):
+
+- **Agents list.** The short number is the title's muted prefix ("AGI-012 · Cut our build costs", still searched), not
+  a column; Started by is cut with its whole name on hover (never broken mid-word); Spent stays on one line; the
+  times the agent woke up are **Turns** (a "run" is a session handing work to other agents, Active runs').
+- **What a session asks** (`src/harness-trace.ts` askTitle, `src/harness-sessions.ts` requestTitle): a tool request reads
+  as what it does: the workspace tool's title, else the request's own `detail.title`, else the tool's name in words
+  ("Add environment", "It asks to add environment"), never "Use create_environment". The trace leaves out its own line
+  for the request still waiting while the bar above the chat box shows it.
+- **Session copy.** Start a session's box has one label ("What should the agent do?", shown), no sentence about the
+  round button; New chat's heading is the breadcrumb's last crumb (the bar's heading is for screen readers only); an
+  ended session with an empty trace says "Nothing was recorded.".
+- **Active runs.** Active / Finished is the line tab strip, kept in the address (`?view=finished`): a link opens it, a
+  reload stays on it. The number folds into the title; the failure reason shows once (the line under the badge); on
+  Finished, "At work" is **Finished** (when it settled) and Last activity goes; the cards' spoken words count one or
+  many ("1 active run"). A run's view says "Set aside for agents under it" and titles its tree "Agents under it (n)",
+  no separate Children fact. The breadcrumb starts at the sidebar entry ("Build / Active runs"): an entry of the
+  sidebar's own whose address sits under another's is never crumbed inside it (`web/src/hooks/use-breadcrumbs.tsx`).
+- **Ask the agent.** A list's Actions ▾ item and its panel are "Ask the agent"; the Cmd+K docs answer is "Ask the
+  docs" (and the staff settings' help that names it).
+- **Keys.** Both keys pages use `web/src/lib/access-words.ts`: the states with a capital, "Never", the unused mark
+  (`keyUnused`, the server's `isUnused`) and an **Expires soon** mark within 7 days (`EXPIRES_SOON_DAYS`). The developer
+  keys tab gets the four cards (Active, Expired, Revoked, Unused for 90 days) and New key as the toolbar's action (an
+  owner's). On the workspace keys tab Kind is hidden while Belongs to shows (the panel keeps it). A pack's label for
+  that tab reads in lowercase mid-sentence ("New agent key", "Search agent keys"), unless it starts with an acronym
+  ("API keys").
+- **Teams.** A team's panel says About, People and Leads once (its header facts); its body links the team's page.
+- **Webhooks.** The panel's title is the endpoint's description, else its address, with no Endpoint fact; events read
+  by their description from the developer surface; a disabled endpoint's row says why ("25 failures in a row", "Turned
+  off by the workspace").
+- **Inbound webhooks.** Settings › Connections' tab `integrations` is labelled "Inbound webhooks" (its id and address
+  unchanged), as the developer console names it; the request-logs notice names it so.
+- **Allowed origins.** The help line in plain words, from the client sessions' span and scopes: "Pages at these
+  addresses may read this workspace's records for up to an hour at a time."
+
+Proof: `npm run test:agent-quick-commands` (a tab's greeting taken and checked, the tab's over the app's),
+`npm run test:console-types` (the fixture declares both keys), with `npm run test:console-tabs`, `npm run test:agent-dock`,
+`npm run test:access-pages`, `npm run test:record-crumbs`, `npm run test:developer-console`, `npm run test:words`,
+`npm run test:vocabulary` and `npm run check:vocabulary` unchanged.
 
 ## Early access form (mold_v0-266, mold_v0-289)
 

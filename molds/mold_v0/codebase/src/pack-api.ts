@@ -3050,9 +3050,12 @@ const uniqueCommands = (a: { commands?: { name: string }[] }, ctx: z.RefinementC
   const seen = new Set<string>();
   (a.commands ?? []).forEach((c, i) => { if (seen.has(c.name)) ctx.addIssue({ code: "custom", message: `the command /${c.name} is listed twice`, path: ["commands", i, "name"] }); seen.add(c.name); });
 };
-/** A tab's own (tabs[].agent): its examples replace the app's on the blank screen, its commands come first in the "/" menu. */
-export const TabAgentSchema = z.object({ ...agentLists, $comment: z.string().max(2000).optional() }).strict()
-  .superRefine((a, ctx) => { if (!a.examples && !a.commands) ctx.addIssue({ code: "custom", message: "a tab's agent names its examples, its commands or both" }); uniqueCommands(a, ctx); });
+/**
+ * A tab's own (tabs[].agent): its examples replace the app's on the blank screen, its commands come first in the "/" menu,
+ * and its greeting (mold_v0-338) heads a new chat opened from it, over the app's.
+ */
+export const TabAgentSchema = z.object({ greeting: z.string().pipe(agentTemplate(80)).optional(), ...agentLists, $comment: z.string().max(2000).optional() }).strict()
+  .superRefine((a, ctx) => { if (!a.examples && !a.commands && !a.greeting) ctx.addIssue({ code: "custom", message: "a tab's agent names its greeting, its examples, its commands or any of them" }); uniqueCommands(a, ctx); });
 /** The app's (pack.json agent_defaults): the greeting, the examples anywhere no tab has its own, the global commands. */
 export const AgentDefaultsSchema = z.object({
   greeting: agentTemplate(80).optional(),

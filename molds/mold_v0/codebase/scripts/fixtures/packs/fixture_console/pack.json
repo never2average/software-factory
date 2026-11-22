@@ -1641,6 +1641,7 @@
       "name": "Helper",
       "description": "Looks at items.",
       "purpose": "general",
+      "start_from_chat": false,
       "connection_env": [
         {
           "area": "mx_storage",
@@ -2063,6 +2064,7 @@
         "$comment": "Add."
       },
       "agent": {
+        "greeting": "What should we find in {tab}?",
         "examples": [
           {
             "title": "Find",

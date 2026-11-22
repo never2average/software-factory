@@ -1,7 +1,7 @@
 'use client';
 // The list's "Actions ▾" (mold_v0-294): one outlined button, its label kept at every width, holding every secondary
 // action of a tab's search row: the page's own, then Import and Export (an export with several formats is a submenu),
-// then Ask AI, each group set off by a separator (lib/toolbar-actions.ts sets the order). No button when it is empty.
+// then Ask the agent (mold_v0-338: "Ask AI" before), each group set off by a separator (lib/toolbar-actions.ts sets the order). No button when it is empty.
 // Ask AI asks the assistant about the list as shown (src/list-answers.ts): its name, search, filters and visible rows,
 // read-only, through the same models and limits as the Cmd+K bar's answers. It shows only when a model is configured
 // (GET …/list/answer), and only on pages the person can already read (the request goes through their own door).
@@ -70,7 +70,7 @@ export function ActionsMenu({ page, imports, exports, ask, busy, className }: {
 }) {
   const available = useAskAvailable();
   const askItem: RowAction | null = ask && available
-    ? { label: 'Ask AI', icon: <Icons.sparkles className='text-primary' />, onSelect: ask, testId: 'list-ask-ai' } : null;
+    ? { label: 'Ask the agent', icon: <Icons.sparkles className='text-primary' />, onSelect: ask, testId: 'list-ask-ai' } : null;
   const items = actionsItems({ page, imports, exports, ask: askItem });
   if (!items.length) return null;
   return (
@@ -185,7 +185,7 @@ export function useListAsk(context: () => ListAskContext): { open: () => void; s
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side='right' className='w-full gap-0 sm:max-w-md'>
           <SheetHeader className='border-b'>
-            <SheetTitle className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Ask AI</SheetTitle>
+            <SheetTitle className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Ask the agent</SheetTitle>
             <SheetDescription className='sr-only'>Questions about this list, answered from the rows shown.</SheetDescription>
           </SheetHeader>
           <div className='flex min-h-0 flex-1 flex-col p-4'>{open && <ListAskPanel context={context} />}</div>

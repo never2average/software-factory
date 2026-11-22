@@ -15,7 +15,7 @@
 export interface AgentExample { title: string; prompt: string; description?: string }
 /** A quick command: chosen from the "/" menu, its prompt goes into the composer. `send` is only ever false. */
 export interface AgentCommand { name: string; label: string; description?: string; prompt: string; send?: false }
-/** What a pack declares, on a tab (`agent`) or for the whole app (`agent_defaults`, which may also carry the greeting). */
+/** What a pack declares, on a tab (`agent`) or for the whole app (`agent_defaults`); both may carry a greeting, only the app an intro. */
 export interface AgentPrompts { greeting?: string; intro?: string; examples?: AgentExample[]; commands?: AgentCommand[] }
 /** The generated registry (web/src/config/agent-prompts.generated.ts): the app's defaults and each tab's own, by tab id. */
 export interface AgentPromptsRegistry { defaults: AgentPrompts | null; tabs: Record<string, AgentPrompts> }
@@ -174,9 +174,13 @@ export function commandsFor(reg: AgentPromptsRegistry, from: OpenedFrom): Scoped
   return mergeCommands(from.tab ? reg.tabs[from.tab]?.commands : undefined, reg.defaults?.commands);
 }
 
-/** The blank screen's greeting and the line under it. */
-export function greetingFor(reg: AgentPromptsRegistry, ctx: PromptContext): { title: string; text: string } {
-  const title = reg.defaults?.greeting ?? (ctx.record_title ? 'How can I help with {record_title}?' : ctx.tab ? 'How can I help with {tab}?' : 'How can I help?');
+/**
+ * The blank screen's greeting and the line under it: the greeting of the tab it was opened from (mold_v0-338), else the
+ * app's, else the shell's.
+ */
+export function greetingFor(reg: AgentPromptsRegistry, ctx: PromptContext, from?: OpenedFrom | null): { title: string; text: string } {
+  const own = from?.tab ? reg.tabs[from.tab]?.greeting : undefined;
+  const title = own ?? reg.defaults?.greeting ?? (ctx.record_title ? 'How can I help with {record_title}?' : ctx.tab ? 'How can I help with {tab}?' : 'How can I help?');
   const text = reg.defaults?.intro ?? 'Ask anything, or start from an example. Type / for quick commands.';
   return { title: fillPrompt(title, ctx).text, text: fillPrompt(text, ctx).text };
 }

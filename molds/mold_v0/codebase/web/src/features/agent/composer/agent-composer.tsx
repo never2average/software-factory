@@ -156,8 +156,8 @@ function CommandMenu({ id, items, active, onActive, onChoose, search, tab, inlin
   );
 }
 
-export function AgentComposer({ id, label, value, onChange, placeholder, sendLabel, disabledReason, busy, session, autoFocus, onSend, above, commands, context, cursor, menuInline }: {
-  id: string; label: string; value: string; onChange: (v: string) => void; placeholder: string; sendLabel: string;
+export function AgentComposer({ id, label, showLabel, value, onChange, placeholder, sendLabel, disabledReason, busy, session, autoFocus, onSend, above, commands, context, cursor, menuInline }: {
+  id: string; label: string; /** mold_v0-338: the label shown above the box (a dialog's one label), else for screen readers only. */ showLabel?: boolean; value: string; onChange: (v: string) => void; placeholder: string; sendLabel: string;
   /** Someone who may not send: the box stays visible and disabled, this as its placeholder. */
   disabledReason: string | null;
   busy: boolean; session: string | null; autoFocus?: boolean;
@@ -292,7 +292,7 @@ export function AgentComposer({ id, label, value, onChange, placeholder, sendLab
   return (
     <TooltipProvider>
       <form className='flex flex-col gap-1.5' onSubmit={(e) => { e.preventDefault(); void send(); }} onBlur={onBlur} aria-label={label} data-agent-composer=''>
-        <label htmlFor={id} className='sr-only'>{label}</label>
+        <label htmlFor={id} className={showLabel ? 'text-sm font-medium' : 'sr-only'}>{label}</label>
         {above}
         {menuInline && menu}
         <div className={cn('bg-background focus-within:ring-ring/40 relative flex flex-col rounded-2xl border shadow-sm focus-within:ring-2', dragging && 'ring-ring ring-2')} onDrop={onDrop} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }} data-composer-card='' data-slot='input-group'>

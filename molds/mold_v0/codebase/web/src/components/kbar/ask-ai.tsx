@@ -1,5 +1,5 @@
 'use client';
-// "Ask AI" in the Cmd+K bar: with a question of a few words typed, the first result asks the API for a short answer
+// "Ask the docs" in the Cmd+K bar (mold_v0-338; "Ask AI" before, a name a list's "Ask the agent" no longer shares): with a question of a few words typed, the first result asks the API for a short answer
 // from the docs (src/docs-answers.ts: the customer guide in /app, the internal docs too in /admin). The answer opens in
 // a dialog and streams in as the model writes it (POST …/docs/answer/stream, server-sent events): markdown with
 // numbered citations that open the cited sections, the sources under it, and what to do when there is no AI summary
@@ -103,14 +103,14 @@ export function AskAiProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Registers the "Ask AI: <query>" action for whatever is typed, above every other section. */
+/** Registers the "Ask the docs: <query>" action for whatever is typed, above every other section. */
 export function AskAiAction() {
   const { search } = useKBar((s) => ({ search: s.searchQuery }));
   const ask = useAskAi();
   const q = search.trim();
   const actions = useMemo(() => (askable(q) ? [{
-    id: 'ask-ai', name: `Ask AI: ${q}`, keywords: q, priority: 10,
-    section: { name: 'Ask AI', priority: 10 }, subtitle: 'A short answer from the docs, with its sources',
+    id: 'ask-ai', name: `Ask the docs: ${q}`, keywords: q, priority: 10,
+    section: { name: 'Ask the docs', priority: 10 }, subtitle: 'A short answer from the docs, with its sources',
     icon: <IconSparkles className='text-primary size-4' />, perform: () => ask(q)
   }] : []), [q, ask]);
   useRegisterActions(actions, [actions]);
@@ -142,7 +142,7 @@ function AskAiDialog({ question, onQuestion }: { question: string | null; onQues
     <Dialog open={!!question} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent className='max-h-[85svh] gap-0 overflow-y-auto p-0 sm:max-w-xl'>
         <DialogHeader className='border-b p-4 pr-12'>
-          <DialogTitle className='flex items-center gap-2'><IconSparkles className='text-primary size-4' /> Ask AI</DialogTitle>
+          <DialogTitle className='flex items-center gap-2'><IconSparkles className='text-primary size-4' /> Ask the docs</DialogTitle>
           <form className='mt-2' onSubmit={(e) => {
             e.preventDefault();
             const next = String(new FormData(e.currentTarget).get('question') ?? '').trim();

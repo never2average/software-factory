@@ -74,8 +74,8 @@ export function DrainNotice({ d }: { d: Drain }) {
       <AlertTitle>Request logs are not connected yet</AlertTitle>
       <AlertDescription>
         These numbers come from your hosting provider&apos;s request logs, counted per hour: never a log line, an address or a visitor.
-        To start them, add a source on Settings, Integrations, then create a log drain at the hosting provider that sends to the source&apos;s address.
-        {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>Open Integrations</Link>
+        To start them, add a source on Settings, Connections, Inbound webhooks, then create a log drain at the hosting provider that sends to the source&apos;s address.
+        {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>Open Inbound webhooks</Link>
       </AlertDescription>
     </Alert>
   );

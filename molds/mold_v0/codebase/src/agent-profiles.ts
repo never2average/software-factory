@@ -103,8 +103,9 @@ async function packProfiles(): Promise<{ pack: string; p: PackAgentProfile }[]> 
 }
 /** A pack's declared profile as a stored config (its governance's domains normalized). */
 export function packConfig(p: PackAgentProfile): ProfileConfig {
-  // mold_v0-312: connection_env is the pack's own (read from its declaration when a session starts), never a stored config.
-  const { id: _i, name: _n, description: _d, $comment: _c, connection_env: _e, ...rest } = p;
+  // mold_v0-312: connection_env is the pack's own (read from its declaration when a session starts), never a stored config;
+  // mold_v0-338: start_from_chat too (read from the declaration when the picker is listed).
+  const { id: _i, name: _n, description: _d, $comment: _c, connection_env: _e, start_from_chat: _s, ...rest } = p;
   const c = ProfileConfigSchema.parse(rest);
   if (c.governance) c.governance = normalizeGovernance(c.governance).governance;
   return c;
@@ -563,6 +564,11 @@ export async function profileForStart(id: string | null | undefined, actor: { ki
 export interface StartableProfile {
   id: string; name: string; description: string; version: number; is_default: boolean; harness: string; model: string;
   budget: { default_usd: number; max_usd: number; ceiling_usd: number }; keys: number; uploads: number; governance: string; purpose: AgentPurpose;
+  /**
+   * mold_v0-338: whether New chat's and Start a session's task picker lists it (false: its pack declares it is started by
+   * builds, improvements, programs or schedules, not a person). A start_agent action naming it still opens with it.
+   */
+  in_chat: boolean;
 }
 export async function startableProfiles(actor: { kind: string; role: AccountRole | null }, ceilingOf: () => Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }>): Promise<StartableProfile[]> {
   needOn();
@@ -570,10 +576,11 @@ export async function startableProfiles(actor: { kind: string; role: AccountRole
   if (!mayStart(actor)) return [];
   const rows = await read((q) => q.query<ProfileRow>(`SELECT ${COLS} FROM agent_profiles WHERE status = 'active' ORDER BY (id = 'default') DESC, lower(name), id`));
   const budget = await ceilingOf();
+  const notInChat = new Set((await packProfiles()).filter(({ p }) => p.start_from_chat === false).map(({ p }) => p.id));
   return rows.map((r) => {
     const eff = effectiveOf(r.config ?? {});
     return { id: r.id, name: r.name, description: r.description, version: r.version, is_default: r.id === DEFAULT_PROFILE, harness: flavourOf(eff.harness)?.label ?? eff.harness,
-      model: eff.model, budget, keys: eff.keys.length, uploads: eff.uploads.length, governance: governanceWords(eff.governance), purpose: profilePurpose(r) };
+      model: eff.model, budget, keys: eff.keys.length, uploads: eff.uploads.length, governance: governanceWords(eff.governance), purpose: profilePurpose(r), in_chat: !notInChat.has(r.id) };
   });
 }
 

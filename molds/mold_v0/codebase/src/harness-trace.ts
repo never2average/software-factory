@@ -157,15 +157,30 @@ export function traceSteps(events: readonly TraceEventRow[], wakeIndex: Map<stri
   return [...out.values()];
 }
 
-const requestAsk = (r: TraceRequestRow, toolTitle: (name: string) => string): string => {
+/** A tool's name in words, when nothing titles it: "mcp__app__create_environment" reads "Create environment". */
+export const toolNameWords = (name: string): string => { const w = name.replace(/^mcp__.+?__/, "").replace(/[_-]+/g, " ").trim() || name; return w.charAt(0).toUpperCase() + w.slice(1); };
+/** A title in the middle of a sentence: its first letter lowercase unless it starts an acronym ("Add environment" reads "add environment"). */
+export const midSentence = (t: string): string => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
+/**
+ * What a tool request asks, as a title (mold_v0-338): the tool's own title (`titled`, e.g. the workspace tools'), else the
+ * title the request carries (its detail's), else the tool's name in words. Never the raw name ("create_environment").
+ */
+export function askTitle(name: string, detail: Record<string, unknown> | null | undefined, titled?: string | null): string {
+  const own = typeof detail?.title === "string" ? detail.title.trim().slice(0, 120) : "";
+  return titled?.trim() || own || toolNameWords(name);
+}
+
+const requestAsk = (r: TraceRequestRow, askOf: (name: string, detail: Record<string, unknown> | null) => string): string => {
   if (r.kind === "web") return `It asks to read ${r.subject}`;
   if (r.kind === "budget") return `It asks for more budget (at ${r.subject})`;
-  return `It asks to use ${toolTitle(r.subject)}`;
+  return `It asks to ${midSentence(askOf(r.subject, r.detail))}`;
 };
 
 /** The marks of a session, oldest first: its wakes queued, sandboxes, requests and budget changes. */
-export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: readonly TraceSandboxRow[]; requests: readonly TraceRequestRow[]; grants: readonly TraceGrantRow[]; wakeIndex: Map<string, number>; toolTitle?: (name: string) => string }): TraceStep[] {
-  const toolTitle = x.toolTitle ?? ((n: string) => (n.startsWith("mcp__app__") ? n.slice("mcp__app__".length) : n));
+export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: readonly TraceSandboxRow[]; requests: readonly TraceRequestRow[]; grants: readonly TraceGrantRow[]; wakeIndex: Map<string, number>; toolTitle?: (name: string) => string;
+  /** mold_v0-338: a tool request's title (src/harness-sessions.ts requestTitle); default: the request's own, else the name in words. */
+  askOf?: (name: string, detail: Record<string, unknown> | null) => string }): TraceStep[] {
+  const askOf = x.askOf ?? ((n: string, d: Record<string, unknown> | null) => askTitle(n, d));
   const out: TraceStep[] = [];
   for (const [i, w] of x.wakes.entries()) {
     const reason = typeof w.scope?.reason === "string" ? w.scope.reason : "";
@@ -184,7 +199,7 @@ export function traceMarks(x: { wakes: readonly TraceWakeRow[]; sandboxes: reado
     }
   }
   for (const r of x.requests) {
-    out.push({ id: `rq:${r.id}:0`, at: iso(r.created_at), kind: "approval", status: r.status === "pending" ? "waiting" : "ok", title: requestAsk(r, toolTitle), fields: clean(r.detail ?? {}) as Record<string, unknown> });
+    out.push({ id: `rq:${r.id}:0`, at: iso(r.created_at), kind: "approval", status: r.status === "pending" ? "waiting" : "ok", title: requestAsk(r, askOf), fields: clean(r.detail ?? {}) as Record<string, unknown> });
     if (r.decided_at && r.status !== "pending") out.push({ id: `rq:${r.id}:1`, at: iso(r.decided_at), kind: "approval", status: r.status === "declined" || r.status === "expired" ? "error" : "ok",
       title: `${r.status === "approved" ? "Approved" : r.status === "declined" ? "Declined" : "It expired unanswered"}${r.decided_by ? ` by ${r.decided_by}` : ""}`, detail: r.reason ? maskSecrets(r.reason).slice(0, 400) : null });
   }
