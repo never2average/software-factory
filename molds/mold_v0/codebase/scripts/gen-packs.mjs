@@ -2713,7 +2713,9 @@ const nav = (area) => {
 };
 const allPages = packs.flatMap((p) => p.pages);
 /** A tab's icon when it declares none, by kind (the sidebar's entry for it). */
-const DEFAULT_ICONS = { agent_runs: "play", overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code" };
+const DEFAULT_ICONS = { agent_runs: "play", overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page", agent: "code",
+  // mold_v0-335: a sections tab without an icon of its own (its entry had none, and the console's type requires one).
+  sections: "dashboard" };
 /**
  * Each record area's icon (mold_v0-242; src/record-icons.ts): its own `icon`; else the icon of the customer tab that
  * shows it (the sidebar entry of the first shown tab over it alone, else of one that merges it: the tab itself, or the
