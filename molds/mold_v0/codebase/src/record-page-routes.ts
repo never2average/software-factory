@@ -100,6 +100,10 @@ export interface ActionView {
   agent?: { profile: string; name: string; version: number; message: string };
   /** open_url (mold_v0-262): the web address it opens in a new tab (null: the field holds none). */
   url?: string | null;
+  /** toggle (mold_v0-336): whether its boolean field is on now. */
+  on?: boolean;
+  /** mold_v0-336: drawn as a bare text link in place of the outlined button (declared `look: "link"`). */
+  look?: "link";
   /** start_program (mold_v0-303): the program it starts, its inputs filled from this record, and how it runs. */
   program?: { id: string; name: string; version: number; via: "session" | "runner"; inputs: Record<string, unknown> };
 }
@@ -131,7 +135,7 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
   const { formField } = await import("./tab-actions.js");
   for (const x of layout.actions) {
     if (role !== null && x.roles && !x.roles.includes(role)) continue;
-    const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
+    const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", ...(x.look === "link" ? { look: "link" as const } : {}), confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
     const unavailable = (x.unavailable ?? []).find((u) => holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
     const writes = area.scope === "workspace";
     switch (x.kind) {
@@ -200,6 +204,14 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       case "delete": {
         if (!writes || !may(area, "delete", actor) || areaOpWithheld(area.name, "delete")) continue;
         out.push({ ...base, label: x.label ?? "Delete", disabled: unavailable });
+        break;
+      }
+      case "toggle": {
+        // mold_v0-336: a boolean field turned on or off in one click, for whom an edit form would offer the field (the
+        // update permission; a members' opt-in to owners only, mold_v0-322); the record store refuses the rest on save.
+        const f = area.fields.find((y) => y.name === x.field);
+        if (!writes || !f || !personSets(f) || !may(area, "update", actor) || areaOpWithheld(area.name, "update") || !formOffers(area, role)(f)) continue;
+        out.push({ ...base, label: x.label ?? f.label, disabled: unavailable, on: record.data[f.name] === true });
         break;
       }
       case "link": {
@@ -656,6 +668,16 @@ export function recordPageRouter(): Router {
       case "delete": {
         if (a.disabled) throw new PackError(a.disabled, 409);
         return { deleted: await dataApi.delete(callerOf(res), area.name, record.key) };
+      }
+      case "toggle": {
+        // mold_v0-336: {on: true|false} (absent: the other way round). The record as read, its field set, written through
+        // the record store as the person: an encrypted field read masked keeps its value, the fields only actions set keep
+        // theirs, and its save checks (a connection's only_one: 409 in its words), history and health reset all apply.
+        if (a.disabled) throw new PackError(a.disabled, 409);
+        const on = body.on === undefined ? !a.on : body.on;
+        if (typeof on !== "boolean") throw new PackError("on: true or false", 400);
+        if (on === a.on) return { record, unchanged: true };
+        return dataApi.update(callerOf(res), area.name, record.key, { title: record.title, data: { ...record.data, [declared.field!]: on } });
       }
       case "start_agent": {
         // The first message is the record's, filled here (whatever the browser sends); the session carries the record.

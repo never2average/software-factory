@@ -17,6 +17,9 @@
 //              in words, as a toast
 //   start_program (mold_v0-303, flag nested_runs) starts a program with its inputs filled from the record by the server,
 //              then opens the session that runs it on the agent's page
+//   toggle     (mold_v0-336) turns a boolean field on or off at once: a switch in the header, an on/off item in a menu
+// mold_v0-336: an action declared `look: "link"` is drawn as a bare text link (the primary, a secondary one), the one
+// exception to every button being outlined; it keeps a visible focus ring.
 // A disabled action stays in its place, its reason shown on hover and on focus (a tooltip on a button, a line under the
 // item in a menu) and read with it by a screen reader. The server refuses what it refuses here, whatever is sent.
 import { useRouter } from 'next/navigation';
@@ -30,8 +33,9 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
-  DropdownMenuSubTrigger, DropdownMenuTrigger
+  DropdownMenuSubTrigger, DropdownMenuSwitchItem, DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDialog } from '@/features/admin/ui';
 import { fail } from '@/features/portal/shared';
@@ -64,7 +68,9 @@ const ICON: Record<PageAction['kind'], ReactNode> = {
   // mold_v0-305: a workspace's own storage, written, read and deleted once (src/workspace-storage.ts testStorageRecord)
   test_storage: <Icons.circleCheck aria-hidden data-icon='inline-start' />,
   // mold_v0-312: a connection record's own call (src/connection-test.ts testConnectionRecord)
-  test_connection: <Icons.circleCheck aria-hidden data-icon='inline-start' />
+  test_connection: <Icons.circleCheck aria-hidden data-icon='inline-start' />,
+  // mold_v0-336: a switch says it (no icon)
+  toggle: null
 };
 
 /** Whether an action's form is a create or an edit (it opens in the side panel: mold_v0-256, flag side_panel_forms). */
@@ -130,6 +136,11 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
         host.changed();
         return;
       }
+      if (a.kind === 'toggle') {
+        // mold_v0-336: the field the other way round, through the record store (its only-one rule refused in its words).
+        await takeAction(host.area, host.record.key, a.id, { on: !a.on });
+        toast.success(`${a.label}: ${a.on ? 'off' : 'on'}`);
+      }
       if (a.kind === 'move') {
         await takeAction(host.area, host.record.key, a.id, { to });
         toast.success(`Moved to ${a.moves?.find((m) => m.to === to)?.label.replace(/^Move to /, '') ?? to}`);
@@ -168,7 +179,10 @@ function Why({ id, reason }: { id: string; reason: string }) {
 /** One header button (the primary, a secondary): disabled ones keep focus and show why on hover and focus. */
 function ActionButton({ a, primary, busy, take }: { a: PageAction; primary?: boolean; busy: boolean; take: (a: PageAction, to?: string) => void }) {
   const why = `why-${a.id}`;
+  if (a.kind === 'toggle') return <ToggleSwitch a={a} busy={busy} take={take} />;
   if (a.kind === 'move' && !a.disabled) return <MoveButton a={a} primary={primary} take={take} />;
+  // mold_v0-336: declared look "link": a bare text link (RailMain's look), never a box.
+  if (a.look === 'link') return <TextAction a={a} busy={busy} take={take} primary={primary} />;
   const button = (
     <Button type='button' variant={primary ? 'default' : 'outline'} size='sm' data-page-action={a.id} {...(primary ? { 'data-primary': '' } : {})}
       aria-disabled={a.disabled || busy ? true : undefined} aria-describedby={a.disabled ? why : undefined}
@@ -181,6 +195,44 @@ function ActionButton({ a, primary, busy, take }: { a: PageAction; primary?: boo
   return (
     <Tooltip>
       <TooltipTrigger render={button} />
+      <TooltipContent className='max-w-72 text-pretty' data-action-why={a.id}>{a.disabled}</TooltipContent>
+      <Why id={why} reason={a.disabled} />
+    </Tooltip>
+  );
+}
+
+/** mold_v0-336: a toggle in the header: its label and a switch (the switch is the control; disabled ones say why). */
+function ToggleSwitch({ a, busy, take }: { a: PageAction; busy: boolean; take: (a: PageAction, to?: string) => void }) {
+  const id = `toggle-${a.id}`, why = `why-${a.id}`;
+  return (
+    <span className='inline-flex items-center gap-2 text-[0.8rem]' data-page-action={a.id} data-toggle={a.on ? 'on' : 'off'} title={a.disabled ?? undefined}>
+      <Switch id={id} checked={!!a.on} disabled={!!a.disabled || busy} aria-describedby={a.disabled ? why : undefined} onCheckedChange={() => take(a)} />
+      <label htmlFor={id} className={cn(a.disabled && 'text-muted-foreground')}>{a.label}</label>
+      {a.disabled && <Why id={why} reason={a.disabled} />}
+    </span>
+  );
+}
+
+/**
+ * mold_v0-336: an action declared `look: "link"`: a bare text link with its icon (the brand's colour, underlined on hover,
+ * a focus ring), not a box: the one exception to mold_v0-251's outlined buttons (scripts/console-outlines.ts ALLOW,
+ * testing/console/outlines.mjs skip [data-text-action]). A disabled one keeps its focus and says why.
+ */
+function TextAction({ a, busy, take, primary, rail }: { a: PageAction; busy: boolean; take: (a: PageAction, to?: string) => void; primary?: boolean; rail?: boolean }) {
+  const why = `why-text-${a.id}`;
+  const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
+  const link = (
+    <button type='button' data-text-action='' data-page-action={a.id} {...(primary ? { 'data-primary': '' } : {})} {...(rail ? { 'data-rail-main': '' } : {})}
+      {...(one ? { 'data-move-to': one.to } : {})} aria-disabled={a.disabled || busy ? true : undefined} aria-describedby={a.disabled ? why : undefined}
+      className={cn(RAIL_LINK, 'h-6 rounded-sm px-0.5 font-medium', (a.disabled || busy) && 'text-muted-foreground hover:text-muted-foreground cursor-not-allowed hover:no-underline')}
+      onClick={() => { if (!a.disabled && !busy) take(a, one?.to); }}>
+      {ICON[a.kind]}{one ? one.label : a.label}
+    </button>
+  );
+  if (!a.disabled) return link;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
       <TooltipContent className='max-w-72 text-pretty' data-action-why={a.id}>{a.disabled}</TooltipContent>
       <Why id={why} reason={a.disabled} />
     </Tooltip>
@@ -230,6 +282,13 @@ function MoveItems({ a, take }: { a: PageAction; take: (a: PageAction, to?: stri
 
 /** One action as a menu item (More, a row's menu): disabled ones say why under their label. */
 function ActionItem({ a, take }: { a: PageAction; take: (a: PageAction, to?: string) => void }) {
+  // mold_v0-336: a toggle is an on/off item (the menu stays open: its switch moves when the record is read again).
+  if (a.kind === 'toggle') return (
+    <DropdownMenuSwitchItem checked={!!a.on} disabled={!!a.disabled} title={a.disabled ?? undefined} closeOnClick={false} onCheckedChange={() => take(a)}
+      data-page-action={a.id} data-toggle={a.on ? 'on' : 'off'} className={cn('items-start', DISABLED_ITEM)}>
+      <span className='flex min-w-0 flex-col gap-0.5'><span className={cn(a.disabled && 'text-muted-foreground')}>{a.label}</span>{a.disabled && <ItemWhy reason={a.disabled} />}</span>
+    </DropdownMenuSwitchItem>
+  );
   // mold_v0-300: a move with one state open now is one item named by that move, not a submenu of one choice.
   const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
   if (one) return (
@@ -424,6 +483,9 @@ const RAIL_LINK = 'text-primary hover:text-primary inline-flex items-center gap-
 /** The primary action as a text link; a disabled one keeps its focus and says why on hover and focus. */
 function RailMain({ a, busy, take }: { a: PageAction; busy: boolean; take: (a: PageAction, to?: string) => void }) {
   const why = `why-rail-${a.id}`;
+  if (a.kind === 'toggle') return <ToggleSwitch a={a} busy={busy} take={take} />;
+  // mold_v0-336: declared look "link": the bare text link, without the outline every button has (mold_v0-251).
+  if (a.look === 'link' && !(a.kind === 'move' && !a.disabled && !singleMove(a) && (a.moves?.length ?? 0) > 0)) return <TextAction a={a} busy={busy} take={take} primary rail />;
   const one = a.kind === 'move' && !a.disabled ? singleMove(a) : null;
   if (a.kind === 'move' && !a.disabled && !one && (a.moves?.length ?? 0) > 0) return (
     <DropdownMenu>

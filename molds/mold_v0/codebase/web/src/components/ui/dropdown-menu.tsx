@@ -181,6 +181,30 @@ function DropdownMenuCheckboxItem({
   );
 }
 
+/**
+ * mold_v0-336: an on/off item (role menuitemcheckbox, aria-checked): its label, then a switch's look on the right (drawn,
+ * not a control of its own: the item is the control). A record page's `toggle` action in a menu.
+ */
+function DropdownMenuSwitchItem({ className, children, checked, ...props }: MenuPrimitive.CheckboxItem.Props) {
+  return (
+    <MenuPrimitive.CheckboxItem
+      data-slot='dropdown-menu-switch-item'
+      className={cn(
+        "relative flex cursor-default items-center gap-1.5 rounded-md py-1 pr-1.5 pl-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      checked={checked}
+      {...props}
+    >
+      {children}
+      <span aria-hidden data-switch-look={checked ? 'on' : 'off'}
+        className={cn('relative ml-auto inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors', checked ? 'bg-primary' : 'bg-input dark:bg-input/80')}>
+        <span className={cn('bg-background block size-3 rounded-full transition-transform', checked ? 'translate-x-[0.875rem] dark:bg-primary-foreground' : 'translate-x-0.5 dark:bg-foreground')} />
+      </span>
+    </MenuPrimitive.CheckboxItem>
+  );
+}
+
 function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
   return <MenuPrimitive.RadioGroup data-slot='dropdown-menu-radio-group' {...props} />;
 }
@@ -248,6 +272,7 @@ export {
   DropdownMenuLabel,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
+  DropdownMenuSwitchItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,

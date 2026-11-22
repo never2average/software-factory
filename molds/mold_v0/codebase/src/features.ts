@@ -70,7 +70,7 @@ export function featureRequested(id: FeatureId): boolean {
     case "documents": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.type === "file" || f.preview === "document")));
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
     case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true || f.display === "chips"))
-      || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
+      || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object" && "related" in c)));
     // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs);
     // mold_v0-327: or a pack declares recipes of its own (its agent profiles' sessions receive them).
     case "recipes": return adminRecordsShown().includes("recipes") || defs().some((d) => (d.recipes ?? []).length > 0);

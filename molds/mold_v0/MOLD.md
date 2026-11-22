@@ -3715,6 +3715,48 @@ Proof: `npm run test:record-rail` (also the last step of `npm run test:record-pa
 their paths, the pure decisions, the blocks rendered from the console's own bundle, and the wiring (the panel keeps
 Expand, ✕, Back and the splitter). A pack that names none of the keys builds and draws as before.
 
+## Building blocks for lists and record panels (mold_v0-336)
+
+Six generic pieces, approved by the operator on 2026-11-22 for the lists that show a workspace's own records beside a
+shared catalog's, and their record panels. Every pack key is optional; a pack that names none builds and draws as before,
+except the two layout fixes below (a merged tab's later-area row, the cards on a phone), which are the mold's for every app.
+
+- **A merged tab's row from a later area opens that area's own record** (`web/src/features/records/record-pages.tsx`
+  RecordTableView `rowArea`): a shared catalog's entry listed beside the workspace's own connections opens the entry's
+  own panel (its laid-out page with Used by, its notices and its actions, else its own fields), the panel it opens from
+  its own list; never the tab's columns (mostly the first area's fields) as rows of "—".
+- **`toggle`, a page action** (`src/pack-api.ts` `PAGE_ACTION_KINDS`, `DetailActionSchema`; `src/record-page-routes.ts`):
+  `{"kind": "toggle", "field": "<boolean field>"}` turns the field on or off in one click, drawn as an on/off item in a
+  menu (the rail's ⋯, More, a related row's menu: `DropdownMenuSwitchItem`) or a labelled switch in the header. Offered to
+  the roles that may update the record and whom a form would offer the field (a members' opt-in to owners only); written
+  through the record store as the person (POST `.../actions/toggle.<field>`, `{on}` or nothing for the other way round), so
+  a connection's `only_one` refuses a second one in its own words (409), the history names who changed it, a key read
+  masked keeps its value and the fields only actions set keep theirs. Label: the field's. Refused at build: no field, a
+  field that is not a boolean, encrypted or set only by actions, a shared or repository area, a viewer's.
+- **`look: "link"` on an action** (primary or secondary): drawn as a bare text link in the brand's colour (underlined on
+  hover, a focus ring), the one exception to mold_v0-251's outlined buttons, only where declared
+  (`scripts/console-outlines.ts` ALLOW, `testing/console/outlines.mjs` skips `[data-text-action]`). Refused on an action
+  in the menu (`more`) and on a toggle.
+- **A column of a field per source area** on a merged tab: `{"by_source": {"<area>": "<field>", ...}, "label": "State",
+  "id"?}` among its `columns` (`TabSourceColumnSchema`): one State column showing a workspace connection's health and a
+  catalog entry's maturity, each row the field of the first of its areas that maps one, drawn as that area's own cell
+  (its badge colours and option words, a stale test's "Tested N days ago"), filtered and sorted as one (an enum of every
+  mapped field's options). Its id is `id`, else the label in lowercase words joined by `_`. Refused: on a tab of one area,
+  an area that is not the tab's, a field the area lacks, encrypted, json or file fields, fields of different types, an id
+  that is a field of the tab's areas (or its source column), a column twice.
+- **`plural`**, on a record area and on an area tab: what its rows are called ("hosting accounts"), counted in the list's
+  footer ("8 hosting accounts"; one: "1 hosting account", "1 catalog entry"). A merged tab without its own says its
+  areas' joined ("8 hosting accounts and catalog entries"; one: "1 hosting account or catalog entry") when each declares
+  one. Absent: "records", as before.
+- **A list's four cards on a phone** (below 640px; `StatStrip` `strip`, `web/src/features/tabs/sparklines.tsx`): one
+  compact row of label and value (no sparkline) that scrolls sideways, a keyboard stop while it scrolls, so the list starts
+  on the first screen; two by two from 640px and four across from 1024px as before. The home page's headline row stays
+  two by two.
+
+Proof: `npm run test:blocks-ui` (the keys and 21 refusals, the console's source column, plural and cards bundled as it
+builds them, the wiring and the outline scan; then the toggle through the API in an embedded database: offered by role,
+taken, only_one's 409, an owners-only opt-in, a viewer). The console-types fixture declares each key.
+
 ## Record pages, part 2: related lists, runs, actions (mold_v0-254)
 
 Under the same flag (`record_pages`, off by default; off, `/api/records/_page` answers nothing and the generated files

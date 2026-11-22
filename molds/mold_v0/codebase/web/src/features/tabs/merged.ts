@@ -29,7 +29,35 @@ export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
   }
   const words = [...new Set(tab.areas.flatMap((a) => (a.source ? [a.source] : [])))];
   if (words.length) fields.unshift({ name: SOURCE_COLUMN, label: 'Source', type: 'enum', options: words.map((w) => ({ value: w, label: w })) });
-  return { ...own, label: tab.label, description: tab.description, fields, list_columns: tab.columns ?? own.list_columns, links: [], lifecycle: null };
+  // mold_v0-336: a column of a field per source area: one field of the mapped fields' type (an enum: every one's options).
+  for (const c of tab.source_columns ?? []) {
+    const mapped = Object.entries(c.by_source).map(([an, fn]) => (areas as RecordAreaSpec[]).find((a) => a.name === an)?.fields.find((f) => f.name === fn)).filter((f): f is RecordFieldSpec => !!f);
+    const first = mapped[0];
+    if (!first) continue;
+    const options: NonNullable<RecordFieldSpec['options']> = [];
+    for (const f of mapped) for (const o of f.options ?? []) if (!options.some((y) => (typeof y === 'string' ? y : y.value) === (typeof o === 'string' ? o : o.value))) options.push(o);
+    fields.push({ name: c.id, label: c.label, type: first.type, ...(first.type === 'enum' ? { options } : {}), by_source: c.by_source } as RecordFieldSpec);
+  }
+  // mold_v0-336: its rows are several areas': the own area's plural is not theirs (tabPlural says what they are called).
+  return { ...own, label: tab.label, description: tab.description, fields, list_columns: tab.columns ?? own.list_columns, links: [], lifecycle: null, plural: undefined };
+}
+
+/** mold_v0-336: a field per source area (a merged tab's column, src/pack-api.ts TabSourceColumnSchema), or null. */
+export const bySource = (f: RecordFieldSpec | undefined) => ((f as { by_source?: Record<string, string> } | undefined)?.by_source ?? null);
+/** The area whose field a source column shows on a row: the first of the row's areas the column maps, else its first. */
+export const sourceArea = (by: Record<string, string>, r: Pick<RecordRow, 'areas'>) => r.areas?.find((a) => a in by) ?? Object.keys(by)[0]!;
+
+/**
+ * mold_v0-336: what a merged tab's rows are called, plural (its footer's count): the tab's own, else (one area) its area's,
+ * else its areas' joined by "and" when each declares one; null: "records", as before.
+ */
+export function tabPlural(tab: Pick<PackTabSpec, 'plural' | 'area' | 'areas'>): string | null {
+  if (tab.plural) return tab.plural;
+  const names = tab.areas ? tab.areas.map((a) => a.area) : tab.area ? [tab.area] : [];
+  const words = names.map((n) => findRecordArea('app', n)?.plural);
+  if (!words.length || words.some((w) => !w)) return null;
+  const uniq = [...new Set(words as string[])];
+  return uniq.length === 1 ? uniq[0]! : `${uniq.slice(0, -1).join(', ')} and ${uniq[uniq.length - 1]}`;
 }
 
 /** Where a merged tab (or a filtered one, mold_v0-175) reads its rows (the server's merge or filter), or one area's list. */
@@ -38,7 +66,11 @@ export const tabRecordsUrl = (tab: PackTabSpec, area: RecordAreaSpec) =>
 
 /** A merged tab's rows with their source word (the first of each row's areas that has one) among their data. */
 export function withSource(tab: PackTabSpec, page: Page): Page {
-  if (!tab.areas?.some((a) => a.source)) return page;
+  const cols = tab.source_columns ?? [];
+  if (!tab.areas?.some((a) => a.source) && !cols.length) return page;
   const word = (r: RecordRow) => tab.areas!.find((a) => a.source && r.areas?.includes(a.area))?.source ?? null;
-  return { ...page, records: page.records.map((r) => ({ ...r, data: { ...r.data, [SOURCE_COLUMN]: word(r) } })) };
+  const sourced = !!tab.areas?.some((a) => a.source);
+  // mold_v0-336: each source column's value: the field its row's area maps (absent: empty).
+  return { ...page, records: page.records.map((r) => ({ ...r, data: { ...r.data, ...(sourced ? { [SOURCE_COLUMN]: word(r) } : {}),
+    ...Object.fromEntries(cols.map((c) => [c.id, r.data[c.by_source[sourceArea(c.by_source, r)]!] ?? null])) } })) };
 }

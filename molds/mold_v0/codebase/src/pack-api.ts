@@ -1352,7 +1352,9 @@ export const DetailNoticeSchema = z.object({
 export const RUN_OUTCOMES = ["accepted", "needs_review", "refused", "applied", "rolled_back", "succeeded", "failed"] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage", "test_connection"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url", "start_program", "test_storage", "test_connection", "toggle"] as const;
+/** mold_v0-336: how an action drawn as a button looks: the outlined button (mold_v0-251, the default) or a bare text link. */
+export const PAGE_ACTION_LOOKS = ["button", "link"] as const;
 /** A program's id (src/program-spec.ts PROGRAM_ID, the same rule). */
 export const PROGRAM_REF = /^[a-z][a-z0-9-]{1,39}$/;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
@@ -1430,6 +1432,12 @@ export type SessionCreates = z.output<typeof SessionCreatesSchema>;
  *              database): one HTTPS call its `probe` declares (src/connection-test-config.ts), made on the server with
  *              the record's own fields (a secret opened there only, never returned or logged), said in plain words;
  *              writes the probe's status and tested fields (set_by "action"); offered to the roles that may update it
+ *   toggle     (mold_v0-336) turn a boolean field `field` of the record on or off in one click: drawn as a switch (in a
+ *              menu, an item with an on/off switch); written through the record store as the person (its roles, the
+ *              owners-only rule of a members' opt-in, a connection's only_one refused in its words, its history), and
+ *              offered only to the roles that may update the record and whom a form would offer the field
+ * `look` (mold_v0-336) draws a primary or secondary action as a bare text link ("link") instead of the outlined button
+ * (mold_v0-251's rule, "button", the default): only where declared.
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1474,6 +1482,8 @@ export const DetailActionSchema = z.object({
   on_outcome: z.object(Object.fromEntries(RUN_OUTCOMES.map((o) => [o, choiceValue.optional()])) as Record<RunOutcome, z.ZodOptional<typeof choiceValue>>).strict().optional(),
   /** mold_v0-334: a text field of the record each outcome's reason is written into (its history shows it). */
   reason_field: name.optional(),
+  /** mold_v0-336: a primary or secondary action drawn as a bare text link ("link") instead of the outlined button. */
+  look: z.enum(PAGE_ACTION_LOOKS).optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1700,7 +1710,18 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
   const ids = actions.map(pageActionId);
   for (const [i, x] of actions.entries()) {
     const only = (k: "job_kind" | "input" | "to" | "field", kinds: readonly string[]) => { if (x[k] !== undefined && !kinds.includes(x.kind)) bad(`${k} is for a ${kinds.join(" or ")} action, not ${x.kind}`, i, k); };
-    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record", "start_program"]); only("to", ["move"]); only("field", ["link", "open_url"]);
+    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record", "start_program"]); only("to", ["move"]); only("field", ["link", "open_url", "toggle"]);
+    // mold_v0-336: a toggle turns one boolean field the person sets on and off; a look is for a button, not a menu item.
+    if (x.kind === "toggle") {
+      const f = x.field === undefined ? undefined : fieldOf(x.field);
+      if (x.field === undefined) bad("a toggle action names the boolean field it turns on and off (field)", i, "field");
+      else if (!f) bad(`${x.field} is not one of the area's fields`, i, "field");
+      else if (f.type !== "boolean" || f.multiple) bad(`${x.field} is ${f.multiple ? "a list" : `a ${f.type} field`}: a toggle turns a boolean field on and off`, i, "field");
+      else if (f.encrypted) bad(`${x.field} is encrypted: a toggle shows the field's value as its switch`, i, "field");
+      else if (!personSets(f)) bad(`${x.field} is set only by the app's actions (set_by "action"): a person never turns it on or off`, i, "field");
+    }
+    if (x.look !== undefined && x.kind === "toggle") bad("a toggle is drawn as a switch: it takes no look", i, "look");
+    else if (x.look !== undefined && (x.place ?? "more") === "more") bad("look is for an action drawn as a button (place primary or secondary): one in the menu is a menu item", i, "look");
     // mold_v0-303: a start_program action names its program (the build checks it is declared), and is never a viewer's.
     if (x.program !== undefined && x.kind !== "start_program") bad(`program is for a start_program action, not ${x.kind}`, i, "program");
     if (x.kind === "start_program" && !x.program) bad("a start_program action names the program it starts (program)", i, "program");
@@ -1743,7 +1764,7 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     // A run's and an edit's form is the question; a link or a copy changes nothing: only a move or a delete asks first.
     if (x.confirm !== undefined && x.kind !== "move" && x.kind !== "delete") bad(`confirm is for a move or a delete (a ${x.kind} ${x.kind === "start_run" || x.kind === "edit" ? "opens its form first" : "changes nothing"})`, i, "confirm");
     if (ids.indexOf(ids[i]!) !== i) bad(`two actions are ${ids[i]}: give each its own kind, job kind, state or field`, i);
-    const writes = x.kind === "move" || x.kind === "edit" || x.kind === "delete";
+    const writes = x.kind === "move" || x.kind === "edit" || x.kind === "delete" || x.kind === "toggle";
     if (writes && shared) bad(`a shared (platform) area's records are written by platform staff, never from a workspace's page: no ${x.kind} action`, i, "kind");
     if (writes && !shared && readOnly && x.kind !== "delete") bad(`${a.name ?? "the area"}'s records come from its repository: no ${x.kind} action`, i, "kind");
     if (writes && a.append_only) bad(`an append-only area's records are never changed: no ${x.kind} action`, i, "kind");
@@ -2033,6 +2054,11 @@ export const RecordAreaSchema = z.object({
    * so that no two Records entries share one (src/record-icons.ts). Two areas naming one icon is a build warning.
    */
   icon: z.enum(TAB_ICONS).optional(),
+  /**
+   * mold_v0-336: what its records are called, plural ("hosting accounts"): a list's footer counts its rows with it ("8
+   * hosting accounts"; one: the word less its s, "1 hosting account"). Absent: "records", as before.
+   */
+  plural: plainWords(40).optional(),
   role: z.enum(["source", "check", "asset"]),
   scope: z.enum(["platform", "workspace"]),
   fields: z.array(field).min(1).max(60),
@@ -2794,6 +2820,26 @@ export const TabRelatedColumnSchema = z.object({
   id: name.optional(),
 }).strict();
 export type TabRelatedColumn = z.output<typeof TabRelatedColumnSchema>;
+/**
+ * mold_v0-336: a merged tab's column that shows a different field for each of its areas' rows (`by_source`: an area of the
+ * tab -> one of that area's fields), headed `label`: one State column showing a workspace connection's health and a
+ * catalog entry's maturity, in place of two half-empty ones. Each row shows the field of the first of its areas that maps
+ * one, drawn as that area's own cell (its badge colours, its option words); the column filters and sorts as one (an enum's
+ * options are every mapped field's). Its id (the console's table, the CSV) is `id`, default the label in lowercase words
+ * joined by _. The mapped fields are one type (enums may differ in options).
+ */
+export const TabSourceColumnSchema = z.object({
+  by_source: z.record(name, name).refine((m) => Object.keys(m).length >= 1 && Object.keys(m).length <= 4, "1 to 4 areas of the tab, each mapped to one of its fields"),
+  label: plainWords(40),
+  id: name.optional(),
+}).strict();
+export type TabSourceColumn = z.output<typeof TabSourceColumnSchema>;
+/** Whether a tab column shows a field per source area (mold_v0-336). */
+export const isSourceColumn = (c: unknown): c is TabSourceColumn => !!c && typeof c === "object" && "by_source" in (c as object);
+/** A source column's id: its own, else its label in lowercase words joined by _. */
+export const sourceColumnId = (c: Pick<TabSourceColumn, "label" | "id">) => c.id ?? (c.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(?![a-z])/, "c_") || "column");
+/** A tab column's id: a field's name, a related column's rel_<...>, a source column's own. */
+export const tabColumnId = (c: string | TabRelatedColumn | TabSourceColumn) => (typeof c === "string" ? c : isSourceColumn(c) ? sourceColumnId(c) : relatedColumnId(c));
 /** Whether a tab column is computed from related records (else it is a field's name). */
 export const isRelatedColumn = (c: unknown): c is TabRelatedColumn => !!c && typeof c === "object" && "related" in (c as object);
 /** A related column's id in the console's table and the API: rel_<area>_<count|latest_field>. */
@@ -2858,7 +2904,10 @@ export const TabSchema = z.object({
   areas: z.array(TabAreaSchema).min(2).max(4).optional(),
   // mold_v0-256 (flag record_pages): a column may be computed from the records that point back to each row (TabRelatedColumnSchema).
   // mold_v0-260: up to 12 with the flag wide_lists (refused past 8 while it is off).
-  columns: z.array(z.union([name, TabRelatedColumnSchema])).min(1).max(WIDE_LIST_MAX).optional(),
+  // mold_v0-336: a merged tab's column may show a field per source area (TabSourceColumnSchema).
+  columns: z.array(z.union([name, TabRelatedColumnSchema, TabSourceColumnSchema])).min(1).max(WIDE_LIST_MAX).optional(),
+  /** mold_v0-336: what an area tab's rows are called, plural: its footer's count ("8 hosting accounts"). Absent: its area's plural (a merged tab: its areas' plurals joined by "and" when each has one), else "records". */
+  plural: plainWords(40).optional(),
   views: z.array(z.enum(TAB_VIEWS)).min(1).max(4).optional(),
   board_by: name.optional(),
   timeline_by: point.optional(),
@@ -2911,9 +2960,16 @@ export const TabSchema = z.object({
     if (new Set(names).size !== names.length) bad("an area is listed twice", "areas");
     if (t.areas[0]!.rows === "matched") bad("the first area brings the rows (rows: all): a matched area only adds fields to them", "areas", "0", "rows");
   }
-  const colIds = (t.columns ?? []).map((c) => (typeof c === "string" ? c : relatedColumnId(c)));
+  const colIds = (t.columns ?? []).map(tabColumnId);
   if (new Set(colIds).size !== colIds.length) bad("a column is listed twice", "columns");
-  if (t.areas && (t.columns ?? []).some((c) => typeof c !== "string")) bad("a merged tab's columns are fields: a column computed from related records is for a tab of one area", "columns");
+  if (t.areas && (t.columns ?? []).some((c) => typeof c !== "string" && !isSourceColumn(c))) bad("a merged tab's columns are fields: a column computed from related records is for a tab of one area", "columns");
+  // mold_v0-336: a column of a field per source area is a merged tab's, each key one of its areas.
+  for (const [ci, c] of (t.columns ?? []).entries()) {
+    if (!isSourceColumn(c)) continue;
+    if (!t.areas) { bad("by_source is for a merged tab (areas): a tab of one area shows its fields", "columns", String(ci)); continue; }
+    for (const k of Object.keys(c.by_source)) if (!t.areas.some((a) => a.area === k)) bad(`by_source: ${k} is not one of the tab's areas (${t.areas.map((a) => a.area).join(", ")})`, "columns", String(ci), "by_source", k);
+  }
+  if (t.plural !== undefined && t.kind !== "area") bad("plural is for an area tab: what its rows are called", "plural");
   if (t.kind === "overview" && !t.charts?.length && !t.include?.length) bad("an overview tab lists its charts (or includes a section of the shell's)", "charts");
   if (t.include && t.kind !== "overview") bad("include is for an overview tab", "include");
   if (t.include && new Set(t.include).size !== t.include.length) bad("a section is included twice", "include");

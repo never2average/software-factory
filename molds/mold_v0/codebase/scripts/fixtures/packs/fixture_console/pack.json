@@ -63,6 +63,7 @@
     {
       "name": "mx_items",
       "label": "Items",
+      "plural": "items",
       "description": "Every field type, a lifecycle, clocks and a laid-out page.",
       "icon": "kanban",
       "role": "check",
@@ -785,7 +786,8 @@
                 },
                 "reason": "Already running."
               }
-            ]
+            ],
+            "look": "link"
           },
           {
             "kind": "move",
@@ -800,6 +802,16 @@
           {
             "kind": "edit",
             "place": "secondary"
+          },
+          {
+            "kind": "toggle",
+            "field": "urgent",
+            "place": "more",
+            "label": "Urgent",
+            "roles": [
+              "owner",
+              "member"
+            ]
           },
           {
             "kind": "delete",
@@ -1991,7 +2003,19 @@
         }
       ],
       "action": false,
-      "reason": "Rows come from two areas."
+      "reason": "Rows come from two areas.",
+      "columns": [
+        "title",
+        {
+          "by_source": {
+            "mx_parents": "state",
+            "mx_children": "state"
+          },
+          "label": "Where it is",
+          "id": "where_at"
+        }
+      ],
+      "plural": "parents and children"
     },
     {
       "id": "mx-runs",

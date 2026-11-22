@@ -29,18 +29,25 @@ export function Section({ title, titleId, description, action, children, classNa
  * tab's four cards, mold_v0-181): four across from a wide screen, two by two below it, every cell one line of label and
  * one of value and sparkline (the line's place kept while it loads or has no weeks), so nothing moves as they fill in.
  */
-export function StatStrip({ items, className, quad }: {
+export function StatStrip({ items, className, quad, strip }: {
   items: {
     label: ReactNode; value: ReactNode; hint?: ReactNode; href?: string; spark?: number[];
     /** What the value and its sparkline say, for a screen reader (the line itself is a picture). */
     said?: string;
   }[]; className?: string; quad?: boolean;
+  /**
+   * mold_v0-336: on a phone (below 640px) the cards are one compact row that scrolls sideways (label and value, no
+   * sparkline), so the list below starts on the first screen; the caller's scrolling container is the region
+   * (features/tabs/sparklines.tsx). Wider, as `quad`.
+   */
+  strip?: boolean;
 }) {
   // mold_v0-329: a list tab may have 1 to 4 cards; the row takes as many columns as it has (one on a phone for one card).
   const n = items.length;
   const cols = n <= 1 ? 'grid-cols-1' : n === 2 ? 'grid-cols-2' : n === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4';
   return (
-    <dl className={cn(quad ? (n >= 4 ? 'grid grid-cols-2 border-y lg:grid-cols-4' : cn('grid border-y', cols)) : 'grid grid-cols-2 border-y sm:flex sm:divide-x', className)}>
+    <dl className={cn(quad ? (n >= 4 ? 'grid grid-cols-2 border-y lg:grid-cols-4' : cn('grid border-y', cols)) : 'grid grid-cols-2 border-y sm:flex sm:divide-x',
+      quad && strip && 'max-sm:flex max-sm:w-max max-sm:min-w-full', className)} data-strip={quad && strip ? '' : undefined}>
       {items.map((it, i) => {
         const body = (
           <>
@@ -49,8 +56,9 @@ export function StatStrip({ items, className, quad }: {
             </dt>
             <dd className='mt-1 flex items-end justify-between gap-3' aria-hidden={it.said ? true : undefined}>
               {/* A card's number is never cut: the sparkline narrows instead (down to 32px), the number a step smaller on a phone. */}
-              <span className={cn('text-2xl font-semibold tabular-nums tracking-tight', quad && 'shrink-0 max-sm:text-xl')}>{it.value}</span>
-              {it.spark && it.spark.length > 1 ? <Sparkline values={it.spark} /> : quad && <span className='mb-1 h-7 w-24 min-w-8 shrink' />}
+              <span className={cn('text-2xl font-semibold tabular-nums tracking-tight', quad && 'shrink-0 max-sm:text-xl', quad && strip && 'max-sm:text-lg max-sm:leading-6')}>{it.value}</span>
+              {it.spark && it.spark.length > 1 ? (strip && quad ? <span className='contents max-sm:hidden'><Sparkline values={it.spark} /></span> : <Sparkline values={it.spark} />)
+                : quad && <span className={cn('mb-1 h-7 w-24 min-w-8 shrink', strip && 'max-sm:hidden')} />}
             </dd>
             {it.said && <dd className='sr-only'>{it.said}</dd>}
             {it.hint && <dd className='text-muted-foreground mt-0.5 text-xs'>{it.hint}</dd>}
@@ -59,7 +67,11 @@ export function StatStrip({ items, className, quad }: {
         // A <dl> holds only <dt>/<dd> groups wrapped in a <div> (axe `definition-list`, `dlitem`), so a stat with a link
         // keeps that shape: the link is the label, stretched over the whole cell so the cell is still one tap target.
         return (
-          <div key={i} className={cn(quad
+          <div key={i} className={cn(quad && strip
+            // mold_v0-336: a phone's one compact row (each card 10.5rem, a hairline between), as quad from 640px.
+            ? cn('min-w-0 px-4 py-3 max-sm:w-[10.5rem] max-sm:shrink-0 max-sm:px-3 max-sm:py-2 max-sm:first:pl-0 max-sm:not-first:border-l lg:first:pl-0 lg:not-first:border-l',
+              n > 2 ? 'sm:max-lg:odd:pl-0 sm:max-lg:even:border-l sm:max-lg:[&:nth-child(-n+2)]:border-b' : 'sm:max-lg:odd:pl-0 sm:max-lg:even:border-l')
+            : quad
             ? (n > 2 ? 'min-w-0 px-4 py-3 max-lg:odd:pl-0 max-lg:even:border-l max-lg:[&:nth-child(-n+2)]:border-b lg:first:pl-0 lg:not-first:border-l'
               : 'min-w-0 px-4 py-3 max-lg:odd:pl-0 max-lg:even:border-l lg:first:pl-0 lg:not-first:border-l')
             : 'min-w-0 flex-1 px-4 py-3 first:pl-0 max-sm:border-b max-sm:odd:pl-0 max-sm:even:border-l', it.href && 'group relative has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring')}>
