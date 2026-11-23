@@ -28,7 +28,7 @@ export function homeCardsRouter(): Router {
   r.use((_req, _res, next) => (featureOn("overview_cards") ? next() : next("router")));
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
-  r.get("/recent-runs", answer(async (_req, res) => ({ runs: await recentRuns(S(res).org, await byWords(S(res))) })));
+  r.get("/recent-runs", answer(async (_req, res) => ({ runs: await recentRuns(S(res).org, await byWords(S(res)), 6, { role: S(res).accountRole ?? null, userId: S(res).user ?? null }) })));
   r.get("/attention", answer(async (_req, res) => attention(S(res).org, { role: S(res).accountRole ?? null, userId: S(res).user ?? null })));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;

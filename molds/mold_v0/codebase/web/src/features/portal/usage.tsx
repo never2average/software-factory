@@ -248,7 +248,7 @@ function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
     <>
       <div className='grid lg:grid-cols-2'>
         <Box title='Runs by kind' description={`${num(r.runs)} runs in this period: ${usd(r.cost_usd)} of model spend, ${num(r.tool_calls)} tool calls, ${num(r.requests)} model requests.`}>
-          <RankBars data={r.by_kind.map((k) => ({ name: k.kind, value: k.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} mono empty='No run spend in this period.' />
+          <RankBars data={r.by_kind.map((k) => ({ name: runKindLabel(k.pack, k.kind), value: k.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No run spend in this period.' />
         </Box>
         <Box title='Runs by person'>
           <RankBars data={r.by_person.map((p) => ({ name: p.label, value: p.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No run spend in this period.' />
@@ -263,8 +263,9 @@ function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
 
 /** The latest runs, one row each (shared with the neutral Activity page). */
 /**
- * Recent runs. mold_v0-340: each by its own title (an agent session's title, from the server), else its kind in the pack's
- * words, never the stored kind; its status in the console's one status vocabulary, as a badge (web/src/lib/run-status.ts).
+ * Recent runs. mold_v0-340/343: each by its own title (from the server, src/run-analytics.ts runTitles: an agent session's
+ * title, else the record it ran on, else its kind's label in the pack's words), else its kind in the pack's words, never
+ * a raw kind id; its status in the console's one status vocabulary, as a badge (web/src/lib/run-status.ts).
  */
 export function RunTable({ rows, run = 'Run' }: { rows: { id: string; pack?: string; kind: string; title?: string | null; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
   if (!rows.length) return <Empty>No runs in this period.</Empty>;

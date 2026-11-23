@@ -190,7 +190,13 @@ try {
   {
     await asPlatform(() => db.query("UPDATE runs SET status = 'failed', error_kind = 'run', error = 'Timed out after 1200 seconds', cost_usd = 0.42 WHERE id = $1", [runOnRecord]));
     const runs = await get(member.token, "/api/home/recent-runs");
-    assert.ok(runs.body.runs.length >= 3 && runs.body.runs.every((r: any) => r.label === "Diagnose an incident"), "recent runs, in the pack's words");
+    // mold_v0-343: a run reads its own title: the record it was started on, else its kind in the pack's words; never a raw id.
+    const [link] = await asPlatform(() => db.query<{ org_id: number; record_area: string; record_key: string }>("SELECT org_id, record_area, record_key FROM runs WHERE id = $1", [runOnRecord]));
+    const { recordTitles } = await import("../src/record-areas.js");
+    const onRec = { title: (await recordTitles(link!.org_id, link!.record_area, [link!.record_key], (await import("../src/record-areas.js")).SYSTEM_ACTOR)).get(link!.record_key) ?? null };
+    assert.ok(runs.body.runs.length >= 3 && runs.body.runs.every((r: any) => typeof r.label === "string" && r.label.length > 0 && r.label !== r.kind), "recent runs, never a raw kind id");
+    assert.equal(runs.body.runs.find((r: any) => r.id === runOnRecord)?.label, onRec.title ?? "Diagnose an incident", "a run on a record reads the record's title");
+    assert.ok(runs.body.runs.every((r: any) => [onRec.title, "Diagnose an incident"].includes(r.label)), "recent runs: a record's title, else the kind in the pack's words");
     assert.ok(!(await get(ownerB.token, "/api/home/recent-runs")).body.runs.some((r: any) => r.id === runOnRecord), "B never sees A's");
     const att = await get(viewer.token, "/api/home/attention");
     assert.deepEqual(att.body.records.map((r: any) => [r.key, r.tone, r.notice]), [["inc-1", "danger", "Critical and open"], ["inc-2", "warning", "Past its fix-by date"], ["globex", "warning", "Paused"]], "needs attention: danger first, as a viewer reads");

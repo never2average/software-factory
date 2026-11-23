@@ -210,17 +210,55 @@ export async function sessionTitles(orgId: number, runIds: string[]): Promise<Ma
   return new Map(rows.map((r) => [r.id, r.title]));
 }
 
+/** mold_v0-343: a word or id as a label ("build" -> "Build", "weekly_scan" -> "Weekly scan"); never the raw id. */
+export const labelWords = (s: string) => { const w = s.replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim(); return w ? w.charAt(0).toUpperCase() + w.slice(1) : "Run"; };
+
+/**
+ * mold_v0-343: a kind as a run's title: its label in the pack's words, as the pack wrote it (the built-in agent
+ * kinds' "Agent session", "Acceptance test"), else, for a kind the build no longer declares, its id in words, capitalised: never the raw id.
+ */
+export async function runKindTitle(pack: string, kind: string): Promise<string> {
+  const { findKind } = await import("./runs.js");
+  const { AGENT_PACK, AGENT_KIND } = await import("./agent-harness-config.js");
+  let label: string | undefined;
+  try { label = (findKind(pack, kind) as { label?: string | null } | null)?.label?.trim(); } catch { /* no packs to read: the id in words */ }
+  return label ? label : pack === AGENT_PACK && kind === AGENT_KIND ? "Agent session" : labelWords(kind);
+}
+
+/**
+ * mold_v0-343: each run's own title (Recent runs on Activity, Billing's Spending and Usage; the home page's runs): an
+ * agent session's wake by its session's title; a run started on a record by that record's title, as `actor` reads it
+ * (none for an area they may not read); else its kind's label in the pack's words (runKindTitle). Every run has one.
+ */
+export async function runTitles(orgId: number, rows: readonly { id: string; pack: string; kind: string; record_area?: string | null; record_key?: string | null }[], actor: Actor | null): Promise<Map<string, string>> {
+  if (!rows.length) return new Map();
+  const sessions = await sessionTitles(orgId, rows.map((x) => x.id)).catch(() => new Map<string, string>());
+  const byArea = new Map<string, string[]>();
+  for (const x of rows) if (!sessions.get(x.id)?.trim() && x.record_area && x.record_key) byArea.set(x.record_area, [...(byArea.get(x.record_area) ?? []), x.record_key]);
+  const records = new Map<string, Map<string, string>>();
+  if (actor && byArea.size) {
+    const { recordTitles } = await import("./record-areas.js");
+    for (const [area, keys] of byArea) records.set(area, await recordTitles(orgId, area, keys, actor).catch(() => new Map<string, string>()));
+  }
+  const out = new Map<string, string>();
+  for (const x of rows) {
+    const own = sessions.get(x.id)?.trim() || (x.record_area && x.record_key ? records.get(x.record_area)?.get(x.record_key)?.trim() : undefined);
+    out.set(x.id, own || await runKindTitle(x.pack, x.kind));
+  }
+  return out;
+}
+
 /** The workspace's latest runs, of the packs whose runs list is not withheld: kind, status, when, cost and who. */
-export async function recentRuns(orgId: number, who: (id: string | null) => string, limit = 6) {
+export async function recentRuns(orgId: number, who: (id: string | null) => string, limit = 6, actor: Actor | null = null) {
   const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; pack: string; kind: string; status: string; created_at: Date; ended_at: Date | null; requested_by: string | null; cost: number; record_area: string | null; record_key: string | null }>(
     `/* tenant: org_id = $1 is the session's workspace */ SELECT r.id, r.pack, r.kind, r.status, r.created_at, r.ended_at, r.requested_by, r.record_area, r.record_key, r.harness_session_id, ${RUN_USD}::float AS cost
        FROM runs r WHERE r.org_id = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 50`, [orgId]));
-  const titles = await sessionTitles(orgId, rows.map((x) => x.id));
-  const { findKind } = await import("./runs.js");
+  // mold_v0-343: each run by its own title (its session's, its record's, else its kind in the pack's words).
+  const titles = await runTitles(orgId, rows, actor);
   // An agent session is one line however many times it woke (its latest wake), and opens the session (session_id).
   const seen = new Set<string>();
   return rows.filter((x) => !packOpWithheld(x.pack, "list_runs")).filter((x) => { const s = (x as { harness_session_id?: string | null }).harness_session_id; if (!s) return true; if (seen.has(s)) return false; seen.add(s); return true; }).slice(0, limit).map((x) => ({
-    session_id: (x as { harness_session_id?: string | null }).harness_session_id ?? null, id: x.id, pack: x.pack, kind: x.kind, label: titles.get(x.id) ?? (findKind(x.pack, x.kind) as { label?: string } | null)?.label ?? x.kind, status: x.status,
+    session_id: (x as { harness_session_id?: string | null }).harness_session_id ?? null, id: x.id, pack: x.pack, kind: x.kind, label: titles.get(x.id)!, status: x.status,
     created_at: new Date(x.created_at).toISOString(), ended_at: x.ended_at ? new Date(x.ended_at).toISOString() : null, cost_usd: r6(Number(x.cost)), by: who(x.requested_by),
   }));
 }

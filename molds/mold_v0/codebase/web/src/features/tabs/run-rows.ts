@@ -38,8 +38,14 @@ const RESULT_ORDER = ['fail', 'error', 'pass', 'not_applicable', 'unknown'];
 export const RESULT_LABELS: Record<string, string> = { pass: 'Pass', fail: 'Fail', error: 'Error', not_applicable: 'Not applicable', unknown: 'Unknown' };
 export const resultCounts = (r: Record<string, number>) => RESULT_ORDER.filter((s) => r[s]).map((s) => `${r[s]} ${RESULT_LABELS[s]!.toLowerCase()}`).join(', ');
 
-/** A kind's label in the pack's words, else its name. */
-export const runKindLabel = (pack: string, kind: string) => JOB_KINDS.find((k) => k.pack === pack && k.name === kind)?.label ?? kind;
+/** mold_v0-343: an id as a label ("build" -> "Build", "weekly_scan" -> "Weekly scan"), as src/run-analytics.ts labelWords. */
+export const labelWords = (s: string) => { const w = s.replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim(); return w ? w.charAt(0).toUpperCase() + w.slice(1) : 'Run'; };
+/**
+ * A kind's label in the pack's words (as the pack wrote it), else (mold_v0-343) its name in words, capitalised: never the
+ * raw id. The workspace agent's session kind reads "Agent session", as the server's.
+ */
+export const runKindLabel = (pack: string, kind: string) =>
+  JOB_KINDS.find((k) => k.pack === pack && k.name === kind)?.label?.trim() || (pack === '_agent' && kind === 'session' ? 'Agent session' : labelWords(kind));
 /** The record a run ran over (targets.asset {area, key}), or null. */
 export const runTarget = (r: Pick<Run, 'targets'>): Ref | null => {
   const a = r.targets?.asset as Partial<Ref> | undefined;

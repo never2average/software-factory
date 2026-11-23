@@ -240,8 +240,8 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
   const charts = await usageCharts(s, range, users, p, byTool, budget, t.members);
   // Runs (mold_v0-008): their tool calls' people and cost, per run, kind and person, only when the period has any.
   const runUsage = await workspaceRunUsage(s.org, range.start, range.end, users);
-  // mold_v0-289: an agent session's own title in Recent runs, not its kind.
-  const runTitles = await (await import("./run-analytics.js")).sessionTitles(s.org, runUsage.recent.map((x) => x.id));
+  // mold_v0-289/343: each run's own title in Recent runs (src/run-analytics.ts runTitles), never its raw kind id.
+  const runTitles = await (await import("./run-analytics.js")).runTitles(s.org, runUsage.recent, { role: s.accountRole ?? null, userId: s.user ?? null });
   const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id ? (id === s.user ? "You" : t.members.find((m) => m.user_id === id)?.email ?? "Former member") : "Connector key");
   // Spend per person is for billing roles (as Spend by person below); everyone else sees their own line.
   const billing = roles.canAccount(s.accountRole, "billing");
