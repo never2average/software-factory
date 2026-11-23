@@ -167,7 +167,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 30 and len(set(ids(root))) == 30, "the registry names 30 flags, each once")
+    ok(len(flags) == 31 and len(set(ids(root))) == 31, "the registry names 31 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],

@@ -114,6 +114,7 @@ through the same check `factory.py validate` and the build use.
   | `usage_tool` | false | always (the profile alone) | usage |
   | `workspace_recipes` | true | the staff Records group (`console.admin_records`) lists `recipes`; needs `agent_harness` | recipes |
   | `record_resources` | false | a shared area's `repository` or `database` field (refused while off) | resources |
+  | `plan_upgrade` | false | always (the profile alone): Billing's Upgrade plan for this month (seats, this month's limit; mold_v0-342) | upgrade |
 
   Record-owned resources (mold_v0-282, `record_resources`): a shared (platform) area's field may be `"type":
   "repository"` (an existing GitHub repository, owner/name, that staff link to a record: read through the platform's

@@ -35,6 +35,8 @@ import { fill } from "./vocabulary.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
 import * as limits from "./limits.js";
+import { featureOn } from "./features.js";
+import * as monthUpgrade from "./month-upgrade.js";
 import * as clerk from "./clerk.js";
 import { people, signedIn } from "./people.js";
 import * as roles from "./account-roles.js";
@@ -618,6 +620,8 @@ export function appRouter() {
   api.post("/team/invitations", (_req, res, next) => { need(res, "team"); next(); },
     endpointLimit("invite", (_req, res) => (res.locals.session as Session).slug) as express.RequestHandler, async (req, res) => {
     need(res, "team");
+    // mold_v0-342 (flag plan_upgrade): not past the workspace's seats (this month's, else its plan's; none: no check).
+    await monthUpgrade.checkSeat({ orgId: S(res).org, slug: S(res).slug });
     const r = await admin.invite(actor(res), S(res).slug, req.body?.email, req.body?.role ?? "member");
     res.status(201).json({ invitation: r.invitation, key: r.key, connector_url: r.connector_url });
   });
@@ -731,12 +735,24 @@ export function appRouter() {
   });
   api.get("/billing/usage", async (_req, res) => void res.json(await billingUsage(S(res))));
   api.post("/billing/portal", async (_req, res) => { need(res, "billing"); res.json(await admin.portalLink(actor(res), S(res).slug, `${consoleUrl()}/app#billing`)); });
+  // Upgrade plan for this month (mold_v0-342, flag plan_upgrade; src/month-upgrade.ts): seats and this month's limit, for
+  // owners and billing managers only. A raise with the payment provider on answers its billing page and writes nothing.
+  api.get("/billing/upgrade", async (_req, res, next) => {
+    if (!featureOn("plan_upgrade")) return next();
+    need(res, "billing");
+    res.json(await monthUpgrade.view({ orgId: S(res).org, slug: S(res).slug }));
+  });
+  api.post("/billing/upgrade", async (req, res, next) => {
+    if (!featureOn("plan_upgrade")) return next();
+    need(res, "billing");
+    res.json(await monthUpgrade.apply({ orgId: S(res).org, slug: S(res).slug }, { label: actor(res), user: S(res).user ?? null }, req.body ?? {}));
+  });
   api.post("/billing/checkout", async (req, res) => { need(res, "billing"); res.json(await admin.checkoutLink(actor(res), S(res).slug, req.body?.price_id, `${consoleUrl()}/app#billing`, { requireAllowed: true })); });
   api.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
     const hostError = hosts().some((h) => (h.routes?.appErrors ?? []).some((C) => err instanceof C));
-    if (!(err instanceof AppError || hostError || err instanceof ContextError || err instanceof JourneyError || err instanceof TipError || err instanceof limits.LimitError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
+    if (!(err instanceof AppError || hostError || err instanceof ContextError || err instanceof JourneyError || err instanceof TipError || err instanceof limits.LimitError || err instanceof monthUpgrade.UpgradeError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
     // A Budget rules refusal also says which rule (code), the limit and what's left, who set it and the admins to ask.
-    res.status(err.status ?? 400).json({ error: err.message, ...(err instanceof limits.LimitError || err instanceof AppError ? err.info : {}) });
+    res.status(err.status ?? 400).json({ error: err.message, ...(err instanceof limits.LimitError || err instanceof AppError || err instanceof monthUpgrade.UpgradeError ? err.info : {}) });
   });
   r.use("/api/app", api);
   return r;

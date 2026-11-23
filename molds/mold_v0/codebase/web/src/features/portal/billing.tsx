@@ -12,6 +12,9 @@
 // each row's Edit saves through the endpoint that owns that rule, which checks it. Adding and editing open in the side
 // panel beside the list (mold_v0-289's way). Access log (mold_v0-209; the workspace's owners, only where the profile
 // turns audit.data on): the audit trails on the records table (features/audit/access-log.tsx).
+// mold_v0-342: with a pack's Spending tab (console.billing), This month is that tab's first section (above the spend
+// analytics) and no longer above the strip; with flag plan_upgrade its header has Upgrade plan (owners and billing
+// managers): seats and this month's limit, for the current month only (src/month-upgrade.ts).
 // Plans and cards are the payment provider's; people are the sign-in provider's.
 import { CANCEL_INVITATION, INVITATION_CANCELLED, inviteStateWords } from '@/lib/access-words';
 import { useEffect, useState } from 'react';
@@ -25,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { featureOn } from '@/config/features';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
@@ -50,7 +55,7 @@ interface Sub { status: string; plan: string | null; renews_at: string | null; c
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
   /** Usage pricing, one line per metric (model spend, agent sessions, simulations, sandbox hours), in words. */
   usage?: { metric: string; summary: string }[] }
-interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
+interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default' | 'month'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
   contributions?: Contributions; run_charges?: RunCharges }
 /** Price per run (mold_v0-019): this month's run charges and credits per currency, and the latest rows. Only when the app bills runs. */
 interface RunCharges { enabled: boolean; currency: string;
@@ -132,8 +137,8 @@ function tabToUrl(tab: string, first = 'people') {
 }
 
 export function BillingPage() {
-  const { data: b, error } = useOrgLoad(() => appApi<Billing>('GET', '/billing'));
-  const { data: u } = useOrgLoad(() => appApi<Usage>('GET', '/billing/usage'));
+  const { data: b, error, reload: reloadBilling } = useOrgLoad(() => appApi<Billing>('GET', '/billing'));
+  const { data: u, reload: reloadUsage } = useOrgLoad(() => appApi<Usage>('GET', '/billing/usage'));
   const { data: t, reload: reloadTeam } = useOrgLoad(() => appApi<Team>('GET', '/team'));
   const { data: l, error: limitsError, reload: reloadLimits } = useOrgLoad(() => appApi<Limits>('GET', '/limits'));
   const reload = () => { reloadTeam(); reloadLimits(); };
@@ -165,11 +170,15 @@ export function BillingPage() {
   // mold_v0-298: a single tab left (a plain member with People in Settings) shows no tab strip.
   const tabCount = visible.length;
   const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>(() => (urlParam('filter') === 'exceptions' ? 'exceptions' : 'all'));
+  // mold_v0-342: with a Spending tab, This month is its first section (the spend analytics below it), not above the strip.
+  const spendingTab = order.some((t) => t.id === 'spending');
+  const changed = () => { void reloadBilling(); void reloadUsage(); reloadLimits(); };
+  const month = b ? <ThisMonth b={b} u={u ?? undefined} l={l ?? undefined} onChanged={changed} /> : null;
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !b ? <LoadingCards count={3} /> : (
         <div className='flex w-full flex-col gap-6'>
-          <ThisMonth b={b} u={u ?? undefined} l={l ?? undefined} />
+          {!spendingTab && month}
           {/* People, Budget groups, Budget rules and Access log as tabs: the tables get the full width and height they need. */}
           <Tabs value={shown} onValueChange={(v) => setTab(String(v))} className='gap-4'>
             <div className='flex flex-wrap items-center justify-between gap-x-6 gap-y-2'>
@@ -183,7 +192,7 @@ export function BillingPage() {
               )}
             </div>
             {/* mold_v0-340: Spending (the Activity page's body) and Alerts (Settings', read only), when the pack names them. */}
-            {order.some((t) => t.id === 'spending') && <TabsContent value='spending'><WorkspaceActivityBody /></TabsContent>}
+            {spendingTab && <TabsContent value='spending'><div className='flex flex-col gap-8' data-billing-spending=''>{month}<WorkspaceActivityBody /></div></TabsContent>}
             {order.some((t) => t.id === 'alerts') && <TabsContent value='alerts'><AlertsTab /></TabsContent>}
             {peopleHere && <TabsContent value='people'><People t={t ?? undefined} l={l ?? undefined} reload={reload} filter={peopleFilter} setFilter={setPeopleFilter} /></TabsContent>}
             <TabsContent value='teams'>
@@ -217,8 +226,11 @@ export function TeamPanel() {
 
 // ---------- this month: plan, spend against the cap ----------
 
-function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | undefined }) {
+function ThisMonth({ b, u, l, onChanged }: { b: Billing; u: Usage | undefined; l: Limits | undefined; onChanged?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  // mold_v0-342: Upgrade plan (flag plan_upgrade), for those who manage billing only (the server checks the role too).
+  const [upgrade, setUpgrade] = useState(false);
+  const canUpgrade = featureOn('plan_upgrade') && b.can_manage;
   const go = (path: string, body?: unknown, id = path) => {
     setBusy(id);
     appApi<{ url: string }>('POST', path, body).then((r) => { window.location.href = r.url; }).catch((e) => { setBusy(null); fail(e); });
@@ -229,16 +241,23 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
   const cap = u?.budget_usd ?? b.budget_usd;
   const pct = (v: number) => (cap ? Math.min(100, (v / cap) * 100) : 0);
   const over = !!u && cap > 0 && u.projected_usd > cap;
+  const manage = b.enabled && b.can_manage && b.customer
+    ? <Button variant='outline' size='sm' disabled={busy !== null} onClick={() => go('/billing/portal')}>{busy ? <Icons.spinner className='animate-spin' /> : <Icons.creditCard />} Manage billing</Button> : null;
   return (
     // mold_v0-298: the summary has its heading.
-    <Block title='This month' action={b.enabled && b.can_manage && b.customer
-      ? <Button variant='outline' size='sm' disabled={busy !== null} onClick={() => go('/billing/portal')}>{busy ? <Icons.spinner className='animate-spin' /> : <Icons.creditCard />} Manage billing</Button> : undefined}>
+    // mold_v0-342: Upgrade plan beside Manage billing; without the flag the header is exactly as before.
+    <Block title='This month' action={canUpgrade ? <div className='flex flex-wrap items-center justify-end gap-2'>
+      {manage}
+      {canUpgrade && <Button size='sm' disabled={busy !== null} onClick={() => setUpgrade(true)} data-billing-upgrade=''><Icons.rocket /> Upgrade plan</Button>}
+    </div> : manage ?? undefined}>
+      {upgrade && <UpgradeDialog onClose={() => setUpgrade(false)} onChanged={() => { setUpgrade(false); onChanged?.(); }} />}
       {s && ['past_due', 'unpaid'].includes(s.status) && <Alert variant='destructive'><Icons.warning /><AlertDescription>The last payment failed. {fill('Update the card to keep running {runs}.')}</AlertDescription></Alert>}
       {l?.can_manage && l.alert && <UsageBanner a={l.alert} />}
       {mine && l?.you && <YourBudget m={mine} l={l} you={l.you} />}
       <div className='flex flex-wrap items-baseline gap-x-6 gap-y-2 leading-none'>
         <span className={cn('font-semibold tabular-nums', mine ? 'text-base' : 'text-4xl')}>{mine && 'Account: '}{usd(u?.spent_usd ?? 0)}</span>
         <span className='text-muted-foreground text-sm'>{cap ? `of ${usd(cap)} prepaid this month` : 'no prepaid allowance'}</span>
+        {b.budget_source === 'month' && <Badge variant='outline' data-billing-month-only=''>Set for this month only</Badge>}
         <span className='ml-auto flex items-center gap-2 text-sm'>
           {!b.enabled || (b.budget_source === 'override' && !s) ? null : <>
             <span className='font-medium'>{s?.plan ?? 'No plan'}</span>
@@ -345,6 +364,129 @@ function RunChargesList({ c }: { c: RunCharges }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+// ---------- Upgrade plan for this month (mold_v0-342, flag plan_upgrade) ----------
+
+/** GET /billing/upgrade (src/month-upgrade.ts view): seats and this month's limit, now and the plan's, and how payment works. */
+interface UpgradeView {
+  period: { start: string; end: string; last_day: string };
+  seats: { now: number | null; plan: number | null; members: number; invitations: number };
+  limit: { now_usd: number; plan_usd: number; spent_usd: number };
+  change: { seats: number | null; limit_usd: number | null; set_at: string } | null;
+  payment: 'ledger' | 'provider' | 'needs_plan';
+  plan: { name: string; amount: number | null; currency: string; interval: string | null } | null;
+  max: { seats: number; limit_usd: number };
+}
+type UpgradeAnswer = { status: 'applied'; message: string } | { status: 'provider'; url: string; message: string };
+
+const seatsText = (v: number | null) => (v == null ? 'No limit' : plural(v, 'seat'));
+
+/** A whole number of seats from the field ('' keeps none), or NaN. */
+const seatsOf = (v: string) => (v.trim() === '' ? null : Number(v));
+
+/**
+ * Upgrade plan: a new seat count and a spending limit for the current month only (it ends with the month). It shows
+ * what changes (now → new), the plan's price when it has one, and how payment works here; Confirm saves it, or, with
+ * the payment provider on and a raise, opens the provider's billing page (nothing changes until the plan does).
+ */
+export function UpgradeDialog({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+  const [v, setV] = useState<UpgradeView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [seats, setSeats] = useState('');
+  const [limit, setLimit] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    appApi<UpgradeView>('GET', '/billing/upgrade').then((x) => {
+      setV(x);
+      setSeats(x.seats.now == null ? '' : String(x.seats.now));
+      setLimit(String(x.limit.now_usd));
+    }, (e: Error) => setLoadError(e.message || "Couldn't load this month's plan."));
+  }, []);
+  const minSeats = v ? Math.max(1, v.seats.members + v.seats.invitations) : 1;
+  const s = seatsOf(seats), lim = limit.trim() === '' ? NaN : Number(limit);
+  const seatsProblem = !v ? null : s == null ? null : !Number.isInteger(s) || s < 1 || s > v.max.seats ? `A whole number from 1 to ${num(v.max.seats)}.`
+    : s < minSeats ? `At least ${minSeats}: ${plural(v.seats.members, 'person', 'people')}${v.seats.invitations ? ` and ${plural(v.seats.invitations, 'pending invitation')}` : ''}.` : null;
+  const limitProblem = !v ? null : !Number.isFinite(lim) || lim < 0 || lim > v.max.limit_usd ? `An amount from $0 to ${usd(v.max.limit_usd)}.`
+    : Math.round(lim * 100) < Math.round(v.limit.spent_usd * 100) ? `At least ${usd(v.limit.spent_usd)}: this month's spend so far.` : null;
+  const same = !!v && s === v.seats.now && Number.isFinite(lim) && Math.round(lim * 100) === Math.round(v.limit.now_usd * 100);
+  const raises = !!v && ((v.seats.now != null && (s == null || s > v.seats.now)) || (Number.isFinite(lim) && lim > v.limit.now_usd));
+  const confirm = () => {
+    if (!v) return;
+    setBusy(true);
+    appApi<UpgradeAnswer>('POST', '/billing/upgrade', { seats: s, limit_usd: Math.round(lim * 100) / 100 }).then((r) => {
+      if (r.status === 'provider') { toast(r.message); window.location.href = r.url; return; }
+      toast.success(r.message);
+      onChanged();
+    }).catch((e) => { setBusy(false); fail(e); });
+  };
+  const price = v?.plan && v.plan.amount != null ? `${money(v.plan.amount, v.plan.currency)}${v.plan.interval ? ` / ${v.plan.interval}` : ''}` : null;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className='sm:max-w-lg' data-billing-upgrade-dialog=''>
+        <DialogHeader>
+          <DialogTitle>Upgrade plan for this month</DialogTitle>
+          <DialogDescription>
+            {v ? `Seats and a spending limit for this month only: they end on ${v.period.last_day}, then the plan's apply again.` : 'Seats and a spending limit for this month only.'}
+          </DialogDescription>
+        </DialogHeader>
+        {loadError ? <Alert variant='destructive'><Icons.warning /><AlertDescription>{loadError}</AlertDescription></Alert> : !v ? <LoadingCards count={1} /> : (
+          <div className='flex flex-col gap-5'>
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <div className='flex flex-col gap-1.5'>
+                <Label htmlFor='upgrade-seats'>Seats</Label>
+                <Input id='upgrade-seats' type='number' inputMode='numeric' min={minSeats} max={v.max.seats} step={1} value={seats} placeholder='No limit'
+                  aria-invalid={!!seatsProblem} aria-describedby='upgrade-seats-help' onChange={(e) => setSeats(e.target.value)} />
+                <p id='upgrade-seats-help' className={cn('text-xs', seatsProblem ? 'text-destructive' : 'text-muted-foreground')}>
+                  {seatsProblem ?? `People and pending invitations: ${v.seats.members + v.seats.invitations} now. Empty: no limit.`}
+                </p>
+              </div>
+              <div className='flex flex-col gap-1.5'>
+                <Label htmlFor='upgrade-limit'>Spending limit this month (USD)</Label>
+                <Input id='upgrade-limit' type='number' inputMode='decimal' min={v.limit.spent_usd} max={v.max.limit_usd} step='0.01' value={limit}
+                  aria-invalid={!!limitProblem} aria-describedby='upgrade-limit-help' onChange={(e) => setLimit(e.target.value)} />
+                <p id='upgrade-limit-help' className={cn('text-xs', limitProblem ? 'text-destructive' : 'text-muted-foreground')}>
+                  {limitProblem ?? `Usage-based: ${usd(v.limit.spent_usd)} spent so far.`}
+                </p>
+              </div>
+            </div>
+            <section className='flex flex-col gap-2' aria-label='What changes'>
+              <h3 className='text-sm font-medium'>What changes</h3>
+              <dl className='divide-y border-y text-sm' data-billing-upgrade-changes=''>
+                <div className='flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2'>
+                  <dt className='text-muted-foreground'>Seats</dt>
+                  <dd className='tabular-nums'>{seatsText(v.seats.now)} <span aria-hidden>→</span><span className='sr-only'>to</span> <span className='font-medium'>{seatsProblem ? '…' : seatsText(s)}</span></dd>
+                </div>
+                <div className='flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2'>
+                  <dt className='text-muted-foreground'>Spending limit this month</dt>
+                  <dd className='tabular-nums'>{usd(v.limit.now_usd)} <span aria-hidden>→</span><span className='sr-only'>to</span> <span className='font-medium'>{limitProblem ? '…' : usd(lim)}</span></dd>
+                </div>
+                {price && (
+                  <div className='flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2'>
+                    <dt className='text-muted-foreground'>{v.plan!.name}</dt>
+                    <dd className='tabular-nums'>{price}{v.payment === 'provider' && raises ? <span className='text-muted-foreground'> · the payment provider shows any change before you pay</span> : <span className='text-muted-foreground'> · unchanged</span>}</dd>
+                  </div>
+                )}
+                <div className='flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2'>
+                  <dt className='text-muted-foreground'>After {v.period.last_day}</dt>
+                  <dd className='text-muted-foreground'>{seatsText(v.seats.plan)} · {v.limit.plan_usd > 0 ? usd(v.limit.plan_usd) : 'no allowance'} again</dd>
+                </div>
+              </dl>
+            </section>
+            {v.payment === 'ledger' && <p className='text-muted-foreground text-xs' data-billing-upgrade-payment='ledger'>No payment is taken: billing is off in this app, so this changes this month&apos;s seats and allowance only.</p>}
+            {v.payment === 'provider' && <p className='text-muted-foreground text-xs' data-billing-upgrade-payment='provider'>{raises ? "More seats or a higher limit is a plan change with your payment provider: Confirm opens its billing page, and nothing changes or is charged until you confirm it there." : 'Lowering costs nothing: it applies right away.'}</p>}
+            {v.payment === 'needs_plan' && raises && <Alert data-billing-upgrade-payment='needs_plan'><Icons.lock /><AlertDescription>This workspace has no plan yet: choose one under This month first. More seats or a higher limit come with a plan.</AlertDescription></Alert>}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant='outline' onClick={onClose}>Cancel</Button>
+          <Button disabled={!v || busy || !!seatsProblem || !!limitProblem || same || (v.payment === 'needs_plan' && raises)} onClick={confirm}>
+            {busy && <Icons.spinner className='animate-spin' />}{v?.payment === 'provider' && raises ? 'Continue to payment' : 'Confirm'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -711,8 +853,10 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
   };
   const max = l.server_max_sessions;
   const rows: RuleRow[] = [
-    { key: 'allowance', rule: 'Monthly allowance', applies: 'Account', by: profile.name, at: null,
-      value: l.budget_error ? "Couldn't load" : l.budget_usd > 0 ? `${usd(l.budget_usd)} a month` : 'No prepaid allowance' },
+    { key: 'allowance', rule: 'Monthly allowance', applies: 'Account',
+      // mold_v0-342: this month's own limit (Upgrade plan) says so, and who set it.
+      ...(b.budget_source === 'month' && who('allowance') ? { by: who('allowance')!.by_name, at: who('allowance')!.at } : { by: profile.name, at: null }),
+      value: l.budget_error ? "Couldn't load" : l.budget_usd > 0 ? `${usd(l.budget_usd)}${b.budget_source === 'month' ? ' this month only' : ' a month'}` : 'No prepaid allowance' },
     // The short label; the sentence is its tooltip (and the dialog's hint).
     { ...policyRow('mode', 'How people share it', MODE_OPTIONS.find((m) => m.id === p.mode)?.label ?? p.mode, 'Each budget', 'mode', 'How the people in each budget share it. Own limits apply in every mode.'), hint: MODE_WORDS[p.mode] },
     policyRow('reserve_usd', 'Held back (buffer)', p.reserve_usd ? usd(p.reserve_usd) : 'None', 'Account', 'money', 'Nobody can launch into this. It absorbs runs that finish past a limit.'),

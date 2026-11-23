@@ -170,7 +170,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 30 and len(set(ids(root))) == 30, "the registry names 30 flags, each once")
+    ok(len(flags) == 31 and len(set(ids(root))) == 31, "the registry names 31 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -225,6 +225,9 @@ def self_test(root):
     q = lambda prof: next(x for x in effective(prof, [], root) if x["id"] == "agent_quick_commands")["on"]
     ok(not q({}) and q({"features": {"agent_harness": True}}) and not q({"features": {"agent_harness": True, "agent_quick_commands": False}}) and not problems({"features": {"agent_quick_commands": True}}, [], root),
        "the agent's examples and quick commands: on wherever the agent is, unless turned off (mold_v0-316)")
+    # mold_v0-342: Upgrade plan for this month, the profile alone; off by default
+    u = lambda prof: next(x for x in effective(prof, [], root) if x["id"] == "plan_upgrade")["on"]
+    ok(not u({}) and u({"features": {"plan_upgrade": True}}), "Upgrade plan for this month: off by default, on when the profile says (mold_v0-342)")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
     # mold_v0-282: record resources, asked for by a shared area's repository or database field; off by default, refused off
     owning = [{"id": "m", "record_areas": [{"name": "molds", "scope": "platform", "fields": [{"name": "repo", "type": "repository"}, {"name": "db", "type": "database", "provider": "core"}]}]}]

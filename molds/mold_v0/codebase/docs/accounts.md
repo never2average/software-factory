@@ -209,6 +209,8 @@ How the app uses it:
    Prices, Invoices read and Meter events write is enough).
 2. Create the plans as recurring prices with a `lookup_key` starting with `<namespace>_` (src/namespace.ts KEY_PREFIX, e.g. `workspace_starter`) and
    `metadata.monthly_budget_usd` (the plan's model-spend cap; the product's metadata works too).
+   Optional (mold_v0-342, flag `plan_upgrade`): the product's `metadata.seats`, how many people and pending invitations
+   the plan includes; Billing's Upgrade plan sends a raise of seats or of this month's limit to the customer portal.
 3. Configure the customer portal (plan switching between the the app prices, card updates, invoices, cancellation).
 4. Optional usage-based pricing: create a meter (sum, value in cents, customer mapping `stripe_customer_id`), set
    `STRIPE_SPEND_METER` to its event name. Each finished agent session reports its model cost once (deduplicated by
