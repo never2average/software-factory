@@ -356,13 +356,29 @@ export async function recentInvoices(customer: string) {
 
 // ---------- what the org may spend ----------
 
-export type BudgetSource = "override" | "plan" | "default";
+export type BudgetSource = "override" | "plan" | "default" | "month";
+
+/** mold_v0-342 (flag plan_upgrade): this month's limit a workspace's billing roles set, if any (src/month-upgrade.ts). */
+async function monthLimit(orgId: number): Promise<number | null> {
+  const { featureOn } = await import("./features.js");
+  if (!featureOn("plan_upgrade")) return null;
+  const { currentChange } = await import("./month-upgrade.js");
+  return (await currentChange(orgId))?.limit_usd ?? null;
+}
 
 /**
- * The org's monthly model-spend allowance (a hard cap): an admin-set allowance first (your own account, trials, comps),
+ * The org's monthly model-spend allowance (a hard cap): this month's own limit first (mold_v0-342, flag plan_upgrade:
+ * Billing's Upgrade plan, for the current month only), else an admin-set allowance (your own account, trials, comps),
  * else its live Stripe plan's monthly_budget_usd, else APP_ORG_MONTHLY_BUDGET_USD (default 0). 0 = no runs.
  */
 export async function orgBudget(orgId: number): Promise<{ budget: number; subscription: SubscriptionSummary | null; source: BudgetSource }> {
+  const base = await baseBudget(orgId);
+  const month = await monthLimit(orgId);
+  return month != null ? { ...base, budget: month, source: "month" } : base;
+}
+
+/** orgBudget without this month's own limit: what applies again when the month ends (src/month-upgrade.ts). */
+export async function baseBudget(orgId: number): Promise<{ budget: number; subscription: SubscriptionSummary | null; source: BudgetSource }> {
   const fallback = Number(ENV.APP_ORG_MONTHLY_BUDGET_USD ?? 0);
   const [o] = await (await getDb()).query<{ stripe_customer_id: string | null; budget_override_usd: string | number | null }>(
     "SELECT stripe_customer_id, budget_override_usd FROM organizations WHERE id = $1", [orgId]);
@@ -394,9 +410,14 @@ export async function orgBudgets(orgIds: number[]): Promise<Map<number, { budget
     try { subs = await subscriptionsByCustomer(); }
     catch (err) { console.error("stripe subscription lookup failed:", (err as Error).message); }
   }
+  // mold_v0-342: this month's own limit first (flag plan_upgrade).
+  const { featureOn } = await import("./features.js");
+  const months = featureOn("plan_upgrade") ? await (await import("./month-upgrade.js")).currentChanges(rows.map((o) => Number(o.id))).catch(() => new Map()) : new Map();
   for (const o of rows) {
     const sub = o.stripe_customer_id ? subs.get(o.stripe_customer_id) ?? null : null;
     const live = sub && ["active", "trialing"].includes(sub.status);
+    const month = months.get(Number(o.id))?.limit_usd ?? null;
+    if (month != null) { out.set(Number(o.id), { budget: month, plan: sub?.plan ?? null, source: "month" }); continue; }
     out.set(Number(o.id), o.budget_override_usd != null ? { budget: Number(o.budget_override_usd), plan: sub?.plan ?? null, source: "override" }
       : live && sub!.monthly_budget_usd != null ? { budget: sub!.monthly_budget_usd, plan: sub!.plan, source: "plan" }
       : { budget: fallback, plan: sub?.plan ?? null, source: "default" });

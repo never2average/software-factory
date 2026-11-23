@@ -359,6 +359,18 @@
       "since": "mold_v0-316",
       "about": "The workspace agent's blank screen and quick commands: a new chat opened from a console page (the top bar's agent button passes the page's tab, and on a record's page the record) shows a greeting and 4 to 6 example prompts, and the composer has a / button beside the paperclip (or / typed first) listing quick commands; choosing either fills the composer, with {tab}, {area}, {record_key} and {record_title} filled from that page, and nothing is sent on its own. The app's own come from pack.json agent_defaults (greeting, intro, examples, commands) and tabs[].agent (examples, commands; a tab's commands first, one per name); otherwise the shell's generic ones. The session keeps the page it was opened from.",
       "off": "No example prompts and no / button or menu: the agent page and its composer are as before; agent_defaults and tabs[].agent are accepted and shown nowhere; the generated files leave the flag out."
+    },
+    {
+      "id": "plan_upgrade",
+      "short": "upgrade",
+      "label": "Upgrade plan for this month",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it)",
+      "since": "mold_v0-342",
+      "about": "Billing's This month section gets an Upgrade plan button for a workspace's owners and billing managers: a dialog sets a seat count (how many people and pending invitations the workspace may have) and a spending limit for the current month only, kept as one change with its period (billing_month_changes) that ends by itself when the month does; then the plan's own seats (its payment-provider product's metadata seats, else none) and allowance apply again. The server checks the role, that the seats cover the people and invitations already there and the limit the month's spend so far, keeps each change in Budget rules' history and the staff log, refuses an invitation past the seats, and spends no money itself: with the payment provider on, a raise opens its billing page (nothing changes here until the plan does) and a workspace without a plan chooses one first; with it off (the ledger only), the change is applied and says no payment was taken. GET and POST /api/app/billing/upgrade.",
+      "off": "No button, dialog or route (they answer not found); no seat limit is applied to invitations; the allowance is the admin-set one, the plan's or the default, as before; the generated files leave the flag out."
     }
   ]
 }

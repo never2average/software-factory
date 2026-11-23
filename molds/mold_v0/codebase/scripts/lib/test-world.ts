@@ -60,9 +60,9 @@ export async function startHttp() {
   const mockPost = async (p: string, body: unknown) => (await fetch(`${mock.url}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
   /** A signed-in member of `org` (a Clerk organization linked to it on first use): a session token. */
   const linked = new Map<number, string>();
-  const signIn = async (org: Org, role: "member" | "viewer" | "owner" = "member") => (await signInAs(org, role)).token;
+  const signIn = async (org: Org, role: "member" | "viewer" | "owner" | "billing" = "member") => (await signInAs(org, role)).token;
   /** The same, with who signed in: the session token, the person's id and the workspace's directory id. */
-  const signInAs = async (org: Org, role: "member" | "viewer" | "owner" = "member") => {
+  const signInAs = async (org: Org, role: "member" | "viewer" | "owner" | "billing" = "member") => {
     let corg = linked.get(org.orgId);
     if (!corg) {
       corg = (await clerk("/v1/organizations", { name: org.name })).id as string;
@@ -70,7 +70,7 @@ export async function startHttp() {
       linked.set(org.orgId, corg);
     }
     const user = await mockPost("/_mock/clerk/users", { email: `${role}+${org.orgId}-${randomBytes(3).toString("hex")}@example.org` });
-    await mockPost("/_mock/clerk/memberships", { org_id: corg, user_id: user.id, role: role === "owner" ? "org:admin" : "org:member", ...(role === "viewer" ? { public_metadata: { [NS_KEYS.role]: "viewer" } } : {}) });
+    await mockPost("/_mock/clerk/memberships", { org_id: corg, user_id: user.id, role: role === "owner" ? "org:admin" : "org:member", ...(role === "viewer" || role === "billing" ? { public_metadata: { [NS_KEYS.role]: role } } : {}) });
     return { token: (await mockPost("/_mock/session", { user_id: user.id, org_id: corg })).token as string, userId: user.id as string, clerkOrg: corg };
   };
   const { createAdminToken } = await import("../../src/admin-tokens.js");

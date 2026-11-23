@@ -15,7 +15,8 @@ export type FeatureId =
   | "nested_runs"
   | "record_resources"
   | "workspace_storage"
-  | "agent_quick_commands";
+  | "agent_quick_commands"
+  | "plan_upgrade";
 
 export interface FeatureSpec {
   id: FeatureId;

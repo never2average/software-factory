@@ -5071,6 +5071,59 @@ the keys as before), `npm run test:console-types` (the fixture declares every ne
 `test:console-sidebar`, `test:record-pages`, `test:access-pages`, `test:agent-dock`, `test:words` and
 `test:vocabulary` unchanged.
 
+## Upgrade plan for this month (mold_v0-342)
+
+Billing's This month section (`web/src/features/portal/billing.tsx` ThisMonth: spend against the allowance, the bar with
+the month-end marker, the projection, the usage recorded, finished sessions and the day of the month) and what this month
+can use.
+
+- **Where This month sits (every build with a Spending tab).** When a pack's `console.billing` names `spending`
+  (mold_v0-340), This month is the Spending tab's first section and the spend analytics (the period, the Runs, Spend,
+  People active and Tool calls cards, per member, recent runs, technical details) follow below it; the other tabs
+  (People, Teams, Budget rules, Alerts, Access log) no longer show it above the strip. Without a Spending tab it stays
+  above the tabs, as before (the zero-pack and no-key Billing pages unchanged).
+- **Upgrade plan (flag `plan_upgrade`, board name `upgrade`; off by default, quiet while off, the profile alone turns it
+  on).** This month's header row gets a primary Upgrade plan button (beside Manage billing when the payment provider has
+  the workspace), shown to owners and billing managers only (`b.can_manage`; the server checks the role again, account
+  permission `billing`). It opens a dialog: a seat count and a spending limit for the current month only, the minimums
+  under each field, "What changes" (seats now → new, the limit now → new, the plan's price when it has one, and what
+  applies after the month's last day), how payment works here, Confirm and Cancel.
+- **Seats (new, generic).** The mold had no seats before. A seat is a person or a pending invitation of the workspace.
+  The seats that apply are this month's (from Upgrade plan), else the plan's (`seats` in its payment-provider product's
+  metadata, beside `monthly_budget_usd`), else none: no seat limit, as before. With the flag on, `POST
+  /api/app/team/invitations` is refused (409, code `seats_full`, in plain words naming Upgrade plan) once the people and
+  pending invitations fill the seats; staff's invitations are not counted.
+- **This month's limit.** `src/billing.ts` orgBudget (and staff's orgBudgets) puts this month's limit before the admin-set
+  allowance, the plan's and the default, with `budget_source: "month"`; This month shows "Set for this month only", and
+  Budget rules' Monthly allowance row says "this month only" and who set it. Everything that reads the allowance
+  (launch checks, Budget rules, the usage alerts) reads it.
+- **Month only.** One row per workspace per month (UTC) in `billing_month_changes` (0077; a shell-only table, src/rls.ts
+  NO_ACCESS), read only while `period_start <= now < period_end`: it is never a plan edit, nothing has to run at the
+  month's end, and from the next month the plan's seats and allowance apply again. Clearing both values removes it.
+- **Routes** (`src/month-upgrade.ts`; both answer not found while the flag is off). `GET /api/app/billing/upgrade`: the
+  dialog's view (`period`, `seats {now, plan, members, invitations}`, `limit {now_usd, plan_usd, spent_usd}`, `change`,
+  `payment` `ledger`|`provider`|`needs_plan`, `plan {name, amount, currency, interval}`, `max`). `POST` the same
+  `{seats?, limit_usd?}` (omitted keeps this month's, null clears it). Refused (400, with `field` and the minimum): seats
+  not a whole number from 1 to 10,000 or fewer than the people and pending invitations; a limit not from $0 to
+  $1,000,000 or below the month's spend so far; nothing to change. A viewer or plain member: 403.
+- **Payment: never a silent charge.** With the payment provider on (`STRIPE_SECRET_KEY`), a raise (more seats, a higher
+  limit) is a plan change there: the answer is `{status: "provider", url}`, the provider's billing page (the same
+  customer portal as Manage billing), and nothing is written; a workspace with no live plan is refused (409, code
+  `needs_plan`: choose a plan under This month first). A lowering applies (it costs nothing). With it off (the ledger
+  only) every change applies and its answer, its toast and its history line say that no payment was taken.
+- **Audit.** Each applied change takes Budget rules' lock and adds one line to its history (`usage_rule_changes`, shown on
+  Budget rules, e.g. "This month only (until 30 November): seats no limit → 5, limit $1000 → $250; no payment taken
+  (billing is off)") and one to the staff log (`billing.month_change`; a raise sent to the provider is
+  `billing.month_upgrade_provider`).
+
+Not changed: staff's account page still shows the base allowance (its summary is worked out without this month's limit);
+plans, checkout and the customer portal are as before. Proof: `npm run test:month-upgrade`
+(`scripts/month-upgrade-342-test.ts`, offline: off by default; a viewer and a plain member refused; every refusal; the
+ledger change applied, audited and enforced on invitations; month-only expiry; the provider path with no plan and with a
+live plan of 8 seats, never written or charged here; the page's layout and button), `npm run test:features` (31 flags),
+`test:console-types` (every flag on builds), with `test:console-tabs`, `test:console-sidebar`, `test:app-nav`,
+`test:usage`, `test:limits` and `test:run-charges` unchanged.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace

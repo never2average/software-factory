@@ -569,6 +569,10 @@ async function logChange(q: Queryable, orgId: number, actor: Actor | null, parts
     [orgId, actor?.label ?? null, actor?.user ?? null, parts.join("; "), before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after)]);
 }
 
+/** mold_v0-342: a change made elsewhere (src/month-upgrade.ts: this month's seats and limit) as one history line, under the rules lock. */
+export const recordRuleChange = (q: Queryable, orgId: number, actor: Actor | null, parts: string[], before: unknown, after: unknown) =>
+  logChange(q, orgId, actor, parts, before, after);
+
 /**
  * The account's rules lock, held to the end of the transaction. Every writer takes it first, before reading or
  * locking any row, so writers queue in one order (no deadlock) and each reads the rules the last one saved.
@@ -624,6 +628,8 @@ export async function ruleChanges(org: { orgId: number; slug: string }): Promise
       if (!same(was?.budget_usd, t.budget_usd) || !same(was?.max_concurrent_runs, t.max_concurrent_runs)) keys.push(`team:${t.id}`);
     }
     if (typeof a.user_id === "string") keys.push(`member:${a.user_id}`);
+    // mold_v0-342: this month's limit (Upgrade plan) changes the allowance's row.
+    if (a.month && typeof a.month === "object") keys.push("allowance");
     if (Array.isArray(a.members)) for (const m of a.members) if (typeof m?.user_id === "string") keys.push(`member:${m.user_id}`);
     for (const k of keys) out[k] ??= { by_name: byName(names, r.actor, r.actor_user), at: r.at };
   }

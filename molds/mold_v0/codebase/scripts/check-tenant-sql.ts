@@ -19,6 +19,8 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   "harness_session_tokens",
   // mold_v0-320 the sealed values a running attempt was given (src/connection-env.ts, their only writer and reader)
   "run_delivered_secrets",
+  // mold_v0-342 this month's seats and limit (src/month-upgrade.ts, their only writer and reader)
+  "billing_month_changes",
   // mold_v0-291 nested runs (src/nested-runs.ts, their only writer)
   "harness_children", "harness_evaluations", "harness_champions", "harness_gateway_holds",
   // mold_v0-047 record areas, mold_v0-041 runs, mold_v0-033 workspace store

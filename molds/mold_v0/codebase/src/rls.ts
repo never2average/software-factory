@@ -121,7 +121,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // A shared record's own databases and their sealed connection strings (mold_v0-282, 0061_record_resources): the shell's code only.
   "record_resources",
   // The sealed values a running attempt was given, for redaction on any instance (mold_v0-320, 0072_run_delivered_secrets): the shell's code only.
-  "run_delivered_secrets"];
+  "run_delivered_secrets",
+  // This month's seat count and limit a workspace's billing roles set (mold_v0-342, 0077_billing_month_changes): the shell's billing code only.
+  "billing_month_changes"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
