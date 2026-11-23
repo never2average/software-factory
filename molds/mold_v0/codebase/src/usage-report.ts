@@ -122,9 +122,9 @@ export async function workspaceRunUsage(orgId: number, start: Date, end: Date, u
   const db = await getDb();
   const by = users.length ? " AND r.requested_by = ANY($4)" : "";
   const p = users.length ? [orgId, start, end, users] : [orgId, start, end];
-  const rows = await db.query<{ id: string; pack: string; kind: string; status: string; requested_by: string | null; created_at: Date; ended_at: Date | null;
+  const rows = await db.query<{ id: string; pack: string; kind: string; status: string; requested_by: string | null; created_at: Date; ended_at: Date | null; record_area: string | null; record_key: string | null;
     tool_calls: number; requests: number; tokens: number; usd: number }>(
-    `SELECT r.id, r.pack, r.kind, r.status, r.requested_by, r.created_at, r.ended_at, ${RUN_TOOL_CALLS}::int AS tool_calls,
+    `SELECT r.id, r.pack, r.kind, r.status, r.requested_by, r.created_at, r.ended_at, r.record_area, r.record_key, ${RUN_TOOL_CALLS}::int AS tool_calls,
             ${RUN_GW("requests")}::int AS requests, ${RUN_GW("input_tokens + g.output_tokens")}::float AS tokens, ${RUN_USD}::float AS usd
        FROM runs r WHERE r.org_id = $1 AND r.created_at >= $2 AND r.created_at < $3${by} ORDER BY r.created_at DESC, r.id DESC LIMIT 5000`, p);
   const kinds = new Map<string, { pack: string; kind: string; runs: number; succeeded: number; failed: number; tool_calls: number; requests: number; cost_usd: number }>();
@@ -143,7 +143,7 @@ export async function workspaceRunUsage(orgId: number, start: Date, end: Date, u
     requests: rows.reduce((a, r) => a + n(r.requests), 0), tokens: rows.reduce((a, r) => a + n(r.tokens), 0),
     by_kind: [...kinds.values()].sort((a, b) => b.cost_usd - a.cost_usd || b.runs - a.runs),
     by_person: [...people.values()].sort((a, b) => b.cost_usd - a.cost_usd || b.runs - a.runs),
-    recent: rows.slice(0, 25).map((r) => ({ id: r.id, pack: r.pack, kind: r.kind, status: r.status, requested_by: r.requested_by,
+    recent: rows.slice(0, 25).map((r) => ({ id: r.id, pack: r.pack, kind: r.kind, status: r.status, requested_by: r.requested_by, record_area: r.record_area, record_key: r.record_key,
       created_at: new Date(r.created_at).toISOString(), ended_at: r.ended_at ? new Date(r.ended_at).toISOString() : null,
       tool_calls: n(r.tool_calls), requests: n(r.requests), tokens: n(r.tokens), cost_usd: r6(n(r.usd)) })),
   };

@@ -148,7 +148,7 @@ assert.equal(rr.runSeconds({ started_at: t0, ended_at: null, status: "failed" })
 assert.deepEqual([rr.duration(41), rr.duration(312), rr.duration(4020), rr.duration(null)], ["41s", "5m 12s", "1h 7m", ""]);
 assert.equal(rr.resultCounts({ pass: 3, fail: 1, unknown: 0 }), "1 fail, 3 pass");
 assert.deepEqual(["Applications", "Companies", "Boxes", "Status", "Address", "Control coverage"].map(rr.singular), ["Application", "Company", "Box", "Status", "Address", "Control coverage"]);
-assert.equal(rr.runKindLabel("p", "nightly"), "nightly", "a kind the build does not declare reads as its name");
+assert.deepEqual([rr.runKindLabel("p", "nightly"), rr.runKindLabel("p", "weekly_scan")], ["Nightly", "Weekly scan"], "a kind the build does not declare reads as its name in words (mold_v0-343), never the raw id");
 assert.equal(rr.targetLabel(), "Target", "no asset area in this build: Target");
 ok("a run's row: its states in order, its target, how long it took (so far while running), its results, the target column's name");
 

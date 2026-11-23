@@ -24,6 +24,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -245,15 +246,27 @@ try {
     F.setFeaturesForTest({ record_pages: true, agent_harness: true, nested_runs: false });
     assert.deepEqual((await page(own.token, "shop", "runs")).sections["3-0"], { hidden: true }, "without nested runs: no runs section");
     F.setFeaturesForTest({ record_pages: true, agent_harness: true, nested_runs: true });
-    // Billing's Spending (GET /api/usage): each wake's run named by its session's title, never the stored kind.
-    const u = await app(own.token, "GET", "/api/usage?days=7");
-    assert.equal(u.status, 200, JSON.stringify(u.body).slice(0, 300));
-    const recent = u.body.runs.recent as { kind: string; title: string | null }[];
-    if (recent.length) {
-      assert.ok(recent.every((x) => typeof x.title === "string" && x.title !== "session"), `Recent runs by title: ${JSON.stringify(recent.map((x) => x.title))}`);
-      assert.ok(recent.some((x) => x.title === "Build Shop" || /Shop|Ask about|Improve/.test(String(x.title))), "a session's own title");
+    // mold_v0-343: two runs that are no agent session's, of a kind this build does not declare ("build"): one started on
+    // a build record (its title), one on none (the kind in words, "Build"), never the raw id.
+    await ra.workspaceRecords(ID, W.orgId).put("nv_builds", "shop-b9", { title: "build 9 · 22 Nov", data: { app: "shop" } });
+    const rawRun = async (id: string, record: [string, string] | null) => db.query(
+      `INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, record_area, record_key) VALUES ($1, $2, $3, 'build', '{}', 1, 60, 60, 1, $4, $5)`,
+      [id, W.orgId, ID, record?.[0] ?? null, record?.[1] ?? null]);
+    await rawRun(`run_nv343rec${STAMP}`, ["nv_builds", "shop-b9"]);
+    await rawRun(`run_nv343none${STAMP}`, null);
+    // Billing's Spending (GET /api/usage) and Usage (GET /api/app/usage): each run by its own title, never a raw kind id.
+    for (const [where, get] of [["Spending", "/api/usage?days=7"], ["Usage", "/api/app/usage?days=7"]] as const) {
+      const u = await app(own.token, "GET", get);
+      assert.equal(u.status, 200, JSON.stringify(u.body).slice(0, 300));
+      const recent = (where === "Spending" ? u.body.runs.recent : u.body.run_usage.recent) as { id: string; kind: string; title: string | null }[];
+      const titles = JSON.stringify(recent.map((x) => [x.kind, x.title]));
+      assert.ok(recent.length >= 2, `${where}: Recent runs listed: ${titles}`);
+      assert.ok(recent.every((x) => typeof x.title === "string" && x.title.trim() !== "" && x.title !== x.kind), `${where}: no Recent runs title is a raw kind id: ${titles}`);
+      assert.ok(recent.some((x) => x.kind === "session" && /Shop|Ask about|Improve|Agent session/.test(String(x.title))), `${where}: a wake by its session's title: ${titles}`);
+      assert.equal(recent.find((x) => x.id.startsWith("run_nv343rec"))?.title, "build 9 · 22 Nov", `${where}: a run on a record by its record's title`);
+      assert.equal(recent.find((x) => x.id.startsWith("run_nv343none"))?.title, "Build", `${where}: else its kind in words, capitalised`);
     }
-    ok("a record's sessions: those started from the app, its build and its problem, never another app's; the runs among them only once a session hands work on, active then finished, the app's own; none without nested runs");
+    ok("a record's sessions: those started from the app, its build and its problem, never another app's; the runs among them only once a session hands work on, active then finished, the app's own; none without nested runs; Recent runs (Spending, Usage) each by its own title: a session's, a record's, else its kind in words, never a raw kind id");
   }
 
   // ---------- 4. a record's charts ----------
@@ -396,7 +409,10 @@ try {
     assert.match(table, /<RunStatusBadge status=\{runStatusOf\(x\.status\)\} \/>/, "its status in the one status vocabulary, as a badge");
     assert.doesNotMatch(table, /<TableCell>\{x\.status\}<\/TableCell>/, "never the stored status word");
     const route = readFileSync(path.join(ROOT, "src", "usage-routes.ts"), "utf8");
-    assert.match(route, /title: titles\.get\(x\.id\) \?\? \(x\.pack === AGENT_PACK \? "Agent session" : null\)/, "an agent session's run: its session's title, else Agent session");
+    assert.match(route, /runTitles\(s\.org, report\.runs\.recent,/, "Recent runs on Spending: each run's own title (src/run-analytics.ts runTitles)");
+    const rr = await import(pathToFileURL(path.join(ROOT, "web", "src", "features", "tabs", "run-rows.ts")).href);
+    assert.deepEqual([rr.runKindLabel("p", "build"), rr.runKindLabel("p", "weekly_scan"), rr.runKindLabel("_agent", "session")], ["Build", "Weekly scan", "Agent session"],
+      "a kind the build does not declare: its id in words, capitalised, never the raw id (mold_v0-343)");
     ok("the console's drawing: the record's tab strip wraps (no scroller, no tab clipped, no label broken); sessions and runs in a record panel as compact rows (title on one line with an ellipsis and the whole on hover, state and spend, then who and when), the table layout once expanded; Recent runs by title and status words");
   }
 
