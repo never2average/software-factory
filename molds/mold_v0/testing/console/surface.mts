@@ -36,8 +36,23 @@ function legalShown(lane: string, route: string): boolean {
   return Boolean(legal && !legal[own]);
 }
 
+/**
+ * mold_v0-297: the console's own list of the pages it serves (scripts/gen-packs.mjs writes it; web/src/proxy.ts answers
+ * anything missing from it as not found). A page whose feature is off for this app (run_analytics, a repository area,
+ * the agent ...) keeps its page.tsx but is deliberately not served, so it is not one of this app's pages to grade, as
+ * legalShown does for Terms and Privacy. A served page is graded exactly as before. Null (an older copy without the
+ * file): every page.tsx, as before.
+ */
+function servedRoutes(lane: string): Set<string> | null {
+  const f = path.join(lane, "web", "src", "config", "console-routes.generated.json");
+  if (!existsSync(f)) return null;
+  const routes = (JSON.parse(readFileSync(f, "utf8")) as { routes?: unknown }).routes;
+  return Array.isArray(routes) ? new Set(routes.filter((r): r is string => typeof r === "string")) : null;
+}
+
 function shellPages(lane: string): Page[] {
   const root = path.join(lane, "web", "src", "app");
+  const served = servedRoutes(lane);
   const out: Page[] = [];
   const walk = (dir: string, segs: string[]) => {
     for (const e of readdirSync(dir).sort()) {
@@ -49,6 +64,7 @@ function shellPages(lane: string): Page[] {
         if (route === "/auth" || route.startsWith("/auth/")) continue;  // Clerk's own widget: not rendered in the lane console
         if (route.startsWith("/console-status/")) continue;             // always a 404: graded as a status page below (mold_v0-131)
         if (!legalShown(lane, route)) continue;                          // a legal page the build does not serve itself (mold_v0-109)
+        if (served && !served.has(route)) continue;                     // a page this app's build switches off (mold_v0-297)
         if (route === "/app/journeys" || route === "/admin/journeys") continue; // the journeys and tips components' (below), only where on
         const signedIn = route === "/app" || route.startsWith("/app/") || route === "/admin" || route.startsWith("/admin/");
         out.push({ pack: "shell", path: route, label: route, signed_in: signedIn });
