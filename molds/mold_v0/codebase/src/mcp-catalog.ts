@@ -11,9 +11,11 @@
  *                                       through them and its next step, listed first (clients list tools in order)
  *   list_<area>, get_<area>             every record area (reads; the area's `read` roles)
  *   export_<area>                       every record area (mold_v0-108): its records as CSV, every field a column under
- *                                       its label, as the console's Export CSV writes them (src/record-export.ts)
+ *                                       its label, as the console's Export CSV writes them (src/record-export.ts);
+ *                                       none for an area whose contract's export is {none} (mold_v0-298)
  *   reveal_<area>                       a workspace area with encrypted fields (mold_v0-194): their values, for the
- *                                       roles allowed to reveal them, each reveal in the data trail
+ *                                       roles allowed to reveal them, each reveal in the data trail; none for an area
+ *                                       whose contract's reveal is {none} (mold_v0-298)
  *   read_<area>_files                   an area with a file field or a document-previewing URL field (mold_v0-303):
  *                                       a record's files, or one file's contents (src/record-files.ts agentRecordFiles),
  *                                       while the document_preview flag is on (Reserved.documents)
@@ -293,19 +295,23 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
         title: `${label}: get one`,
         description: `One record of ${label} (${whose}) by its key, with every field and the records its links name.`,
         input: { key: recordKey(`The ${label} record's key`) }, annotations: READ });
-      add({ generated: n("export", a.name), op: "export", door: "workspace", area: a.name, action: "read", admin_needs: "read",
-        title: `${label}: export as CSV`,
-        description: `Export the records of ${label} (${whose}) as CSV text: a header row, then one row per record with its key, title, every field under its label and when it last changed; ` +
-          `filter and sort as ${n("list", a.name)} does. At most ${EXPORT_TEXT} at once: when more remain, next is set; pass it as after for the rest. Give the user the csv as a file.`,
-        input: {
-          filter: z.record(z.string(), z.unknown()).optional().describe(`As ${n("list", a.name)}: {field: value} or {field: {op: value}}, every condition ANDed`),
-          sort: z.enum(sortable.flatMap((s) => [s, `-${s}`]) as [string, ...string[]]).optional().describe("The order: a field, key, title or updated_at; - first for descending (default key)"),
-          after: z.string().min(1).max(2000).optional().describe("The next value of the previous export"),
-        },
-        annotations: READ });
+      // mold_v0-298: an action the area's contract grants nobody ({none}: not even an account key, src/record-areas.ts
+      // mayExport, mayReveal) has no tool at all, so what a pack declares is what its callers are offered.
+      const granted = (action: "export" | "reveal") => { const g = a.contract?.actions[action]; return !(g && typeof g === "object" && !Array.isArray(g) && "none" in g); };
+      if (granted("export"))
+        add({ generated: n("export", a.name), op: "export", door: "workspace", area: a.name, action: "read", admin_needs: "read",
+          title: `${label}: export as CSV`,
+          description: `Export the records of ${label} (${whose}) as CSV text: a header row, then one row per record with its key, title, every field under its label and when it last changed; ` +
+            `filter and sort as ${n("list", a.name)} does. At most ${EXPORT_TEXT} at once: when more remain, next is set; pass it as after for the rest. Give the user the csv as a file.`,
+          input: {
+            filter: z.record(z.string(), z.unknown()).optional().describe(`As ${n("list", a.name)}: {field: value} or {field: {op: value}}, every condition ANDed`),
+            sort: z.enum(sortable.flatMap((s) => [s, `-${s}`]) as [string, ...string[]]).optional().describe("The order: a field, key, title or updated_at; - first for descending (default key)"),
+            after: z.string().min(1).max(2000).optional().describe("The next value of the previous export"),
+          },
+          annotations: READ });
       // mold_v0-194: an area with encrypted fields (never shown on a read) can reveal them, to the roles allowed.
       const encrypted = a.fields.filter((f) => f.encrypted);
-      if (!shared && encrypted.length)
+      if (!shared && encrypted.length && granted("reveal"))
         add({ generated: n("reveal", a.name), op: "reveal", door: "workspace", area: a.name, action: "read", admin_needs: "read",
           title: `${label}: reveal encrypted fields`,
           description: `The values of the encrypted fields of one ${label} record (${encrypted.map((f) => `${f.name} (${plain(f.label, 40)})`).join(", ")}): every other read shows them as ${JSON.stringify("[encrypted]")}. ` +

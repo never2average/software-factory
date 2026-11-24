@@ -143,7 +143,13 @@ try {
       assert.equal((await call("GET", "/api/records/rt_secrets?audit=export", owner)).status, 403);
       await assert.rejects(withTenant(A.orgId, () => exportArea({ orgId: A.orgId, role: null, userId: null }, "rt_secrets")), /Secrets records are not exported \(secrets never leave as a file\)/);
       assert.equal((await call("GET", "/api/records/rt_secrets", owner)).status, 200, "and still reads it");
-      ok("export: its own permission (a member reads but may not export what the contract keeps to owners: the pages, the tool and its offer); no contract exports as it reads; {none} exports to nobody");
+      // mold_v0-298: an action nobody is granted has no tool: export_<area> and reveal_<area> are not generated for
+      // {none}, so a pack's declared tools are the ones an owner (or an account key) is offered.
+      const ops = (area: string) => mt.generatedTools().filter((t) => t.area === area).map((t) => t.op);
+      assert.ok(!ops("rt_secrets").includes("export") && ops("rt_secrets").includes("reveal"), "{none} export: no export_<area>, reveal still generated");
+      assert.ok(ops("rt_closed").includes("export") && !ops("rt_closed").includes("reveal"), "{none} reveal: no reveal_<area>, export still generated");
+      assert.ok(ops("rt_plain").includes("export"), "no contract: export_<area> as before");
+      ok("export: its own permission (a member reads but may not export what the contract keeps to owners: the pages, the tool and its offer); no contract exports as it reads; {none} exports to nobody and has no export tool");
     }
 
     // ---------- 3. reveal (mold_v0-235) ----------
