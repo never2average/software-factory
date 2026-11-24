@@ -460,7 +460,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `importWorkspaceRecords`; the console's Import, its own button next to Export in a list's search row, its form a full
   card in the list's place, `?import=1`, with the preview and what it wrote: `web/src/features/records/workspace-import.tsx`);
   `export` is its own permission within read's (the list routes' `?audit=export`, `export_<area>`, Export CSV shown only
-  to those roles); `reveal` is the area's, a field's `reveal_roles` narrowing it, `{none}` revealing nothing. Every
+  to those roles); `reveal` is the area's, a field's `reveal_roles` narrowing it, `{none}` revealing nothing. An
+  export or reveal of `{none}` generates no `export_<area>` or `reveal_<area>` tool at all (mold_v0-298: the pack
+  declares only what an owner or an account key is offered; the connection areas' keys never leave). Every
   workspace row records who or what wrote it (`sql/migrations/0042_workspace_record_provenance.sql`: `provenance` one of
   staff, people, repository, intake, run; `written_by`, `updated_by`), set by each door with `asWriter`; a record's
   detail carries it and `GET /api/admin/records/_provenance` counts each area's rows by provenance across workspaces,
@@ -1624,7 +1626,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   named `<prefix>_<verb>_<thing>` (the prefix its id unless `mcp.prefix` says otherwise) and in the pack's words (a pack's
   `words.run` "review" gives `review_status`, `list_reviews`, `get_review_results`, `cancel_review`; `words.workspace` is
   the descriptions' word): `list_<area>` (filter, sort, limit, after), `get_<area>` and `export_<area>` (mold_v0-108,
-  below) for every area; `create_<area>`
+  below) for every area (no `export_<area>` where its contract's export is `{none}`, nor `reveal_<area>` where its
+  reveal is: an action nobody may take has no tool, mold_v0-298); `create_<area>`
   and `update_<area>` for a workspace area whose rows are not read from files or an API, `move_<area>` with a
   lifecycle (its states and transitions in the description); `get_metrics` when the pack declares metrics (063's
   computation); `start_<kind>` per job kind with its `args` typed from the declaration (and `target_asset` when the
