@@ -80,10 +80,14 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
     (cfg.client_sessions.scopes ?? []).some((x) => x === "checks" || x.startsWith("checks:"))
       ? "A session holding `checks` (or `checks:<name>`, one question) asks the app's yes/no questions from the page itself (`POST /v1/checks/<name>`), never more than the key that minted it holds."
       : "",
-    "A page calls the API from the origins allowed for your workspace: these for every workspace, and those your owners add (`/v1/allowed_origins`). A request from any other origin, or a key sent from a browser, is refused.",
+    cfg.client_sessions.allowed_origins.length
+      ? "A page calls the API from the origins allowed for your workspace: these for every workspace, and those your owners add (`/v1/allowed_origins`). A request from any other origin, or a key sent from a browser, is refused."
+      : "A page calls the API only from the origins your owners allow (`/v1/allowed_origins`). A request from any other origin, or a key sent from a browser, is refused.",
     cfg.client_sessions.allowed_origins.map((o) => `- ${o}`).join("\n"),
   ].filter(Boolean).join("\n\n")));
 
+  // mold_v0-347: no events declared, no webhooks out (and no page about them).
+  if (cfg.events.length) {
   const ev = cfg.events.map((e) => `- ${code(e.name)}: ${e.description}${e.areas?.length ? ` (areas ${e.areas.map(code).join(", ")})` : ""}`).join("\n");
   out.push(page("Webhooks", [
     "Add an endpoint (`POST /v1/webhook_endpoints` with its `url` and the `events` it takes, or all of them) and your server receives each event as a signed POST, following the Standard Webhooks specification. The answer holds the endpoint's signing secret (`whsec_...`) once; reading it again is recorded, and you can rotate it (the old secret keeps signing beside the new one for a day).",
@@ -96,6 +100,7 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
     "## Retries",
     "Answer with a 2xx within 15 seconds. Anything else is retried with backoff (after 5 seconds, 5 minutes, 30 minutes, 2, 5, 10 and 10 hours). Every attempt is in the endpoint's delivery log (`GET /v1/webhook_endpoints/<id>/deliveries`), and a delivery can be sent again. An endpoint that keeps failing is disabled; enable it again when it is fixed.",
   ].join("\n\n")));
+  }
 
   if (cfg.webhooks_in?.length) {
     out.push(page("Webhooks in", [
@@ -108,7 +113,7 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
   }
 
   const langs = cfg.sdk_languages;
-  out.push(page("SDKs", [
+  if (langs.length) out.push(page("SDKs", [
     `Typed SDKs are generated from the API's description for ${langs.map((l) => (l === "typescript" ? "JavaScript and TypeScript" : "Python")).join(" and ")}. Each sends your key, retries a write safely with its idempotency key, and turns errors into exceptions carrying the problem's \`code\`.`,
     langs.includes("typescript") && first ? fence("ts", `import { Client } from './sdk';\nconst api = new Client({ baseUrl: process.env.API!, token: process.env.KEY! });\nconst page = await api.records.${first.name}.list({ limit: 10 });`) : "",
     langs.includes("python") && first ? fence("python", `from sdk import Client\napi = Client(base_url=API, token=KEY)\npage = api.records.${first.name}.list(limit=10)`) : "",

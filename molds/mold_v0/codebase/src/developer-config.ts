@@ -13,6 +13,11 @@
  *                   build's workspace record areas, its key, title and fields read by JSON Pointer
  *   api_version     (optional) the version a key made today is pinned to; one of API_VERSIONS (default the latest)
  *
+ * mold_v0-347: events, sdk_languages and client_sessions are each optional (developerSurfaceDefaults fills them): a
+ * surface may be its receivers alone. With no event there are no webhooks out (hasWebhooksOut): no Settings tab, no
+ * endpoint routes, nothing in the API's description; with no client_sessions a session holds read only, from the
+ * origins a workspace adds itself.
+ *
  * No imports: scripts/gen-packs.mjs loads this file directly (node's type stripping) to check a declaration against the
  * build's areas, and src/developer-docs.ts (the guide's pages) reads the same catalog.
  */
@@ -96,6 +101,15 @@ export interface DeveloperSurfaceConfig {
   webhooks_in?: InboundReceiver[];
   api_version?: string;
 }
+
+/** What a declaration leaves out, filled in (mold_v0-347): no events, no SDK, client sessions of read only and an hour. */
+export const SESSIONS_WHEN_UNDECLARED = { ttl_seconds: 3600, allowed_origins: [] as string[], scopes: ["read"] };
+export function developerSurfaceDefaults<T extends Partial<DeveloperSurfaceConfig>>(c: T): T & DeveloperSurfaceConfig {
+  const cs = c.client_sessions ? { ...c.client_sessions, ttl_seconds: c.client_sessions.ttl_seconds ?? 3600 } : { ...SESSIONS_WHEN_UNDECLARED, scopes: [...SESSIONS_WHEN_UNDECLARED.scopes] };
+  return { ...c, events: c.events ?? [], sdk_languages: c.sdk_languages ?? [], client_sessions: cs } as T & DeveloperSurfaceConfig;
+}
+/** Whether the build has webhooks out (mold_v0-347): only when it declares an event to send. */
+export const hasWebhooksOut = (c: Pick<DeveloperSurfaceConfig, "events"> | null | undefined) => !!c?.events?.length;
 
 const ORIGIN = /^https:\/\/[a-z0-9.-]+(:[0-9]{2,5})?$/;
 const POINTER = /^(\/([^~/]|~[01])*)*$/;

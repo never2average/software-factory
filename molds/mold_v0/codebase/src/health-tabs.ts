@@ -23,6 +23,7 @@ import { clockAreas } from "./record-clocks.js";
 import { intakeWired } from "./email-intake.js";
 import { companyEmailWired } from "./company-email.js";
 import { developerSurface } from "./developer-surface.js";
+import { hasWebhooksOut } from "./developer-config.js";
 import { signOn } from "./ledger.js";
 import { encryptedAreas } from "./encrypted-fields-migration.js";
 import { auditSettings } from "./audit-trail.js";
@@ -215,8 +216,8 @@ export async function healthScheduled() {
 
 /** Email Delivery is a tab when the app sends mail of a workspace's own, or has a developer surface (its people's mail). */
 export const deliveriesOn = () => companyEmailWired() || !!developerSurface();
-/** Webhook Delivery (mold_v0-215) is a tab when the app has a developer surface: its declared events go out as webhooks. */
-export const webhooksOn = () => !!developerSurface();
+/** Webhook Delivery (mold_v0-215) is a tab when the app has a developer surface whose declared events go out as webhooks (mold_v0-347: one with none sends none). */
+export const webhooksOn = () => hasWebhooksOut(developerSurface());
 
 /** Email sends by kind and status, and by day: counts, never an address, a domain or a subject. */
 export async function healthDeliveries(q: Record<string, unknown>) {

@@ -196,7 +196,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     // The developer surface of an embedded app (mold_v0-193): where its events go, and what may write in.
     const dev = developerSurface();
     if (dev) {
-      rows.push({ item: "Webhooks out", detail: `this server POSTs the events ${list(dev.events.map((e) => e.name))} of a workspace, signed (Standard Webhooks), to the https addresses that workspace's owners add, never to a private address; a sealed area's events carry its record keys only` });
+      if (dev.events.length) rows.push({ item: "Webhooks out", detail: `this server POSTs the events ${list(dev.events.map((e) => e.name))} of a workspace, signed (Standard Webhooks), to the https addresses that workspace's owners add, never to a private address; a sealed area's events carry its record keys only` });
       if (dev.webhooks_in?.length) rows.push({ item: "Webhooks in", detail: `senders a workspace sets up post signed payloads that are written into its own ${list([...new Set(dev.webhooks_in.map((r) => r.area))])} records` });
     }
     if (!rows.length) rows.push({ item: "Runs", detail: "this build declares no job kind and no outside repository" });

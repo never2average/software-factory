@@ -18,7 +18,7 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { accountRefusal, canAccount, type AccountPermission } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
 import { auditPlatform } from "./developer-audit.js";
-import { API_VERSIONS, BASE_SCOPES, SDK_LANGUAGES } from "./developer-config.js";
+import { API_VERSIONS, BASE_SCOPES, SDK_LANGUAGES, hasWebhooksOut } from "./developer-config.js";
 import { createDeveloperKey, listDeveloperKeys, revokeDeveloperKey, rotateDeveloperKey } from "./developer-keys.js";
 import { addOrigin, listOrigins, removeOrigin } from "./developer-sessions.js";
 import { ApiProblem, currentApiVersion, developerSurface } from "./developer-surface.js";
@@ -60,7 +60,10 @@ export function developerAppRouter(): Router {
   r.get("/", answer("read", async () => ({
     openapi: "/openapi.json", api_versions: API_VERSIONS, api_version: currentApiVersion(), scopes: BASE_SCOPES, sdk_languages: cfg.sdk_languages.filter((l) => (SDK_LANGUAGES as readonly string[]).includes(l)),
     events: hooks.eventCatalog(), client_sessions: { ttl_seconds: cfg.client_sessions.ttl_seconds, scopes: cfg.client_sessions.scopes ?? ["read", "write"], allowed_origins: cfg.client_sessions.allowed_origins },
-    receivers: (cfg.webhooks_in ?? []).map((x) => ({ name: x.name, description: x.description ?? null, area: x.area })),
+    // mold_v0-347: `secret` says which secret verifies a sender (never its name or value): "app", one the app's operators
+    // set on its hosting (a log drain's secret_env, when set), else "own", the source's own (shown once when it is made).
+    receivers: (cfg.webhooks_in ?? []).map((x) => ({ name: x.name, description: x.description ?? null, area: x.area,
+      secret: x.log_drain?.secret_env && process.env[x.log_drain.secret_env] ? "app" as const : "own" as const })),
   })));
 
   r.get("/keys", answer("read", async (_q, res) => ({ data: await listDeveloperKeys(S(res).org) })));
@@ -87,16 +90,19 @@ export function developerAppRouter(): Router {
     return { data: await listOrigins(S(res).org) };
   }));
 
-  r.get("/webhooks", answer("read", async (_q, res) => ({ data: await hooks.listEndpoints(S(res).org) })));
-  r.post("/webhooks", answer("manage", async (req, res) => ({ data: await hooks.createEndpoint(S(res).org, body(req), who(res)) }), 201));
-  r.patch("/webhooks/:id", answer("manage", async (req, res) => ({ data: await hooks.updateEndpoint(S(res).org, String(req.params.id), body(req)) })));
-  r.delete("/webhooks/:id", answer("manage", async (req, res) => {
-    if (!(await hooks.deleteEndpoint(S(res).org, String(req.params.id)))) throw new ApiProblem(404, "not_found", "No such webhook endpoint");
-  }));
-  r.post("/webhooks/:id/rotate", answer("manage", async (req, res) => ({ data: await hooks.rotateEndpointSecret(S(res).org, String(req.params.id), body(req), who(res)) })));
-  r.post("/webhooks/:id/reveal", answer("manage", async (req, res) => ({ data: await hooks.revealWebhookSecret(S(res).org, String(req.params.id), who(res)) })));
-  r.post("/webhooks/:id/test", answer("manage", async (req, res) => ({ data: await hooks.testEndpoint(S(res).org, String(req.params.id)) })));
-  r.get("/webhooks/:id/deliveries", answer("read", async (req, res) => hooks.listDeliveries(S(res).org, String(req.params.id), req.query as Record<string, unknown>)));
+  // mold_v0-347: webhooks out only when the build declares an event (else these answer 404, as any unknown route).
+  if (hasWebhooksOut(cfg)) {
+    r.get("/webhooks", answer("read", async (_q, res) => ({ data: await hooks.listEndpoints(S(res).org) })));
+    r.post("/webhooks", answer("manage", async (req, res) => ({ data: await hooks.createEndpoint(S(res).org, body(req), who(res)) }), 201));
+    r.patch("/webhooks/:id", answer("manage", async (req, res) => ({ data: await hooks.updateEndpoint(S(res).org, String(req.params.id), body(req)) })));
+    r.delete("/webhooks/:id", answer("manage", async (req, res) => {
+      if (!(await hooks.deleteEndpoint(S(res).org, String(req.params.id)))) throw new ApiProblem(404, "not_found", "No such webhook endpoint");
+    }));
+    r.post("/webhooks/:id/rotate", answer("manage", async (req, res) => ({ data: await hooks.rotateEndpointSecret(S(res).org, String(req.params.id), body(req), who(res)) })));
+    r.post("/webhooks/:id/reveal", answer("manage", async (req, res) => ({ data: await hooks.revealWebhookSecret(S(res).org, String(req.params.id), who(res)) })));
+    r.post("/webhooks/:id/test", answer("manage", async (req, res) => ({ data: await hooks.testEndpoint(S(res).org, String(req.params.id)) })));
+    r.get("/webhooks/:id/deliveries", answer("read", async (req, res) => hooks.listDeliveries(S(res).org, String(req.params.id), req.query as Record<string, unknown>)));
+  }
 
   if (cfg.webhooks_in?.length) {
     r.get("/sources", answer("read", async (_q, res) => ({ data: await listSources(S(res).org) })));

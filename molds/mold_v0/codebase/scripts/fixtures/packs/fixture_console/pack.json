@@ -2293,7 +2293,14 @@
             "hints": {
               "endpoint": "The bucket's address."
             },
-            "$comment": "Every service."
+            "$comment": "Every service.",
+            "receiver": {
+              "name": "mx_events",
+              "label": "Entries",
+              "how": "At the service: Settings, Webhooks, paste this address.",
+              "feeds": "Feeds the log.",
+              "$comment": "Set up in the service's panel."
+            }
           }
         },
         "others": true,
@@ -2455,7 +2462,19 @@
       "scopes": [
         "read"
       ]
-    }
+    },
+    "webhooks_in": [
+      {
+        "name": "mx_events",
+        "description": "Entries a connected service sends.",
+        "area": "mx_log",
+        "key": "/id",
+        "title": "/title",
+        "fields": {
+          "entry": "/entry"
+        }
+      }
+    ]
   },
   "console": {
     "$comment": "mold_v0-340: Billing's tabs and the sidebar's foot.",

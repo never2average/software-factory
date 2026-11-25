@@ -15,7 +15,7 @@ export const STAFF_GUIDE_SLUG = 'staff-guide';
 /** The session engine's build keeps its Health words; without it Health has more tabs (mold_v0-204, features/admin/health-tabs.tsx). */
 const ENGINE = ['products', 'scenarios', 'simulations', 'agent_sessions'].every((t) => HOST_TABLES.includes(t));
 const DELIVERIES = settingsPage.email || developerConsole.on;
-const WEBHOOKS = developerConsole.on;
+const WEBHOOKS = developerConsole.on && (developerConsole as { webhooks_out?: boolean }).webhooks_out !== false;
 
 const titleCase = (s: string) => s.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
 /**

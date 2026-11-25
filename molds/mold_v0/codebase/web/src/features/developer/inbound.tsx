@@ -14,12 +14,17 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Allowed, useAccountRole } from '@/features/portal/role';
 import { CopyButton, ErrorState, FormRow, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { developerConsole } from '@/config/pack-nav.generated';
 import { dev, type Offer, type Source, type SourceDelivery } from './api';
 import { OnceDialog, type Once } from './once';
 
 const address = (s: Pick<Source, 'path'>) => (typeof window === 'undefined' ? s.path : `${window.location.origin}${s.path}`);
 
-export function InboundTab({ offer }: { offer: Offer }) {
+// mold_v0-347: a receiver a connect tab's service sets up in its own panel is not offered here.
+const LINKED = new Set((developerConsole as { linked?: string[] }).linked ?? []);
+
+export function InboundTab({ offer: all }: { offer: Offer }) {
+  const offer = useMemo(() => ({ ...all, receivers: all.receivers.filter((r) => !LINKED.has(r.name)) }), [all]);
   const { data, error, reload } = useOrgLoad(() => dev<{ data: Source[] }>('GET', '/sources'));
   const { lock } = useAccountRole();
   const [adding, setAdding] = useState(false);
@@ -38,7 +43,7 @@ export function InboundTab({ offer }: { offer: Offer }) {
   return (
     <>
       <RecordView<Source>
-        id='app-developer-sources' compact noun='sources' properties rows={data?.data ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
+        id='app-developer-sources' compact noun='sources' properties rows={(data?.data ?? []).filter((s) => !LINKED.has(s.receiver))} rowKey={(s) => s.id} cols={cols} loading={!data}
         searchText={(s) => `${s.description ?? ''} ${s.receiver} ${s.id}`} searchPlaceholder='Search sources'
         primary={<Allowed need='manage'><Button size='sm' onClick={() => setAdding(true)} data-add-source=''>Add source</Button></Allowed>}
         actions={(s) => [lock({ label: 'Delete', destructive: true, onSelect: () => void remove(s) }, 'manage')]}
