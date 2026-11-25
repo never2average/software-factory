@@ -611,7 +611,7 @@ export const PackJsonSchema = z.object({
      */
     billing: z.object({
       $comment: z.string().max(2000).optional(),
-      tabs: z.array(z.union([z.enum(BILLING_TABS), z.object({ id: z.enum(BILLING_TABS), label: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/).optional(), settings_teams: z.literal(true).optional() }).strict()]))
+      tabs: z.array(z.union([z.enum(BILLING_TABS), z.object({ id: z.enum(BILLING_TABS), label: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/).optional(), settings_teams: z.literal(true).optional(), with_alerts: z.literal(true).optional() }).strict()]))
         .min(1).max(BILLING_TABS.length),
     }).strict().optional(),
     /** mold_v0-340: the foot of the /app sidebar, under no heading: the pack's tabs with no group (by id) and "settings", in order. */
