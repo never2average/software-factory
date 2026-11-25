@@ -23535,6 +23535,10 @@
                           "settings_teams": {
                             "type": "boolean",
                             "const": true
+                          },
+                          "with_alerts": {
+                            "type": "boolean",
+                            "const": true
                           }
                         },
                         "required": [
