@@ -122,8 +122,9 @@ const TAB_LABELS: Record<string, string> = { spending: 'Spending', people: 'Peop
  * mold_v0-340: the tabs in their order: those a pack's console.billing names (Spending and Alerts only then), then the
  * shell's others in their own order; each with its label.
  */
-export function billingOrder(declared = billingTabs): { id: string; label: string; settings_teams?: boolean }[] {
-  const named = (declared ?? []).map((t) => ({ id: t.id, label: t.label ?? TAB_LABELS[t.id]!, ...(t.settings_teams ? { settings_teams: true } : {}) }));
+export function billingOrder(declared = billingTabs): { id: string; label: string; settings_teams?: boolean; with_alerts?: boolean }[] {
+  const named = (declared ?? []).map((t) => ({ id: t.id, label: t.label ?? TAB_LABELS[t.id]!, ...(t.settings_teams ? { settings_teams: true } : {}),
+    ...(t.with_alerts ? { with_alerts: true } : {}) }));
   const rest = ['people', 'teams', 'rules', 'access-log'].filter((id) => !named.some((t) => t.id === id)).map((id) => ({ id, label: TAB_LABELS[id]! }));
   return [...named, ...rest];
 }
@@ -146,7 +147,9 @@ export function BillingPage() {
   // (The tabs only render once billing has loaded, in the browser, so reading the URL here can't mismatch the server's HTML.)
   // ?tab=access-log opens the Access log (owners, where the profile turns audit.data on).
   const order = billingOrder();
-  const [tab, setTabState] = useState(() => { const v = urlParam('tab'); return v && BILLING_TABS.includes(v) && order.some((t) => t.id === v) ? v : order[0]!.id; });
+  // mold_v0-346: with the alerts below the budget rules, an old ?tab=alerts link opens Budget rules.
+  const alertsInRules = order.some((t) => t.id === 'rules' && t.with_alerts);
+  const [tab, setTabState] = useState(() => { const asked = urlParam('tab'); const v = asked === 'alerts' && alertsInRules ? 'rules' : asked; return v && BILLING_TABS.includes(v) && order.some((t) => t.id === v) ? v : order[0]!.id; });
   const { role, loaded: roleLoaded } = useAccountRole();
   const logTab = dataTrailOn() && role === 'owner';
   // mold_v0-298: people are managed in one place. With the Team page inside Settings, a viewer who can open that tab has
@@ -204,7 +207,11 @@ export function BillingPage() {
                 </div>
               ) : l ? <Teams l={l} reload={reload} people={peopleHere ? label('people') : elsewhere && seesElsewhere ? `Settings › ${elsewhere.label}` : null} /> : <LoadingCards count={1} />}
             </TabsContent>
-            {l?.can_manage && <TabsContent value='rules'><Rules l={l as AdminLimits} b={b} reload={reload} /></TabsContent>}
+            {l?.can_manage && <TabsContent value='rules'>
+              <Rules l={l as AdminLimits} b={b} reload={reload} />
+              {/* mold_v0-346: the automatic alerts (read only) below the budget rules, when the pack says so. */}
+              {alertsInRules && <section className='mt-8 flex flex-col gap-3' data-billing-rules-alerts=''><h2 className='text-base leading-none font-semibold'>Alerts</h2><AlertsTab /></section>}
+            </TabsContent>}
             {!l && tab === 'rules' && <TabsContent value='rules'><LoadingCards count={1} /></TabsContent>}
             {dataTrailOn() && <TabsContent value='access-log'><WorkspaceAccessLog /></TabsContent>}
           </Tabs>

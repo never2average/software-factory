@@ -72,7 +72,8 @@ export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects", "billing", "
  *               is the server's rule, GET /api/usage): /app/activity and /app/usage lead here
  *   people      who is in the account (the first tab, and its default, unless spending comes first)
  *   teams       the budget groups; with `settings_teams` (flag teams) Settings' Teams table above them, leaving Settings
- *   rules       the budget rules (those who may change them)
+ *   rules       the budget rules (those who may change them); with `with_alerts` (mold_v0-346) Settings' Alerts below them,
+ *               read only, leaving Settings: no Alerts tab of its own then
  *   alerts      Settings' Alerts (flag scheduled_alerts), read only, leaving Settings
  *   access-log  the data trail (owners, where the profile turns audit.data on)
  * The named tabs come first, in that order, each under its label when it gives one; the shell's others keep their place
@@ -80,7 +81,7 @@ export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects", "billing", "
  */
 export const BILLING_TABS = ["spending", "people", "teams", "rules", "alerts", "access-log"] as const;
 export type BillingTab = (typeof BILLING_TABS)[number];
-export interface BillingTabSpec { id: BillingTab; label?: string; settings_teams?: boolean }
+export interface BillingTabSpec { id: BillingTab; label?: string; settings_teams?: boolean; with_alerts?: boolean }
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ,'&()-]{0,39}$/;
 /** console.billing's entries as {id, label?, settings_teams?} (strings become {id}). */
 export const billingEntries = (v: unknown): BillingTabSpec[] =>
@@ -97,14 +98,18 @@ export function billingProblems(v: unknown, where: string): string[] {
     const w = `${at}.tabs[${i}]`;
     const e = typeof x === "string" ? { id: x } : x;
     if (!e || typeof e !== "object" || Array.isArray(e)) { out.push(`${w}: a tab's id, or {"id", "label"}`); return; }
-    for (const k of Object.keys(e)) if (!["id", "label", "settings_teams"].includes(k)) out.push(`${w}: unknown field ${k} (known: id, label, settings_teams)`);
-    const { id, label, settings_teams } = e as { id?: unknown; label?: unknown; settings_teams?: unknown };
+    for (const k of Object.keys(e)) if (!["id", "label", "settings_teams", "with_alerts"].includes(k)) out.push(`${w}: unknown field ${k} (known: id, label, settings_teams, with_alerts)`);
+    const { id, label, settings_teams, with_alerts } = e as { id?: unknown; label?: unknown; settings_teams?: unknown; with_alerts?: unknown };
     if (typeof id !== "string" || !(BILLING_TABS as readonly string[]).includes(id)) { out.push(`${w}: ${JSON.stringify(id).slice(0, 40)} is not one of Billing's tabs (${BILLING_TABS.join(", ")})`); return; }
     if (seen.has(id)) out.push(`${w}: ${id} is named twice`);
     seen.add(id);
     if (label !== undefined && (typeof label !== "string" || !LABEL.test(label))) out.push(`${w}: label is a short name in plain words (up to 40 characters)`);
     if (settings_teams !== undefined && (settings_teams !== true || id !== "teams")) out.push(`${w}: settings_teams is true, on the teams tab only`);
+    if (with_alerts !== undefined && (with_alerts !== true || id !== "rules")) out.push(`${w}: with_alerts is true, on the rules tab only`);
   });
+  // mold_v0-346: the alerts are in one place, a tab of their own or below the budget rules.
+  if (tabs.some((x) => x && typeof x === "object" && (x as { with_alerts?: unknown }).with_alerts === true) && tabs.some((x) => (typeof x === "string" ? x : (x as { id?: unknown })?.id) === "alerts"))
+    out.push(`${at}.tabs: the rules tab shows the alerts (with_alerts): drop the alerts tab`);
   return out;
 }
 

@@ -133,7 +133,7 @@ export interface AlertRule { area: string; area_label: string; source: 'due' | '
 export const alertRules: AlertRule[] = [];
 
 /** mold_v0-340: Billing's in-page tabs as a pack names them (console.billing), in order; null: Billing's own. */
-export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean }
+export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean; with_alerts?: boolean }
 export const billingTabs: BillingTabSpec[] | null = null;
 /** mold_v0-340: Settings tabs that live in Billing instead: their id -> their address there (an old ?tab= leads on). */
 export const movedSettingsTabs: Record<string, string> = {};

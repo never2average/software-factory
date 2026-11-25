@@ -1734,12 +1734,14 @@ const BILLING = (() => {
   if (by.length > 1) fail("packs", `console.billing: packs ${by.map((p) => p.id).join(" and ")} both declare Billing's tabs: declare them once`);
   const tabs = billingEntries(by[0].json.console.billing)
     .filter((t) => t.id !== "alerts" || FEATURE_ON.scheduled_alerts)
-    .map((t) => ({ id: t.id, ...(t.label ? { label: t.label } : {}), ...(t.settings_teams && FEATURE_ON.teams ? { settings_teams: true } : {}) }));
+    .map((t) => ({ id: t.id, ...(t.label ? { label: t.label } : {}), ...(t.settings_teams && FEATURE_ON.teams ? { settings_teams: true } : {}),
+      ...(t.with_alerts && FEATURE_ON.scheduled_alerts ? { with_alerts: true } : {}) }));
   return { pack: by[0].id, tabs };
 })();
 const billingHas = (id) => !!BILLING?.tabs.some((t) => t.id === id);
 /** mold_v0-340: the Settings tabs that live in Billing instead (their id -> Billing's address for them). */
-const MOVED_SETTINGS = { ...(billingHas("alerts") ? { alerts: "/app/billing?tab=alerts" } : {}), ...(BILLING?.tabs.some((t) => t.settings_teams) ? { teams: "/app/billing?tab=teams" } : {}) };
+// mold_v0-346: the alerts below the budget rules (with_alerts) leave Settings for Billing's rules tab.
+const MOVED_SETTINGS = { ...(billingHas("alerts") ? { alerts: "/app/billing?tab=alerts" } : BILLING?.tabs.some((t) => t.with_alerts) ? { alerts: "/app/billing?tab=rules" } : {}), ...(BILLING?.tabs.some((t) => t.settings_teams) ? { teams: "/app/billing?tab=teams" } : {}) };
 /**
  * The staff sidebar's Records group as declared (mold_v0-271, src/console-pages.ts ADMIN_RECORDS_PAGES): the profile's
  * console.admin_records, else the one pack's that says it; null when none does (the group lists every shared area, as
@@ -2975,7 +2977,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }\n" +
   `export const alertRules: AlertRule[] = ${json(ALERT_RULES)};\n` +
   "\n/** mold_v0-340: Billing's in-page tabs as a pack names them (console.billing), in order; null: Billing's own. */\n" +
-  "export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean }\n" +
+  "export interface BillingTabSpec { id: 'spending' | 'people' | 'teams' | 'rules' | 'alerts' | 'access-log'; label?: string; settings_teams?: boolean; with_alerts?: boolean }\n" +
   `export const billingTabs: BillingTabSpec[] | null = ${json(BILLING?.tabs ?? null)};\n` +
   "/** mold_v0-340: Settings tabs that live in Billing instead: their id -> their address there (an old ?tab= leads on). */\n" +
   `export const movedSettingsTabs: Record<string, string> = ${json(MOVED_SETTINGS)};\n` +
