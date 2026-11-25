@@ -86,29 +86,32 @@ type TabRef = Pick<PackTabSpec, 'pack' | 'id' | 'action'>;
 export const actionLabel = (a: NonNullable<PackTabSpec['action']>) =>
   a.label ?? (a.kind === 'start_run' ? fill('Start {run}') : a.kind === 'new_schedule' ? 'New schedule' : a.kind === 'link' ? 'Open' : 'New record');
 
-// The toolbar's own button size (as Export beside it); a phone: the icon alone, square.
+// The toolbar's own button size (as Export beside it).
 // mold_v0-318: in a list's search row narrowed by a side panel (RecordView's toolbar container below 48rem, from sm up):
-// the icon alone, square; its label stays the accessible name and the tooltip.
-const ACTION_CLASS = 'ml-auto shrink-0 sm:@max-[48rem]/toolbar:w-8 sm:@max-[48rem]/toolbar:px-0';
+// mold_v0-344: its label's first word with the icon, as on a phone (never the icon alone: the operator's "+" with no
+// words); the whole label stays the accessible name and the tooltip.
+const ACTION_CLASS = 'ml-auto shrink-0';
 const LABEL_CLASS = 'hidden sm:inline sm:@max-[48rem]/toolbar:hidden';
+const SHORT_CLASS = 'sm:hidden sm:@max-[48rem]/toolbar:inline';
 /** mold_v0-309: a toolbar action's word on a phone: its label's first word ("Add", "New", "Start"), never the icon alone. */
 export const shortLabel = (label: string) => label.trim().split(/\s+/)[0] ?? label;
 
 /**
  * The button itself, the last control of the list's search row (mold_v0-217): a normal primary button, the icon and its
- * label from sm up; on a phone the icon alone, its label the accessible name and the title.
+ * label from sm up; on a phone or in a narrowed row the icon and the label's first word (mold_v0-309, mold_v0-344), the
+ * whole label the accessible name and the title.
  */
 export function ToolbarAction({ label, icon, onClick, href }: { label: string; icon: ReactNode; onClick?: () => void; href?: string }) {
   // A link action (mold_v0-213): the same button, as a link (a page of the console, or an address in a new tab).
   if (href) return (
     <Button aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS} nativeButton={false}
       render={href.startsWith('/') ? <Link href={href} /> : <a href={href} target='_blank' rel='noopener noreferrer' />}>
-      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
+      {icon}<span className={SHORT_CLASS} aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
     </Button>
   );
   return (
     <Button type='button' onClick={onClick} aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS}>
-      {icon}<span className='sm:hidden' aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
+      {icon}<span className={SHORT_CLASS} aria-hidden>{shortLabel(label)}</span><span className={LABEL_CLASS}>{label}</span>
     </Button>
   );
 }

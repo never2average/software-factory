@@ -12,7 +12,7 @@ import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { recordAreas, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
+import { recordAreas, type PackTabSpec, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
 import { keyChunks, latestField, placeColumns, type RelatedColumns } from './related-columns';
 import { Field, RecordView, type PropType, type RecordCol, type RowAction, type SortRule } from '@/components/layout/record-view';
 import type { FilterRule, RawValue } from '@/components/layout/record-filters';
@@ -23,7 +23,8 @@ import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad, When } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { useExportCsv } from '@/features/tabs/export';
-import { bySource, sourceArea } from '@/features/tabs/merged';
+import { bySource, sourceArea, CONNECT_FLAG, CONNECT_STATE } from '@/features/tabs/merged';
+import { ConnectCards, ConnectSection, StateBadge, useConnectSpec, type RowConnect } from '@/features/tabs/connect';
 import { useImportAction } from './workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
@@ -53,7 +54,9 @@ export type RecordRow = { key: string; title: string | null; data: Record<string
   /** A shared row on the staff pages (mold_v0-221, src/record-areas.ts Provenance): staff's or its repository's, and what a staff override stands over. */
   provenance?: Provenance;
   /** mold_v0-259 (flag teams): who sees it, on an area that declares visibility. */
-  visibility?: RecordVisibility };
+  visibility?: RecordVisibility;
+  /** mold_v0-344: a connect tab's row: whether its service may be connected here, and this workspace's connections of it. */
+  connect?: RowConnect };
 export type Provenance = { by: 'staff' | 'repository'; repository: string | null; overrides: { title: string | null; version: string | null } | null };
 export type Page = { records: RecordRow[]; next: string | null };
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[];
@@ -214,6 +217,8 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         }
         const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
+        // mold_v0-344: a connect tab's State: this workspace's state for the service, in its colour.
+        if (name === CONNECT_STATE && !source) return <StateBadge state={r.data[name]} />;
         // mold_v0-336: a merged tab's column of a field per source area: the row's own area's cell (its badge colours,
         // its option words, its health's staleness).
         const by = bySource(f);
@@ -344,7 +349,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowActions, detailNote, related, noun: plural }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary: given, source, toolbarAction, importAction, rowActions, detailNote, related, noun: plural, connect }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** mold_v0-336: what the rows are called, plural (the footer's count; a merged tab's, features/tabs/merged.ts tabPlural): default the area's own plural, else "records". */
   noun?: string | null;
@@ -366,9 +371,15 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   exportName?: string; exportAreas?: string[];
   /** mold_v0-256 (flag record_pages): columns computed from the records that point back to each row (./related-columns.ts). */
   related?: RelatedColumns;
+  /**
+   * mold_v0-344: a connect tab (features/tabs/connect.tsx): its three cards in place of `summary`, and each service's panel
+   * opens with this workspace's accounts and its Connect form above the service's own page.
+   */
+  connect?: Pick<PackTabSpec, 'pack' | 'id' | 'connect'>;
 }) {
-  const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
+  const { data, error, reload } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
   const exporter = useExportCsv({ url, area, rows, name: exportName ?? area.name, areas: exportAreas ?? [area.name] });
+  const connectSpec = useConnectSpec(connect ?? null);
   // mold_v0-256: the computed columns' values for the rows read, as the person reading (an area they may not read: empty).
   const rowKeys = useMemo(() => (data?.records ?? []).map((r) => r.key), [data]);
   const relatedValues = useOrgLoad(async () => {
@@ -462,6 +473,10 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const laidOut = (r: RecordRow) => !source && !detailNote && featureOn('record_pages') && !!layoutOf(rowArea(r));
   // mold_v0-336: the rows' own word ("8 hosting accounts"), the pack's plural; absent, "records" as before.
   const noun = source?.noun ?? plural ?? area.plural ?? 'records';
+  // mold_v0-344: a connect tab's flag is turned on by the tab's first connection only.
+  const flagTaken = !!connect && (data?.records ?? []).some((r) => r.data[CONNECT_FLAG] === true);
+  // mold_v0-344: a connect tab's three cards (Connected, Needs attention, Services) in place of the tab's own.
+  const summary = connect ? <ConnectCards rows={data?.records ?? null} /> : given;
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
@@ -489,7 +504,12 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       pageHref={detailHref}
       // A record whose area declares its page's layout (flag record_pages): the laid-out record itself in the panel.
       properties={(r) => source?.properties !== false && !laidOut(r) && !foreign(r)}
-      detail={(r) => source?.detail ? source.detail(r) : laidOut(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
+      detail={(r) => source?.detail ? source.detail(r) : connect && !foreign(r) ? (
+        <div className='flex flex-col gap-5' data-connect-panel=''>
+          <ConnectSection tab={connect} row={r} spec={connectSpec.data} onChanged={() => void reload()} flagTaken={flagTaken} />
+          <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
+        </div>
+      ) : laidOut(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
         : foreign(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel /> : (<>
         <dl>
           {detailNote?.(r)}

@@ -3191,6 +3191,11 @@ function viewsModule() {
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}),
       // mold_v0-336: a column of a field per source area; what the tab's rows are called (its footer's count).
       ...(t.source_columns?.length ? { source_columns: t.source_columns } : {}), ...(t.plural ? { plural: t.plural } : {}),
+      // mold_v0-344: a catalog tab whose services a workspace connects in place: what its panels' Connect form needs (never
+      // its condition: the server says which rows may be connected).
+      ...(t.connect ? { connect: { area: t.connect.area, via: t.connect.via, ...(t.connect.fields ? { fields: t.connect.fields } : {}), ...(t.connect.more ? { more: t.connect.more } : {}),
+        ...(t.connect.flag ? { flag: t.connect.flag } : {}), ...(t.connect.others ? { others: true } : {}),
+        ...(t.connect.services ? { services: Object.fromEntries(Object.entries(t.connect.services).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([x]) => x !== "$comment"))])) } : {}) } } : {}),
       // mold_v0-256 (flag record_pages): a column computed from related records: its id, heading, area and what it shows.
       ...(FEATURE_ON.record_pages && t.related_columns?.length ? { related_columns: t.related_columns.map((c) => {
         const r = recordAreas.find((a) => a.name === c.related.area), fn = c.show.startsWith("latest:") ? c.show.slice(7) : null;
@@ -3257,6 +3262,10 @@ function viewsModule() {
     "  /** mold_v0-336: a merged tab's columns of a field per source area (each id is among `columns`): its heading and, per area, the field it shows. */\n" +
     "  source_columns?: { id: string; label: string; by_source: Record<string, string> }[];\n" +
     "  /** mold_v0-336: what the tab's rows are called, plural (its footer's count). */\n  plural?: string;\n" +
+    "  /** mold_v0-344: a catalog tab whose services a workspace connects in place (src/pack-api.ts TabConnectSchema): the connections' area, its reference to the\n" +
+    "   *  service, the form's order, the flag builds read, each service's fixed and default values, its Get a key link and its hints. */\n" +
+    "  connect?: { area: string; via: string; fields?: string[]; more?: string[]; flag?: string; others?: boolean;\n" +
+    "    services?: Record<string, { set?: Record<string, string | number | boolean>; defaults?: Record<string, string | number | boolean>; get_key?: { href: string; label?: string; scopes?: string }; hints?: Record<string, string> }> };\n" +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
     "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +

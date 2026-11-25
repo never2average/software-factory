@@ -372,6 +372,8 @@ export interface PageFormField {
   multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: 'document';
   /** mold_v0-339: a number's unit (a share, "percent", shown and typed as a percent). */
   unit?: string;
+  /** mold_v0-305: an encrypted field (the server's formField says so): a hidden input, never filled; mold_v0-344: Replace key edits these alone. */
+  secret?: true;
 }
 /** A page action as this person may take it on this record (src/record-page-routes.ts ActionView). */
 export interface PageAction {

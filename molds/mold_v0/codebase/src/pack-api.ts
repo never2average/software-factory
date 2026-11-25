@@ -3078,6 +3078,68 @@ export const TabSourceColumnSchema = z.object({
 export type TabSourceColumn = z.output<typeof TabSourceColumnSchema>;
 /** Whether a tab column shows a field per source area (mold_v0-336). */
 export const isSourceColumn = (c: unknown): c is TabSourceColumn => !!c && typeof c === "object" && "by_source" in (c as object);
+/**
+ * mold_v0-344: a catalog tab whose services a workspace connects in place (`connect` on an area tab of one area: a shared
+ * catalog of outside services). Each service is listed once, with this workspace's own state for it, worked out on the
+ * server from its connection records (`area`, each pointing at the service through `via`): its State (connected, needs
+ * attention, not tested, not connected), whether builds use it (`flag`) and when it was last tested. A service's panel holds
+ * the Connect form (the connection area's own create, through the data API) and, once connected, each account with its own
+ * actions (the connection area's page actions: test, edit, delete, toggles).
+ *   area      a workspace area: the connections (a key it holds is sealed: its contract says export and reveal none)
+ *   via       its reference field to the tab's area: the service a connection is for (filled from the service, never asked)
+ *   when      which services may be connected (the notices' condition language over the tab's area's fields: a hosted
+ *             service with a key); the rest are listed with their state alone (a self-hosted or built-in one has none)
+ *   fields    asked first, beyond the area's required fields (usually the key alone); the rest under More options
+ *   more      the fields under More options first, in this order (the rest after them)
+ *   flag      a boolean field of the area builds read: the first connection of the tab turns it on, its column "Builds use it"
+ *   services  per service key (or "*", every other): `set` fields filled from the service and never asked (a provider
+ *             option), `defaults` prefilled and editable, `get_key` the provider's page where a key is made (href, and the
+ *             scopes to tick in one line), `hints` one line per field (where to find an ID)
+ *   others    true: a connection that points at no service (and that no one service's `set` claims) is listed too, as its
+ *             own row (a connection saved before the tab had Connect)
+ */
+export const CONNECT_STATES = ["connected", "needs_attention", "not_tested", "not_connected"] as const;
+export const CONNECT_STATE_LABELS: Record<(typeof CONNECT_STATES)[number], string> = { connected: "Connected", needs_attention: "Needs attention", not_tested: "Not tested", not_connected: "Not connected" };
+/** The columns a connect tab adds before its own: the state, whether builds use it (with a flag), when it was last tested. */
+export const CONNECT_COLUMNS = { state: "connection_state", flag: "connection_flag", tested: "connection_tested" } as const;
+const httpsHref = z.string().trim().min(9).max(500).refine((h) => { try { const u = new URL(h); return u.protocol === "https:" && !!u.hostname && !u.username && !u.password; } catch { return false; } }, "an https:// address");
+const connectValue = z.union([z.string().min(1).max(500), z.number().finite(), z.boolean()]);
+export const TabConnectServiceSchema = z.object({
+  set: z.record(name, connectValue).refine((m) => Object.keys(m).length <= 8, "at most 8 fields").optional(),
+  defaults: z.record(name, connectValue).refine((m) => Object.keys(m).length <= 8, "at most 8 fields").optional(),
+  get_key: z.object({ href: httpsHref, label: plainWords(40).optional(), scopes: plainWords(240).optional() }).strict().optional(),
+  hints: z.record(name, plainWords(240)).refine((m) => Object.keys(m).length <= 12, "at most 12 fields").optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export const TabConnectSchema = z.object({
+  area: name,
+  via: name,
+  when: DetailConditionSchema.optional(),
+  fields: z.array(name).min(1).max(6).optional(),
+  more: z.array(name).min(1).max(16).optional(),
+  flag: name.optional(),
+  services: z.record(z.string().regex(/^(\*|[A-Za-z0-9][A-Za-z0-9._:()-]{0,199})$/, "a service's record key, or * for every other"), TabConnectServiceSchema)
+    .refine((m) => Object.keys(m).length <= 200, "at most 200 services").optional(),
+  others: z.boolean().optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((c, ctx) => {
+  const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  const seen = new Set<string>();
+  for (const [k, list] of [["fields", c.fields ?? []], ["more", c.more ?? []]] as const) for (const [i, n] of list.entries()) {
+    if (seen.has(n)) bad(`${n} is listed twice (fields and more name each field once)`, k, String(i));
+    seen.add(n);
+    if (n === c.via) bad(`${n} is the service the connection is for (via): it is filled from the service, never asked`, k, String(i));
+    if (n === c.flag) bad(`${n} is the flag (the first connection turns it on): a switch on the account, not a field of the form`, k, String(i));
+  }
+  if (c.flag !== undefined && c.flag === c.via) bad("the flag is a boolean field, not via", "flag");
+  for (const [s, svc] of Object.entries(c.services ?? {})) for (const part of ["set", "defaults"] as const) for (const f of Object.keys(svc[part] ?? {})) {
+    if (f === c.via) bad(`${f} is via: the service itself fills it`, "services", s, part, f);
+    if (part === "defaults" && svc.set && f in svc.set) bad(`${f} is set (fixed) for this service: a default would never show`, "services", s, part, f);
+  }
+});
+export type TabConnect = z.output<typeof TabConnectSchema>;
+/** mold_v0-344: a connect tab's service entry for a catalog record: its own, else "*", else none. */
+export const connectService = (c: Pick<TabConnect, "services">, key: string) => c.services?.[key] ?? c.services?.["*"] ?? null;
 /** A source column's id: its own, else its label in lowercase words joined by _. */
 export const sourceColumnId = (c: Pick<TabSourceColumn, "label" | "id">) => c.id ?? (c.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(?![a-z])/, "c_") || "column");
 /** A tab column's id: a field's name, a related column's rel_<...>, a source column's own. */
@@ -3192,6 +3254,8 @@ export const TabSchema = z.object({
   inside: z.enum(TAB_INSIDE).optional(),
   /** mold_v0-316 (flag agent_quick_commands): the workspace agent's examples and quick commands when opened from this tab. */
   agent: TabAgentSchema.optional(),
+  /** mold_v0-344: a catalog tab whose services a workspace connects in place, inside each one's panel (TabConnectSchema). */
+  connect: TabConnectSchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -3251,6 +3315,15 @@ export const TabSchema = z.object({
   if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
   if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
   if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
+  // mold_v0-344: Connect is a catalog tab's, over one area; each service is connected inside its own panel.
+  if (t.connect) {
+    if (t.kind !== "area" || !t.area || t.areas) bad("connect is for an area tab over one area (area): a catalog whose services are connected in place", "connect");
+    if (t.connect.area === t.area) bad("connect.area is the connections' area, not the catalog the tab lists", "connect", "area");
+    if (t.action && t.action.kind === "create_record") bad("a connect tab adds no record from its search row: each service is connected inside its own panel (action: false, with a reason)", "action");
+    if (t.views && t.views.some((v) => v === "board" || v === "timeline")) bad("a connect tab is a table of services (views: table, detail)", "views");
+    const ids: string[] = Object.values(CONNECT_COLUMNS);
+    for (const [ci, c] of (t.columns ?? []).entries()) if (typeof c === "string" && ids.includes(c)) bad(`${c} is the tab's own connect column (placed first): leave it out of columns`, "columns", String(ci));
+  }
 });
 export type Tab = z.output<typeof TabSchema>;
 

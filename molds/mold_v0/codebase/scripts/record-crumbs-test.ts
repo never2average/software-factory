@@ -17,7 +17,7 @@
 //      parent record linking to its page, then the record; the console wires it (the record page names its parents, the
 //      top bar's trail and the sidebar's lit entry read them).
 //   5. A list's search row narrowed by a side panel (source): the row is a container; below 48rem (from sm up) it stays
-//      one line, the search box 10rem at least, the primary action its icon alone, named by its words (Actions ▾ keeps its
+//      one line, the search box 10rem at least, the primary action its icon and first word (mold_v0-344: never the icon alone), named by its words (Actions ▾ keeps its
 //      word, as at every width).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -188,8 +188,10 @@ try {
     assert.match(rv, /<div className='@container\/toolbar'>\s*<div className='flex flex-wrap items-center gap-2 sm:@max-\[48rem\]\/toolbar:flex-nowrap'>/, "the search row is a container, one line when narrow (from sm up)");
     assert.match(rv, /relative min-w-48 flex-1 sm:@max-\[48rem\]\/toolbar:min-w-40/, "the search box: 12rem at full width, 10rem narrowed");
     const ta = src("features/tabs/tab-action.tsx");
-    assert.match(ta, /const ACTION_CLASS = 'ml-auto shrink-0 sm:@max-\[48rem\]\/toolbar:w-8 sm:@max-\[48rem\]\/toolbar:px-0';/, "the primary action: square when narrowed");
-    assert.match(ta, /const LABEL_CLASS = 'hidden sm:inline sm:@max-\[48rem\]\/toolbar:hidden';/, "its words hidden when narrowed (a phone's first word as before)");
+    // mold_v0-344: never the icon alone: narrowed, the label's first word with it (as on a phone).
+    assert.match(ta, /const ACTION_CLASS = 'ml-auto shrink-0';/, "the primary action: never squared to its icon when narrowed");
+    assert.match(ta, /const LABEL_CLASS = 'hidden sm:inline sm:@max-\[48rem\]\/toolbar:hidden';/, "its whole label hidden when narrowed");
+    assert.match(ta, /const SHORT_CLASS = 'sm:hidden sm:@max-\[48rem\]\/toolbar:inline';/, "its first word shown when narrowed, as on a phone");
     assert.equal((ta.match(/aria-label=\{label\} title=\{label\}/g) ?? []).length, 2, "named and titled by its label, button and link alike");
     // Actions ▾ keeps its word at every width (console-tabs: the label at every width); the row fits beside it.
     assert.match(src("components/layout/actions-menu.tsx"), /data-testid='list-actions'[\s\S]*?Actions\s*<Icons\.chevronDown/, "Actions ▾ keeps its word");

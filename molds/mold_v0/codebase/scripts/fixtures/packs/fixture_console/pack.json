@@ -1489,6 +1489,12 @@
           ]
         },
         {
+          "name": "catalog_entry",
+          "label": "Catalog entry",
+          "type": "reference",
+          "to": "mx_catalog"
+        },
+        {
           "name": "failing_since",
           "label": "Failing since",
           "type": "date",
@@ -2248,6 +2254,54 @@
         }
       ],
       "plural": "parents and children"
+    },
+    {
+      "id": "connect-catalog",
+      "kind": "area",
+      "label": "Connect",
+      "area": "mx_catalog",
+      "columns": [
+        "maturity"
+      ],
+      "connect": {
+        "area": "mx_storage",
+        "via": "catalog_entry",
+        "when": {
+          "field": "maturity",
+          "empty": false
+        },
+        "fields": [
+          "access_key_id"
+        ],
+        "more": [
+          "endpoint"
+        ],
+        "flag": "in_use",
+        "services": {
+          "*": {
+            "set": {
+              "kind": "object"
+            },
+            "defaults": {
+              "bucket": "files"
+            },
+            "get_key": {
+              "href": "https://keys.example.com/new",
+              "label": "Get a key",
+              "scopes": "Read and write"
+            },
+            "hints": {
+              "endpoint": "The bucket's address."
+            },
+            "$comment": "Every service."
+          }
+        },
+        "others": true,
+        "$comment": "Connected in place."
+      },
+      "action": false,
+      "reason": "Connected inside each service's panel.",
+      "plural": "services"
     },
     {
       "id": "mx-runs",

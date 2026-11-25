@@ -87,15 +87,24 @@ export function recordAppRouter(): Router {
   // list withheld: 404 as there).
   // A filtered tab's page (mold_v0-175): its one area, narrowed by the tab's declared filter (never the page's).
   r.get("/tabs/:pack/:tab", answer(async (req, res) => {
-    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && (!!t.areas || !!t.filter));
+    // mold_v0-344: or a connect tab's: each service with this workspace's state for it (src/tab-connect.ts).
+    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && (!!t.areas || !!t.filter || !!t.connect));
     if (!tab || tabAreas(tab).some((a) => areaOpWithheld(a.area, "list"))) throw new PackError("Not found", 404);
     exporting(req, res, tabAreas(tab).map((a) => areaOrThrow(a.area)));
     if (!tab.areas) {
       const a = areaOrThrow(tab.area!);
-      const page = await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), filter: tab.filter }, actor(res));
-      return { area: areaSummary(a), ...page, records: await withRefTitles(org(res), a, page.records, actor(res)) };
+      const page = await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), ...(tab.filter ? { filter: tab.filter } : {}) }, actor(res));
+      const records = await withRefTitles(org(res), a, page.records, actor(res));
+      return { area: areaSummary(a), ...page, records: tab.connect ? await (await import("./tab-connect.js")).withConnections(org(res), tab, records, actor(res), !page.next) : records };
     }
     return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
+  }));
+  // mold_v0-344: a connect tab's form, as this person may use it (src/tab-connect.ts connectSpec): who may connect, the
+  // connection area's fields in the form's order, the flag, the fields an account's health shows.
+  r.get("/tabs/:pack/:tab/connect", answer(async (req, res) => {
+    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && !!t.connect);
+    if (!tab || areaOpWithheld(tab.area!, "list")) throw new PackError("Not found", 404);
+    return (await import("./tab-connect.js")).connectSpec(tab, actor(res));
   }));
   // The home page's Due soon card (mold_v0-207; src/record-clocks.ts dueAcross): records coming due or overdue across
   // the clock areas this person may read and whose list no pack withholds. Not an area name (those take no "-").

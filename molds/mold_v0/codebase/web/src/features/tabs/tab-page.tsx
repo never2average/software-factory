@@ -282,12 +282,20 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
             exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined} importAction={imp.item}
-            related={relatedColumnsOf(tab)} noun={tabPlural(tab)}
+            related={connectRelated(tab)} noun={tabPlural(tab)} connect={tab.connect ? tab : undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
     </div></FormHost></StripHandOff>
   );
+}
+
+/** mold_v0-344: a connect tab's related columns placed after its own (State, the flag, Last tested), in their declared order. */
+function connectRelated(tab: PackTabSpec) {
+  const r = relatedColumnsOf(tab);
+  if (!r || !tab.connect) return r;
+  const own = tab.connect.flag ? 3 : 2;
+  return { ...r, columns: r.columns.map((c) => ({ ...c, at: c.at + own })) };
 }
 
 /** mold_v0-315: `off`: nothing inside takes a sections tab's strip (./in-page-tabs.tsx useTabStrip). */

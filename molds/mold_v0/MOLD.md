@@ -5127,6 +5127,66 @@ live plan of 8 seats, never written or charged here; the page's layout and butto
 `test:console-types` (every flag on builds), with `test:console-tabs`, `test:console-sidebar`, `test:app-nav`,
 `test:usage`, `test:limits` and `test:run-charges` unchanged.
 
+## Connect a service where you find it (mold_v0-344)
+
+Approved by the operator on 2026-11-24 after a catalog row of a hosting provider opened a read-only panel with no way to
+connect it: one row per service, Connect inside its panel. An opt-in key on an area tab of ONE area (a shared catalog of
+outside services); a pack that names none builds and draws as before.
+
+- **Declared** (`src/pack-api.ts` `TabConnectSchema`, `tabs[].connect`; the pack schema and the app spec's copy
+  regenerated): `{area, via, when?, fields?, more?, flag?, services?, others?}`. `area` is the workspace's connections
+  (a workspace area), `via` its single reference to the tab's area (the service a connection is for; filled from the
+  service, never asked). `when` (the notices' condition language over the catalog's own fields) says which services may be
+  connected: decided per catalog record from its data (a hosted service, not built in), never by names; the rest keep
+  their state alone and say there is no account to connect. `fields` are asked first beyond the area's required fields
+  (usually the key alone); `more` orders More options (every other field the area's form offers follows). `flag` is a
+  boolean field builds read: the tab's first connection turns it on (an only-one refusal: saved without it), and it is the
+  "Builds use it" column. `services` is per catalog key (or `*`, every other): `set` (fields filled from the service and
+  never shown: a provider option), `defaults` (prefilled, editable), `get_key` (`href`, an https page where the provider
+  makes the key, its `label`, the `scopes` to tick in one line), `hints` (one line per field: where an ID is found).
+  `others: true` lists a connection that points at no service as its own row (one saved before the tab had Connect, and
+  that no single service's `set` claims). Pack data only: no provider names in the mold.
+- **Refused at build** (`src/pack-api.ts` TabSchema, `src/metric-spec.ts` `connectProblems`): connect on a tab that is
+  not an area tab of one area; the catalog as its own connections; a `create_record` action (Connect is in the panel:
+  `action: false` with its reason); a board or a timeline; one of its own column ids among `columns`; via, the flag or a
+  field listed twice in `fields`/`more`; a key page that is not https. Across the build: an unknown connections area or a
+  shared one; one whose encrypted fields could be read back (its contract's `export` and `reveal` must be `{"none": ...}`);
+  via that is not its single reference to the catalog; a field only actions set, a file field; a flag that is not a
+  boolean; an encrypted field, an unknown option or a non-boolean written in `set`/`defaults`; a hint for an unknown
+  field; a condition over fields the catalog lacks.
+- **Read** (`src/tab-connect.ts`, through the tab's rows route `GET /api/records/tabs/<pack>/<tab>`): each catalog row
+  gains this workspace's `connection_state` (connected: a test worked, or the area has no test and one is saved; needs
+  attention: one failed, could not test, needs its key, stale or expiring, by connection health, mold_v0-332; not tested;
+  not connected), `connection_flag` and `connection_tested` (the latest test), and `connect` (`connectable`, its
+  connections as the person reads them, each with its health, a sealed field masked). A connection belongs to its via,
+  else to the one service whose `set` values it holds. The connections are the workspace's own list read as the person
+  (the area's read permission: a role that may not read them gets `{hidden: true}`, never "not connected"); nothing is
+  written and nothing crosses workspaces. `GET /api/records/tabs/<pack>/<tab>/connect`: the form for this person
+  (`allowed`: the area's create roles, a role that edits, create not withheld; the fields the area's form offers, in
+  order, `ask` and `more`; the flag; the health fields; `who` may connect, in the roles' words).
+- **Drawn** (`web/src/features/tabs/connect.tsx`, wired in `features/records/record-pages.tsx` RecordTableView and
+  `features/tabs/merged.ts` connectArea): the table's first columns are State (its word in its colour), the flag (in the
+  connections area's own label) and Last tested, then the tab's; search, filters and sort work on them. Three cards:
+  Connected, Needs attention, Services. A service's panel opens with this workspace's accounts above the service's own
+  page: each account's facts (its IDs and settings, the flag, Health, Last tested, Last test said, Key expires on) and its
+  actions, the connection area's own page actions: Test, Replace key (its sealed fields alone), Edit, Disconnect (the
+  area's delete, with its confirm words) and its switches; "Connect another account" for a second. Not connected: the
+  Connect form right there (Get a key with its scopes, the fields asked, More options with the name, one labelled
+  "Connect & test" button): it creates the record through the data API (`POST /api/data/<area>`, the area's permissions,
+  contract and audit), runs the area's test action when it has one (its guards and rate limits; its words inline in plain
+  language, never a key), and on a failed test keeps the form filled for that account (its key sealed: a new one replaces
+  it, Save & test edits it through its edit action). People who may not connect see the state and one line saying who
+  may. A row of `others` opens its connection's own record.
+- **Never an icon-only primary button.** A list's toolbar action narrowed by a side panel (mold_v0-318) now keeps its
+  label's first word beside the icon, as on a phone (`tab-action.tsx` SHORT_CLASS): every app's lists, not only connect tabs.
+
+Proof: `npm run test:connect-tab` (`scripts/connect-tab-344-test.ts`, offline: the key and 14 refusals with their paths;
+the state and ownership rules; through the API in an embedded database: the rows' state, flag and connections, the key
+masked and its value nowhere in an answer, the condition, `others`, the form's spec for an owner and a member, the
+member's create refused, a second workspace seeing none of the first's connections or state, a role that may not read
+them getting none, the account's actions and Disconnect), `test:console-types` (the fixture declares every key),
+`test:console-tabs` and `test:record-crumbs` (the labelled narrowed action).
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace
