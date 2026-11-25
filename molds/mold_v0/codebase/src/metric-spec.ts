@@ -18,6 +18,43 @@ export type SpecTab = Tab & { pack: string };
  * Every other kind shows none.
  */
 export interface MergedArea { area: string; rows: "all" | "matched"; source?: string; /** mold_v0-305: the area's own narrowing. */ filter?: Record<string, unknown> }
+/**
+ * mold_v0-344: what is wrong with a connect tab's `connect` (src/pack-api.ts TabConnectSchema) over its catalog `a`: its
+ * connections' area a workspace area of the build whose keys stay sealed, via its reference to the catalog, the fields it
+ * asks and fills the area's own (a person's to set), the flag a boolean, the condition over the catalog's fields.
+ */
+export function connectProblems(c: NonNullable<Tab["connect"]>, a: SpecArea, area: (n: string) => SpecArea | null | undefined): string[] {
+  const out: string[] = [];
+  const conn = area(c.area);
+  if (!conn) return [`${c.area} is not a record area of this build`];
+  if (conn.scope !== "workspace") out.push(`${c.area} is a shared area: a workspace connects a service in its own (scope workspace) area`);
+  const actions = (conn.contract as { actions?: Record<string, unknown> } | undefined)?.actions ?? {};
+  const none = (x: unknown) => !!x && typeof x === "object" && !Array.isArray(x) && "none" in (x as object);
+  if (conn.fields.some((f) => f.encrypted)) for (const op of ["export", "reveal"] as const)
+    if (!none(actions[op])) out.push(`${c.area} holds keys: its contract's ${op} is {"none": ...} (a key is never read back once saved)`);
+  const via = conn.fields.find((f) => f.name === c.via);
+  if (!via) out.push(`via ${c.via} is not a field of ${c.area}`);
+  else if (via.type !== "reference" || (via as { to?: string }).to !== a.name || via.multiple) out.push(`via ${c.via} is not ${c.area}'s single reference to ${a.name} (the service a connection is for)`);
+  const personal = (n: string, why: string) => {
+    const f = conn.fields.find((x) => x.name === n);
+    if (!f) { out.push(`${why} ${n} is not a field of ${c.area}`); return null; }
+    if ((f as { set_by?: string }).set_by === "action") { out.push(`${why} ${n} is set only by the app's actions (a test's status): a person never fills it`); return null; }
+    if (f.type === "file") { out.push(`${why} ${n} is a file field: the Connect form takes typed values`); return null; }
+    return f;
+  };
+  for (const n of [...(c.fields ?? []), ...(c.more ?? [])]) personal(n, "field");
+  if (c.flag !== undefined) { const f = personal(c.flag, "flag"); if (f && (f.type !== "boolean" || f.encrypted)) out.push(`flag ${c.flag} is not a boolean field (the switch builds read)`); }
+  for (const [s, svc] of Object.entries(c.services ?? {})) for (const part of ["set", "defaults"] as const) for (const [n, v] of Object.entries(svc[part] ?? {})) {
+    const f = personal(n, `services.${s}.${part}:`);
+    if (!f) continue;
+    if (f.encrypted) { out.push(`services.${s}.${part}: ${n} is encrypted: a key is typed by the person, never written in pack.json`); continue; }
+    if (f.type === "enum" && !optionValues(f).includes(String(v))) out.push(`services.${s}.${part}: ${String(v)} is not one of ${n}'s options (${optionValues(f).join(", ")})`);
+    if (f.type === "boolean" && typeof v !== "boolean") out.push(`services.${s}.${part}: ${n} is a boolean: true or false`);
+  }
+  for (const [s, svc] of Object.entries(c.services ?? {})) for (const n of Object.keys(svc.hints ?? {})) if (!conn.fields.some((f) => f.name === n)) out.push(`services.${s}.hints: ${n} is not a field of ${c.area}`);
+  if (c.when) for (const m of conditionIssues(a.fields, [], c.when, a.name)) out.push(`when: ${m}`);
+  return out;
+}
 export const tabAreas = (t: Pick<Tab, "kind" | "area" | "areas">): MergedArea[] =>
   t.kind !== "area" ? [] : t.areas ? t.areas.map((a) => ({ area: a.area, rows: a.rows ?? "all", ...(a.source !== undefined ? { source: a.source } : {}), ...(a.filter ? { filter: a.filter } : {}) })) : t.area ? [{ area: t.area, rows: "all" as const }] : [];
 /** The area a tab is named and emptied by: its own (the first of a merged tab's areas). */
@@ -367,6 +404,7 @@ export function checkViews(b: BuildViews): string[] {
       }
       // Its filter (mold_v0-175): the area's fields (or key, title, updated_at); the server checks each value as a list's.
       for (const n of Object.keys(t.filter ?? {})) if (!["key", "title", "updated_at"].includes(n) && !a.fields.some((f) => f.name === n)) at(p, `${w}: filter ${n} is not a field of area ${a.name}`);
+      if (t.connect) for (const m of connectProblems(t.connect, a, area)) at(p, `${w}: connect: ${m}`);
     }
     if (t.kind === "area" && t.areas) {
       // A merged tab (mold_v0-135): every area declared; a field it shows means one thing in every area that has it.

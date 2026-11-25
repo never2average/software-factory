@@ -14,6 +14,7 @@ export const SOURCE_COLUMN = 'source';
 export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
   if (!tab.areas) {
     const area = findRecordArea('app', tab.area ?? '');
+    if (area && tab.connect) return connectArea(tab, area);
     return area && { ...area, list_columns: tab.columns ?? area.list_columns };
   }
   const areas = tab.areas.map((a) => findRecordArea('app', a.area));
@@ -43,6 +44,28 @@ export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
   return { ...own, label: tab.label, description: tab.description, fields, list_columns: tab.columns ?? own.list_columns, links: [], lifecycle: null, plural: undefined };
 }
 
+/** mold_v0-344: a connect tab's own columns (src/pack-api.ts CONNECT_COLUMNS): this workspace's state for each service. */
+export const CONNECT_STATE = 'connection_state', CONNECT_FLAG = 'connection_flag', CONNECT_TESTED = 'connection_tested';
+export const CONNECT_STATE_OPTIONS = [
+  { value: 'connected', label: 'Connected' }, { value: 'needs_attention', label: 'Needs attention' },
+  { value: 'not_tested', label: 'Not tested' }, { value: 'not_connected', label: 'Not connected' }
+];
+/**
+ * mold_v0-344: a connect tab's area as its table shows it: the catalog's fields and its columns after the tab's own (State,
+ * the flag builds read in its own words, Last tested), each a plain field the table filters and sorts by.
+ */
+export function connectArea(tab: PackTabSpec, area: RecordAreaSpec): RecordAreaSpec {
+  const c = tab.connect!;
+  const flag = c.flag ? findRecordArea('app', c.area)?.fields.find((f) => f.name === c.flag) : undefined;
+  const own: RecordFieldSpec[] = [
+    { name: CONNECT_STATE, label: 'State', type: 'enum', options: CONNECT_STATE_OPTIONS } as RecordFieldSpec,
+    ...(c.flag ? [{ name: CONNECT_FLAG, label: flag?.label ?? 'Builds use it', type: 'boolean' } as RecordFieldSpec] : []),
+    { name: CONNECT_TESTED, label: 'Last tested', type: 'date' } as RecordFieldSpec
+  ];
+  const cols = (tab.columns ?? area.list_columns).filter((n) => !own.some((f) => f.name === n));
+  return { ...area, fields: [...own, ...area.fields.filter((f) => !own.some((o) => o.name === f.name))], list_columns: [...own.map((f) => f.name), ...cols] };
+}
+
 /** mold_v0-336: a field per source area (a merged tab's column, src/pack-api.ts TabSourceColumnSchema), or null. */
 export const bySource = (f: RecordFieldSpec | undefined) => ((f as { by_source?: Record<string, string> } | undefined)?.by_source ?? null);
 /** The area whose field a source column shows on a row: the first of the row's areas the column maps; null when it maps none (the cell is empty). */
@@ -63,7 +86,7 @@ export function tabPlural(tab: Pick<PackTabSpec, 'plural' | 'area' | 'areas'>): 
 
 /** Where a merged tab (or a filtered one, mold_v0-175) reads its rows (the server's merge or filter), or one area's list. */
 export const tabRecordsUrl = (tab: PackTabSpec, area: RecordAreaSpec) =>
-  tab.areas || tab.filtered ? `/api/records/tabs/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : `/api/records/${area.name}`;
+  tab.areas || tab.filtered || tab.connect ? `/api/records/tabs/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : `/api/records/${area.name}`;
 
 /** A merged tab's rows with their source word (the first of each row's areas that has one) among their data. */
 export function withSource(tab: PackTabSpec, page: Page): Page {

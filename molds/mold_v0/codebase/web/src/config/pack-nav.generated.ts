@@ -190,6 +190,10 @@ export interface PackTabSpec {
   source_columns?: { id: string; label: string; by_source: Record<string, string> }[];
   /** mold_v0-336: what the tab's rows are called, plural (its footer's count). */
   plural?: string;
+  /** mold_v0-344: a catalog tab whose services a workspace connects in place (src/pack-api.ts TabConnectSchema): the connections' area, its reference to the
+   *  service, the form's order, the flag builds read, each service's fixed and default values, its Get a key link and its hints. */
+  connect?: { area: string; via: string; fields?: string[]; more?: string[]; flag?: string; others?: boolean;
+    services?: Record<string, { set?: Record<string, string | number | boolean>; defaults?: Record<string, string | number | boolean>; get_key?: { href: string; label?: string; scopes?: string }; hints?: Record<string, string> }> };
   /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */
   areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];
   board_by?: string | null;
