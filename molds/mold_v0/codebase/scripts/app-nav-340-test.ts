@@ -144,6 +144,15 @@ try {
     assert.match(cp({ billing: { tabs: ["spending", "wallet"] } }), /wallet" is not one of Billing's tabs/);
     assert.match(cp({ billing: { tabs: ["people", "people"] } }), /people is named twice/);
     assert.match(cp({ billing: { tabs: [{ id: "rules", settings_teams: true }] } }), /settings_teams is true, on the teams tab only/);
+    // mold_v0-346: the alerts below the budget rules: on the rules tab only, and never beside an Alerts tab of their own.
+    assert.match(cp({ billing: { tabs: [{ id: "people", with_alerts: true }] } }), /with_alerts is true, on the rules tab only/);
+    assert.match(cp({ billing: { tabs: [{ id: "rules", with_alerts: true }, "alerts"] } }), /drop the alerts tab/);
+    assert.doesNotMatch(cp({ billing: { tabs: ["spending", { id: "rules", with_alerts: true }] } }) ?? "", /with_alerts|alerts tab/);
+    const billingSrc = readFileSync(new URL("../web/src/features/portal/billing.tsx", import.meta.url), "utf8");
+    assert.match(billingSrc, /asked === 'alerts' && alertsInRules \? 'rules'/, "an old ?tab=alerts link opens Budget rules");
+    assert.match(billingSrc, /alertsInRules && <section[^>]*data-billing-rules-alerts=''><h2[^>]*>Alerts<\/h2><AlertsTab \/>/, "the alerts below the rules");
+    const gen = readFileSync(new URL("./gen-packs.mjs", import.meta.url), "utf8");
+    assert.match(gen, /with_alerts\) \? \{ alerts: "\/app\/billing\?tab=rules" \}/, "Settings' Automation leads to Budget rules");
     assert.match(cp({ billing: { tabs: ["people"], order: 1 } }), /unknown field order/);
     assert.match(cp({ billing: { tabs: [] } }), /1 to 6 of spending/);
     assert.match(cp({ sidebar_end: [] }), /1 to 6 entries/);
