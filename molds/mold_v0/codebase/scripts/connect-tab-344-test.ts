@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // mold_v0-344: a catalog tab whose services a workspace connects in place (pack.json tabs[].connect; src/pack-api.ts
 // TabConnectSchema, src/metric-spec.ts connectProblems, src/tab-connect.ts, web/src/features/tabs/connect.tsx).
 //   npm run test:connect-tab        offline: an embedded database, a fake sign-in, a pack of its own
@@ -119,6 +120,11 @@ try {
     assert.equal(row(p, "alpha").data.connection_flag, false);
     assert.equal(row(p, "alpha").connect.connectable, true);
     assert.equal(row(p, "gamma").connect.connectable, false, "a self-hosted one: no Connect (its own data says so)");
+    // mold_v0-345: a service this tab does not connect reads "Not available here", never "Not connected", with no flag of its own.
+    assert.equal(row(p, "gamma").data.connection_state, "unavailable", "a self-hosted one: not available here");
+    assert.equal(row(p, "gamma").data.connection_flag, undefined, "no Builds use it of its own");
+    const pages = readFileSync(new URL("../web/src/features/records/record-pages.tsx", import.meta.url), "utf8");
+    assert.match(pages, /connect\?\.connect && !source \? listed\.map\(\(c\) => \(c\.key === '_record' \? \{ \.\.\.c, label: 'Service' \}/, "a connect tab's first column says Service");
   }
   // The form's spec: who may connect, the key first, the rest under More options, the flag.
   {

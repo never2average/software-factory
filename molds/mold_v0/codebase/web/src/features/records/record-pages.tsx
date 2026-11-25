@@ -398,7 +398,9 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // mold_v0-259 (flag teams): an area that declares visibility lists who sees each record, a column the Filter menu filters.
   const visible = base === 'app' && !source && !!visibilityOf(area);
   const cols = useMemo(() => {
-    const plain = columnsOf(area, source, linked ? [linked.field] : [], base);
+    const listed = columnsOf(area, source, linked ? [linked.field] : [], base);
+    // mold_v0-345: a connect tab's rows are services (Vercel, R2 ...), whatever its catalog area is called.
+    const plain = connect?.connect && !source ? listed.map((c) => (c.key === '_record' ? { ...c, label: 'Service' } : c)) : listed;
     const own = visible ? [...plain, visibilityColumn<RecordRow>(data?.records ?? [])] : plain;
     if (!related) return own;
     // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
@@ -445,7 +447,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       };
     });
     return placeColumns(own, extra);
-  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error, visible, data, base]);
+  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error, visible, data, base, connect]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.

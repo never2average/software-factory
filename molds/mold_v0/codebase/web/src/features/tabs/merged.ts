@@ -48,7 +48,7 @@ export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
 export const CONNECT_STATE = 'connection_state', CONNECT_FLAG = 'connection_flag', CONNECT_TESTED = 'connection_tested';
 export const CONNECT_STATE_OPTIONS = [
   { value: 'connected', label: 'Connected' }, { value: 'needs_attention', label: 'Needs attention' },
-  { value: 'not_tested', label: 'Not tested' }, { value: 'not_connected', label: 'Not connected' }
+  { value: 'not_tested', label: 'Not tested' }, { value: 'not_connected', label: 'Not connected' }, { value: 'unavailable', label: 'Not available here' }
 ];
 /**
  * mold_v0-344: a connect tab's area as its table shows it: the catalog's fields and its columns after the tab's own (State,

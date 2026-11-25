@@ -3098,8 +3098,8 @@ export const isSourceColumn = (c: unknown): c is TabSourceColumn => !!c && typeo
  *   others    true: a connection that points at no service (and that no one service's `set` claims) is listed too, as its
  *             own row (a connection saved before the tab had Connect)
  */
-export const CONNECT_STATES = ["connected", "needs_attention", "not_tested", "not_connected"] as const;
-export const CONNECT_STATE_LABELS: Record<(typeof CONNECT_STATES)[number], string> = { connected: "Connected", needs_attention: "Needs attention", not_tested: "Not tested", not_connected: "Not connected" };
+export const CONNECT_STATES = ["connected", "needs_attention", "not_tested", "not_connected", "unavailable"] as const;
+export const CONNECT_STATE_LABELS: Record<(typeof CONNECT_STATES)[number], string> = { connected: "Connected", needs_attention: "Needs attention", not_tested: "Not tested", not_connected: "Not connected", unavailable: "Not available here" };
 /** The columns a connect tab adds before its own: the state, whether builds use it (with a flag), when it was last tested. */
 export const CONNECT_COLUMNS = { state: "connection_state", flag: "connection_flag", tested: "connection_tested" } as const;
 const httpsHref = z.string().trim().min(9).max(500).refine((h) => { try { const u = new URL(h); return u.protocol === "https:" && !!u.hostname && !u.username && !u.password; } catch { return false; } }, "an https:// address");
