@@ -43,7 +43,7 @@ type ConnectTab = Pick<PackTabSpec, 'pack' | 'id' | 'connect'>;
 type Service = NonNullable<NonNullable<PackTabSpec['connect']>['services']>[string];
 type Row = { key: string; title: string | null; data: Record<string, unknown>; areas?: string[]; connect?: RowConnect };
 
-const STATE_COLOR: Record<string, BadgeColor> = { connected: 'success', needs_attention: 'danger', not_tested: 'warning', not_connected: 'neutral' };
+const STATE_COLOR: Record<string, BadgeColor> = { connected: 'success', needs_attention: 'danger', not_tested: 'warning', not_connected: 'neutral', unavailable: 'neutral' };
 const stateLabel = (s: unknown) => CONNECT_STATE_OPTIONS.find((o) => o.value === s)?.label ?? 'Not connected';
 /** A state as the table and the panel draw it: its word, in its colour. */
 export function StateBadge({ state }: { state: unknown }) {
