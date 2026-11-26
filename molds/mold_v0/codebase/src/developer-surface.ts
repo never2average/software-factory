@@ -16,7 +16,7 @@
  * queued, and the MCP surface is unchanged.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { LATEST_API_VERSION, type DeveloperSurfaceConfig } from "./developer-config.js";
+import { LATEST_API_VERSION, developerSurfaceDefaults, hasWebhooksOut, type DeveloperSurfaceConfig } from "./developer-config.js";
 import { packConfigs } from "./host.js";
 import { featureSetting } from "./feature-flags.js";
 
@@ -24,8 +24,10 @@ import { featureSetting } from "./feature-flags.js";
 export function developerSurface(): DeveloperSurfaceConfig | null {
   const c = packConfigs().find((x) => x.developer_surface)?.developer_surface;
   if (!c || !featureSetting("developer_surface")) return null; // the features registry (mold_v0-219): off, none
-  return { ...c, client_sessions: { ...c.client_sessions, ttl_seconds: c.client_sessions.ttl_seconds ?? 3600 } };
+  return developerSurfaceDefaults(c);
 }
+/** mold_v0-347: whether this build sends webhooks out (it declares an event); else no endpoint route is mounted. */
+export const webhooksOutOn = () => hasWebhooksOut(developerSurface());
 export const developerOn = () => developerSurface() !== null;
 /** The version a key made now is pinned to. */
 export const currentApiVersion = () => developerSurface()?.api_version ?? LATEST_API_VERSION;

@@ -25,7 +25,7 @@ import { createHash, randomBytes } from "node:crypto";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { auditApiCaller } from "./audit-trail.js";
 import { auditPlatform } from "./developer-audit.js";
-import { API_VERSIONS, scopeAllows, type BaseScope } from "./developer-config.js";
+import { API_VERSIONS, hasWebhooksOut, scopeAllows, type BaseScope } from "./developer-config.js";
 import { resolveDeveloperKey, type ResolvedKey } from "./developer-keys.js";
 import { openApiDocument } from "./developer-openapi.js";
 import { answerCheck, declaredChecks, findCheck } from "./checks.js";
@@ -394,20 +394,23 @@ export function developerApiRouter(): Router {
   // ---------- webhooks out ----------
   const by = (res: Response) => actorLabel(callerOf(res).actor);
   const wh = (fn: (req: Request, res: Response, orgId: number) => Promise<Answer>) => h(async (req, res) => { keysOnly(res); need(res, "webhooks"); return fn(req, res, callerOf(res).orgId); });
-  v1.get("/webhook_endpoints", wh(async (_q, _r, org) => ({ status: 200, body: { data: await hooks.listEndpoints(org) } })));
-  v1.post("/webhook_endpoints", wh(async (_q, res, org) => ({ status: 201, body: { data: await hooks.createEndpoint(org, jsonBody(res), by(res)) } })));
-  v1.get("/webhook_endpoints/:id", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.getEndpoint(org, String(req.params.id)) } })));
-  v1.patch("/webhook_endpoints/:id", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.updateEndpoint(org, String(req.params.id), jsonBody(res)) } })));
-  v1.delete("/webhook_endpoints/:id", wh(async (req, _r, org) => {
-    if (!(await hooks.deleteEndpoint(org, String(req.params.id)))) throw new ApiProblem(404, "not_found", "No such webhook endpoint");
-    return { status: 204 };
-  }));
-  v1.post("/webhook_endpoints/:id/rotate_secret", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.rotateEndpointSecret(org, String(req.params.id), jsonBody(res), by(res)) } })));
-  v1.get("/webhook_endpoints/:id/secret", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.revealWebhookSecret(org, String(req.params.id), by(res)) } })));
-  v1.post("/webhook_endpoints/:id/test", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.testEndpoint(org, String(req.params.id)) } })));
-  v1.get("/webhook_endpoints/:id/deliveries", wh(async (req, _r, org) => ({ status: 200, body: await hooks.listDeliveries(org, String(req.params.id), { limit: q1(req, "limit"), after: q1(req, "after"), status: q1(req, "status") }) })));
-  v1.get("/webhook_deliveries/:id", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.getDelivery(org, String(req.params.id)) } })));
-  v1.post("/webhook_deliveries/:id/retry", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.redeliver(org, String(req.params.id)) } })));
+  // mold_v0-347: only when the build declares an event to send (else 404, as any unknown route).
+  if (hasWebhooksOut(developerSurface())) {
+    v1.get("/webhook_endpoints", wh(async (_q, _r, org) => ({ status: 200, body: { data: await hooks.listEndpoints(org) } })));
+    v1.post("/webhook_endpoints", wh(async (_q, res, org) => ({ status: 201, body: { data: await hooks.createEndpoint(org, jsonBody(res), by(res)) } })));
+    v1.get("/webhook_endpoints/:id", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.getEndpoint(org, String(req.params.id)) } })));
+    v1.patch("/webhook_endpoints/:id", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.updateEndpoint(org, String(req.params.id), jsonBody(res)) } })));
+    v1.delete("/webhook_endpoints/:id", wh(async (req, _r, org) => {
+      if (!(await hooks.deleteEndpoint(org, String(req.params.id)))) throw new ApiProblem(404, "not_found", "No such webhook endpoint");
+      return { status: 204 };
+    }));
+    v1.post("/webhook_endpoints/:id/rotate_secret", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.rotateEndpointSecret(org, String(req.params.id), jsonBody(res), by(res)) } })));
+    v1.get("/webhook_endpoints/:id/secret", wh(async (req, res, org) => ({ status: 200, body: { data: await hooks.revealWebhookSecret(org, String(req.params.id), by(res)) } })));
+    v1.post("/webhook_endpoints/:id/test", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.testEndpoint(org, String(req.params.id)) } })));
+    v1.get("/webhook_endpoints/:id/deliveries", wh(async (req, _r, org) => ({ status: 200, body: await hooks.listDeliveries(org, String(req.params.id), { limit: q1(req, "limit"), after: q1(req, "after"), status: q1(req, "status") }) })));
+    v1.get("/webhook_deliveries/:id", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.getDelivery(org, String(req.params.id)) } })));
+    v1.post("/webhook_deliveries/:id/retry", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.redeliver(org, String(req.params.id)) } })));
+  }
 
   // ---------- declarative checks (mold_v0-196, src/checks.ts): the scope checks, or checks:<name> ----------
   if (declaredChecks().length) {

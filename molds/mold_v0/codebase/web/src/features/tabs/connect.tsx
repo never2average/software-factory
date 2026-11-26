@@ -6,7 +6,8 @@
 // record page's actions (test, edit, delete, toggles: POST /api/records/_page/<area>/<key>/actions/<id>), with their
 // permissions, contract, guards, rate limits and audit; a key typed here goes to the server once and is never shown again.
 //   ConnectCards     the list's three cards: Connected, Needs attention, Services
-//   ConnectSection   a service's panel, above its catalog page: its accounts, then Connect (or who may connect it)
+//   ConnectSection   a service's panel, above its catalog page: its accounts, then Connect (or who may connect it), and
+//                    once connected the receiver it feeds (mold_v0-347, connect-receiver.tsx)
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +26,7 @@ import { findRecordArea } from '@/features/records/registry';
 import { FieldsForm, fieldValues, type FormField } from './tab-action';
 import { keyFromTitle } from './form-prefill';
 import { CONNECT_FLAG, CONNECT_STATE, CONNECT_STATE_OPTIONS, CONNECT_TESTED } from './merged';
+import { ReceiverSection } from './connect-receiver';
 
 type Health = { state?: string | null; attention?: boolean; tested_at?: string };
 export type ConnectionView = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; health?: Health };
@@ -153,6 +155,8 @@ export function ConnectSection({ tab, row, spec, onChanged, flagTaken }: { tab: 
       ) : (
         <div><Button type='button' variant='outline' size='sm' onClick={() => setAdding(true)} data-connect-another=''><Icons.add aria-hidden data-icon='inline-start' />Connect another account</Button></div>
       )}
+      {/* mold_v0-347: the receiver this service feeds (its request logs, say), set up here once an account is connected. */}
+      {accounts.length > 0 && service?.receiver && <ReceiverSection receiver={service.receiver} />}
     </section>
   );
 }

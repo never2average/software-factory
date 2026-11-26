@@ -223,7 +223,8 @@ try {
     const tabs = readFileSync(path.join(ROOT, "web/src/features/admin/health-tabs.tsx"), "utf8");
     assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\),\s*\.\.\.\(webhooksTab\(\) \? \[\['webhooks', 'Webhook Delivery'\] as const\] : \[\]\), \['status', 'Status'\]\n\];/, "the shell's Health tabs, in order: Errors, Runs, Scheduled work, Email Delivery, Webhook Delivery, Status (mold_v0-293: Sign-in removed)");
     assert.match(tabs, /deliveriesTab = \(\): boolean => settingsPage\.email \|\| developerConsole\.on/, "Email Delivery only with company email or a developer surface");
-    assert.match(tabs, /webhooksTab = \(\): boolean => developerConsole\.on;/, "Webhook Delivery only with a developer surface (mold_v0-215)");
+    assert.match(tabs, /webhooksTab = \(\): boolean => developerConsole\.on && \(developerConsole as \{ webhooks_out\?: boolean \}\)\.webhooks_out !== false;/,
+      "Webhook Delivery only with a developer surface that sends webhooks (mold_v0-215; mold_v0-347: a surface of receivers alone has none)");
     // Email Delivery is emails only: its tab has no webhook card or view; the webhook ones are Webhook Delivery's.
     const emailTab = tabs.slice(tabs.indexOf('function DeliveriesTab'), tabs.indexOf('// ---------------------------------------------------------------- Webhook Delivery'));
     assert.ok(emailTab.length > 0 && !/[Ww]ebhook|[Ee]ndpoint|hooks_/.test(emailTab), "Email Delivery shows email only");

@@ -33,8 +33,8 @@ import { cn } from '@/lib/utils';
 
 /** Email Delivery is a tab only when the app sends mail of a workspace's own or has a developer surface (the server's deliveriesOn). */
 export const deliveriesTab = (): boolean => settingsPage.email || developerConsole.on;
-/** Webhook Delivery is a tab only when the app has a developer surface: its declared events go out as webhooks (the server's webhooksOn). */
-export const webhooksTab = (): boolean => developerConsole.on;
+/** Webhook Delivery is a tab only when the app has a developer surface that sends webhooks (its declared events; mold_v0-347: a surface of receivers alone sends none). */
+export const webhooksTab = (): boolean => developerConsole.on && (developerConsole as { webhooks_out?: boolean }).webhooks_out !== false;
 
 /** Health's tabs in a build without the session engine, in order (Errors first: the page's default). */
 export const healthTabsShell = (): readonly (readonly [string, string])[] => [

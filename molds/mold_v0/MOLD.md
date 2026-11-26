@@ -2847,7 +2847,7 @@ brief's `## Profile` `legal.*` lines, or one question; `later` leaves the pages 
 
 **Developer surface (mold_v0-193; an app of kind `embedded`).** On in a build where one pack's pack.json declares
 `developer_surface` (`src/developer-config.ts`: `events`, `sdk_languages`, `client_sessions` {ttl_seconds,
-allowed_origins, scopes}, optional `webhooks_in` and `api_version`; checked by `gen-packs.mjs` against the build's record
+allowed_origins, scopes}, `webhooks_in` and `api_version`, each optional since mold_v0-347, below, though one must be declared; checked by `gen-packs.mjs` against the build's record
 areas, one pack's per build, carried to the server as `PACK_CONFIG`). The factory writes it there from the app spec
 (`mint.py new --spec`: the spec's `developer_surface` into the first inline pack; docs/APP_SPEC.md). Off, in every
 `kind: tool` app, nothing of it is mounted, read or queued: no `/v1`, no `/openapi.json`, no `/api/developer`, the MCP
@@ -2886,7 +2886,7 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
   the minting key's; the subject is the actor; revocable, and dead with their key. A browser calls only from an origin
   allowed for the session's workspace (the app's `allowed_origins` and the workspace's own, `/v1/allowed_origins`);
   a key sent with an `Origin` is refused (`secret_key_in_browser`).
-- **Webhooks out** (`src/developer-webhooks.ts`, Standard Webhooks): endpoints with a `whsec_` signing secret (sealed with
+- **Webhooks out** (`src/developer-webhooks.ts`, Standard Webhooks; only when the surface declares an event, mold_v0-347): endpoints with a `whsec_` signing secret (sealed with
   the workspace's data key; answered when made or rotated; read again only through the audited reveal, counted on the
   endpoint and handed to the audit hook; a rotation signs with both secrets for its grace). Events: record created,
   updated, state changed and deleted (`src/record-areas.ts` `onRecordChangeInTransaction`; a sealed or asset area's
@@ -3029,7 +3029,7 @@ with `embedded`); in a build the flag false turns a declared surface off. The sp
 needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platform`.
 
 **Settings, from the registry.** Each capability that is on contributes its Settings tabs, in four fixed groups:
-**Access** (Credentials, API keys, Allowed origins, Teams), **Connections** (Email, Webhooks, Integrations), **Automation**
+**Access** (Credentials, API keys, Allowed origins, Teams), **Connections** (Email, Webhooks, Integrations; a group with no tab is not shown, mold_v0-347), **Automation**
 (Alerts), **Data & trust** (Signing), each followed by the packs' own: a workspace record area declared
 `"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
 table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operations. The sidebar follows the
@@ -4713,7 +4713,8 @@ Programs", "What an improvement improves", "Programs' records, roles and starts"
   set when the last delivery, or the source's creation, is `silent_hours` old) and a delivery clears it; nothing is
   emailed. The console shows the state above every tab that reads a drain's records (an overview whose charts' metrics
   are over one, an area tab over one: `developerConsole.drains` in the generated config): what to do when not connected
-  (add a source on Settings, Integrations, then a log drain at the provider that sends to its address), waiting, a
+  (add a source on Settings, Integrations, then a log drain at the provider that sends to its address; where a connect
+  tab's service sets the drain up, mold_v0-347, open that tab and its service's panel instead), waiting, a
   warning when silent (also at the top of the home page), else when logs last arrived. A metric `unit` may be `ms`
   ("240 ms", then "1.2 s"). Tests: `scripts/log-drain-analytics-test.ts` (a sample in Vercel's documented format,
   `scripts/lib/log-drain-sample.ts`, signed with a secret made at run time, sent through `POST /v1/inbound/<source>`;
@@ -5187,6 +5188,52 @@ member's create refused, a second workspace seeing none of the first's connectio
 them getting none, the account's actions and Disconnect), `test:console-types` (the fixture declares every key),
 `test:console-tabs` and `test:record-crumbs` (the labelled narrowed action).
 
+## A receiver set up where its service is connected; a developer surface of receivers alone (mold_v0-347)
+
+Approved by the operator on 2026-11-25 after asking whether Settings › Connections (Webhooks, Inbound webhooks) was still
+needed in an app whose only receiver is its hosting provider's request logs: "Remove the page". Two opt-in keys; a pack
+that names neither builds and draws as before (the zero-pack build and every other app unchanged).
+
+- **Receivers alone** (`src/pack-manifest.ts` DeveloperSurfaceSchema, `src/developer-config.ts` developerSurfaceDefaults,
+  hasWebhooksOut): `events`, `sdk_languages` and `client_sessions` are each optional; a surface must declare one of them or
+  `webhooks_in` (an empty one is refused). Left out: no events, no SDK, client sessions of `read` only for an hour from
+  the origins a workspace adds itself. **No event, no webhooks out**: no Settings › Webhooks tab, the console's
+  `/api/developer/webhooks*` and `/v1/webhook_endpoints*`, `/v1/webhook_deliveries*` are not mounted (404), the
+  description (`/openapi.json`) lists neither those paths nor events (`webhooks` is empty), the guide has no Webhooks
+  page (no SDKs page without a language), Health has no Webhook Delivery (`webhooksOn`, `developerConsole.webhooks_out`
+  false), and the data map has no Webhooks out row. API keys, Allowed origins and Inbound webhooks stay as they were.
+- **A receiver linked to a service** (`src/pack-api.ts` TabConnectServiceSchema `receiver`; `tabs[].connect.services.<key>`):
+  `{name, label?, how?, feeds?}`, the developer surface's receiver (`webhooks_in[].name`) that service feeds, in plain
+  words. Refused at build (`scripts/gen-packs.mjs` LINKED_RECEIVERS): a name the surface does not declare, a receiver
+  linked from two tabs, a linking tab the build does not show. With the developer surface off a link is ignored, as the
+  surface is. The console's tab spec carries `{name, label, how, feeds, drain}` (`label` defaults to "Request logs" for
+  a log drain, else "Inbound webhooks").
+- **Drawn** (`web/src/features/tabs/connect-receiver.tsx`, from `connect.tsx` ConnectSection): once the service has an
+  account in this workspace, its panel shows the receiver's block: its state (Not connected, Waiting, Receiving, Silent:
+  a log drain's own health from `GET /api/log-drains/status`, else from its sources), `feeds`, each source's address with
+  Copy and when it last received, `how` (where at the provider the address goes), and for those who may manage (owners)
+  "Set up <label>" and Remove. Every read and write is the inbound sources' own routes (`/api/developer/sources`: every
+  role reads, an owner's `manage` to add or remove; the source's secret made and sealed by the server, answered once, in
+  the shell's once-dialog when the sender signs with it). The offer (`GET /api/developer/`) says per receiver which
+  secret verifies a sender, `own` or `app` (a log drain's `secret_env` set on the app's hosting), never its name or value;
+  with `app` the dialog is skipped (the address is all the provider needs). Inbound verification (`POST /v1/inbound/<id>`)
+  is unchanged.
+- **Settings** (`SETTINGS_TABS`): Inbound webhooks lists only the receivers no connect tab links, and is not a tab when
+  every receiver is linked; Webhooks only with an event. A group with no tab is not shown (Settings' layout follows the
+  remaining tabs: up to 5, one strip). **Old addresses**: `?tab=integrations` (and `?tab=webhooks` when there are none
+  out) are `movedSettingsTabs` entries to the linking tab's address, and `/app/settings/connections` redirects there when
+  the group is empty (next.config, the destination's query kept). The drain notices (`drain-status.tsx`) send people to
+  that tab by its label (`developerConsole.drains.setup` {href, label}).
+
+Proof: `npm run test:connect-receiver` (`scripts/connect-receiver-347-test.ts`, offline: the keys and refusals; builds of
+a fixture pack in a temporary copy: the Settings tabs, the moved addresses and redirect, the tab spec, an unknown and a
+twice-linked receiver refused, an unlinked receiver and an event keeping Settings as before; through the API with a
+surface of one log-drain receiver: no webhooks out on either API, the description or Health; a member's and a viewer's
+set-up refused, the secret answered once and never listed, a second workspace seeing none of the first's sources or
+drain state and unable to remove them, a delivery with another secret refused and the right one received),
+`test:console-types` (the fixture declares the receiver), `test:console-tabs`, `test:connect-tab`,
+`test:developer-surface`, `test:developer-console`, `test:log-drain`.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace
@@ -5295,7 +5342,8 @@ The shell's own words and layout (no key):
   by their description from the developer surface; a disabled endpoint's row says why ("25 failures in a row", "Turned
   off by the workspace").
 - **Inbound webhooks.** Settings › Connections' tab `integrations` is labelled "Inbound webhooks" (its id and address
-  unchanged), as the developer console names it; the request-logs notice names it so.
+  unchanged), as the developer console names it; the request-logs notice names it so (or, mold_v0-347, the connect tab
+  whose service's panel sets the drain up).
 - **Allowed origins.** The help line in plain words, from the client sessions' span and scopes: "Pages at these
   addresses may read this workspace's records for up to an hour at a time."
 

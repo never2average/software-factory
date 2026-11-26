@@ -9,7 +9,8 @@ export interface Offer {
   openapi: string; api_versions: string[]; api_version: string; scopes: string[]; sdk_languages: string[];
   events: { name: string; description?: string; about: string }[];
   client_sessions: { ttl_seconds: number; scopes: string[]; allowed_origins: string[] };
-  receivers: { name: string; description: string | null; area: string }[];
+  /** mold_v0-347: `secret`: which secret verifies a sender ("app": set on the app's hosting; "own": the source's, shown once). */
+  receivers: { name: string; description: string | null; area: string; secret?: 'own' | 'app' }[];
 }
 export interface DevKey {
   id: number; name: string; kind: 'secret' | 'integration'; scopes: string[]; key_prefix: string; api_version: string;

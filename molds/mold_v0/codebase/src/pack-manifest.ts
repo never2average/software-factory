@@ -218,13 +218,15 @@ const DeveloperSurfaceSchema = z.object({
     description: z.string().trim().min(1).max(300),
     areas: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(60).optional(),
     payload: z.record(z.string(), z.unknown()).optional(),
-  }).strict()).min(1).max(100),
-  sdk_languages: z.array(z.enum(SDK_LANGUAGES)).min(1).max(SDK_LANGUAGES.length).refine((l) => new Set(l).size === l.length, "each language once"),
+  }).strict()).max(100).optional(),
+  // mold_v0-347: events, SDKs and client sessions are each optional: a surface may be its receivers alone (webhooks_in),
+  // and with no event there are no webhooks out (no Settings tab, no endpoint routes). See developerSurfaceDefaults.
+  sdk_languages: z.array(z.enum(SDK_LANGUAGES)).max(SDK_LANGUAGES.length).refine((l) => new Set(l).size === l.length, "each language once").optional(),
   client_sessions: z.object({
     ttl_seconds: z.number().int().min(60).max(86400).default(3600),
     allowed_origins: z.array(z.string().regex(/^https:\/\/[a-z0-9.-]+(:[0-9]{2,5})?$/, "an https origin like https://app.example.com")).min(1).max(50),
     scopes: z.array(z.string().regex(SESSION_SCOPE_PATTERN, "read, write, run or checks, or one narrowed like read:<area> or checks:<check>")).max(50).optional(),
-  }).strict(),
+  }).strict().optional(),
   webhooks_in: z.array(z.object({
     name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "lowercase letters, digits and _"),
     description: z.string().trim().max(300).optional(),
@@ -243,7 +245,10 @@ const DeveloperSurfaceSchema = z.object({
     if (r.fields === undefined) ctx.addIssue({ code: "custom", path: ["fields"], message: "a receiver that is not a log drain names its fields" });
   })).max(20).optional(),
   api_version: z.enum(API_VERSIONS).optional(),
-}).strict();
+}).strict().superRefine((d, ctx) => {
+  if (!d.events?.length && !d.webhooks_in?.length && !d.client_sessions && !d.sdk_languages?.length)
+    ctx.addIssue({ code: "custom", message: "a developer surface declares something: its events, its receivers (webhooks_in), its client sessions or its SDKs" });
+});
 
 /**
  * The journeys component (mold_v0-143; src/journeys.ts, src/host.ts JourneysConfig): on in a build where one pack

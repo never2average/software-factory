@@ -14035,6 +14035,41 @@
                             "pattern": "^[^\\n\\r{}<>]*$"
                           }
                         },
+                        "receiver": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 40,
+                              "pattern": "^[^\\n\\r{}<>]*$"
+                            },
+                            "how": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 240,
+                              "pattern": "^[^\\n\\r{}<>]*$"
+                            },
+                            "feeds": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160,
+                              "pattern": "^[^\\n\\r{}<>]*$"
+                            },
+                            "$comment": {
+                              "type": "string",
+                              "maxLength": 2000
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
                         "$comment": {
                           "type": "string",
                           "maxLength": 2000
@@ -21931,7 +21966,6 @@
               "maxLength": 2000
             },
             "events": {
-              "minItems": 1,
               "maxItems": 100,
               "type": "array",
               "items": {
@@ -21978,7 +22012,6 @@
               }
             },
             "sdk_languages": {
-              "minItems": 1,
               "maxItems": 2,
               "type": "array",
               "items": {
@@ -22363,11 +22396,6 @@
               ]
             }
           },
-          "required": [
-            "events",
-            "sdk_languages",
-            "client_sessions"
-          ],
           "additionalProperties": false
         },
         "journeys": {

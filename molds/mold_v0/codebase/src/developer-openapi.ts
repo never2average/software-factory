@@ -9,7 +9,7 @@
  */
 import { declaredChecks } from "./checks.js";
 import { checkBuckets, inputKind } from "./check-spec.js";
-import { API_VERSIONS, EVENT_CATALOG, TEST_EVENT, type EventName } from "./developer-config.js";
+import { API_VERSIONS, EVENT_CATALOG, TEST_EVENT, hasWebhooksOut, type EventName } from "./developer-config.js";
 import { currentApiVersion, developerSurface } from "./developer-surface.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { NS } from "./namespace.js";
@@ -187,43 +187,45 @@ export function openApiDocument(serverUrl: string): Schema {
   add("/v1/allowed_origins", "delete", operation({ method: "delete", summary: "Remove a browser origin.", group: "allowed_origins", sdk: "remove", scope: "sessions", write: true,
     params: [{ name: "origin", in: "query", required: true, schema: { type: "string" } }], ok: origins }));
 
-  // ---------- webhooks out ----------
-  const declared = cfg.events.map((e) => e.name);
-  schemas.WebhookEndpoint = { type: "object", required: ["id", "url", "events", "status"], properties: {
-    id: { type: "string" }, url: { type: "string", format: "uri" }, description: { type: ["string", "null"] }, events: { type: "array", items: { type: "string", enum: declared } },
-    status: { type: "string", enum: ["enabled", "disabled"] }, disabled_reason: { type: ["string", "null"] }, failure_streak: { type: "integer" },
-    secret: { type: "string", description: "whsec_...: answered when the endpoint is made or its secret rotated, and by the audited reveal." },
-    secret_rotated_at: { type: ["string", "null"] }, secret_revealed_at: { type: ["string", "null"] }, secret_reveals: { type: "integer" },
-    created_at: { type: "string", format: "date-time" }, updated_at: { type: "string", format: "date-time" } } };
-  schemas.WebhookDelivery = { type: "object", required: ["id", "endpoint_id", "event_type", "status", "attempts"], properties: {
-    id: { type: "string", description: "The message's webhook-id." }, endpoint_id: { type: "string" }, event_type: { type: "string" },
-    status: { type: "string", enum: ["pending", "succeeded", "failed"] }, attempts: { type: "integer" },
-    attempt_log: { type: "array", items: { type: "object", properties: { at: { type: "string" }, status: { type: ["integer", "null"] }, ms: { type: "integer" }, error: { type: "string" } } } },
-    next_attempt_at: { type: ["string", "null"] }, last_status: { type: ["integer", "null"] }, last_error: { type: ["string", "null"] },
-    created_at: { type: "string" }, delivered_at: { type: ["string", "null"] }, payload: ref("EventEnvelope") } };
-  schemas.EventEnvelope = { type: "object", required: ["type", "timestamp", "data"], properties: { type: { type: "string" }, timestamp: { type: "string", format: "date-time" }, data: { type: "object" } } };
-  const ep = json({ type: "object", required: ["data"], properties: { data: ref("WebhookEndpoint") } });
-  const dl = json({ type: "object", required: ["data"], properties: { data: ref("WebhookDelivery") } });
-  const epId = pathParam("id", "The endpoint's id (we_...).");
-  add("/v1/webhook_endpoints", "get", operation({ method: "get", summary: "The workspace's webhook endpoints.", group: "webhook_endpoints", sdk: "list", scope: "webhooks",
-    ok: json({ type: "object", required: ["data"], properties: { data: { type: "array", items: ref("WebhookEndpoint") } } }) }));
-  add("/v1/webhook_endpoints", "post", operation({ method: "post", summary: "Add a webhook endpoint (answers its signing secret once).", group: "webhook_endpoints", sdk: "create", scope: "webhooks", write: true, status: "201",
-    body: body({ type: "object", required: ["url"], properties: { url: { type: "string", format: "uri" }, events: { type: "array", items: { type: "string", enum: declared } }, description: { type: "string" } } }), ok: ep }));
-  add("/v1/webhook_endpoints/{id}", "get", operation({ method: "get", summary: "One webhook endpoint.", group: "webhook_endpoints", sdk: "get", scope: "webhooks", params: [epId], ok: ep }));
-  add("/v1/webhook_endpoints/{id}", "patch", operation({ method: "patch", summary: "Change an endpoint's address, events or description, or disable or enable it.", group: "webhook_endpoints", sdk: "update", scope: "webhooks", write: true, params: [epId],
-    body: body({ type: "object", properties: { url: { type: "string" }, events: { type: "array", items: { type: "string", enum: declared } }, description: { type: "string" }, status: { type: "string", enum: ["enabled", "disabled"] } } }), ok: ep }));
-  add("/v1/webhook_endpoints/{id}", "delete", operation({ method: "delete", summary: "Remove a webhook endpoint.", group: "webhook_endpoints", sdk: "delete", scope: "webhooks", write: true, params: [epId], status: "204", ok: { description: "Removed" } }));
-  add("/v1/webhook_endpoints/{id}/rotate_secret", "post", operation({ method: "post", summary: "A new signing secret (answered once); the old one signs beside it for grace_hours.", group: "webhook_endpoints", sdk: "rotate_secret", scope: "webhooks", write: true, params: [epId],
-    body: body({ type: "object", properties: { grace_hours: { type: "integer", minimum: 0, maximum: 168 } } }, false), ok: ep }));
-  add("/v1/webhook_endpoints/{id}/secret", "get", operation({ method: "get", summary: "Read the signing secret again (recorded: when, by whom).", group: "webhook_endpoints", sdk: "reveal_secret", scope: "webhooks", params: [epId],
-    ok: json({ type: "object", required: ["data"], properties: { data: { type: "object", required: ["secret"], properties: { secret: { type: "string" } } } } }) }));
-  add("/v1/webhook_endpoints/{id}/test", "post", operation({ method: "post", summary: `Send a test ping (${TEST_EVENT}) now.`, group: "webhook_endpoints", sdk: "test", scope: "webhooks", write: true, params: [epId], ok: dl }));
-  add("/v1/webhook_endpoints/{id}/deliveries", "get", operation({ method: "get", summary: "The endpoint's delivery log, newest first.", group: "webhook_endpoints", sdk: "deliveries", scope: "webhooks",
-    params: [epId, P.limit, P.after, { name: "status", in: "query", schema: { type: "string", enum: ["pending", "succeeded", "failed"] } }],
-    ok: json({ type: "object", required: ["data", "next"], properties: { data: { type: "array", items: ref("WebhookDelivery") }, next: { type: ["string", "null"] } } }) }));
-  const dId = pathParam("id", "The delivery's id (msg_...).");
-  add("/v1/webhook_deliveries/{id}", "get", operation({ method: "get", summary: "One delivery and its attempts.", group: "webhook_deliveries", sdk: "get", scope: "webhooks", params: [dId], ok: dl }));
-  add("/v1/webhook_deliveries/{id}/retry", "post", operation({ method: "post", summary: "Send a delivery again now.", group: "webhook_deliveries", sdk: "retry", scope: "webhooks", write: true, params: [dId], ok: dl }));
+  // ---------- webhooks out (mold_v0-347: only when the build declares an event) ----------
+  if (hasWebhooksOut(cfg)) {
+    const declared = cfg.events.map((e) => e.name);
+    schemas.WebhookEndpoint = { type: "object", required: ["id", "url", "events", "status"], properties: {
+      id: { type: "string" }, url: { type: "string", format: "uri" }, description: { type: ["string", "null"] }, events: { type: "array", items: { type: "string", enum: declared } },
+      status: { type: "string", enum: ["enabled", "disabled"] }, disabled_reason: { type: ["string", "null"] }, failure_streak: { type: "integer" },
+      secret: { type: "string", description: "whsec_...: answered when the endpoint is made or its secret rotated, and by the audited reveal." },
+      secret_rotated_at: { type: ["string", "null"] }, secret_revealed_at: { type: ["string", "null"] }, secret_reveals: { type: "integer" },
+      created_at: { type: "string", format: "date-time" }, updated_at: { type: "string", format: "date-time" } } };
+    schemas.WebhookDelivery = { type: "object", required: ["id", "endpoint_id", "event_type", "status", "attempts"], properties: {
+      id: { type: "string", description: "The message's webhook-id." }, endpoint_id: { type: "string" }, event_type: { type: "string" },
+      status: { type: "string", enum: ["pending", "succeeded", "failed"] }, attempts: { type: "integer" },
+      attempt_log: { type: "array", items: { type: "object", properties: { at: { type: "string" }, status: { type: ["integer", "null"] }, ms: { type: "integer" }, error: { type: "string" } } } },
+      next_attempt_at: { type: ["string", "null"] }, last_status: { type: ["integer", "null"] }, last_error: { type: ["string", "null"] },
+      created_at: { type: "string" }, delivered_at: { type: ["string", "null"] }, payload: ref("EventEnvelope") } };
+    schemas.EventEnvelope = { type: "object", required: ["type", "timestamp", "data"], properties: { type: { type: "string" }, timestamp: { type: "string", format: "date-time" }, data: { type: "object" } } };
+    const ep = json({ type: "object", required: ["data"], properties: { data: ref("WebhookEndpoint") } });
+    const dl = json({ type: "object", required: ["data"], properties: { data: ref("WebhookDelivery") } });
+    const epId = pathParam("id", "The endpoint's id (we_...).");
+    add("/v1/webhook_endpoints", "get", operation({ method: "get", summary: "The workspace's webhook endpoints.", group: "webhook_endpoints", sdk: "list", scope: "webhooks",
+      ok: json({ type: "object", required: ["data"], properties: { data: { type: "array", items: ref("WebhookEndpoint") } } }) }));
+    add("/v1/webhook_endpoints", "post", operation({ method: "post", summary: "Add a webhook endpoint (answers its signing secret once).", group: "webhook_endpoints", sdk: "create", scope: "webhooks", write: true, status: "201",
+      body: body({ type: "object", required: ["url"], properties: { url: { type: "string", format: "uri" }, events: { type: "array", items: { type: "string", enum: declared } }, description: { type: "string" } } }), ok: ep }));
+    add("/v1/webhook_endpoints/{id}", "get", operation({ method: "get", summary: "One webhook endpoint.", group: "webhook_endpoints", sdk: "get", scope: "webhooks", params: [epId], ok: ep }));
+    add("/v1/webhook_endpoints/{id}", "patch", operation({ method: "patch", summary: "Change an endpoint's address, events or description, or disable or enable it.", group: "webhook_endpoints", sdk: "update", scope: "webhooks", write: true, params: [epId],
+      body: body({ type: "object", properties: { url: { type: "string" }, events: { type: "array", items: { type: "string", enum: declared } }, description: { type: "string" }, status: { type: "string", enum: ["enabled", "disabled"] } } }), ok: ep }));
+    add("/v1/webhook_endpoints/{id}", "delete", operation({ method: "delete", summary: "Remove a webhook endpoint.", group: "webhook_endpoints", sdk: "delete", scope: "webhooks", write: true, params: [epId], status: "204", ok: { description: "Removed" } }));
+    add("/v1/webhook_endpoints/{id}/rotate_secret", "post", operation({ method: "post", summary: "A new signing secret (answered once); the old one signs beside it for grace_hours.", group: "webhook_endpoints", sdk: "rotate_secret", scope: "webhooks", write: true, params: [epId],
+      body: body({ type: "object", properties: { grace_hours: { type: "integer", minimum: 0, maximum: 168 } } }, false), ok: ep }));
+    add("/v1/webhook_endpoints/{id}/secret", "get", operation({ method: "get", summary: "Read the signing secret again (recorded: when, by whom).", group: "webhook_endpoints", sdk: "reveal_secret", scope: "webhooks", params: [epId],
+      ok: json({ type: "object", required: ["data"], properties: { data: { type: "object", required: ["secret"], properties: { secret: { type: "string" } } } } }) }));
+    add("/v1/webhook_endpoints/{id}/test", "post", operation({ method: "post", summary: `Send a test ping (${TEST_EVENT}) now.`, group: "webhook_endpoints", sdk: "test", scope: "webhooks", write: true, params: [epId], ok: dl }));
+    add("/v1/webhook_endpoints/{id}/deliveries", "get", operation({ method: "get", summary: "The endpoint's delivery log, newest first.", group: "webhook_endpoints", sdk: "deliveries", scope: "webhooks",
+      params: [epId, P.limit, P.after, { name: "status", in: "query", schema: { type: "string", enum: ["pending", "succeeded", "failed"] } }],
+      ok: json({ type: "object", required: ["data", "next"], properties: { data: { type: "array", items: ref("WebhookDelivery") }, next: { type: ["string", "null"] } } }) }));
+    const dId = pathParam("id", "The delivery's id (msg_...).");
+    add("/v1/webhook_deliveries/{id}", "get", operation({ method: "get", summary: "One delivery and its attempts.", group: "webhook_deliveries", sdk: "get", scope: "webhooks", params: [dId], ok: dl }));
+    add("/v1/webhook_deliveries/{id}/retry", "post", operation({ method: "post", summary: "Send a delivery again now.", group: "webhook_deliveries", sdk: "retry", scope: "webhooks", write: true, params: [dId], ok: dl }));
+  }
 
   // ---------- webhooks in ----------
   if (cfg.webhooks_in?.length) {
@@ -247,7 +249,7 @@ export function openApiDocument(serverUrl: string): Schema {
 
   // ---------- the events, as OpenAPI 3.1 webhooks ----------
   const webhooks: Record<string, unknown> = {};
-  for (const e of [...cfg.events, { name: TEST_EVENT, description: "A test ping you asked for." }]) {
+  for (const e of hasWebhooksOut(cfg) ? [...cfg.events, { name: TEST_EVENT, description: "A test ping you asked for." }] : []) {
     const record = (EVENT_CATALOG as Record<string, { record: boolean }>)[e.name]?.record === true;
     const data: Schema = record
       ? { type: "object", required: ["area", "key"], properties: { area: { type: "string", ...("areas" in e && e.areas?.length ? { enum: e.areas } : {}) }, key: { type: "string" }, title: { type: ["string", "null"] },

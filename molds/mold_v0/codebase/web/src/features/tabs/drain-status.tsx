@@ -13,7 +13,9 @@ import { dateTimeText } from '@/lib/display-format';
 type DrainState = 'not_connected' | 'waiting' | 'receiving' | 'silent';
 export interface Drain { receiver: string; areas: string[]; state: DrainState; sources: number; last_received_at: string | null; silent_hours: number; hours_since: number | null }
 
-const drains = (developerConsole as { drains?: { areas: string[]; tabs: string[] } }).drains ?? null;
+const drains = (developerConsole as { drains?: { areas: string[]; tabs: string[]; setup?: { href: string; label: string } } }).drains ?? null;
+// mold_v0-347: a drain set up in a connect tab's panel (its hosting service's) is pointed at there; else Inbound webhooks.
+const SETUP = drains?.setup ?? null;
 /** The tabs that show a drain's state (`<pack>/<tab id>`), from the build. */
 export const drainTab = (pack: string, id: string) => !!drains?.tabs.includes(`${pack}/${id}`);
 export const drainsInBuild = () => !!drains;
@@ -30,7 +32,8 @@ const ago = (h: number | null, iso: string | null) => {
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
   return m < 60 ? `${m} minute${m === 1 ? '' : 's'} ago` : h !== null && h < 48 ? `${h} hour${h === 1 ? '' : 's'} ago` : `on ${when(iso)}`;
 };
-const INTEGRATIONS = '/app/settings?tab=integrations';
+const INTEGRATIONS = SETUP?.href ?? '/app/settings?tab=integrations';
+const SEE = SETUP ? `Open ${SETUP.label}` : 'See the source';
 
 /** The state of the drains that fill this page's records (`areas`: those it reads; none: every drain). */
 export function DrainStatus({ areas, silentOnly = false }: { areas?: string[]; silentOnly?: boolean }) {
@@ -55,7 +58,7 @@ export function DrainNotice({ d }: { d: Drain }) {
         <AlertDescription>
           {d.last_received_at ? `The last ones arrived ${when(d.last_received_at)}, so the numbers below stop there. ` : 'None have arrived since the source was added. '}
           Open the hosting provider&apos;s log drain settings and check that the drain is not paused or failing, and that it still sends to this app&apos;s address.
-          {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>See the source</Link>
+          {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>{SEE}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -65,7 +68,7 @@ export function DrainNotice({ d }: { d: Drain }) {
         <AlertTitle>Waiting for the first request logs</AlertTitle>
         <AlertDescription>
           The source is set up, but no request logs have arrived yet. Once the hosting provider&apos;s log drain sends to its address, the numbers below fill in within minutes.
-          {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>See the source</Link>
+          {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>{SEE}</Link>
         </AlertDescription>
       </Alert>
     );
@@ -74,8 +77,10 @@ export function DrainNotice({ d }: { d: Drain }) {
       <AlertTitle>Request logs are not connected yet</AlertTitle>
       <AlertDescription>
         These numbers come from your hosting provider&apos;s request logs, counted per hour: never a log line, an address or a visitor.
-        To start them, add a source on Settings, Connections, Inbound webhooks, then create a log drain at the hosting provider that sends to the source&apos;s address.
-        {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>Open Inbound webhooks</Link>
+        {SETUP
+          ? `To start them, open ${SETUP.label}, open your hosting service there (connect it first if it is not), set up Request logs in its panel, then paste the address it gives into the provider's log drain settings.`
+          : "To start them, add a source on Settings, Connections, Inbound webhooks, then create a log drain at the hosting provider that sends to the source's address."}
+        {' '}<Link className='underline underline-offset-4' href={INTEGRATIONS}>{SETUP ? `Open ${SETUP.label}` : 'Open Inbound webhooks'}</Link>
       </AlertDescription>
     </Alert>
   );

@@ -3109,6 +3109,16 @@ export const TabConnectServiceSchema = z.object({
   defaults: z.record(name, connectValue).refine((m) => Object.keys(m).length <= 8, "at most 8 fields").optional(),
   get_key: z.object({ href: httpsHref, label: plainWords(40).optional(), scopes: plainWords(240).optional() }).strict().optional(),
   hints: z.record(name, plainWords(240)).refine((m) => Object.keys(m).length <= 12, "at most 12 fields").optional(),
+  // mold_v0-347: the developer surface's receiver (webhooks_in) this service's panel sets up once it is connected: its
+  // source made and its address shown there (the inbound sources' own routes), its state; `how` says where at the
+  // provider the address goes, `feeds` what it fills. Checked against the build's receivers by scripts/gen-packs.mjs.
+  receiver: z.object({
+    name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a receiver's name (developer_surface.webhooks_in[].name)"),
+    label: plainWords(40).optional(),
+    how: plainWords(240).optional(),
+    feeds: plainWords(160).optional(),
+    $comment: z.string().max(2000).optional(),
+  }).strict().optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export const TabConnectSchema = z.object({

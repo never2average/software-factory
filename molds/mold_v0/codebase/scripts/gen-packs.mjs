@@ -132,7 +132,7 @@ const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL
 // The journeys and tips components' words (mold_v0-143): plain TypeScript with no imports.
 const { JOURNEY_WEB_WORDS, TIP_WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "journeys-words.ts")).href);
 // The developer surface's catalog and build checks (mold_v0-193): plain TypeScript with no imports.
-const { developerSurfaceProblems, LATEST_API_VERSION } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-config.ts")).href);
+const { developerSurfaceProblems, developerSurfaceDefaults, hasWebhooksOut, LATEST_API_VERSION } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-config.ts")).href);
 const { developerGuidePages } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-docs.ts")).href);
 // Each record area's one icon (mold_v0-242): its own, its customer tab's, else a distinct one from its name.
 const { recordAreaIcons, recordIconDuplicates } = await import(pathToFileURL(path.join(HERE, "..", "src", "record-icons.ts")).href);
@@ -1550,7 +1550,10 @@ function drainConsole() {
   const chartAreas = (pack, names) => (names ?? []).flatMap((n) => (packViews.charts ?? []).find((c) => c.pack === pack && c.name === n)?.metrics ?? []).map((m) => over.get(`${pack}/${m}`));
   const tabs = (packViews.tabs ?? []).filter((t) => (t.kind === "overview" && !(t.include ?? []).length && chartAreas(t.pack, t.charts).some((a) => areas.includes(a)))
     || (t.kind === "area" && (areas.includes(t.area) || (t.areas ?? []).some((a) => areas.includes(a.area))))).map((t) => `${t.pack}/${t.id}`);
-  return { drains: { areas, tabs } };
+  // mold_v0-347: a drain set up in a connect tab's panels: the notices send people to that tab, by its label.
+  const linked = [...LINKED_RECEIVERS.values()].find((l) => l.drain);
+  const tab = linked ? shownTabs().find((t) => t.pack === linked.pack && t.id === linked.tab) : null;
+  return { drains: { areas, tabs, ...(tab ? { setup: { href: tabUrl(tab), label: [sectionParent(tab)?.label, tab.label].filter(Boolean).join(" › ") } } : {}) } };
 }
 /** The build's metrics, charts and tabs (mold_v0-063, 058), as checked across every pack by src/metric-spec.ts. */
 let packViews = { problems: [], metrics: [], charts: [], tabs: [] };
@@ -2193,7 +2196,8 @@ let developerOwner = null, developerFacts = null;
     // against the build's record areas.
     if (j.developer_surface !== undefined && FEATURE_ON.developer_surface) { // off (mold_v0-219): as if not declared
       const { $comment: _c, ...rest } = j.developer_surface;
-      const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
+      // mold_v0-347: events, SDKs and client sessions may be left out (a surface of receivers alone): filled in as none.
+      const cfg = developerSurfaceDefaults(rest);
       const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true,
         enums: Object.fromEntries((a.fields ?? []).filter((f) => f.type === "enum" && Array.isArray(f.options)).map((f) => [f.name, f.options.map((o) => (typeof o === "string" ? o : o.value))])),
         refs: Object.fromEntries((a.fields ?? []).filter((f) => f.type === "reference" && typeof f.to === "string").map((f) => [f.name, f.to])) })),
@@ -2215,6 +2219,31 @@ let developerOwner = null, developerFacts = null;
   }
   refuse();
 }
+// ---------- mold_v0-347: a receiver set up where its service is connected ----------
+/**
+ * A connect tab's service may name one of the developer surface's receivers (`tabs[].connect.services.<key>.receiver`:
+ * {name, label?, how?, feeds?}): once the service is connected, its panel sets up that receiver's source (the inbound
+ * sources' own routes) and shows its state, and Settings › Inbound webhooks no longer lists it. Receiver name -> the
+ * tab that links it (one tab a receiver). With the developer surface off, a link is ignored as the surface is.
+ */
+const LINKED_RECEIVERS = new Map();
+for (const p of packs) for (const t of p.json?.tabs ?? []) for (const [k, svc] of Object.entries(t.connect?.services ?? {})) {
+  const rc = svc?.receiver;
+  if (!rc || !developerFacts) continue;
+  const at = `packs/${p.id}/pack.json`, where = `tab ${t.id}: connect.services.${k}.receiver`;
+  const decl = (developerFacts.webhooks_in ?? []).find((r) => r.name === rc.name);
+  if (!decl) { fail(at, `${where}: ${rc.name} is not one of the developer surface's receivers (developer_surface.webhooks_in: ${(developerFacts.webhooks_in ?? []).map((r) => r.name).join(", ") || "none"})`); continue; }
+  const prior = LINKED_RECEIVERS.get(rc.name);
+  if (prior && !(prior.pack === p.id && prior.tab === t.id)) { fail(at, `${where}: ${rc.name} is set up from tab ${prior.tab} of pack ${prior.pack} already: one tab a receiver`); continue; }
+  LINKED_RECEIVERS.set(rc.name, { pack: p.id, tab: t.id, drain: !!decl.log_drain });
+}
+refuse();
+/** A linked receiver as the console's panel takes it: its label (a log drain's "Request logs"), and whether it is a drain. */
+const receiverForConsole = (rc) => {
+  if (!rc || !developerFacts || !LINKED_RECEIVERS.has(rc.name)) return undefined;
+  const drain = LINKED_RECEIVERS.get(rc.name).drain;
+  return { name: rc.name, label: rc.label ?? (drain ? "Request logs" : "Inbound webhooks"), ...(rc.how ? { how: rc.how } : {}), ...(rc.feeds ? { feeds: rc.feeds } : {}), drain };
+};
 // ---------- Settings, from the features registry (mold_v0-219) ----------
 const SETTINGS_GROUPS = ["access", "connections", "automation", "data_trust"];
 const SETTINGS_TABS = (() => {
@@ -2223,8 +2252,10 @@ const SETTINGS_TABS = (() => {
     { id: "api_keys", label: "API keys", group: "access", kind: "api_keys", on: !!developerFacts },
     { id: "allowed_origins", label: "Allowed origins", group: "access", kind: "allowed_origins", on: !!developerFacts },
     { id: "email", label: "Email", group: "connections", kind: "email", on: FEATURE_ON.company_email },
-    { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: !!developerFacts },
-    { id: "integrations", label: "Inbound webhooks", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
+    // mold_v0-347: webhooks out only when the surface declares an event; Inbound webhooks only while a receiver is set up
+    // here (one a connect tab's service links is set up in that service's panel instead).
+    { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: hasWebhooksOut(developerFacts) },
+    { id: "integrations", label: "Inbound webhooks", group: "connections", kind: "integrations", on: (developerFacts?.webhooks_in ?? []).some((r) => !LINKED_RECEIVERS.has(r.name)) },
     // mold_v0-340: unless a pack's console.billing puts it in Billing (read only there).
     { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts && !MOVED_SETTINGS.alerts },
     // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
@@ -2706,6 +2737,19 @@ const PACK_ROUTES = { rewrites: [], redirects: [], declared: [] };
   // and its Settings group's page when nothing else is left in it.
   for (const t of shownTabs()) if (billingHas("spending") && t.kind === "usage") fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: the Activity page is Billing's Spending tab (console.billing names spending): drop this tab, or spending`);
   if (billingHas("spending")) for (const source of ["/app/activity", "/app/usage"]) redirects.push({ source, destination: "/app/billing?tab=spending", permanent: false });
+  // mold_v0-347: receivers set up in a connect tab's panels: Inbound webhooks' old address leads to that tab; so do
+  // Webhooks' (when there are none out) and the Connections group's page when nothing is left in it.
+  {
+    const first = [...LINKED_RECEIVERS.values()][0];
+    const linked = first ? shownTabs().find((t) => t.pack === first.pack && t.id === first.tab) : null;
+    if (first && !linked) fail(`packs/${first.pack}/pack.json`, `tab ${first.tab}: it sets up a receiver (connect.services.*.receiver) yet is not shown in this build`);
+    if (linked && !SETTINGS_TABS.some((t) => t.id === "integrations")) {
+      const url = tabUrl(linked);
+      MOVED_SETTINGS.integrations = url;
+      if (!SETTINGS_TABS.some((t) => t.id === "webhooks")) MOVED_SETTINGS.webhooks = url;
+      if (!SETTINGS_TABS.some((t) => t.group === "connections")) redirects.push({ source: "/app/settings/connections", destination: url, permanent: false });
+    }
+  }
   if (MOVED_SETTINGS.alerts && !SETTINGS_TABS.some((t) => t.group === "automation")) redirects.push({ source: "/app/settings/automation", destination: MOVED_SETTINGS.alerts, permanent: false });
   if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
   redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
@@ -2986,7 +3030,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** mold_v0-341: the foot's heading (console.sidebar_end_label); '' for none. */\n" +
   `export const sidebarEndLabel: string = ${json(SIDEBAR_END_LABEL)};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
-  `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length, ...drainConsole() })};\n` +
+  `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length, ...(developerFacts && !hasWebhooksOut(developerFacts) ? { webhooks_out: false } : {}), ...(LINKED_RECEIVERS.size ? { linked: [...LINKED_RECEIVERS.keys()] } : {}), ...drainConsole() })};\n` +
   // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own; a build may hide it (mold_v0-130). The staff's
   // every-workspace Activity page is gone (mold_v0-211). A host pack's mcp block (mold_v0-137: its server instructions
@@ -3197,7 +3241,8 @@ function viewsModule() {
       // its condition: the server says which rows may be connected).
       ...(t.connect ? { connect: { area: t.connect.area, via: t.connect.via, ...(t.connect.fields ? { fields: t.connect.fields } : {}), ...(t.connect.more ? { more: t.connect.more } : {}),
         ...(t.connect.flag ? { flag: t.connect.flag } : {}), ...(t.connect.others ? { others: true } : {}),
-        ...(t.connect.services ? { services: Object.fromEntries(Object.entries(t.connect.services).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([x]) => x !== "$comment"))])) } : {}) } } : {}),
+        ...(t.connect.services ? { services: Object.fromEntries(Object.entries(t.connect.services).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([x]) => x !== "$comment" && x !== "receiver")
+          .concat(receiverForConsole(v.receiver) ? [["receiver", receiverForConsole(v.receiver)]] : []))])) } : {}) } } : {}),
       // mold_v0-256 (flag record_pages): a column computed from related records: its id, heading, area and what it shows.
       ...(FEATURE_ON.record_pages && t.related_columns?.length ? { related_columns: t.related_columns.map((c) => {
         const r = recordAreas.find((a) => a.name === c.related.area), fn = c.show.startsWith("latest:") ? c.show.slice(7) : null;
@@ -3267,7 +3312,9 @@ function viewsModule() {
     "  /** mold_v0-344: a catalog tab whose services a workspace connects in place (src/pack-api.ts TabConnectSchema): the connections' area, its reference to the\n" +
     "   *  service, the form's order, the flag builds read, each service's fixed and default values, its Get a key link and its hints. */\n" +
     "  connect?: { area: string; via: string; fields?: string[]; more?: string[]; flag?: string; others?: boolean;\n" +
-    "    services?: Record<string, { set?: Record<string, string | number | boolean>; defaults?: Record<string, string | number | boolean>; get_key?: { href: string; label?: string; scopes?: string }; hints?: Record<string, string> }> };\n" +
+    "    services?: Record<string, { set?: Record<string, string | number | boolean>; defaults?: Record<string, string | number | boolean>; get_key?: { href: string; label?: string; scopes?: string }; hints?: Record<string, string>;\n" +
+    "      /** mold_v0-347: the developer surface's receiver this service's panel sets up once connected (its label, the provider's how, what it feeds). */\n" +
+    "      receiver?: { name: string; label: string; how?: string; feeds?: string; drain: boolean } }> };\n" +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
     "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
