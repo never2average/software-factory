@@ -471,7 +471,8 @@ const note = (id: string, text: string) => { const p = document.createElement('p
       const historyDom = draw("history", { view: "record", area: "builds", record: running, links: [], provenance: { by: "run" },
         page: hist([change(3, "updated", "r.lee@example.com", [{ field: "log", before: "a\nb\nc", after: "a\nB\nc\nd" }, { field: "duration", before: 1200, after: 1312 }]),
           change(2, "moved", "Run run_abc", [{ field: "status", before: "queued", after: "running" }]), change(1, "created", "You", [{ field: "branch", after: "main" }])], true) }, "?tab=history");
-      soft.match(historyDom, /data-history-change="updated"[\s\S]*?r\.lee@example\.com[\s\S]*?changed 2 fields/, "who, and what");
+      // mold_v0-348: the line names the fields it changed (up to 3), no longer only how many.
+      soft.match(historyDom, /data-history-change="updated"[\s\S]*?r\.lee@example\.com[\s\S]*?changed [a-z ]+ and [a-z ]+</, "who, and what");
       soft.match(historyDom, /data-history-diff=""[\s\S]*?\+2[\s\S]*?−1[\s\S]*?data-diff="removed"[\s\S]*?b[\s\S]*?data-diff="added"[\s\S]*?B/, "a long text as a line diff");
       soft.match(historyDom, /data-history-field="duration"[\s\S]*?data-history-before=""[\s\S]*?20m 0s|data-history-field="duration"[\s\S]*?1,200[\s\S]*?1,312|data-history-field="duration"[\s\S]*?1200[\s\S]*?1312/, "a short value before and after");
       soft.match(historyDom, /data-history-change="moved"[\s\S]*?Queued[\s\S]*?Running/, "a move: its states in words");
@@ -523,7 +524,9 @@ const note = (id: string, text: string) => { const p = document.createElement('p
         { key: ["[data-side-panel]", "Escape"] }, { wait: 400 }, { html: ["confirm", "[role=alertdialog]"] }, { click: "[role=alertdialog] button" }, { wait: 300 },
         { click: "[data-panel-expand]" }, { wait: 300 }, { values: "expanded" }] });
       soft.ok(/id="values-panel">[^<]*"action-title":"Nightly build"/.test(panelDom) && /id="values-panel">[^<]*"action-key":"nightly-build"/.test(panelDom), "the panel: the Key follows the Title");
-      soft.match(panelDom, /id="values-panel">[^<]*"action-field-project":"checkout"/, "the project filled in from the address");
+      // mold_v0-348: the picker shows the chosen record by its name (its key under it), never the raw key in the box.
+      soft.match(panelDom, /id="values-panel">[^<]*"action-field-project":"Checkout"/, "the project filled in from the address, shown by its name");
+      soft.match(panelDom, /data-picked-title="">checkout</, "its key under it");
       soft.match(panelDom, /id="active-trap">[^<]*side-panel-title|id="active-trap">[^<]*data-panel-expand/, "Tab from the last control wraps to the first");
       soft.match(panelDom, /id="html-confirm">[\s\S]*?Discard your changes\?/, "Esc with unsaved changes asks first");
       soft.match(panelDom, /id="values-expanded">[^<]*"action-title":"Nightly build"/, "Open full page: the same form, its typed values kept");

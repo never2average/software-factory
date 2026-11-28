@@ -704,10 +704,11 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
   const missing = [...(!key.trim() ? ['Name'] : []), ...plain.filter((f) => f.required && f.type !== 'boolean' && (values[f.name] == null || values[f.name] === '' || (Array.isArray(values[f.name]) && !(values[f.name] as unknown[]).length))).map((f) => f.label)];
   const missingWords = missing.length ? `Fill in ${missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0]} to add it.` : null;
   return (
-    <CardForm onSubmit={submit} submit={<span className='flex flex-wrap items-center gap-3'>
-      <Button type='submit' disabled={busy || !key.trim()} title={missingWords ?? undefined} aria-describedby={missingWords ? 'action-missing' : undefined}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>
+    <CardForm onSubmit={submit} submit={<>
+      {/* The words beside Add, never around it: the footer's buttons stay its own children (their order, Tab wrapping). */}
       {missingWords && <span id='action-missing' className='text-muted-foreground text-xs' data-add-missing=''>{missingWords}</span>}
-    </span>}>
+      <Button type='submit' disabled={busy || !key.trim()} title={missingWords ?? undefined} aria-describedby={missingWords ? 'action-missing' : undefined}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>
+    </>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='action-title'>Name<span className='text-destructive' aria-hidden> *</span></Label>
         <Input id='action-title' value={title} onChange={(e) => { setTitle(e.target.value); if (!keyTyped) setKey(keyFromTitle(e.target.value)); }} />
