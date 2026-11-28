@@ -20,7 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { RecordPanel, guarded, usePanelSplit } from '@/components/layout/detail-panel';
-import { DETAIL_PARAM, PANEL_FULL, PANEL_PARAM, PANEL_TAB_PARAM, type PanelKind } from '@/lib/split-panel';
+import { closedSearch, DETAIL_PARAM, PANEL_FULL, PANEL_PARAM, PANEL_TAB_PARAM, type PanelKind } from '@/lib/split-panel';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
 import { downloadCsv, today, type CsvValue } from '@/lib/csv';
@@ -162,9 +162,24 @@ export function RecordView<T>({
   const open = controlled ? openKey : url[DETAIL_PARAM] ?? null;
   const expanded = controlled ? ownExpanded : url[PANEL_PARAM] === PANEL_FULL;
   const setExpanded = (v: boolean) => (controlled ? setOwnExpanded(v) : void setUrl({ [PANEL_PARAM]: v ? PANEL_FULL : null }));
+  // mold_v0-349 (operator-approved): opening a panel from the list pushes one history entry (the same address with ?id=,
+  // shallow), so the browser's Back closes the panel first and only then leaves the list; switching rows, Expand and the
+  // panel's tab replace that entry. Closing it here (✕, Esc, Back to list) goes back over the entry it pushed, while the
+  // address is still the list's as it was then (else it is replaced, as before: a panel a reload or a link opened).
+  const pushedFrom = useRef<string | null>(null);
+  const here = () => `${window.location.pathname}${closedSearch(window.location.search)}`;
+  useEffect(() => { if (!open) pushedFrom.current = null; }, [open]);
   const setOpen = (k: string | null) => {
-    if (!controlled) void setUrl(k ? { [DETAIL_PARAM]: k } : { [DETAIL_PARAM]: null, [PANEL_PARAM]: null, [PANEL_TAB_PARAM]: null });
-    else if (!k) setOwnExpanded(false);
+    if (!controlled) {
+      if (k && !open) { pushedFrom.current = here(); void setUrl({ [DETAIL_PARAM]: k }, { history: 'push' }); }
+      else if (k) void setUrl({ [DETAIL_PARAM]: k });
+      else {
+        const from = pushedFrom.current;
+        pushedFrom.current = null;
+        if (from !== null && from === here()) window.history.back();
+        else void setUrl({ [DETAIL_PARAM]: null, [PANEL_PARAM]: null, [PANEL_TAB_PARAM]: null });
+      }
+    } else if (!k) setOwnExpanded(false);
     onOpenChange?.(k);
   };
   const [sortMap, setSortMap] = useStored<Record<string, SortRule[]>>(ns('sort'), {});

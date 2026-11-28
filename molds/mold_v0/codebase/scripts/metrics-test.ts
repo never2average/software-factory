@@ -80,7 +80,7 @@ try {
       ["a state that is not one", vulns((j) => { metricOf(j, "fixed_per_week").by_time.at = "state:done"; }), /state:done: done is not a state of area audit_findings/],
       ["a series over many groups", vulns((j) => { metricOf(j, "found_weekly_by_severity").group_by = "app"; }), /a series grouped by app could have many groups/],
       ["a group by a list field", vulns((j) => { j.record_areas[2].fields.push({ name: "tags", label: "Tags", type: "enum", multiple: true, options: ["a", "b"] }); metricOf(j, "open_by_severity").group_by = "tags"; }), /group_by: tags holds a list/],
-      ["a metric over nothing", vulns((j) => { metricOf(j, "open_findings").over = "nowhere"; }), /metric open_findings is over nowhere, which is neither a record area of this build nor run_results or runs/],
+      ["a metric over nothing", vulns((j) => { metricOf(j, "open_findings").over = "nowhere"; }), /metric open_findings is over nowhere, which is neither a record area of this build nor run_results, runs or spend/],
       ["a metric name two packs use", vulns((j) => { metricOf(j, "open_findings").name = "pick_rate"; for (const c of j.charts) c.metrics = c.metrics.map((x: string) => (x === "open_findings" ? "pick_rate" : x)); }), /metric pick_rate is already pack fixture_(vulns|adoption)'s/],
       ["a donut", vulns((j) => { j.charts[1].type = "donut"; }), /donut charts are not offered: show part-to-whole as a stacked_bar/],
       ["two y-axes", vulns((j) => { j.charts[2].metrics = ["opened_per_week", "fixed_per_week"]; metricOf(j, "fixed_per_week").measure = "rate"; metricOf(j, "fixed_per_week").rate = { where: [{ field: "state", op: "eq", value: "fixed" }] }; }), /chart open_vs_fixed \(line\) would need two y-axes \(count and percent\)/],
@@ -285,6 +285,40 @@ try {
     assert.deepEqual((await cardsOf(B, "audits")).cards.map((c) => c.value), [1, 1, 10, 9], "B's own run only");
     install();
     console.log("✓ a runs tab's cards from the shell: audits this week 2, succeeded 66.7%, 1.03 h on average, spend $2.25 (a running total); B's apart");
+  }
+
+  // ---------- mold_v0-349: the spend ledger, the one Billing reads ----------
+  {
+    const withSpend = () => { const j = fixtureJson("fixture_adoption"); j.metrics.push(
+      { name: "month_spend", label: "Model spend this month", over: "spend", measure: "sum" },
+      { name: "spend_weekly", label: "Model spend", over: "spend", measure: "sum", by_time: { at: "created", every: "week", last: 6 } });
+      j.tabs.find((t: any) => t.id === "simulations").sparklines = ["month_spend"]; return j; };
+    install(fixtureJson("fixture_vulns"), withSpend());
+    // A run queued this month (the database's own clock: Billing's month), beside the October ones above.
+    await db.query(`INSERT INTO runs (id, org_id, pack, kind, status, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, cost_usd, created_at)
+       VALUES ($1, $2, 'fixture_adoption', 'adopt_simulate', 'succeeded', '{}'::jsonb, 1, 3600, 120, 5, 0.4, now())`, [`run_a4_${STAMP}`, A.orgId]);
+    const { orgMonthSpendUsd } = await import("../src/session-engine.js");
+    const billingA = await orgMonthSpendUsd(A.orgId), billingB = await orgMonthSpendUsd(B.orgId);
+    const ms = await get(A, "month_spend");
+    assert.deepEqual([ms.value, ms.unit, ms.kind], [billingA, "usd", "single"], "this month's spend is exactly Billing's figure (orgMonthSpendUsd), in usd");
+    assert.ok(Math.abs(billingA - 0.4) < 1e-9, `the month holds this month's run only (${billingA})`);
+    assert.equal((await get(B, "month_spend")).value, billingB, "B's own ledger");
+    assert.deepEqual((await get(A, "spend_weekly")).series![0]!.values, [0, 0, 0, 0, 1.5, 0.75], "by week, the same ledger: 1.50 the week of 10-12, 0.75 of 10-19 (the clock fixed)");
+    assert.equal((await get(A, "month_spend", MEMBER)).value, billingA, "a member reads it, as Billing shows them the account's figure");
+    const t = met.buildViews().tabs.find((x) => x.pack === "fixture_adoption" && x.id === "simulations")!;
+    const card = (await spark.computeSparklines(A.orgId, t, API, NOW)).cards[0]!;
+    assert.deepEqual([card.id, card.label, card.mode, card.unit, card.value], ["month_spend", "Model spend this month", "weekly", "usd", billingA], "the card: this month's figure beside its weeks");
+    assert.deepEqual(card.series.slice(-2), [1.5, 0.75], "its weeks from the same ledger (never a running total that would not end at the month's)");
+    const spec = await import("../src/metric-spec.js");
+    const b0 = met.buildViews();
+    const views = (m: Record<string, unknown>) => spec.checkViews({ ...b0, metrics: [...b0.metrics, { pack: "fixture_adoption", limit: 12, ...m } as never] }).filter((x) => x.includes("spend_bad"));
+    assert.deepEqual(views({ name: "spend_bad", label: "x", over: "spend", measure: "sum" }), [], "a sum over spend builds");
+    assert.match(views({ name: "spend_bad", label: "x", over: "spend", measure: "count" })[0] ?? "", /a metric over spend is a sum/);
+    assert.match(views({ name: "spend_bad", label: "x", over: "spend", measure: "sum", where: [{ field: "created", op: "gte", value: "now-7" }] })[0] ?? "", /reads the ledger whole, as Billing does: it has no where/);
+    assert.match(views({ name: "spend_bad", label: "x", over: "spend", measure: "sum", group_by: "created" })[0] ?? "", /it has no group_by/);
+    install();
+    await db.query("DELETE FROM runs WHERE id = $1", [`run_a4_${STAMP}`]); // the later checks count A's October runs only
+    console.log(`✓ the spend ledger (mold_v0-349): this month's figure is Billing's (${billingA} usd), by week the same ledger, a card reads it; where, group_by and count refused`);
   }
 
   // ---------- 5. a list tab's four cards (mold_v0-181) ----------

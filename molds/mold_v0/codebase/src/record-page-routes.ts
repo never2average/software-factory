@@ -137,12 +137,16 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
     if (role !== null && x.roles && !x.roles.includes(role)) continue;
     // mold_v0-339: an action offered only while its condition holds (the one that fits this record) is left out otherwise.
     if (x.show_when && !holds(x.show_when, record.data, (record as { clocks?: unknown }).clocks)) continue;
-    const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", ...(x.look === "link" ? { look: "link" as const } : {}), confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
-    let unavailable = (x.unavailable ?? []).find((u) => u.when && holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
-    // mold_v0-337: or while a related record is open (a build of this application still running): read as the shell.
-    if (!unavailable && opts.org !== undefined) for (const u of x.unavailable ?? []) {
-      if (u.related && (await relatedOpen(opts.org, area, record.key, u.related, 1)).length) { unavailable = u.reason; break; }
+    let unavailable: string | null = null, asks: string | null = null;
+    // A condition on the record first, then (mold_v0-337) while a related record is open (a build of this application
+    // still running): read as the shell. mold_v0-349: an `ask` entry asks first with its reason instead of disabling.
+    for (const related of [false, true]) for (const u of x.unavailable ?? []) {
+      if (!!u.related !== related || (u.ask ? asks !== null : unavailable !== null)) continue;
+      const held = u.when ? holds(u.when, record.data, (record as { clocks?: unknown }).clocks) : !!u.related && opts.org !== undefined && (await relatedHolds(opts.org, area, record, u.related));
+      if (held) { if (u.ask) asks = u.reason; else unavailable = u.reason; }
     }
+    const confirm = x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null);
+    const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", ...(x.look === "link" ? { look: "link" as const } : {}), confirm: asks ? (confirm ? `${asks} ${confirm}` : asks) : confirm } as const;
     const writes = area.scope === "workspace";
     switch (x.kind) {
       case "start_run": {
@@ -419,12 +423,15 @@ export async function computedFact(org: number | null, area: RecordArea, record:
     return computedFact(org, hopArea, { area: hopArea.name, key: mid.key, title: mid.title, data: {} } as RecordRow, { ...fact, computed: next }, actor);
   }
   const target = findArea(c.area);
-  const via = target ? viaOf(area.name, target, c) : null;
+  const via = target ? (c.match_field !== undefined ? c.via ?? null : viaOf(area.name, target, c)) : null;
   // mold_v0-271: staff (org null) read shared areas only, as their own record pages list them.
   if (org === null) { if (!target || !via || target.scope !== "platform" || areaOpWithheld(target.name, "admin_list")) return { hidden: true }; }
   else if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
   const listFor = (o: number | null, name: string, q: Parameters<typeof listPlatform>[1], a: Actor) => (o === null ? listPlatform(findArea(name)!, q) : listForWorkspace(o, name, q as never, a));
-  const filter = pointingAt(target, via, record.key);
+  // mold_v0-349: forward through this record's reference, then back: theirs whose via holds its value (none: nothing to follow).
+  const matchOn = c.match_field !== undefined ? matchValue(record.data[c.match_field]) : record.key;
+  if (matchOn === null) return c.op === "count" ? { op: "count", value: 0, capped: false, area: target.name, via } : { op: "latest", value: null, area: target.name, field: c.field ?? null, record: null };
+  const filter = c.match_field !== undefined ? { [via]: matchOn } : pointingAt(target, via, record.key);
   const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data, (row as { clocks?: unknown }).clocks);
   if (c.op === "count") {
     let n = 0, after: string | undefined;
@@ -458,9 +465,28 @@ export async function computedFact(org: number | null, area: RecordArea, record:
  * words and names none of them), on the write's own transaction when inside one (src/connection-test-health.ts
  * shellRead). A page at a time, stopping at `max` matches or COMPUTED_COUNT_MAX read.
  */
-export async function relatedOpen(org: number, area: RecordArea, key: string, rel: { area: string; via?: string; where?: DetailCondition }, max = COMPUTED_COUNT_MAX): Promise<string[]> {
+/** mold_v0-349: a field's value a match follows (one plain value; a list's first): null when there is none to follow. */
+export const matchValue = (v: unknown): string | null => {
+  const x = Array.isArray(v) ? v[0] : v;
+  return typeof x === "string" ? (x === "" ? null : x) : typeof x === "number" || typeof x === "boolean" ? String(x) : null;
+};
+
+/**
+ * Whether an action's unavailable `related` holds on `record` (mold_v0-337): at least one related record `where` keeps
+ * is open; mold_v0-349: matched on `match_field` (forward through the record's reference, then back; nothing to follow:
+ * never), and with `none`, while not one is.
+ */
+export async function relatedHolds(org: number, area: RecordArea, record: Pick<RecordRow, "key" | "data">, rel: { area: string; via?: string; match_field?: string; where?: DetailCondition; none?: true }): Promise<boolean> {
+  if (rel.match_field !== undefined && matchValue(record.data[rel.match_field]) === null) return false;
+  const found = (await relatedOpen(org, area, record.key, rel, 1, record.data)).length > 0;
+  return rel.none ? !found : found;
+}
+
+export async function relatedOpen(org: number, area: RecordArea, key: string, rel: { area: string; via?: string; match_field?: string; where?: DetailCondition }, max = COMPUTED_COUNT_MAX, data?: Record<string, unknown>): Promise<string[]> {
   const target = findArea(rel.area);
-  const via = target ? viaOf(area.name, target, rel) : null;
+  const via = target ? (rel.match_field !== undefined ? rel.via ?? null : viaOf(area.name, target, rel)) : null;
+  // mold_v0-349: matched on a field: the records whose via holds this record's value of it.
+  if (rel.match_field !== undefined) { const v = matchValue(data?.[rel.match_field]); if (v === null) return []; key = v; }
   if (!target || !via || target.scope !== "workspace") return [];
   const { shellRead } = await import("./connection-test-health.js");
   type R = { id: string; key: string; data: Record<string, unknown> | string };
@@ -903,13 +929,13 @@ export function recordPageRouter(): Router {
           // mold_v0-337: one at a time, made under a lock on (workspace, area, this record): the check and the make in one
           // transaction, so of two presses at the same moment the second waits, then finds the first's record open and is
           // refused with the action's reason; {{$n}} is counted inside the same lock.
-          const busy = (declared.unavailable ?? []).filter((u) => u.related && u.related.area === c.area).map((u) => ({ related: u.related!, reason: u.reason }));
+          const busy = (declared.unavailable ?? []).filter((u) => u.related && !u.ask && u.related.area === c.area).map((u) => ({ related: u.related!, reason: u.reason }));
           const make = async (sid: string) => {
             const { auditAtomic } = await import("./audit-trail.js");
             return auditAtomic(() => inTransaction(s.org, async () => {
               if (busy.length || numbered)
                 await (await recordQuery()).query("SELECT pg_advisory_xact_lock(hashtext($1))", [`made-from/${s.org}/${c.area}/${area.name}/${record.key}`]);
-              for (const u of busy) if ((await relatedOpen(s.org, area, record.key, u.related, 1)).length) throw new PackError(u.reason, 409);
+              for (const u of busy) if (await relatedHolds(s.org, area, record, u.related)) throw new PackError(u.reason, 409);
               const n = numbered ? (await relatedOpen(s.org, area, record.key, { area: c.area, via: c.link })).length + 1 : undefined;
               return S.makeCreated(s.org, c, key, S.planCreated(c, record, { session: sid, person: s.user ?? null, now: new Date(), n }, fillTemplate), actor);
             }));

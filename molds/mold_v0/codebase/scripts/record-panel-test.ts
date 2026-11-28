@@ -57,7 +57,12 @@ const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
   assert.doesNotMatch(rv, /if \(current && detail\) return/, "never the list replaced by the record");
   // RecordView names "a row this list can open" `can` (detail given, or a side panel of the caller's).
   assert.match(rv, /onClick=\{can \? \(e\) => \{ if \(\(e\.target as HTMLElement\)\.closest\('a\[href\]'\)\) return; openRow\(k\); \}/, "a row click opens its panel (a link in a cell stays a link)");
-  assert.match(rv, /useQueryStates\(\{ \[DETAIL_PARAM\]: parseAsString, \[PANEL_PARAM\]: parseAsString, \[PANEL_TAB_PARAM\]: parseAsString \}, \{ history: 'replace'/, "the open row in the address, replaced (Back leaves the list)");
+  // mold_v0-349 (operator-approved change of this assertion): opening a panel from the list pushes ONE history entry, so
+  // the browser's Back closes the panel first; before, every change was replaced and Back left the list (finding 10 of the
+  // console's end-to-end audit of 2026-11-28). Switching rows, Expand and the panel's tab still replace it.
+  assert.match(rv, /useQueryStates\(\{ \[DETAIL_PARAM\]: parseAsString, \[PANEL_PARAM\]: parseAsString, \[PANEL_TAB_PARAM\]: parseAsString \}, \{ history: 'replace'/, "the open row in the address; a switch, Expand and the panel's tab replace the entry");
+  assert.match(rv, /if \(k && !open\) \{ pushedFrom\.current = here\(\); void setUrl\(\{ \[DETAIL_PARAM\]: k \}, \{ history: 'push' \}\); \}/, "opening a panel from the list pushes one entry (Back closes the panel first)");
+  assert.match(rv, /if \(from !== null && from === here\(\)\) window\.history\.back\(\);/, "closing goes back over the entry it pushed (no second Back to the same list)");
   const controls = /data-slot='detail-panel-controls'>([\s\S]*?)<\/div>/.exec(dp)?.[1] ?? "";
   assert.match(controls, /data-testid='detail-panel-expand'/);
   assert.match(controls, /\{menu \?\? <PanelMenu /);
@@ -158,8 +163,10 @@ try {
   await row("R-102").waitFor();
   const loaded = await p.evaluate(() => (window as any).__loaded);
   const before = await width('[data-slot="list-main"]');
+  const depth0 = await p.evaluate(() => history.length);
   await row("R-102").click(); await settle();
   check(await panel.isVisible() && (await panel.getAttribute("data-row")) === "R-102", "a row click opens its panel");
+  check(await p.evaluate(() => history.length) === depth0 + 1, "mold_v0-349: opening it pushes one history entry");
   check(/[?&]id=R-102\b/.test(await qs()) && /view=open/.test(await qs()), `the address has ?id= (and keeps the list's own: ${await qs()})`);
   check(await p.evaluate((t: number) => (window as any).__loaded === t && location.pathname === "/", loaded), "no navigation: the same page, never reloaded");
   const after = await width('[data-slot="list-main"]');
@@ -176,6 +183,7 @@ try {
   check((await panel.getAttribute("data-row")) === "R-104" && /id=R-104/.test(await qs()), "another row switches the panel");
   check((await row("R-102").getAttribute("data-state")) !== "selected" && (await row("R-104").getAttribute("data-state")) === "selected", "the highlight moves with it");
   check(await panel.innerText().then((t: string) => t.includes("Details of Record 4")), "its body is the new record's");
+  check(await p.evaluate(() => history.length) === depth0 + 1, "mold_v0-349: another row replaces that entry (no entry per row)");
 
   // The splitter: keyboard, then drag.
   const sep = p.getByRole("separator", { name: "Resize the panel" });
@@ -246,6 +254,22 @@ try {
   check((await qs()) === "?view=open", `closing drops only the panel's parameters (${await qs()})`);
   check((await p.getByRole("searchbox").inputValue()) === "Record 12" && (await row("R-102").count()) === 0, "and keeps the search typed");
   await p.getByRole("searchbox").fill(""); await settle();
+
+  // mold_v0-349 (operator-approved; before, Back left the list): the browser's Back closes the panel first, then leaves.
+  await p.goto(`${base}/?view=open`); await row("R-103").waitFor();
+  const at0 = await p.evaluate(() => (window as any).__loaded);
+  await row("R-103").click(); await settle();
+  await row("R-108").click(); await settle();
+  await p.getByTestId("detail-panel-expand").click(); await settle();
+  await p.goBack(); await settle();
+  check(!(await panel.isVisible()) && (await qs()) === "?view=open", `Back closes the panel (switched and expanded first), on the list with its own parameters (${await qs()})`);
+  check(await p.evaluate((t: number) => (window as any).__loaded === t && location.pathname === "/", at0), "Back did not leave or reload the list");
+  await row("R-109").click(); await settle();
+  await p.getByRole("button", { name: "Close panel" }).click(); await settle();
+  check(!(await panel.isVisible()) && (await qs()) === "?view=open", "✕ closes it");
+  await p.goForward(); await settle();
+  check((await panel.getAttribute("data-row")) === "R-109", "✕ went back over the entry it pushed (Forward reopens it; one Back leaves the list, not two)");
+  await p.goto(`${base}/?view=open`); await row("R-101").waitFor(); await settle();
 
   // Unsaved changes.
   await row("R-106").click(); await settle();

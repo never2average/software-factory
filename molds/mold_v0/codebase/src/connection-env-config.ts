@@ -6,7 +6,7 @@
  *
  *   "agent_profiles": [{ "id": "builder", "name": "Builder", "connection_env": [{
  *     "area": "storage_connections",              a workspace area of this pack whose contract reveals nothing
- *     "where": { "kind": "files" },               plain fields the record must hold (optional)
+ *     "where": { "kind": "files" },               plain fields the record must hold (optional); a list: one of its values (mold_v0-349)
  *     "use": "use_for_files",                     a boolean field the record must have on (optional)
  *     "prefix": "STORAGE_",                       put before every variable's name (optional)
  *     "members_field": "members_may_use",         a boolean field only owners set: on, members' sessions receive it too (optional)
@@ -35,9 +35,18 @@ export const RESERVED_ENV_PREFIXES = ["RUN_", ENV_PREFIX, LEGACY_ENV_PREFIX, "AN
 export const reservedEnv = (n: string) => { const u = n.toUpperCase(); return RESERVED_ENV.includes(u) || RESERVED_ENV_PREFIXES.some((p) => u.startsWith(p)); };
 
 const fieldName = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a field's name");
+const whereValue = z.union([z.string().max(200), z.number().finite(), z.boolean()]);
+/** mold_v0-349: a `where` value as a test: one value equal, or (a list) one of its values. */
+export type WhereValue = string | number | boolean | (string | number | boolean)[];
+export const whereHolds = (where: Record<string, unknown> | undefined, data: Record<string, unknown>): boolean =>
+  Object.entries(where ?? {}).every(([k, v]) => (Array.isArray(v) ? v.includes(data[k] as never) : data[k] === v));
+/** mold_v0-349: a `where` as a record list's filter (a list is `in`). */
+export const whereFilter = (where: Record<string, unknown> | undefined): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(where ?? {}).map(([k, v]) => [k, Array.isArray(v) ? { in: v } : v]));
 export const ConnectionEnvSchema = z.object({
   area: fieldName,
-  where: z.record(fieldName, z.union([z.string().max(200), z.number().finite(), z.boolean()])).refine((w) => Object.keys(w).length <= 4, "at most 4 conditions").optional(),
+  // mold_v0-349: a condition's value, or a list of values the field may hold one of (a kind of network: a firewall or a security group).
+  where: z.record(fieldName, z.union([whereValue, z.array(whereValue).min(1).max(20)])).refine((w) => Object.keys(w).length <= 4, "at most 4 conditions").optional(),
   use: fieldName.optional(),
   /** Every variable's name starts with it (required: a connection's names never collide with a program's own). */
   prefix: z.string().regex(/^[A-Z][A-Z0-9]{1,30}_$/, "capital letters and digits ending in _ (STORAGE_, COMPUTE_)"),
@@ -56,7 +65,8 @@ export const ConnectionEnvSchema = z.object({
   members_field: fieldName.optional(),
   /**
    * mold_v0-332: at most one record of the area (of those matching `where`) has `use` on: a save that turns it on while
-   * another has it on is refused, naming the other (not only at a session's start).
+   * another has it on is refused, naming the other (not only at a session's start). mold_v0-349: so one marked per kind,
+   * an entry per kind each with its own `where` (a private network, a firewall, a private link: each its one).
    */
   only_one: z.boolean().optional(),
   /**

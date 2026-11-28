@@ -549,6 +549,16 @@
             {
               "state_since": true,
               "label": "In this state since"
+            },
+            {
+              "label": "Matched children",
+              "computed": {
+                "area": "mx_children",
+                "via": "label",
+                "match_field": "kind_word",
+                "op": "count"
+              },
+              "hide_empty": true
             }
           ]
         },
@@ -584,7 +594,12 @@
               "equals": 0
             },
             "tone": "success",
-            "text": "No children."
+            "text": "No children.",
+            "link": {
+              "label": "Open its parent",
+              "tab": "merged",
+              "field": "parent"
+            }
           },
           {
             "when": {
@@ -906,6 +921,20 @@
                   }
                 },
                 "reason": "A child is still building."
+              },
+              {
+                "related": {
+                  "area": "mx_children",
+                  "via": "label",
+                  "match_field": "kind_word",
+                  "where": {
+                    "field": "state",
+                    "equals": "READY"
+                  },
+                  "none": true
+                },
+                "reason": "No child of its kind is ready: go on anyway?",
+                "ask": true
               }
             ],
             "look": "link"
