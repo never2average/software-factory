@@ -85,6 +85,14 @@ function TextDiff({ before, after }: { before: string; after: string }) {
   );
 }
 
+/** mold_v0-348: the fields a change made, named in its line (up to 3; an encrypted one says so), else how many. */
+function changedWords(area: RecordAreaSpec, fields: readonly { field: string; label?: string | null; redacted?: boolean }[]): string {
+  const names = fields.map((c) => { const f = area.fields.find((x) => x.name === c.field); const l = (f?.label ?? c.label ?? c.field).toLowerCase(); return c.redacted || f?.encrypted ? `${l} (encrypted)` : l; });
+  if (!names.length) return 'it';
+  if (names.length > 3) return `${names.length} fields`;
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]!;
+}
+
 function FieldRow({ area, c, action, titles }: { area: RecordAreaSpec; c: FieldChange; action: RecordChangeView['action']; titles?: Titles }) {
   const label = area.fields.find((f) => f.name === c.field)?.label ?? c.label ?? c.field;
   if (c.redacted) return (
@@ -206,7 +214,7 @@ export function HistoryList({ area, data, url, empty, titles: own }: { area: Rec
                   <span className='font-medium'>{h.by}</span>{' '}
                   {/* mold_v0-310: the run or agent session the change was made in, linked to its page. */}
                   {h.run && <><span className='text-muted-foreground'>in</span> <RunLinkText link={h.run} />{' '}</>}
-                  <span className='text-muted-foreground'>{h.action === 'created' ? 'added it' : h.action === 'deleted' ? 'deleted it' : h.action === 'moved' ? 'moved it' : `changed ${fields.length === 1 ? 'one field' : `${fields.length} fields`}`}</span>
+                  <span className='text-muted-foreground'>{h.action === 'created' ? 'added it' : h.action === 'deleted' ? 'deleted it' : h.action === 'moved' ? 'moved it' : `changed ${changedWords(area, fields)}`}</span>
                   {when && <> <span className='text-muted-foreground'>·</span> <time dateTime={when.iso} title={when.hover} className='text-muted-foreground'>{when.text}</time></>}
                   <span className='sr-only'> ({CHANGE_WORDS[h.action]})</span>
                 </p>

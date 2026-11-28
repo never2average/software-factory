@@ -25,7 +25,7 @@ import { TargetVersions } from '@/features/agent/dock/target-versions';
 import { featureOn } from '@/config/features';
 import Link from 'next/link';
 import { RunLinkText } from './run-link';
-import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -43,7 +43,7 @@ import { RUN_STATUSES, type RunNeeds, type RunOutcomeBadge, type RunStatus } fro
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
-import { useInRecordPanel, usePanelHeaderSlots, useRecordPanelFull } from '@/components/layout/detail-panel';
+import { useInRecordPanel, useOpenRelated, usePanelHeaderSlots, useRecordPanelFull } from '@/components/layout/detail-panel';
 import { createPortal } from 'react-dom';
 import { CopyLink, LinkRow, NoticeLine, RailEmpty, RailFields, RailHeading, RailNumbers, RailSection, RailSteps, TextLink, type RailRow } from './record-kit';
 import { ClockSection, type ClockEvent } from './clocks';
@@ -427,6 +427,8 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
 }) {
   const target = findRecordArea(base, s.related!.area);
   const rail = useRail();
+  // mold_v0-348: inside a list's record panel a row opens in that panel (a plain click; a new tab still opens its page).
+  const openRelated = useOpenRelated();
   // Hidden from this role (it may not read that area), or nothing for it in the page's answer: no card at all.
   if (!target || data?.hidden || (page.data && !data)) return null;
   // mold_v0-256: each column its field and its own heading, when it has one.
@@ -435,13 +437,32 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
   const rows = data && !data.hidden ? data.records : [];
   const more = !!(data && !data.hidden && data.more);
   const all = data && !data.hidden && data.match !== null ? showAllHref(base, target.name, data.via, data.match ?? record.key) : null;
+  const opener = (r: { key: string; title: string | null }) => (e: MouseEvent) => {
+    if (!openRelated || !target || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    openRelated({ area: target.name, key: r.key, title: r.title || r.key });
+  };
   const hostOf = (r: (typeof rows)[number]): ActionHost => ({ area: target.name, areaLabel: target.label, base, record: { key: r.key, title: r.title, data: r.data, updated_at: r.updated_at },
     copy: (t, done) => void copyWithToast(t, done), changed, deleted: changed });
   // mold_v0-331: display rows: one link row (what is there, in words, and View → the list narrowed to this record).
   if (s.display === 'rows') {
     const words = page.error && !data ? 'Could not load' : !data ? 'Loading…' : relatedRowWords(rows.length, more, target.label);
-    const row = <LinkRow id={id} title={s.title} detail={words} action='View' href={all} data-section-kind='related' data-related-count={data ? String(rows.length) : undefined} />;
-    return rail ? row : <div className='bg-card w-full rounded-xl border px-4 py-1.5' data-related-card=''>{row}</div>;
+    // mold_v0-348: the records themselves under the count (each opening as a related row does), View all only when there
+    // are more than it lists.
+    const row = <LinkRow id={id} title={s.title} detail={words} action={more ? 'View all' : 'View'} href={rows.length && !more ? null : all} data-section-kind='related' data-related-count={data ? String(rows.length) : undefined} />;
+    const list = rows.length > 0 && (
+      <ul className='mb-1.5 flex flex-col gap-1 pl-0.5 text-sm' data-related-rows=''>
+        {rows.map((r) => (
+          <li key={r.key} className='flex min-w-0 items-baseline gap-2' data-related-row={r.key}>
+            <Link href={href(r.key)} onClick={opener(r)} className='truncate underline-offset-4 hover:underline' title={r.title && r.title !== r.key ? r.key : undefined}>{r.title || r.key}</Link>
+            {cols[0] && r.data[cols[0].name] != null && r.data[cols[0].name] !== '' && (
+              <span className='text-muted-foreground min-w-0 truncate text-[13px]'><RelatedCell target={target} f={cols[0]} v={r.data[cols[0].name]} recordKey={r.key} titles={r.ref_titles?.[cols[0].name]} base={base} /></span>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+    return rail ? <>{row}{list}</> : <div className='bg-card w-full rounded-xl border px-4 py-1.5' data-related-card=''>{row}{list}</div>;
   }
   const TH = rail ? TH_RAIL : TH_CARD, TD = rail ? TD_RAIL : TD_CARD;
   return (
@@ -462,7 +483,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
                   <tr key={r.key} className='hover:bg-muted/40 border-b transition-colors' data-related-row={r.key}>
                     <td className={cn(TD, 'min-w-40')}>
                       {/* mold_v0-309: the title alone (its key on hover), never the key printed under it. */}
-                      <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline' title={r.title && r.title !== r.key ? r.key : undefined}>{r.title || r.key}</Link>
+                      <Link href={href(r.key)} onClick={opener(r)} className='font-medium underline-offset-4 hover:underline' title={r.title && r.title !== r.key ? r.key : undefined}>{r.title || r.key}</Link>
                     </td>
                     {cols.map((f) => <td key={f.name} className={cn(TD, f.type === 'number' && 'text-right')}><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} titles={r.ref_titles?.[f.name]} base={base} /></td>)}
                     <td className={cn(TD, 'w-10 text-right')}><RowActions host={hostOf(r)} actions={r.actions} href={href(r.key)} /></td>
@@ -475,7 +496,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
             {rows.map((r) => (
               <li key={r.key} className='flex items-start gap-3 px-4 py-3' data-related-row={r.key}>
                 <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
-                  <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
+                  <Link href={href(r.key)} onClick={opener(r)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
                   <dl className='grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs'>
                     {cols.map((f) => (
                       <div key={f.name} className='flex min-w-0 flex-col gap-0.5'>
@@ -800,7 +821,7 @@ async function getPage(url: string): Promise<PageData> {
   return body;
 }
 
-export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false, tabParam = 'tab', headerActions }: {
+export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false, tabParam = 'tab', headerActions, onDeleted }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode;
   /** Read the record again (mold_v0-254: after an action changed it). */
@@ -811,6 +832,8 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   tabParam?: string;
   /** mold_v0-271: a staff page's own Edit and Remove, in the header beside Copy ID and Copy link. */
   headerActions?: ReactNode;
+  /** mold_v0-348: after its Delete, instead of the area's own list (a list's panel closes and reads its list again). */
+  onDeleted?: () => void;
 }) {
   const [asked, setAsked] = useQueryState(tabParam);
   // mold_v0-298: the tabs whose condition holds on this record; ti stays the declared index (sectionKey matches the server's).
@@ -827,7 +850,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   const [actions, setActions] = useState<PageData['actions'] | null>(null);
   useEffect(() => { if (page.data) setActions(page.data.actions); }, [page.data]);
   const changed = () => { void page.reload(); onChanged?.(); };
-  const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed, canShare };
+  const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed, canShare, ...(onDeleted ? { deleted: onDeleted } : {}) };
   const withActions = base === 'app' && declaresActions(layout);
   const { bar, card, panel, rail } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
   // mold_v0-256: a log section that is live (its live_when holds) reads the record again every few seconds.
@@ -1090,7 +1113,7 @@ function RailBody({ area, base, layout, record, links, clockEvents, where, crede
  * than the page or the panel (a phone, a record panel beside its list, eight tabs) they go on to a second row, never
  * clipped and never in a sideways scroller. No tab's label breaks inside itself (each trigger keeps its width).
  */
-export const RECORD_TAB_STRIP_CLASS = 'max-w-full flex-wrap justify-start gap-x-6 gap-y-1 p-0 group-data-horizontal/tabs:h-auto';
+export const RECORD_TAB_STRIP_CLASS = 'max-w-full flex-wrap justify-start gap-x-4 gap-y-1 p-0 group-data-horizontal/tabs:h-auto';
 function RecordTabStrip({ tabs }: { tabs: DetailLayout['tabs']; open: string }) {
   return (
     <div className='max-w-full pb-1.5' data-tab-strip-room='' data-tab-strip-wraps=''>

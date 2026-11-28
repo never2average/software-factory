@@ -28,10 +28,19 @@ import { keyFromTitle } from './form-prefill';
 import { CONNECT_FLAG, CONNECT_STATE, CONNECT_STATE_OPTIONS, CONNECT_TESTED } from './merged';
 import { ReceiverSection } from './connect-receiver';
 
-type Health = { state?: string | null; attention?: boolean; tested_at?: string };
+type Health = { state?: string | null; attention?: boolean; tested_at?: string; reasons?: string[] };
+/** mold_v0-348: why an account needs attention, in words (src/connection-test-health.ts healthView's reasons). */
+const ATTENTION_WORDS: Record<string, string> = {
+  failing: 'its last test failed', cannot_test: 'it could not be tested', needs_key: 'its key is missing', stale: 'it has not been tested for a while',
+  expiring: 'its key expires soon', more_than_one: 'another account also has the same flag on'
+};
+export const attentionWords = (reasons: readonly string[] | undefined): string | null => {
+  const w = [...new Set((reasons ?? []).map((r) => ATTENTION_WORDS[r]).filter((x): x is string => !!x))];
+  return w.length ? `Needs attention: ${w.length > 1 ? `${w.slice(0, -1).join(', ')} and ${w.at(-1)}` : w[0]}.` : null;
+};
 export type ConnectionView = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; health?: Health };
 /** A catalog row's own part (src/tab-connect.ts ConnectRow): whether it may be connected here, and its connections. */
-export type RowConnect = { connectable: boolean; connections: ConnectionView[] } | { hidden: true };
+export type RowConnect = { connectable: boolean; reason?: string; connections: ConnectionView[] } | { hidden: true };
 /** What the Connect form needs, as the server says this person may use it (src/tab-connect.ts connectSpec). */
 export interface ConnectSpec {
   allowed: boolean; readable: boolean;
@@ -144,7 +153,7 @@ export function ConnectSection({ tab, row, spec, onChanged, flagTaken }: { tab: 
           onSaid={(s) => setSaid({ key: a.key, said: s })} onChanged={onChanged} />
       ))}
       {!c.connectable ? (
-        <p className='text-muted-foreground text-sm' data-connect-none=''>No account to connect for this one: it is not a hosted service with a key of its own.</p>
+        <p className='text-muted-foreground text-sm' data-connect-none=''>{c.reason ?? 'No account to connect for this one: it is not a hosted service with a key of its own.'}</p>
       ) : !spec ? null : !spec.allowed ? (
         <p className='text-muted-foreground text-sm' data-connect-who=''>{accounts.length ? '' : 'Not connected. '}{spec.who}</p>
       ) : formOpen ? (
@@ -196,6 +205,7 @@ function Account({ tab, spec, conn, said, onSaid, onChanged }: { tab: ConnectTab
         <span className='text-sm font-medium'>{conn.title || conn.key}</span>
         {conn.health?.attention ? <ToneBadge color='danger'>Needs attention</ToneBadge> : null}
       </div>
+      {conn.health?.attention && attentionWords(conn.health.reasons) && <p className='text-sm' data-connect-attention=''>{attentionWords(conn.health.reasons)}</p>}
       {facts.length > 0 && (
         <dl className='grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm'>
           {facts.map(([k, v]) => <div key={k} className='contents'><dt className='text-muted-foreground'>{k}</dt><dd className='min-w-0 break-words'>{v}</dd></div>)}
@@ -232,12 +242,20 @@ function Account({ tab, spec, conn, said, onSaid, onChanged }: { tab: ConnectTab
       )}
       {confirm && (
         <ConfirmDialog open onOpenChange={(o) => { if (!o) setConfirm(null); }} destructive title={`Disconnect ${conn.title || conn.key}?`}
-          description={confirm.confirm ?? ''} confirmLabel='Disconnect'
+          // mold_v0-348: the delete's own question ("Delete this hosting account?") under a Disconnect title says it twice
+          // in two words: its first sentence goes when it asks one; the rest (what keeps working) stays.
+          description={disconnectWords(confirm.confirm)} confirmLabel='Disconnect'
           onConfirm={() => void run('delete', async () => { await takeAction(area, conn.key, confirm.id); onChanged(); })} />
       )}
     </div>
   );
 }
+
+/** A Disconnect dialog's body: the area's delete confirm without its own leading question (the title asks it). */
+export const disconnectWords = (confirm: string | null | undefined): string => {
+  const rest = (confirm ?? '').replace(/^(Delete|Remove|Disconnect) this [^?]{1,80}\?\s*/i, '').trim();
+  return rest || 'This workspace stops using its key here; the service keeps its own data.';
+};
 
 /** An account's edit (every field the edit offers) or its Replace key (the sealed ones alone): saved, then tested again. */
 function EditForm({ fields, all, conn, replace, busy, onSave, onCancel }: { fields: FormField[]; all: FormField[]; conn: ConnectionView; replace: boolean; busy: boolean;

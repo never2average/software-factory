@@ -60,6 +60,13 @@ export function setResolverForTest(r: Resolver | null) { resolver = r ?? systemR
  * The stand-in address (tests): honoured only in a test world (APP_TEST_WORLD=1, set by scripts/lib/test-world.ts),
  * never in production, and only on 127.0.0.1.
  */
+/**
+ * mold_v0-348: a test world (APP_TEST_WORLD=1: the lanes, the console's renders, the scripts) never calls a real service:
+ * without a stand-in a connection's Test answers that it was not tested here. Production never sets it.
+ */
+export const TEST_WORLD_WORDS = "It wasn't tested: this is a test world, which never calls a real service.";
+export const testWorldWithoutStandin = (): boolean => ENV.APP_TEST_WORLD === "1" && !standin();
+
 export function standin(): string | null {
   const v = ENV.APP_CONNECTION_TEST_STANDIN;
   if (!v || process.env.NODE_ENV === "production" || ENV.APP_TEST_WORLD !== "1") return null;
@@ -212,7 +219,7 @@ export function cleanWords(s: string, secrets: readonly string[]): string | null
   return t.length > SUMMARY_MAX ? `${t.slice(0, SUMMARY_MAX - 1)}…` : t;
 }
 const STATUS_WORDS: Record<number, string> = {
-  400: "the request was not accepted (check the fields this test uses)", 401: "the token was refused", 403: "the token is not allowed to do this",
+  400: "the request was not accepted: the token, or a field this test uses, is probably wrong", 401: "the token was refused", 403: "the token is not allowed to do this",
   404: "nothing was found there (check the address and the account it names)", 405: "the service does not take this kind of request there",
   407: "a proxy asked for a sign-in", 408: "it took too long", 409: "the service refused it in its current state", 410: "it is no longer there",
   422: "the service could not use what was sent", 429: "too many requests: try again in a minute", 502: "the service's gateway had a problem",
@@ -397,6 +404,8 @@ export async function testConnectionRecord(orgId: number, area: Area, key: strin
   if (!pk) {
     result = { ok: false, outcome: "not_ready", host: null, status: null, ms: 0, probe: null,
       words: test.by && (choice === undefined || choice === null || choice === "") ? `It can't be tested yet: ${label(test.by)} is empty.` : `It can't be tested yet: this app has no test for ${test.by ? `${label(test.by)} ${String(choice).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 80)}` : "this record"}.` };
+  } else if (testWorldWithoutStandin()) {
+    result = { ok: false, outcome: "not_ready", host: null, status: null, ms: 0, probe: pk, words: TEST_WORLD_WORDS };
   } else {
     const kv = await import("./keyvault.js");
     const { decryptValue, isEnvelope } = await import("./encrypted-fields.js");

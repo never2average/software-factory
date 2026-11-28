@@ -8,6 +8,7 @@
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
+import { Icons } from '@/components/icons';
 import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
@@ -15,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { recordAreas, type PackTabSpec, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
 import { keyChunks, latestField, placeColumns, type RelatedColumns } from './related-columns';
 import { Field, RecordView, type PropType, type RecordCol, type RowAction, type SortRule } from '@/components/layout/record-view';
+import { closeRecordPanel, OpenRelatedProvider } from '@/components/layout/detail-panel';
 import type { FilterRule, RawValue } from '@/components/layout/record-filters';
 import { useRepositories } from '@/features/admin/repositories';
 import { EmptyState } from '@/features/tabs/empty';
@@ -181,6 +183,8 @@ export interface RecordSource {
   properties?: false;
 }
 
+/** mold_v0-348: the hidden column a ?linked= rule filters on: whether the row points at the linked record by its key. */
+const LINKED_COL = '_linked';
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
 function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] = [], base: 'app' | 'admin' = 'app'): RecordCol<RecordRow>[] {
   const record: RecordCol<RecordRow> = {
@@ -202,10 +206,12 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
       ...(type === 'select' && f?.options ? { options: f.options.map((o) => (typeof o === 'string' ? { value: o } : { value: o.value, label: o.label })) } : {}),
       value: (r) => {
         const v = r.data[name];
+        // mold_v0-348: a flag never set is off: No, as a set one reads (never a dash beside another row's Yes).
+        if (type === 'boolean' && (v == null || v === '')) return false;
         if (v == null) return null;
         if (type === 'number') return typeof v === 'number' ? v : Number(v);
         if (type === 'boolean') return Boolean(v);
-        if (refTarget(area, f) && r.ref_titles?.[name]) return refWords(v, r.ref_titles[name]);
+        if ((refTarget(area, f) || f?.type === 'person') && r.ref_titles?.[name]) return refWords(v, r.ref_titles[name]);
         return type === 'select' || type === 'date' ? String(v) : fieldText(f, v, r.key);
       },
       render: (r) => {
@@ -215,6 +221,9 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
           const keys = (Array.isArray(r.data[name]) ? r.data[name] as unknown[] : [r.data[name]]).filter((k): k is string => typeof k === 'string' && k !== '');
           if (keys.length) return <span className='line-clamp-2' data-ref-cell={name}>{keys.map((k, i) => <span key={k}>{i > 0 && ', '}<Link href={`/${base}/records/${to}/${encodeURIComponent(k)}`} className='underline-offset-4 hover:underline' onClick={(e) => e.stopPropagation()}>{titles[k] ?? k}</Link></span>)}</span>;
         }
+        // mold_v0-348: a person by name (the server's titles for its ids), never a user id.
+        if (f?.type === 'person' && titles && r.data[name] != null && r.data[name] !== '') return <span className='line-clamp-2' data-person-cell={name}>{refWords(r.data[name], titles)}</span>;
+        if (type === 'boolean' && (r.data[name] == null || r.data[name] === '')) return <span>{fieldText(f, false, r.key) || 'No'}</span>;
         const chips = chipWords(f, chipValues(f, r.data[name]));
         if (chips) return <Chips values={chips} max={4} />;
         // mold_v0-344: a connect tab's State: this workspace's state for the service, in its colour.
@@ -401,7 +410,11 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
     const listed = columnsOf(area, source, linked ? [linked.field] : [], base);
     // mold_v0-345: a connect tab's rows are services (Vercel, R2 ...), whatever its catalog area is called.
     const plain = connect?.connect && !source ? listed.map((c) => (c.key === '_record' ? { ...c, label: 'Service' } : c)) : listed;
-    const own = visible ? [...plain, visibilityColumn<RecordRow>(data?.records ?? [])] : plain;
+    const seen = visible ? [...plain, visibilityColumn<RecordRow>(data?.records ?? [])] : plain;
+    // mold_v0-348: ?linked= matches the stored key (a reference column's value is the record's title once the server
+    // gives the titles, which never equals the key), one of a list's keys exactly, never a part of one.
+    const own = linked ? [...seen, { key: LINKED_COL, label: `${areaFieldLabel(area, linked.field)} is ${linked.key}`, type: 'boolean' as const, hidden: true, keep: false, peek: false as const, csv: false as const,
+      value: (r: RecordRow) => (Array.isArray(r.data[linked.field]) ? r.data[linked.field] as unknown[] : [r.data[linked.field]]).includes(linked.key), render: () => null }] : seen;
     if (!related) return own;
     // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
     const values = relatedValues.data ?? {};
@@ -454,16 +467,15 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsFlag.withDefault(false));
   const clocked = !!area.clocks?.length;
   const overdueRule = (r: FilterRule) => r.key === OVERDUE_COL && r.op === 'true';
-  const linkedList = linked ? !!(area.fields.find((f) => f.name === linked.field)?.multiple || area.fields.find((f) => f.name === linked.field)?.type === 'link') : false;
   // mold_v0-259: ?visibility=workspace|private|team:<name> (a team's page links to its records' list) is a Filter rule.
   const [visibilityParam, setVisibilityParam] = useQueryState('visibility');
   const visRule = visible ? visibilityRule(visibilityParam) : null;
   const initialRules = useMemo(() => {
     const rules = [...(clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : []),
-      ...(linked ? [{ id: 'linked', key: linked.field, op: (linkedList ? 'contains' : 'is') as 'contains' | 'is', value: linked.key }] : []),
+      ...(linked ? [{ id: 'linked', key: LINKED_COL, op: 'true' as const }] : []),
       ...(visRule ? [visRule] : [])];
     return rules.length ? rules : undefined;
-  }, [clocked, overdueParam, linked?.field, linked?.key, linkedList, visRule?.value]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clocked, overdueParam, linked?.field, linked?.key, visRule?.value]); // eslint-disable-line react-hooks/exhaustive-deps
   const shown = data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
@@ -472,6 +484,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // mostly the first area's fields.
   const rowArea = (r: RecordRow): RecordAreaSpec => (recordArea(r) === area.name ? area : findRecordArea(base, recordArea(r)) ?? area);
   const foreign = (r: RecordRow) => rowArea(r) !== area;
+  // mold_v0-348: a record deleted from its panel: the panel closes and the list reads again, on this page (never the
+  // area's own list elsewhere).
+  const deleted = () => { closeRecordPanel(); void reload(); };
+  // mold_v0-348: a related record clicked in a record's panel (an application's build) opens in this list's panel.
+  const [peer, setPeer] = useState<{ area: string; key: string; title: string } | null>(null);
+  const relatedArea = peer ? findRecordArea(base, peer.area) : undefined;
+  const relatedPanel = peer && relatedArea ? {
+    key: `related:${peer.area}:${peer.key}`, title: peer.title, onClose: () => setPeer(null),
+    items: [{ label: 'Open in its own page', icon: <Icons.externalLink />, href: `/${base}/records/${peer.area}/${encodeURIComponent(peer.key)}` }],
+    body: <OpenRelatedProvider value={setPeer}><RecordDetailBody key={`${peer.area}:${peer.key}`} area={relatedArea} recordKey={peer.key} base={base} inPanel onDeleted={() => { setPeer(null); void reload(); }} /></OpenRelatedProvider>
+  } : null;
   const laidOut = (r: RecordRow) => !source && !detailNote && featureOn('record_pages') && !!layoutOf(rowArea(r));
   // mold_v0-336: the rows' own word ("8 hosting accounts"), the pack's plural; absent, "records" as before.
   const noun = source?.noun ?? plural ?? area.plural ?? 'records';
@@ -481,8 +504,9 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const summary = connect ? <ConnectCards rows={data?.records ?? null} /> : given;
   if (error) return <ErrorState error={error} />;
   return (
+    <OpenRelatedProvider value={setPeer}>
     <RecordView<RecordRow>
-      id={id} compact={compact} noun={noun} summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
+      id={id} compact={compact} sidePanel={relatedPanel} noun={noun} summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
       initialRules={initialRules} onRulesChange={(r) => {
         if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
         if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);
@@ -509,10 +533,12 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       detail={(r) => source?.detail ? source.detail(r) : connect && !foreign(r) ? (
         <div className='flex flex-col gap-5' data-connect-panel=''>
           <ConnectSection tab={connect} row={r} spec={connectSpec.data} onChanged={() => void reload()} flagTaken={flagTaken} />
-          <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
+          {/* mold_v0-348: read again whenever its accounts change (a count of them in its facts stays true after Disconnect). */}
+          <RecordDetailBody key={`${r.key}:${r.connect && 'connections' in r.connect ? r.connect.connections.map((c) => `${c.key}@${c.updated_at}`).join(',') : ''}`}
+            area={rowArea(r)} recordKey={r.key} base={base} inPanel onDeleted={deleted} />
         </div>
-      ) : laidOut(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel />
-        : foreign(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel /> : (<>
+      ) : laidOut(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel onDeleted={deleted} />
+        : foreign(r) ? <RecordDetailBody area={rowArea(r)} recordKey={r.key} base={base} inPanel onDeleted={deleted} /> : (<>
         <dl>
           {detailNote?.(r)}
           {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}
@@ -525,6 +551,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
         {!source && recordArea(r) === area.name && <div className='pt-4'><RecordDocuments area={area} base={base} recordKey={r.key} /></div>}
       </>)}
     />
+    </OpenRelatedProvider>
   );
 }
 
@@ -573,7 +600,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
 }
 
 /** A record's page without its page (mold_v0-278: also a list's record panel, `inPanel`: its tabs under &panelTab=). */
-export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin'; inPanel?: boolean }) {
+export function RecordDetailBody({ area, recordKey, base, inPanel = false, onDeleted }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin'; inPanel?: boolean; onDeleted?: () => void }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
   // mold_v0-298: the top bar's last crumb names the record (its page's title), not its key from the address; not from a
@@ -595,7 +622,7 @@ export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { a
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
         <LaidOutRecord area={area} base={base} layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
           provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} canShare={!!data.can_share}
-          tabParam={inPanel ? PANEL_TAB_PARAM : undefined} />
+          tabParam={inPanel ? PANEL_TAB_PARAM : undefined} onDeleted={onDeleted} />
       )}
     </>
   );

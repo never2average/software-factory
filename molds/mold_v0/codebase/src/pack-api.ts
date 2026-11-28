@@ -3121,6 +3121,11 @@ export const TabConnectServiceSchema = z.object({
   }).strict().optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
+/**
+ * mold_v0-348: why a service of a connect tab has no Connect (its `when` fails): a condition on the catalog record and the
+ * words its panel says instead of the shell's own ("No account to connect for this one ..."); the first that holds.
+ */
+export const TabConnectUnavailableSchema = z.object({ when: DetailConditionSchema, reason: plainWords(240) }).strict();
 export const TabConnectSchema = z.object({
   area: name,
   via: name,
@@ -3131,6 +3136,7 @@ export const TabConnectSchema = z.object({
   services: z.record(z.string().regex(/^(\*|[A-Za-z0-9][A-Za-z0-9._:()-]{0,199})$/, "a service's record key, or * for every other"), TabConnectServiceSchema)
     .refine((m) => Object.keys(m).length <= 200, "at most 200 services").optional(),
   others: z.boolean().optional(),
+  unavailable: z.array(TabConnectUnavailableSchema).min(1).max(4).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((c, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });

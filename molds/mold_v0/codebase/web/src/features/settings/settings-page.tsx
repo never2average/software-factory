@@ -14,6 +14,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { pageTabs, settingsLayout, settingsTabUrl, type SettingsTabSpec } from '@/config/settings';
 import { movedSettingsTabs, settingsTabs as ALL } from '@/config/pack-nav.generated';
 import { CredentialsTab } from '@/features/credentials/credentials-tab';
+import { githubCall } from '@/features/credentials/github-app-section';
+import { useOrgLoad } from '@/features/portal/shared';
+import { credentialsTabParts } from '@/config/pack-nav.generated';
 import { EmailTab } from '@/features/email/email-tab';
 import { DeveloperTab } from '@/features/developer/developer-page';
 import { AreaRecordList } from '@/features/records/record-pages';
@@ -57,7 +60,12 @@ export function SettingsPage({ group = null }: { group?: string | null }) {
   // A team or keys tab a pack narrows to some roles (mold_v0-280) shows once the role is known and is one of them, as its
   // sidebar entry did (the server refuses the rest anyway).
   const { role, loaded } = useAccountRole();
-  const tabs = pageTabs(group).filter((t) => { const r = (t as { roles?: string[] }).roles; return !r || (loaded && role !== null && r.includes(role)); });
+  // mold_v0-348: a Credentials tab whose only part is the GitHub connection (the workspace agent's repositories) shows
+  // once the platform's GitHub App is set up; else it would only ever say there is nothing to set.
+  const githubOnly = credentialsTabParts.github && !credentialsTabParts.vault && !credentialsTabParts.runners && ALL.some((t) => t.kind === 'credentials');
+  const github = useOrgLoad(() => (githubOnly ? githubCall().then((v) => !!v?.available, () => false) : Promise.resolve(true)), [githubOnly]);
+  const tabs = pageTabs(group).filter((t) => { const r = (t as { roles?: string[] }).roles; return !r || (loaded && role !== null && r.includes(role)); })
+    .filter((t) => t.kind !== 'credentials' || github.data === true);
   const first = tabs[0]?.id ?? '';
   const [selected, setSelected] = useQueryState('tab', { defaultValue: first });
   // Past 5 tabs, /app/settings itself leads to the asked tab's group page (or the first group's): its address stays good.
@@ -65,7 +73,7 @@ export function SettingsPage({ group = null }: { group?: string | null }) {
   const moved = (movedSettingsTabs as Record<string, string>)[selected] ?? null;
   const lead = moved ?? (layout === 'groups' && !group ? settingsTabUrl(ALL.some((t) => t.id === selected) ? selected : ALL[0]!.id) : null);
   useEffect(() => { if (lead) router.replace(lead); }, [lead, router]);
-  if (lead || !tabs.length) return null;
+  if (lead || !tabs.length || github.data === null) return null;
   const tab = tabs.find((t) => t.id === selected) ?? tabs[0]!;
   const setTab = (v: string) => void setSelected(v === first ? null : v);
   return (

@@ -1,4 +1,5 @@
 'use client';
+import { useBreadcrumbTitle } from '@/lib/breadcrumb-leaf';
 // A team's page (mold_v0-259, flag teams; GET /api/teams/<id>, src/team-routes.ts), in the record page layout
 // (mold_v0-253/254/256, ./records/detail-page.tsx): a header card (what it is, its name and description, badges, four
 // facts, who added it and when) with its actions (Add people, the primary; Rename; Delete in More, the workspace's owners
@@ -80,6 +81,8 @@ export function TeamPage({ id }: { id: string }) {
   const [act, setAct] = useQueryState('act');
   const [confirming, setConfirming] = useState(false);
   const router = useRouter();
+  // mold_v0-348: the top bar's last crumb names the team, not "Team <id>".
+  useBreadcrumbTitle(data?.team.name ?? null);
   if (error) return <PageContainer><ErrorState error={error} /></PageContainer>;
   if (!data) return <PageContainer><LoadingCards count={3} /></PageContainer>;
   const { team, people, can_manage, me } = data;

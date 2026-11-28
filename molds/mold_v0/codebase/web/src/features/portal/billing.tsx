@@ -570,6 +570,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
   // mold_v0-298: Invite, Edit limits and the roles' help open in the side panel beside the list, one at a time.
   const [panel, setPanel] = useState<PeoplePanel>(null);
   const [suspend, setSuspend] = useState<Member | null>(null);
+  const [removing, setRemoving] = useState<Member | null>(null);
   const { lock, roles, can } = useAccountRole();
   if (!t) return <LoadingCards count={1} />;
   // The team (invite, roles, suspension) is the owners'; Edit limits is Budget rules (owners and billing managers).
@@ -597,7 +598,9 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
         ...roles.filter((x) => x.id !== now).map((x, i) => lock({ label: `Make ${x.label.toLowerCase()}`, icon: <Icons.teams />, separator: i === 0 && !!lim,
           onSelect: () => act(appApi('POST', `/team/members/${encodeURIComponent(m.id)}/role`, { role: x.id }), `${m.email} is now ${/^[aeiou]/i.test(x.label) ? 'an' : 'a'} ${x.label.toLowerCase()}`) }, 'team')),
         lock(active ? { label: 'Suspend access', icon: <Icons.close />, destructive: true, separator: true, onSelect: () => setSuspend(m) }
-          : { label: 'Restore access', icon: <Icons.check />, separator: true, onSelect: () => act(appApi('POST', `/team/members/${encodeURIComponent(m.id)}/reactivate`), `Access restored for ${m.email}`) }, 'team')
+          : { label: 'Restore access', icon: <Icons.check />, separator: true, onSelect: () => act(appApi('POST', `/team/members/${encodeURIComponent(m.id)}/reactivate`), `Access restored for ${m.email}`) }, 'team'),
+        // mold_v0-348: an owner removes a person (POST /api/app/team/members/:id/remove), as the Owner role's help says.
+        lock({ label: 'Remove person', icon: <Icons.trash />, destructive: true, onSelect: () => setRemoving(m) }, 'team')
       ])
     ];
   };
@@ -605,7 +608,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
   // mold_v0-334: a suspended member and an expired invitation are not errors: neutral badges, never red.
   const statusVariant = (st: string) => (st === 'Active' ? 'secondary' as const : 'outline' as const);
   const cols: RecordCol<PersonRow>[] = [
-    { key: 'person', label: 'Person', keep: true, type: 'text', value: (r) => (r.kind === 'invite' ? r.x.email : r.m.name || r.m.email || ''),
+    { key: 'person', label: 'Person', keep: true, title: true, type: 'text', value: (r) => (r.kind === 'invite' ? r.x.email : r.m.name || r.m.email || ''),
       // Invites: when it was sent, as a second line (Joined is off by default).
       // mold_v0-275: each person's avatar beside their name (the console's drawing in the app's avatar colours).
       render: (r) => r.kind === 'invite' ? (<IdentityName email={r.x.email}>
@@ -630,7 +633,8 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
       render: (r) => <Badge variant={statusVariant(statusOf(r))}>{statusOf(r)}</Badge> },
     { key: 'team', label: 'Budget group', className: 'w-36 max-sm:hidden', type: 'select', value: (r) => (r.kind === 'member' ? teamName(r.lim?.team_id) ?? 'No group' : 'No group'),
       render: (r) => <span className='text-muted-foreground'>{r.kind === 'member' ? teamName(r.lim?.team_id) ?? '—' : '—'}</span> },
-    { key: 'spend', label: 'Spend this month', className: 'w-56 max-sm:w-auto', type: 'number', value: (r) => (r.kind === 'member' ? r.lim?.spent ?? 0 : 0),
+    // mold_v0-348: never narrower than its bar and its words (it was cut off with a panel open beside the list).
+    { key: 'spend', label: 'Spend this month', className: 'w-56 min-w-48 whitespace-nowrap max-sm:w-auto max-sm:min-w-0', type: 'number', value: (r) => (r.kind === 'member' ? r.lim?.spent ?? 0 : 0),
       // Line 1: the bar (or "· shared budget" with no own limit); line 2: what is left and, when one applies, the limit that binds (red when blocked).
       render: (r) => {
         if (r.kind === 'invite' || !r.lim) return <span className='text-muted-foreground'>—</span>;
@@ -678,6 +682,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
         </div>
       )}
       <RecordView compact id='billing-people' rows={rows} rowKey={(r) => r.key} cols={cols} noun='people' properties detail={() => null}
+        detailTitle={(r) => (r.kind === 'invite' ? r.x.email : r.m.name || r.m.email || '')}
         searchText={(r) => (r.kind === 'invite' ? r.x.email : `${r.m.name ?? ''} ${r.m.email ?? ''} ${teamName(r.lim?.team_id) ?? ''}`)}
         // mold_v0-298: short enough for a phone; "Own settings only" and the roles' help fold into the Actions menu.
         searchPlaceholder='Search people'
@@ -690,7 +695,7 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
           { id: 'suspended', label: 'Suspended', match: (r) => statusOf(r) === 'Suspended' }]}
         // mold_v0-298: Invite is the search row's primary button, its form in the side panel (as New team, New API token).
         // The wrapper holds the row's right edge, so the button stays there when Allowed disables it (and wraps it for the reason).
-        toolbarAction={<span className='ml-auto inline-flex shrink-0'><Allowed need='team'><Button type='button' onClick={() => setPanel({ kind: 'invite' })} aria-label='Invite' title='Invite' data-toolbar-action=''
+        toolbarAction={<span className='ml-auto inline-flex shrink-0'><Allowed need='team'><Button type='button' onClick={() => setPanel({ kind: 'invite' })} aria-label='Invite' data-toolbar-action=''
           className='max-sm:w-8 max-sm:px-0'><Icons.add /><span className='hidden sm:inline'>Invite</span></Button></Allowed></span>}
         sidePanel={panel?.kind === 'invite' ? { key: 'invite', title: 'Invite someone', onClose: () => setPanel(null), body: <InviteForm roles={roles} onClose={() => setPanel(null)} onSent={reload} /> }
           : panel?.kind === 'limits' && l ? { key: `limits:${panel.m.user_id}`, title: `Limits for ${panel.m.name || panel.m.email}`, onClose: () => setPanel(null),
@@ -702,6 +707,18 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
         empty={filtered
           ? <EmptyState id='billing-people-empty' empty={{ title: 'Nobody has their own settings', text: 'Everyone follows the budget rules. Edit limits on a person\'s row gives them their own.', cta: null }} />
           : <EmptyState id='billing-people-empty' empty={{ title: 'Nobody here yet', text: can('team') ? 'Invite adds someone by email: they get a link and join with the role you pick.' : 'The account\'s owners invite people by email.', cta: null }} />} />
+      <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {removing?.name || removing?.email}?</DialogTitle>
+            <DialogDescription>They leave this account and its teams at once, and can come back only with a new invitation. What they made stays. To stop them for a while instead, suspend their access.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setRemoving(null)}>Keep them</Button>
+            <Button variant='destructive' onClick={() => removing && act(appApi('POST', `/team/members/${encodeURIComponent(removing.id)}/remove`), `${removing.email} removed`).finally(() => setRemoving(null))}>Remove</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!suspend} onOpenChange={(o) => !o && setSuspend(null)}>
         <DialogContent>
           <DialogHeader>
@@ -862,7 +879,9 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
   const rows: RuleRow[] = [
     { key: 'allowance', rule: 'Monthly allowance', applies: 'Account',
       // mold_v0-342: this month's own limit (Upgrade plan) says so, and who set it.
-      ...(b.budget_source === 'month' && who('allowance') ? { by: who('allowance')!.by_name, at: who('allowance')!.at } : { by: profile.name, at: null }),
+      // mold_v0-348: else the plan sets it (never the app's name as if a person had): its words say what changes it.
+      ...(b.budget_source === 'month' && who('allowance') ? { by: who('allowance')!.by_name, at: who('allowance')!.at } : { by: 'Your plan', at: null }),
+      hint: featureOn('plan_upgrade') ? 'Set by the plan: Upgrade plan, on Spending, changes it for this month.' : 'Set by the plan: a change of plan changes it.',
       value: l.budget_error ? "Couldn't load" : l.budget_usd > 0 ? `${usd(l.budget_usd)}${b.budget_source === 'month' ? ' this month only' : ' a month'}` : 'No prepaid allowance' },
     // The short label; the sentence is its tooltip (and the dialog's hint).
     { ...policyRow('mode', 'How people share it', MODE_OPTIONS.find((m) => m.id === p.mode)?.label ?? p.mode, 'Each budget', 'mode', 'How the people in each budget share it. Own limits apply in every mode.'), hint: MODE_WORDS[p.mode] },

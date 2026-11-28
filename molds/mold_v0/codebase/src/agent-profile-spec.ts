@@ -282,6 +282,28 @@ export const TEMPLATE_NAME = /\{\{\s*([a-z$][a-z0-9_]{0,62})\s*\}\}/g;
 export const templateNames = (t: string): string[] => [...new Set([...t.matchAll(TEMPLATE_NAME)].map((m) => m[1]!))];
 /** A value as words in a message: a list joined, an object as JSON, nothing as empty. */
 const asWords = (v: unknown): string => (v == null ? "" : Array.isArray(v) ? v.map(asWords).filter(Boolean).join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v));
+/** A field as a first message reads it (an area's field: its name, type and an enum's options). */
+export interface TemplateField { name: string; type?: string; options?: readonly (string | { value: string; label?: string })[] }
+/**
+ * mold_v0-348: a record as a first message reads it: a reference by its record's title with its key ("Fly.io (fly-io)",
+ * its key alone where the person may not read the title), an option by its label ("Custom", never "custom"); the
+ * record's other values as they are. `ref_titles` are the titles the record store gave the row (withRefTitles).
+ */
+export function templateRecord<R extends { key: string; title: string | null; data: Record<string, unknown>; ref_titles?: Record<string, Record<string, string>> }>(fields: readonly TemplateField[], r: R): R {
+  const data = { ...r.data };
+  for (const f of fields) {
+    const v = data[f.name];
+    if (v == null || v === "") continue;
+    const one = (x: unknown): unknown => {
+      if (typeof x !== "string") return x;
+      if (f.type === "reference") { const t = r.ref_titles?.[f.name]?.[x]; return t && t !== x ? `${t} (${x})` : x; }
+      const o = f.options?.find((y) => (typeof y === "string" ? y : y.value) === x);
+      return o && typeof o !== "string" && o.label ? o.label : x;
+    };
+    data[f.name] = Array.isArray(v) ? v.map(one) : one(v);
+  }
+  return { ...r, data };
+}
 /**
  * A start_agent action's first message with the record filled in: {{key}} its key, {{title}} its title, {{<field>}} a
  * field's value (an empty one: nothing). Filled on the server from the record as the person reads it. mold_v0-322: a

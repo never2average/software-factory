@@ -32,7 +32,8 @@ export function TeamsTab() {
   const named = (id: string) => personWords(people.find((p) => p.user_id === id), id, data?.me);
   const cols: RecordCol<TeamSummary>[] = [
     { key: 'name', label: 'Team', title: true, keep: true, type: 'text', className: 'min-w-40', value: (t) => t.name,
-      render: (t) => <Link className='font-medium underline-offset-4 hover:underline' href={teamUrl(t.id)} data-team-link={t.id}>{t.name}</Link> },
+      // mold_v0-348: the row opens the team's panel (a row click never navigates; its own page is the panel's Open in its own page).
+      render: (t) => <span className='font-medium' data-team-link={t.id}>{t.name}</span> },
     { key: 'members', label: 'People', type: 'number', className: 'text-right', value: (t) => t.members, render: (t) => <span className='tabular-nums'>{t.members}</span> },
     { key: 'leads', label: 'Leads', type: 'text', value: (t) => t.leads.map(named).join(', '), render: (t) => (t.leads.length ? <span className='line-clamp-2'>{t.leads.map(named).join(', ')}</span> : <span className='text-muted-foreground'>None</span>) },
     { key: 'yours', label: 'You', type: 'select', options: [{ value: 'Lead' }, { value: 'Member' }, { value: 'Not in it' }],

@@ -386,7 +386,8 @@ export interface PageAction {
     from_record?: string[];
     /** mold_v0-256: the linked record it runs on. */
     target?: { area: string; key: string; title: string | null } | null };
-  moves?: { to: string; label: string; disabled: string | null }[];
+  /** mold_v0-348: `state`, the state it moves to in words (its toast's). */
+  moves?: { to: string; label: string; state?: string; disabled: string | null }[];
   /** mold_v0-303: a start_program action's program, its inputs filled from the record by the server. */
   program?: { id: string; name: string; version: number; via: 'session' | 'runner'; inputs: Record<string, unknown> };
   fields?: PageFormField[];

@@ -24,15 +24,17 @@ export function AlertsTab({ rules = alertRules }: { rules?: readonly AlertRule[]
   const rows: Row[] = rules.map((r, i) => ({ ...r, key: `${r.area}:${r.clock ?? 'due'}:${i}` }));
   const reminders = rows.filter((r) => r.step.startsWith('Reminder')).length;
   const escalations = rows.filter((r) => r.source === 'clock' && !r.step.startsWith('Reminder')).length;
+  const dues = rows.filter((r) => r.source === 'due').length;
   return (
     <RecordView<Row>
       id='settings-alerts' compact noun='alerts' properties
       rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
       summary={<StatStrip quad items={[
-        { label: 'Alerts', value: rows.length, said: `${rows.length} alerts` },
-        { label: 'Due dates', value: rows.filter((r) => r.source === 'due').length, said: 'due dates' },
-        { label: 'Reminders', value: reminders, said: `${reminders} reminders` },
-        { label: 'Escalations', value: escalations, said: `${escalations} escalations` }
+        // mold_v0-348: each count with its number, one or many.
+        { label: 'Alerts', value: rows.length, said: counted(rows.length, 'alert') },
+        { label: 'Due dates', value: dues, said: counted(dues, 'due date') },
+        { label: 'Reminders', value: reminders, said: counted(reminders, 'reminder') },
+        { label: 'Escalations', value: escalations, said: counted(escalations, 'escalation') }
       ]} />}
       searchText={(r) => `${r.area_label} ${r.clock ?? ''} ${r.step} ${r.when} ${who(r)} ${r.does ?? ''}`}
       searchPlaceholder='Search alerts'
@@ -50,3 +52,5 @@ export function AlertsTab({ rules = alertRules }: { rules?: readonly AlertRule[]
     />
   );
 }
+
+const counted = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;

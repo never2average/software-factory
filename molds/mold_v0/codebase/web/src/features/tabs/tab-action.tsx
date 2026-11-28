@@ -300,12 +300,13 @@ function RecordPicker({ id, f, value, set }: { id: string; f: FormField; value: 
           ))}
         </ul>
       )}
-      <Input id={id} value={q} autoComplete='off' role={off ? undefined : 'combobox'} aria-expanded={off ? undefined : open} aria-controls={off ? undefined : list}
+      {/* mold_v0-348: a chosen record reads as its name (its key under it), never as its raw key in the box. */}
+      <Input id={id} value={!multiple && !typed && chosen ? chosen : q} autoComplete='off' role={off ? undefined : 'combobox'} aria-expanded={off ? undefined : open} aria-controls={off ? undefined : list}
         aria-autocomplete={off ? undefined : 'list'} aria-activedescendant={open && shown[active] ? `${list}-${active}` : undefined}
         placeholder={off ? (multiple ? 'record keys, comma-separated' : 'a record key') : 'Search by name'}
         onFocus={() => !off && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onKeyDown={onKey}
         onChange={(e) => { setQ(e.target.value); setTyped(true); setOpen(true); if (!multiple) set(e.target.value); else if (off) set(keysOf(e.target.value)); }} />
-      {chosen && <p className='text-muted-foreground text-xs' data-picked-title=''>{chosen}</p>}
+      {chosen && <p className='text-muted-foreground font-mono text-xs' data-picked-title=''>{String(value)}</p>}
       {f.where_words && <p className='text-muted-foreground text-xs' data-picker-where=''>{f.filter_new_only ? 'New picks: only' : 'Only'} {f.label.toLowerCase()} records {f.where_words}.</p>}
       {open && !off && items && (
         <ul id={list} role='listbox' aria-label={f.label} data-picker-list=''
@@ -699,8 +700,15 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   const uploading = Object.values(uploads).some((xs) => xs.some((x) => x.state === 'uploading'));
+  // mold_v0-348: what is still needed, said beside Add (never a disabled button with no reason).
+  const missing = [...(!key.trim() ? ['Name'] : []), ...plain.filter((f) => f.required && f.type !== 'boolean' && (values[f.name] == null || values[f.name] === '' || (Array.isArray(values[f.name]) && !(values[f.name] as unknown[]).length))).map((f) => f.label)];
+  const missingWords = missing.length ? `Fill in ${missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0]} to add it.` : null;
   return (
-    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>}>
+    <CardForm onSubmit={submit} submit={<>
+      {/* The words beside Add, never around it: the footer's buttons stay its own children (their order, Tab wrapping). */}
+      {missingWords && <span id='action-missing' className='text-muted-foreground text-xs' data-add-missing=''>{missingWords}</span>}
+      <Button type='submit' disabled={busy || !key.trim()} title={missingWords ?? undefined} aria-describedby={missingWords ? 'action-missing' : undefined}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>
+    </>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='action-title'>Name<span className='text-destructive' aria-hidden> *</span></Label>
         <Input id='action-title' value={title} onChange={(e) => { setTitle(e.target.value); if (!keyTyped) setKey(keyFromTitle(e.target.value)); }} />

@@ -5234,6 +5234,42 @@ drain state and unable to remove them, a delivery with another secret refused an
 `test:console-types` (the fixture declares the receiver), `test:console-tabs`, `test:connect-tab`,
 `test:developer-surface`, `test:developer-console`, `test:log-drain`.
 
+## A console audit's fixes: actions do what they say, panels say the right facts (mold_v0-348)
+
+From an end-to-end walk of a minted app's console (2026-11-28: every action pressed, every record's panel read). Each is
+generic; one opt-in pack key (a connect tab's `unavailable`), everything else is the shell's behaviour.
+
+- **Lists**: `?linked=<field>:<key>` (Show all, View →) filters on a hidden column of the stored keys, never on the
+  reference's title (records written through an import or a repository missed it); one of a list's keys exactly. A flag
+  never set reads No. A person field reads the person's name (`withRefTitles` puts the workspace directory's names in
+  `ref_titles`; someone gone reads "A former member"; a workspace with no directory to read keeps the ids).
+- **Panels**: Delete from a list's panel closes it and reads the list again on the same page (never the area's own list
+  elsewhere). A related record's title inside a list's panel (an application's builds, a mold's Used by) opens that
+  record in the list's panel (a new tab still opens its page). A related section drawn as `rows` lists its records under
+  its count, View all only when there are more. A connect tab's service panel reads its facts again when its accounts
+  change (a count of them stays true after Disconnect). The record tab strip's gaps are narrower (eight tabs fit at 1280).
+- **Actions**: a move's toast names the state it moved to ("Moved to Solved"; each move carries `state`), never the
+  button. A confirm whose own button starts with Cancel offers Keep it beside it. A start_agent's first message names a
+  reference by its record's title with its key and an option by its label (`templateRecord`). A session started from a
+  record crumbs through that record. Add says which required fields are still empty.
+- **Connections**: in a test world (`APP_TEST_WORLD=1`) a Test without a stand-in answers "It wasn't tested: this is a
+  test world" (could not test) and calls nothing; a bucket's Test there reaches only one on this machine; production is
+  unchanged. A 400 says the token may be wrong. Needs attention says why (failing, expiring key, two marked, ...).
+  Disconnect's body drops the delete's own question. **`tabs[].connect.unavailable`** `[{when, reason}]` (1 to 4): why a
+  service the tab does not connect has no Connect, the first that holds (server-side, `src/tab-connect.ts`; the shell's
+  words otherwise); not in the console's copy of the tab.
+- **Settings and Billing**: Settings › Credentials asks only the parts the build mounts (`credentialsTabParts`) and, when
+  its only part is the GitHub connection, shows once the platform's GitHub App is set up. People: the panel is titled
+  with the person, Remove person (owners: `POST /api/app/team/members/:id/remove`), a disabled button's tooltip is its
+  reason, Spend this month is not cut off. The plan's allowance says "Your plan". Alerts' counts say their numbers; an
+  escalation at once reads "As soon as it is overdue". A team's row opens its panel; its page's crumb is its name.
+  API keys' empty text for those who cannot make one says who does. A refused origin is a sentence. The access log
+  names a list's Ask AI and the agent. A history line names the fields it changed.
+
+Proof: `npm run test:e2e-fixes` (`scripts/e2e-fixes-348-test.ts`, offline), `test:console-types` (the fixture declares
+`unavailable`), `test:connect-tab`, `test:connection-test`, `test:signed-probes`, `test:workspace-storage`,
+`test:record-panel`, `test:app-nav`.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace

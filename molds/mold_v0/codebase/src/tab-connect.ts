@@ -27,9 +27,9 @@ import { formOffers } from "./secret-binding.js";
 /** The most connections of one area a tab reads for its rows (a workspace keeps a handful). */
 export const CONNECTIONS_MAX = 1000;
 export type ConnectState = "connected" | "needs_attention" | "not_tested" | "not_connected" | "unavailable";
-type Health = { state?: string | null; attention?: boolean; tested_at?: string };
+type Health = { state?: string | null; attention?: boolean; tested_at?: string; reasons?: string[] };
 export interface ConnectionView { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; health?: Health }
-export type ConnectRow = RecordRow & { areas?: string[]; health?: Health; connect?: { connectable: boolean; connections: ConnectionView[] } | { hidden: true } };
+export type ConnectRow = RecordRow & { areas?: string[]; health?: Health; connect?: { connectable: boolean; reason?: string; connections: ConnectionView[] } | { hidden: true } };
 
 const joined = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : xs[0] ?? "");
 
@@ -91,7 +91,9 @@ export async function withConnections(orgId: number, tab: Tab, rows: RecordRow[]
     // mold_v0-345: a service this tab does not connect (its `when` fails) and no account points at: "Not available here",
     // never "Not connected", and no Builds use it or Last tested of its own.
     const data = !connectable && !own.length ? { ...r.data, [CONNECT_COLUMNS.state]: "unavailable" } : { ...r.data, ...view(own) };
-    return { ...r, data, connect: { connectable, connections: own } };
+    // mold_v0-348: why it has none, in the tab's words (the first of its unavailable that holds).
+    const reason = connectable ? undefined : (c.unavailable ?? []).find((u) => conditionHolds(u.when, r.data))?.reason;
+    return { ...r, data, connect: { connectable, ...(reason ? { reason } : {}), connections: own } };
   });
   if (c.others && last) {
     const listed = new Set(rows.map((r) => r.key));

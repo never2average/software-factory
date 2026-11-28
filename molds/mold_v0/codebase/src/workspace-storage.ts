@@ -191,6 +191,10 @@ export async function testStorageRecord(orgId: number, key: string, actor: { rol
   try {
     const settings = await settingsOf(orgId, key, row.data);
     secrets.push(...[settings.access_key_id, settings.secret_access_key].filter((x): x is string => typeof x === "string" && x.length > 0));
+    // mold_v0-348: a test world never calls a real bucket: only one on this machine (a stand-in) is tested there.
+    const loopback = (() => { try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(String(settings.endpoint ?? "")).hostname); } catch { return false; } })();
+    const { ENV } = await import("./env-names.js");
+    if (ENV.APP_TEST_WORLD === "1" && !loopback) throw new Error("this is a test world, which never calls a real service");
     const { testBucket } = await import("./storage.js");
     const t = await testBucket(settings);
     // mold_v0-322: the flags this area's records are used by, as the pack declares them: its own (the workspace's

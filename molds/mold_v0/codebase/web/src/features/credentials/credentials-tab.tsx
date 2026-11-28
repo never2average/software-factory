@@ -32,7 +32,7 @@ import { ToolbarAction } from '@/features/tabs/tab-action';
 import { credentialsOf, forSettings, recordCredentialsHref, recordPurpose, recordSummary, settingsCounts, stateIn, type AreaRecord, type Credential, type CredField, type CredValue, type SlotState, type Status, type Unit } from './model';
 import { who } from '@/features/settings/words';
 import { singular } from '@/features/tabs/run-rows';
-import { onPremRunners, recordAreas } from '@/config/pack-nav.generated';
+import { credentialsTabParts, onPremRunners, recordAreas } from '@/config/pack-nav.generated';
 
 interface Vault { fields: CredField[]; values: CredValue[]; can_manage: boolean; record_areas?: string[] }
 /** One area's records and their credentials (GET /api/credentials?records=<area>, mold_v0-241). */
@@ -93,6 +93,7 @@ function recordRowsOf(areas: readonly (AreaVault & { area: string })[]): Row[] {
   });
 }
 
+const NO_VAULT: Vault = { fields: [], values: [], can_manage: false };
 const notFound = (e: unknown) => (e as { status?: number } | null)?.status === 404;
 /** An area the person may not read (403) or that a later build dropped (404) has no rows. */
 const noRows = (e: unknown) => [403, 404].includes((e as { status?: number } | null)?.status ?? 0);
@@ -100,9 +101,11 @@ const noRows = (e: unknown) => [403, 404].includes((e as { status?: number } | n
 /** Settings › Credentials: the cards, the search row and the table; a row opens its details card, Set its full card. */
 export function CredentialsTab() {
   // Each part answers 404 when the build has none of it (no field, no OAuth field, no GitHub App field, no private network).
-  const { data, error, reload } = useOrgLoad(() => credentialsCall<Vault>('GET', undefined, '?scope=workspace').catch((e) => { if (notFound(e)) return { fields: [], values: [], can_manage: false } as Vault; throw e; }));
-  const { data: oauth, reload: reloadOAuth } = useOrgLoad(() => oauthCall<OAuthView>('GET'));
-  const { data: github, error: githubError, reload: reloadGithub } = useOrgLoad(() => githubCall());
+  // mold_v0-348: only the parts this build mounts are asked (credentialsTabParts): no request that can only answer 404.
+  const { data, error, reload } = useOrgLoad(() => !credentialsTabParts.vault ? Promise.resolve(NO_VAULT)
+    : credentialsCall<Vault>('GET', undefined, '?scope=workspace').catch((e) => { if (notFound(e)) return NO_VAULT; throw e; }));
+  const { data: oauth, reload: reloadOAuth } = useOrgLoad(() => credentialsTabParts.oauth ? oauthCall<OAuthView>('GET') : Promise.resolve(null));
+  const { data: github, error: githubError, reload: reloadGithub } = useOrgLoad(() => credentialsTabParts.github ? githubCall() : Promise.resolve(null));
   const { data: runners, error: runnersError, reload: reloadRunners } = useOrgLoad(() => onPremRunners ? runnersCall() : Promise.resolve(null));
   // mold_v0-241: each area's records in one request (never one per record), once the workspace's answer names them.
   const areas = data ? (data.record_areas ?? []).join(',') : null;

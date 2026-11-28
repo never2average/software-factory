@@ -145,7 +145,9 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
       }
       if (a.kind === 'move') {
         await takeAction(host.area, host.record.key, a.id, { to });
-        toast.success(`Moved to ${a.moves?.find((m) => m.to === to)?.label.replace(/^Move to /, '') ?? to}`);
+        // mold_v0-348: the state it is in now (Solved), never the button that moved it (Mark solved).
+        const m = a.moves?.find((x) => x.to === to);
+        toast.success(`Moved to ${m?.state ?? m?.label.replace(/^Move to /, '') ?? to}`);
       }
       host.changed();
     } catch (e) { fail(e); } finally { setBusy(null); }
