@@ -1790,7 +1790,8 @@ async function pgliteParts() {
   const codes = together ? await Promise.all([run("a"), run("b")]) : [await run("a"), await run("b")];
   const failed = (["a", "b"] as const).filter((_, i) => codes[i] !== 0);
   if (failed.length) throw new Error(`pglite: part(s) ${failed.join(", ")} failed (above)`);
-  log(`✓ migrations on pglite: parts a and b passed`);
+  // mold_v0-300: the whole run's summary, as before the split (the functional lane reads this line).
+  log(`✓ migrations on pglite: schema-on-boot databases upgrade to the same schema with their rows; each migration once; edits, gaps and failures refused or rolled back (parts a and b passed)`);
 }
 
 // A lane that stops the test at its time limit (SIGTERM) leaves no databases behind in the temporary directory.
