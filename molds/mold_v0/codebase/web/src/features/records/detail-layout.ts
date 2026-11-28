@@ -4,6 +4,7 @@
 // unit), a badge's colour classes, which fields no part of the layout names. Pure, so scripts/record-pages-test.ts reads
 // it without a browser; ./detail-page.tsx draws it.
 import type { RecordAreaSpec, RecordFieldSpec } from '../../config/pack-nav.generated';
+import { DETAIL_PARAM } from '../../lib/split-panel';
 
 /** The theme tokens a badge may take (src/pack-api.ts BADGE_COLORS, the same list). */
 export const BADGE_COLORS = ['neutral', 'info', 'success', 'warning', 'danger', 'viz-1', 'viz-2', 'viz-3', 'viz-4', 'viz-5', 'viz-6', 'viz-7', 'viz-8'] as const;
@@ -21,7 +22,9 @@ export interface DetailLeafCondition {
 export interface DetailCondition extends DetailLeafCondition { all?: DetailLeafCondition[]; any?: DetailLeafCondition[] }
 /** A record's clocks as the page has them (./clocks.tsx ClockView): each one's state. */
 export type ClockStates = Record<string, { status?: string; overdue?: boolean }> | null | undefined;
-export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string }
+/** mold_v0-349: a notice's link: a tab of its pack, and optionally a reference field whose record's panel it opens there. */
+export interface DetailNoticeLink { label: string; tab: string; field?: string }
+export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string; link?: DetailNoticeLink }
 export interface DetailGroup { title?: string; fields: string[] }
 export interface DetailSection {
   /** mold_v0-292 (flag nested_runs): the program runs that targeted this record and the versions they made. */
@@ -81,7 +84,7 @@ export type PageActionPlace = 'primary' | 'secondary' | 'more';
 export interface DetailActionSpec {
   kind: PageActionKind; place?: PageActionPlace; label?: string; job_kind?: string; input?: Record<string, string>; to?: string; field?: string;
   /** mold_v0-337: or while a related record is one `where` keeps (`related`; the server checks it). */
-  roles?: string[]; unavailable?: { when?: DetailCondition; related?: { area: string; via?: string; where: DetailCondition }; reason: string }[]; confirm?: string;
+  roles?: string[]; unavailable?: { when?: DetailCondition; related?: { area: string; via?: string; /** mold_v0-349 */ match_field?: string; where: DetailCondition; /** mold_v0-349: holds while none is */ none?: true }; reason: string; /** mold_v0-349: asks first instead of disabling */ ask?: true }[]; confirm?: string;
   /** mold_v0-337: a move's own states (to_any), and its name from the one move open now (label_from_move). */
   to_any?: string[]; label_from_move?: boolean;
   /** mold_v0-256: a create_record action's area. */
@@ -105,7 +108,7 @@ export interface DetailActionSpec {
 }
 export interface DetailTab { label: string; sections: DetailSection[]; /** mold_v0-298: the tab only while this holds (never on the first). */ when?: DetailCondition }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
-export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition;
+export interface DetailComputed { area: string; via?: string; /** mold_v0-349: theirs whose via holds this record's value of it. */ match_field?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition;
   /** mold_v0-337: read through a first hop (the application's default environment); the server reads both. */
   through?: { area: string; via?: string; where?: DetailCondition; sort?: { field: string; direction?: 'asc' | 'desc' } } }
 export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed;
@@ -181,6 +184,19 @@ export function conditionHolds(when: DetailCondition, data: Record<string, unkno
     return when.before ? day < today : when.after ? day > today : day >= today && day <= today + when.within_days!;
   }
   return false;
+}
+/**
+ * mold_v0-349: where a notice's link goes: its tab's address, and with a field, that tab with the record the field names
+ * open in its panel (?id=<its key>). Null: no link (no such tab in this build, or the field is empty).
+ */
+export function noticeHref(link: DetailNoticeLink | undefined, pack: string, data: Record<string, unknown>, tabs: readonly { pack: string; id: string; url: string }[]): string | null {
+  if (!link) return null;
+  const t = tabs.find((x) => x.pack === pack && x.id === link.tab);
+  if (!t) return null;
+  if (link.field === undefined) return t.url;
+  const v = data[link.field], k = Array.isArray(v) ? v[0] : v;
+  if (typeof k !== 'string' || !k) return null;
+  return `${t.url}${t.url.includes('?') ? '&' : '?'}${DETAIL_PARAM}=${encodeURIComponent(k)}`;
 }
 /** The notices to show, in their declared order. */
 export const shownNotices = (layout: DetailLayout, data: Record<string, unknown>, clocks: ClockStates = null, facts?: Record<string, unknown> | null) =>

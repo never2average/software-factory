@@ -99,8 +99,16 @@ export function tabColumns(t: Pick<Tab, "kind" | "area" | "areas" | "columns">, 
   return cols.slice(0, list.length > 1 ? 8 : WIDE_LIST_MAX);
 }
 
-/** What a metric may be over besides a record area: the workspace's run results and its runs. */
-export const RUN_SOURCES = ["run_results", "runs"] as const;
+/**
+ * What a metric may be over besides a record area: the workspace's run results and its runs; mold_v0-349, `spend`: the
+ * workspace's model spend, the one ledger Billing › Spending reads (src/session-engine.ts orgMonthSpendUsd: its sessions'
+ * and its runs', each its recorded cost or the gateway's live total while it runs). A sum with no field: this calendar
+ * month's total (UTC), so a card over it always reads what Billing does; with by_time (at created), that spend by day,
+ * week or month. Nothing else (no where, group_by, rate or duration): the ledger is read whole, as Billing reads it.
+ */
+export const RUN_SOURCES = ["run_results", "runs", "spend"] as const;
+/** mold_v0-349: the spend ledger, as a metric's `over`. */
+export const SPEND_SOURCE = "spend";
 export type RunSource = (typeof RUN_SOURCES)[number];
 
 /** A column a metric reads, as the engine sees it. */
@@ -144,6 +152,8 @@ const RUN_COLUMNS: Record<RunSource, Record<string, Column>> = {
     started: { type: "time", multiple: false, at: { column: "started_at" } },
     ended: { type: "time", multiple: false, at: { column: "ended_at" } },
   },
+  // mold_v0-349: the ledger's one point in time, when the spend was queued (by_time.at).
+  spend: { created: { type: "time", multiple: false, at: { column: "created_at" } } },
 };
 
 /** The column `name` names in what a metric is over (an area or a run source), or a reason it names none. */
@@ -208,6 +218,7 @@ export function metricUnit(m: Metric, over: SpecArea | RunSource | null): Metric
   if (m.measure === "rate") return "percent";
   if (m.measure === "duration") return m.duration!.unit;
   if (over === "runs" && m.field === "cost_usd") return "usd";
+  if (over === SPEND_SOURCE) return "usd";
   return "number";
 }
 
@@ -253,7 +264,16 @@ export function checkViews(b: BuildViews): string[] {
     if (metricOwner.has(m.name)) at(p, `${w} is already pack ${metricOwner.get(m.name)}'s (metric names are unique in a build)`);
     else metricOwner.set(m.name, p);
     const over = overOf(m);
-    if (!over) { at(p, `${w} is over ${m.over}, which is neither a record area of this build nor run_results or runs`); continue; }
+    if (!over) { at(p, `${w} is over ${m.over}, which is neither a record area of this build nor run_results, runs or spend`); continue; }
+    // mold_v0-349: the spend ledger is read whole, as Billing reads it: its month's sum, or that sum by_time (at created).
+    if (over === SPEND_SOURCE) {
+      const extra = (["field", "where", "rate", "duration", "clock", "needs_attention", "group_by", "group_by_list", "mode"] as const).filter((k) => m[k] !== undefined);
+      if (m.measure !== "sum") at(p, `${w}: a metric over spend is a sum (the workspace's model spend, as Billing reads it): measure sum`);
+      if (extra.length) at(p, `${w}: a metric over spend reads the ledger whole, as Billing does: it has no ${extra.join(", ")}`);
+      if (m.by_time && m.by_time.at !== "created") at(p, `${w}: by_time.at: the spend ledger is counted by when it was queued: created`);
+      if (m.unit !== undefined && m.unit !== "usd") at(p, `${w}: unit: spend is in usd`);
+      continue;
+    }
     const col = (name: string, why: string) => { const c = columnOf(over, name); if (typeof c === "string") { at(p, `${w}: ${why}: ${c}`); return null; } return c; };
     const conditions = (list: NonNullable<z.output<typeof MetricSchema>["where"]>, why: string) => {
       for (const c of list) {
@@ -497,6 +517,16 @@ export function checkViews(b: BuildViews): string[] {
   }
   // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.
   problems.push(...detailBuildProblems(b.areas, b.kinds ?? []));
+  // mold_v0-349: a notice's link names a tab of its own pack; with a field, an area tab listing the records it names.
+  for (const a of b.areas) for (const [i, n] of ((a as { detail?: { notices?: { link?: { tab: string; field?: string } }[] } }).detail?.notices ?? []).entries()) {
+    if (!n.link) continue;
+    const t = b.tabs.find((x) => x.pack === a.pack && x.id === n.link!.tab);
+    const w = `record area ${a.name}'s page: notice ${i + 1}: link`;
+    if (!t) { at(a.pack, `${w}: ${n.link.tab} is not a tab of pack ${a.pack}`); continue; }
+    if (n.link.field === undefined) continue;
+    const to = a.fields.find((f) => f.name === n.link!.field)?.to ?? (a.links ?? []).find((l) => l.field === n.link!.field)?.area;
+    if (t.kind !== "area" || !tabAreas(t).some((x) => x.area === to)) at(a.pack, `${w}: tab ${t.id} does not list ${to ?? "the records"} ${n.link.field} names: the link opens that record's panel there`);
+  }
   // mold_v0-340: a record page's charts: the pack's own, each metric over a record area the section says how to narrow.
   for (const a of b.areas) for (const t of (a as { detail?: { tabs: { sections: { title: string; charts?: { charts: string[]; records: { area: string }[] } }[] }[] } }).detail?.tabs ?? []) for (const s of t.sections) {
     if (!s.charts) continue;
@@ -815,7 +845,8 @@ export const sparkSeries = (m: SpecMetric): SpecMetric => ({ ...m, by_time: { at
 const PERIOD: Record<NonNullable<Metric["by_time"]>["every"], string> = { day: "today", week: "this week", month: "this month" };
 /** A declared metric as a card: its label (a series': "<label> this week"), what reads its value and its weeks. */
 export function sparkCardOf(m: SpecMetric): SparkCard {
-  const mode: SparkMode = m.mode === "current" ? "current" : m.by_time ? "latest" : m.measure === "count" || m.measure === "sum" ? "total" : "weekly";
+  // mold_v0-349: this month's spend beside its weeks (a running total of twelve weeks would not end at the month's).
+  const mode: SparkMode = m.mode === "current" ? "current" : m.by_time ? "latest" : m.over === SPEND_SOURCE ? "weekly" : m.measure === "count" || m.measure === "sum" ? "total" : "weekly";
   return { id: m.name, label: m.by_time ? `${m.label} ${PERIOD[m.by_time.every]}` : m.label, value: m, series: sparkSeries(m), mode };
 }
 

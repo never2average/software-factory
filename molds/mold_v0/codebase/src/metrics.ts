@@ -6,6 +6,8 @@
  *                        withTenant for the workspace with org_id named as well, so row-level security refuses another
  *                        workspace's rows whatever the query says
  *   over run_results     the workspace's run results; over runs: its runs (the same, under their own policies)
+ *   over spend           mold_v0-349: the workspace's model spend, the ledger Billing › Spending reads (src/session-engine.ts):
+ *                        this month's total (orgMonthSpendUsd itself, so the two always match), or by_time its buckets
  *
  * How: one aggregate query per metric (count, sum, avg, a rate as avg of 0/1, a duration's avg, percentile or max; GROUP
  * BY a field's value, a due-date bucket or a date_trunc bucket), bounded by its workspace, area and window, a group LIMIT
@@ -21,7 +23,7 @@
 import { getDb } from "./db.js";
 import { ensureOrgKey, isSealed, open, openJson } from "./orgcrypto.js";
 import { PackError, type Metric } from "./pack-api.js";
-import { columnOf, metricRoles, metricUnit, pointOf, RUN_SOURCES, viewsOf, type BuildViews, type Column, type RunSource, type SpecArea, type SpecMetric } from "./metric-spec.js";
+import { columnOf, metricRoles, metricUnit, pointOf, RUN_SOURCES, SPEND_SOURCE, viewsOf, type BuildViews, type Column, type RunSource, type SpecArea, type SpecMetric } from "./metric-spec.js";
 import { packs } from "./packs.js";
 import { findArea, may, type Actor } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
@@ -480,6 +482,7 @@ export type MetricOptions = { forceCode?: boolean; sealed?: Map<string, Promise<
  */
 export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Actor, now = new Date(), opts: MetricOptions = {}): Promise<MetricAnswer> {
   if (actor.role !== null && !metricRoles(m, buildViews().areas).includes(actor.role)) throw new PackError(`Your role can't read ${m.label}.`, 403);
+  if (m.over === SPEND_SOURCE) return spendAnswer(orgId, m, now);
   const src = sourceOf(m);
   // No workspace (mold_v0-212: a staff record page's cards): a shared area's rows only, never a clock (worked out per workspace).
   if (orgId === null && !("area" in src && src.area.scope === "platform" && !m.clock)) throw new PackError(`${m.label} is counted per workspace`, 404);
@@ -533,6 +536,20 @@ export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Ac
     ...base, kind: "series", buckets: days, rows,
     series: keys.map((k, i) => ({ key: hide(k, i), label: m.group_by === undefined ? m.label : label(k), values: days.map((d) => round(at.get(JSON.stringify([k, d])) ?? empty)) })),
   };
+}
+
+/**
+ * mold_v0-349: a metric over the spend ledger: this calendar month's total exactly as Billing reads it
+ * (orgMonthSpendUsd), or by_time the same ledger per bucket. Per workspace only (no staff page reads a workspace's spend).
+ */
+async function spendAnswer(orgId: number | null, m: SpecMetric, now: Date): Promise<MetricAnswer> {
+  if (orgId === null) throw new PackError(`${m.label} is counted per workspace`, 404);
+  const { orgMonthSpendUsd, orgSpendByBucketUsd } = await import("./session-engine.js");
+  const base = { name: m.name, label: m.label, description: m.description ?? null, unit: metricUnit(m, SPEND_SOURCE), measure: m.measure, as_of: now.toISOString(), rows: 0 };
+  if (!m.by_time) return { ...base, kind: "single", value: round(await orgMonthSpendUsd(orgId)) };
+  const w = bucketsOf(m.by_time, now);
+  const at = await orgSpendByBucketUsd(orgId, m.by_time.every, w.start, w.end);
+  return { ...base, kind: "series", buckets: w.days, series: [{ key: null, label: m.label, values: w.days.map((d) => round(at.get(d) ?? 0)) }] };
 }
 
 /** Several metrics at once (the console's charts): each answer, or its refusal, by name. */

@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { orgMonthRunSpendUsd } from "./run-spend.js";
+import { orgMonthRunSpendUsd, RUN_USD } from "./run-spend.js";
 
 /**
  * The session engine's shared SQL and figures (mold_v0-039). Sessions (agent_sessions) are the job queue the shell's
@@ -44,4 +44,31 @@ export async function orgMonthSpendUsd(orgId: number): Promise<number> {
     `SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0) AS usd
        FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, [orgId]);
   return Number(r?.usd ?? 0) + (await orgMonthRunSpendUsd(orgId));
+}
+
+/**
+ * mold_v0-349: the same ledger as orgMonthSpendUsd, by bucket (a metric over `spend` with by_time, src/metrics.ts): per
+ * day, week (from Monday) or month (UTC) in [start, end), each bucket's first day -> its spend. A session lands on its
+ * queued_at, a run on its created_at, each at its recorded cost or the gateway's live total, whichever is larger: the
+ * same rule as the month's figure and Billing's days. Read inside the workspace's tenant scope, its org_id named too.
+ */
+export async function orgSpendByBucketUsd(orgId: number, every: "day" | "week" | "month", start: Date, end: Date): Promise<Map<string, number>> {
+  const { withTenant } = await import("./tenant-scope.js");
+  const db = await getDb();
+  const out = new Map<string, number>();
+  const rows = await withTenant(orgId, () => db.transaction(async (tx) => {
+    const got: { b: string; usd: number }[] = [];
+    if (sessionEngine()) got.push(...await tx.query<{ b: string; usd: number }>(
+      `SELECT to_char(date_trunc($2, s.queued_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS b,
+              coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)::float AS usd
+         FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= $3::timestamptz AND s.queued_at < $4::timestamptz GROUP BY 1`,
+      [orgId, every, start.toISOString(), end.toISOString()]));
+    got.push(...await tx.query<{ b: string; usd: number }>(
+      `SELECT to_char(date_trunc($2, r.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS b, coalesce(sum(${RUN_USD}), 0)::float AS usd
+         FROM runs r WHERE r.org_id = $1 AND r.created_at >= $3::timestamptz AND r.created_at < $4::timestamptz GROUP BY 1`,
+      [orgId, every, start.toISOString(), end.toISOString()]));
+    return got;
+  }));
+  for (const r of rows) out.set(r.b, (out.get(r.b) ?? 0) + Number(r.usd));
+  return out;
 }
