@@ -2059,6 +2059,10 @@
                               "type": "string",
                               "pattern": "^[a-z][a-z0-9_]{1,62}$"
                             },
+                            "match_field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
                             "through": {
                               "type": "object",
                               "properties": {
@@ -2162,7 +2166,7 @@
                                     "fact": {
                                       "type": "integer",
                                       "minimum": 0,
-                                      "maximum": 7
+                                      "maximum": 11
                                     },
                                     "all": {
                                       "minItems": 1,
@@ -2260,7 +2264,7 @@
                                           "fact": {
                                             "type": "integer",
                                             "minimum": 0,
-                                            "maximum": 7
+                                            "maximum": 11
                                           }
                                         },
                                         "additionalProperties": false
@@ -2362,7 +2366,7 @@
                                           "fact": {
                                             "type": "integer",
                                             "minimum": 0,
-                                            "maximum": 7
+                                            "maximum": 11
                                           }
                                         },
                                         "additionalProperties": false
@@ -2536,7 +2540,7 @@
                                 "fact": {
                                   "type": "integer",
                                   "minimum": 0,
-                                  "maximum": 7
+                                  "maximum": 11
                                 },
                                 "all": {
                                   "minItems": 1,
@@ -2634,7 +2638,7 @@
                                       "fact": {
                                         "type": "integer",
                                         "minimum": 0,
-                                        "maximum": 7
+                                        "maximum": 11
                                       }
                                     },
                                     "additionalProperties": false
@@ -2736,7 +2740,7 @@
                                       "fact": {
                                         "type": "integer",
                                         "minimum": 0,
-                                        "maximum": 7
+                                        "maximum": 11
                                       }
                                     },
                                     "additionalProperties": false
@@ -2847,7 +2851,7 @@
                             "fact": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 7
+                              "maximum": 11
                             },
                             "all": {
                               "minItems": 1,
@@ -2945,7 +2949,7 @@
                                   "fact": {
                                     "type": "integer",
                                     "minimum": 0,
-                                    "maximum": 7
+                                    "maximum": 11
                                   }
                                 },
                                 "additionalProperties": false
@@ -3047,7 +3051,7 @@
                                   "fact": {
                                     "type": "integer",
                                     "minimum": 0,
-                                    "maximum": 7
+                                    "maximum": 11
                                   }
                                 },
                                 "additionalProperties": false
@@ -3171,7 +3175,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         },
                         "all": {
                           "minItems": 1,
@@ -3269,7 +3273,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -3371,7 +3375,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -3400,6 +3404,30 @@
                       "minLength": 1,
                       "maxLength": 300,
                       "pattern": "^[^\\n\\r{}<>]*$"
+                    },
+                    "link": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "tab": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{1,62}$"
+                        },
+                        "field": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "tab"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -3676,7 +3704,7 @@
                                       "fact": {
                                         "type": "integer",
                                         "minimum": 0,
-                                        "maximum": 7
+                                        "maximum": 11
                                       },
                                       "all": {
                                         "minItems": 1,
@@ -3774,7 +3802,7 @@
                                             "fact": {
                                               "type": "integer",
                                               "minimum": 0,
-                                              "maximum": 7
+                                              "maximum": 11
                                             }
                                           },
                                           "additionalProperties": false
@@ -3876,7 +3904,7 @@
                                             "fact": {
                                               "type": "integer",
                                               "minimum": 0,
-                                              "maximum": 7
+                                              "maximum": 11
                                             }
                                           },
                                           "additionalProperties": false
@@ -4019,7 +4047,7 @@
                                   "fact": {
                                     "type": "integer",
                                     "minimum": 0,
-                                    "maximum": 7
+                                    "maximum": 11
                                   },
                                   "all": {
                                     "minItems": 1,
@@ -4117,7 +4145,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         }
                                       },
                                       "additionalProperties": false
@@ -4219,7 +4247,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         }
                                       },
                                       "additionalProperties": false
@@ -4478,7 +4506,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         },
                                         "all": {
                                           "minItems": 1,
@@ -4576,7 +4604,7 @@
                                               "fact": {
                                                 "type": "integer",
                                                 "minimum": 0,
-                                                "maximum": 7
+                                                "maximum": 11
                                               }
                                             },
                                             "additionalProperties": false
@@ -4678,7 +4706,7 @@
                                               "fact": {
                                                 "type": "integer",
                                                 "minimum": 0,
-                                                "maximum": 7
+                                                "maximum": 11
                                               }
                                             },
                                             "additionalProperties": false
@@ -4812,7 +4840,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         },
                                         "all": {
                                           "minItems": 1,
@@ -4910,7 +4938,7 @@
                                               "fact": {
                                                 "type": "integer",
                                                 "minimum": 0,
-                                                "maximum": 7
+                                                "maximum": 11
                                               }
                                             },
                                             "additionalProperties": false
@@ -5012,7 +5040,7 @@
                                               "fact": {
                                                 "type": "integer",
                                                 "minimum": 0,
-                                                "maximum": 7
+                                                "maximum": 11
                                               }
                                             },
                                             "additionalProperties": false
@@ -5166,7 +5194,7 @@
                                             "fact": {
                                               "type": "integer",
                                               "minimum": 0,
-                                              "maximum": 7
+                                              "maximum": 11
                                             },
                                             "all": {
                                               "minItems": 1,
@@ -5264,7 +5292,7 @@
                                                   "fact": {
                                                     "type": "integer",
                                                     "minimum": 0,
-                                                    "maximum": 7
+                                                    "maximum": 11
                                                   }
                                                 },
                                                 "additionalProperties": false
@@ -5366,7 +5394,7 @@
                                                   "fact": {
                                                     "type": "integer",
                                                     "minimum": 0,
-                                                    "maximum": 7
+                                                    "maximum": 11
                                                   }
                                                 },
                                                 "additionalProperties": false
@@ -5494,7 +5522,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               },
                               "all": {
                                 "minItems": 1,
@@ -5592,7 +5620,7 @@
                                     "fact": {
                                       "type": "integer",
                                       "minimum": 0,
-                                      "maximum": 7
+                                      "maximum": 11
                                     }
                                   },
                                   "additionalProperties": false
@@ -5694,7 +5722,7 @@
                                     "fact": {
                                       "type": "integer",
                                       "minimum": 0,
-                                      "maximum": 7
+                                      "maximum": 11
                                     }
                                   },
                                   "additionalProperties": false
@@ -5802,7 +5830,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         },
                         "all": {
                           "minItems": 1,
@@ -5900,7 +5928,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -6002,7 +6030,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -6243,7 +6271,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               },
                               "all": {
                                 "minItems": 1,
@@ -6341,7 +6369,7 @@
                                     "fact": {
                                       "type": "integer",
                                       "minimum": 0,
-                                      "maximum": 7
+                                      "maximum": 11
                                     }
                                   },
                                   "additionalProperties": false
@@ -6443,7 +6471,7 @@
                                     "fact": {
                                       "type": "integer",
                                       "minimum": 0,
-                                      "maximum": 7
+                                      "maximum": 11
                                     }
                                   },
                                   "additionalProperties": false
@@ -6460,6 +6488,10 @@
                                 "pattern": "^[a-z][a-z0-9_]{1,62}$"
                               },
                               "via": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "match_field": {
                                 "type": "string",
                                 "pattern": "^[a-z][a-z0-9_]{1,62}$"
                               },
@@ -6555,7 +6587,7 @@
                                   "fact": {
                                     "type": "integer",
                                     "minimum": 0,
-                                    "maximum": 7
+                                    "maximum": 11
                                   },
                                   "all": {
                                     "minItems": 1,
@@ -6653,7 +6685,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         }
                                       },
                                       "additionalProperties": false
@@ -6755,7 +6787,7 @@
                                         "fact": {
                                           "type": "integer",
                                           "minimum": 0,
-                                          "maximum": 7
+                                          "maximum": 11
                                         }
                                       },
                                       "additionalProperties": false
@@ -6763,6 +6795,10 @@
                                   }
                                 },
                                 "additionalProperties": false
+                              },
+                              "none": {
+                                "type": "boolean",
+                                "const": true
                               }
                             },
                             "required": [
@@ -6776,6 +6812,10 @@
                             "minLength": 1,
                             "maxLength": 200,
                             "pattern": "^[^\\n\\r{}<>]*$"
+                          },
+                          "ask": {
+                            "type": "boolean",
+                            "const": true
                           }
                         },
                         "required": [
@@ -7699,7 +7739,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         },
                         "all": {
                           "minItems": 1,
@@ -7797,7 +7837,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -7899,7 +7939,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -11166,7 +11206,7 @@
                                 "fact": {
                                   "type": "integer",
                                   "minimum": 0,
-                                  "maximum": 7
+                                  "maximum": 11
                                 },
                                 "all": {
                                   "minItems": 1,
@@ -11264,7 +11304,7 @@
                                       "fact": {
                                         "type": "integer",
                                         "minimum": 0,
-                                        "maximum": 7
+                                        "maximum": 11
                                       }
                                     },
                                     "additionalProperties": false
@@ -11366,7 +11406,7 @@
                                       "fact": {
                                         "type": "integer",
                                         "minimum": 0,
-                                        "maximum": 7
+                                        "maximum": 11
                                       }
                                     },
                                     "additionalProperties": false
@@ -11545,7 +11585,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         },
                         "all": {
                           "minItems": 1,
@@ -11643,7 +11683,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -11745,7 +11785,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -12215,7 +12255,7 @@
                   "fact": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 7
+                    "maximum": 11
                   },
                   "all": {
                     "minItems": 1,
@@ -12313,7 +12353,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         }
                       },
                       "additionalProperties": false
@@ -12415,7 +12455,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         }
                       },
                       "additionalProperties": false
@@ -12683,7 +12723,7 @@
                         "fact": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 7
+                          "maximum": 11
                         },
                         "all": {
                           "minItems": 1,
@@ -12781,7 +12821,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -12883,7 +12923,7 @@
                               "fact": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "maximum": 7
+                                "maximum": 11
                               }
                             },
                             "additionalProperties": false
@@ -14532,14 +14572,37 @@
                   "additionalProperties": {
                     "anyOf": [
                       {
-                        "type": "string",
-                        "maxLength": 200
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
                       },
                       {
-                        "type": "number"
-                      },
-                      {
-                        "type": "boolean"
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        }
                       }
                     ]
                   }

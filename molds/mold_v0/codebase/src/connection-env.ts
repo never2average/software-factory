@@ -19,14 +19,14 @@
  */
 import { createHash } from "node:crypto";
 import type { AccountRole } from "./account-roles.js";
-import { ConnectionEnvSchema, envVars, type ConnectionEnv } from "./connection-env-config.js";
+import { ConnectionEnvSchema, envVars, whereFilter, whereHolds, type ConnectionEnv, type WhereValue } from "./connection-env-config.js";
 import type { Delivered } from "./credentials.js";
 
 /** What a session's policy keeps of one entry (frozen at its start): its record's key and each variable's field. */
 export interface FrozenConnectionEnv { pack: string; area: string; key: string;
   /** mold_v0-312: the record's identity and version at the start (its row and the fields this entry reads): a wake delivers only that. */
   version?: string;
-  where?: Record<string, string | number | boolean>; use?: string; vars: { env: string; field: string }[];
+  where?: Record<string, WhereValue>; use?: string; vars: { env: string; field: string }[];
   /**
    * mold_v0-322: given to a member through the record's owners' opt-in (the entry's members_field, on at the start).
    * Each wake gives it only while the stored record still has `members_field` on, and while `starter` (who started the
@@ -93,7 +93,7 @@ export async function connectionEnvForStart(orgId: number, profile: { id: string
     // mold_v0-322: a member through the owners' opt-in on the record itself (checked below), a record they may read.
     const byConsent = !byRole && !!c.members_field && actor.role === "member" && may(area, "read", person);
     if (!byRole && !byConsent) continue;
-    const page = await listFor(orgId, area.name, { filter: { ...(c.where ?? {}), ...(c.use ? { [c.use]: true } : {}) }, sort: "-updated_at", limit: 2 }, person);
+    const page = await listFor(orgId, area.name, { filter: { ...whereFilter(c.where), ...(c.use ? { [c.use]: true } : {}) }, sort: "-updated_at", limit: 2 }, person);
     const hits = page.records.filter((r) => matches(c, r.data));
     // mold_v0-321: the flag by its label (an area may hold two flags: "In use" for its files, "Use in builds" for this).
     const flagLabel = c.use ? area.fields.find((f) => f.name === c.use)?.label ?? c.use : "", flag = `marked "${flagLabel}"`;
@@ -152,7 +152,7 @@ export function connectionEnvWords(start: ConnectionEnvStart): string | null {
 const oneLine = (v: string) => v.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/"/g, "'").replace(/\s+/g, " ").trim();
 const asText = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "");
 const matches = (c: { where?: Record<string, unknown>; use?: string }, data: Record<string, unknown>) =>
-  Object.entries(c.where ?? {}).every(([k, v]) => data[k] === v) && (!c.use || data[c.use] === true);
+  whereHolds(c.where, data) && (!c.use || data[c.use] === true);
 
 /**
  * The record's identity and version as an entry reads it: its row (a deleted and re-added record is another row) and

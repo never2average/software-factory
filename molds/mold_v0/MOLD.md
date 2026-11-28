@@ -5270,6 +5270,48 @@ Proof: `npm run test:e2e-fixes` (`scripts/e2e-fixes-348-test.ts`, offline), `tes
 `unavailable`), `test:connect-tab`, `test:connection-test`, `test:signed-probes`, `test:workspace-storage`,
 `test:record-panel`, `test:app-nav`.
 
+## Spend from one ledger, hosting warnings, one flag per kind, Back closes panels (mold_v0-349)
+
+Operator-approved design changes from the same end-to-end walk (2026-11-28). Each is generic and opt-in by its pack key,
+except Back, which is the shell's behaviour.
+
+- **`metrics[].over: "spend"`**: the workspace's model spend, the one ledger Billing › Spending reads
+  (`src/session-engine.ts` `orgMonthSpendUsd`: its agent sessions' and its runs', each its recorded cost or the
+  gateway's live total while it runs). A `sum` with no `field`: this calendar month's total (UTC), computed by
+  `orgMonthSpendUsd` itself, so a card over it and Billing always say the same figure; with `by_time` (`at: "created"`,
+  day, week or month) the same ledger per bucket (`orgSpendByBucketUsd`, inside the workspace's tenant scope). Its unit
+  is usd. Nothing else applies (no `where`, `group_by`, `rate`, `duration`, `clock`, `mode`): the ledger is read whole.
+  A card over it reads this month's figure beside its weeks (mode weekly, never a running total that would not end at
+  the month's). Any role that may read reads it, as Billing shows a member the account's figure; `roles` narrows it.
+- **`match_field`, forward then back**: a computed fact (`header.facts[].computed.match_field`) and an action's
+  unavailable `related.match_field` read the records of `area` whose `via` holds this record's `match_field` value (an
+  application's hosting accounts: the connections whose catalog entry is its compute), not its key. `via` is then any
+  plain field of that area (required); neither side encrypted, json or a file. No value to follow: a count of 0, no
+  latest, and an unavailable entry that never holds. The fact is read as the person (their read permission, the
+  workspace's own scope, like every computed fact); the unavailable entry as the shell over the workspace's own records
+  (its reason names none of them). Not with `through`.
+- **`unavailable[].related.none: true`** holds while NO related record `where` keeps exists (no hosting account marked
+  for builds). **`unavailable[].ask: true`**: while it holds the action stays enabled and asks first, the reason the
+  question's words (before the action's own `confirm`); a creates' re-check never refuses an ask entry.
+- **`notices[].link`** `{label, tab, field?}`: where the notice is put right, a tab of the area's pack; with `field` (a
+  single reference or link of the area) that tab with the record it names open in its panel (`?id=<key>`), left out
+  while the field is empty. The build checks the tab exists and, with a field, that it lists that field's area. A
+  notice's `fact` test now reaches any of a rail header's 12 facts (was the first 8).
+- **connection_env `where` lists**: a condition's value may be a list (1 to 20), the field holding one of them (`in`).
+  With `only_one` (whose scope is the entry's `where`) one record is kept marked per kind: a private network, a firewall
+  or security group, a private link, each delivered under its own prefix.
+- **Back closes a panel first**: opening a list's record panel pushes one history entry (the same address with `?id=`,
+  shallow); switching rows, Expand and the panel's tab replace it; the browser's Back closes the panel and stays on the
+  list, the next Back leaves. Closing it from the page (✕, Esc, Back to list) goes back over the entry it pushed while
+  the address is still the list's as it was, else replaces it (a panel a reload or a shared link opened). A page that
+  keeps its own open-row parameter (`openKey`) is unchanged. This reverses mold_v0-278's "replaced (Back leaves the
+  list)", operator-approved: `scripts/record-panel-test.ts`'s assertion of it changed with it.
+
+Proof: `npm run test:design-349` (`scripts/design-349-test.ts`: the schema and build checks, the console's helpers, in the
+database the matched fact and `none`/`ask` as the person and per workspace), `test:metrics` (the spend ledger against
+`orgMonthSpendUsd`, its weeks and card), `test:record-panel` (Back in a browser), `test:console-types` (the fixture
+declares every new key), `test:connection-env`.
+
 ## Agent examples and quick commands (mold_v0-316)
 
 Flag `agent_quick_commands` (board name `quick`; on by default wherever `agent_harness` is, `quiet_off`): the workspace

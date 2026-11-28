@@ -135,11 +135,14 @@ const NOTICE_TEXT = { danger: 'text-destructive', warning: 'text-foreground', in
 const NOTICE_MARK = { danger: 'text-destructive', warning: 'text-amber-600 dark:text-amber-400', info: 'text-primary', success: 'text-emerald-600 dark:text-emerald-400' } as const;
 
 /** One line for a notice: a mark (▲ for a warning or a problem, ● otherwise), its title in bold, its words. No box. */
-export function NoticeLine({ tone, title, text }: { tone: keyof typeof NOTICE_TEXT; title?: string; text: string }) {
+export function NoticeLine({ tone, title, text, link }: { tone: keyof typeof NOTICE_TEXT; title?: string; text: string;
+  /** mold_v0-349: where it is put right (a tab, or a row's panel there). */
+  link?: { label: string; href: string } | null }) {
   return (
     <div role={tone === 'info' || tone === 'success' ? 'status' : 'alert'} data-record-notice={tone} className={cn('flex items-baseline gap-[7px] text-[13px] leading-snug', NOTICE_TEXT[tone])}>
       <span className={cn('shrink-0', NOTICE_MARK[tone])} aria-hidden>{tone === 'warning' || tone === 'danger' ? '▲' : '●'}</span>
-      <span className='min-w-0 [overflow-wrap:anywhere]'>{title && <span className='font-semibold'>{title}. </span>}{text}</span>
+      <span className='min-w-0 [overflow-wrap:anywhere]'>{title && <span className='font-semibold'>{title}. </span>}{text}
+        {link && <> <TextLink label={`${link.label} →`} href={link.href} data-notice-link='' /></>}</span>
     </div>
   );
 }

@@ -121,7 +121,7 @@ try {
     refused("a schedule of an undeclared kind", tryPack(variant((j) => { j.schedules[0].job_kind = "nope"; })), /schedule nightly_scan names job kind nope/);
     refused("a credential bound to a non-asset area", tryPack(variant((j) => { j.credentials[0].area = "tracker_findings"; })), /credential tracker_token is bound to area tracker_findings, which is not one of this pack's asset areas/);
     refused("an argument of an unknown type", tryPack(variant((j) => { j.job_kinds[0].args[1].type = "integer"; })), /job_kinds\[0\]\.args\[1\]\.type: Invalid option/);
-    refused("a metric over nothing", tryPack(variant((j) => { j.metrics[0].over = "nowhere"; })), /metric open_by_severity is over nowhere, which is neither a record area of this build nor run_results or runs/);
+    refused("a metric over nothing", tryPack(variant((j) => { j.metrics[0].over = "nowhere"; })), /metric open_by_severity is over nowhere, which is neither a record area of this build nor run_results, runs or spend/);
     refused("an area reading from an undeclared repository", tryPack(variant((j) => { j.record_areas[1].repository = "nowhere"; })), /record area tracker_apps reads from repository nowhere, which this pack does not declare/);
     refused("a repository with no kind", tryPack(variant((j) => { delete j.repositories.tracker_ledger.kind; })), /repositories\.tracker_ledger\.kind/);
     refused("a run-results mapping naming no area", tryPack(variant((j) => { j.run_results.check = ["nowhere"]; })), /run_results\.check names nowhere, which is not a record area of this build/);

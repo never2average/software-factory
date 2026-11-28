@@ -51,7 +51,7 @@ import { RecordDocuments, isStoredFile } from './documents';
 import {
   addedByWords, BADGE_CLASS, staleWords, fieldLabelShown, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateRule, dateWords, declaresActions, factShown, declaresCopyLink, isEmptyValue,
   isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, shownTabs, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
-  shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows, stateSince, sinceWords,
+  noticeHref, shownNotices, tabId, unplacedFields, dotTone, headerContext, isRail, railBadges, railHeaderFields, relatedRowWords, stepRows, stateSince, sinceWords,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
   type RelatedData, type RunsData, type SessionsData, type AgentRunsData
 } from './detail-layout';
@@ -985,6 +985,8 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             <Icon aria-hidden className='row-span-2 mt-0.5 size-4' />
             {n.title && <p className='font-medium'>{n.title}</p>}
             <p className={cn('text-foreground/90 leading-relaxed', !n.title && 'row-span-2')}>{n.text}</p>
+            {/* mold_v0-349: where it is put right. */}
+            {(() => { const href = noticeHref(n.link, area.pack, record.data, packTabs); return href && n.link ? <p className='col-start-2'><TextLink label={`${n.link.label} →`} href={href} data-notice-link='' /></p> : null; })()}
           </div>
         );
       })}
@@ -1088,7 +1090,7 @@ function RailBody({ area, base, layout, record, links, clockEvents, where, crede
         <div className='flex flex-col @min-[44rem]:grid @min-[44rem]:grid-cols-[290px_minmax(0,1fr)]' data-rail-columns=''>
           <div className='grid min-w-0 content-start gap-3 border-b pb-4 @min-[44rem]:border-r @min-[44rem]:border-b-0 @min-[44rem]:pr-5 @min-[44rem]:pb-0' data-rail='' data-record-facts=''>
             {!slots && where && <p className='text-muted-foreground m-0 text-xs'>{area.label} · {where}</p>}
-            {notices.map((n, i) => <NoticeLine key={i} tone={n.tone} title={n.title} text={n.text} />)}
+            {notices.map((n, i) => { const href = noticeHref(n.link, area.pack, record.data, packTabs); return <NoticeLine key={i} tone={n.tone} title={n.title} text={n.text} link={href && n.link ? { label: n.link.label, href } : null} />; })}
             {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
               <p className='m-0 text-sm leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
             )}

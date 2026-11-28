@@ -28,7 +28,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { bodyStrings, ConnectionTestSchema, isHttpProbe, outcomeOf, outcomeValue, placeholders, type HealthDecl, type HealthOutcome } from "./connection-test-config.js";
-import { ConnectionEnvSchema } from "./connection-env-config.js";
+import { ConnectionEnvSchema, whereHolds } from "./connection-env-config.js";
 import { ObjectStorageDeclSchema, PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { bindingsOf } from "./secret-binding.js";
@@ -114,7 +114,8 @@ export const onlyOneOf = (area: AreaLike): OnlyOne[] => declOf(area).onlyOne;
 const blank = (v: unknown) => v === undefined || v === null || v === "";
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-const matches = (where: Record<string, unknown>, data: Record<string, unknown>) => Object.entries(where).every(([k, v]) => data[k] === v);
+// mold_v0-349: a list in `where` is one of its values (one marked per kind of network).
+const matches = (where: Record<string, unknown>, data: Record<string, unknown>) => whereHolds(where, data);
 
 // ---------------------------------------------------------------- the test's write
 

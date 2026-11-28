@@ -1194,7 +1194,7 @@ const DetailLeafConditionSchema = z.object({
   clock: name.optional(),
   is: z.enum(CLOCK_TESTS).optional(),
   /** mold_v0-298: a notice's test of a computed header fact (its index in header.facts): empty, equals, in or not_in on its value (a count, or the newest record's value). */
-  fact: z.number().int().min(0).max(7).optional(),
+  fact: z.number().int().min(0).max(11).optional(), // mold_v0-349: a rail header's 12 facts (was 7: the cards' first 8)
 }).strict();
 export const DetailConditionSchema = DetailLeafConditionSchema.extend({
   all: z.array(DetailLeafConditionSchema).min(1).max(6).optional(),
@@ -1342,6 +1342,13 @@ export const DetailChartsSchema = z.object({
 export const DetailComputedSchema = z.object({
   area: name,
   via: name.optional(),
+  /**
+   * mold_v0-349: follow this record's reference forward, then back: the records of `area` whose `via` holds this record's
+   * `match_field` value (an application's hosting accounts: the connections whose catalog entry is its compute), not its
+   * key. `via` is then any plain field of that area; no value in `match_field`: none (a count of 0, no latest). Read as
+   * the person, in the workspace's own scope, like every computed fact. Not with `through`.
+   */
+  match_field: name.optional(),
   /** mold_v0-337: read through a first hop (RelatedHopSchema): `via` then points at that hop's record, not this one. */
   through: RelatedHopSchema.optional(),
   op: z.enum(["count", "latest"]),
@@ -1417,11 +1424,18 @@ export const DetailSectionSchema = z.object({
 // mold_v0-340: up to 16 sections a tab (one Overview tab may hold what three tabs did).
 export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(16), when: DetailConditionSchema.optional() }).strict();
 /** A banner above the tabs while its condition holds on the record: its tone, an optional title and its words. */
+/**
+ * mold_v0-349: a notice's link to where it is put right: a tab of this pack (its id), and optionally a reference field of
+ * this record whose value opens that row's panel in the tab (?id=<its value>): "Connect it on Compute › Hosting" opening
+ * the application's hosting service there. Left out while the field is empty.
+ */
+export const DetailNoticeLinkSchema = z.object({ label: plainWords(60), tab: z.string().regex(/^[a-z][a-z0-9-]{1,62}$/, "a tab's id"), field: name.optional() }).strict();
 export const DetailNoticeSchema = z.object({
   when: DetailConditionSchema,
   tone: z.enum(NOTICE_TONES, { error: () => `a notice's tone is one of ${NOTICE_TONES.join(", ")}` }),
   title: plainWords(80).optional(),
   text: plainWords(300),
+  link: DetailNoticeLinkSchema.optional(),
 }).strict();
 /**
  * mold_v0-334: how a run a start_program action started settles, for its record's moves (src/record-outcomes.ts):
@@ -1494,8 +1508,15 @@ export type SessionCreates = z.output<typeof SessionCreatesSchema>;
  * them (the reason is the pack's words and names none of them), when the page is read and again when the action is
  * taken (refused, 409); a start_agent whose `creates` makes a record of `area` checks again once it is made, and of two
  * pressed at the same moment the later one is taken back.
+ *
+ * mold_v0-349: `match_field` follows this record's reference forward, then back: the records of `area` whose `via` holds
+ * this record's `match_field` value (the hosting accounts whose catalog entry is this application's compute), not its
+ * key (`via` is then any plain field of that area; with no value in `match_field` there is nothing to follow and the
+ * entry never holds). `none`: it holds while NO such record is one `where` keeps (Start build while this workspace has
+ * no account for the application's hosting marked for builds), else while at least one is.
  */
-export const UnavailableRelatedSchema = z.object({ area: name, via: name.optional(), where: DetailConditionSchema }).strict();
+export const UnavailableRelatedSchema = z.object({ area: name, via: name.optional(), match_field: name.optional(), where: DetailConditionSchema, none: z.literal(true).optional() }).strict()
+  .refine((r) => r.match_field === undefined || r.via !== undefined, "a related entry matched on a field names the field of theirs it matches (via)");
 /**
  * An action of a record's page (mold_v0-254), in its header (`place`: the primary, a secondary button, or the More
  * menu, the default):
@@ -1567,7 +1588,11 @@ export const DetailActionSchema = z.object({
   label_from_move: z.boolean().optional(),
   field: name.optional(),
   roles: z.array(role).min(1).max(4).optional(),
-  unavailable: z.array(z.object({ when: DetailConditionSchema.optional(), related: UnavailableRelatedSchema.optional(), reason: plainWords(200) }).strict()
+  /**
+   * mold_v0-349: `ask`, the action stays enabled while this entry holds and asks first, its reason the question's words
+   * (Start build while the application's hosting is not connected: it can still be built, not deployed).
+   */
+  unavailable: z.array(z.object({ when: DetailConditionSchema.optional(), related: UnavailableRelatedSchema.optional(), reason: plainWords(200), ask: z.literal(true).optional() }).strict()
     .refine((u) => (u.when === undefined) !== (u.related === undefined), "an unavailable entry has a condition on the record (when) or on its related records (related), one of them")).max(6).optional(),
   confirm: plainWords(300).optional(),
   /** mold_v0-261: a start_agent action's agent profile (the pack's own agent_profiles, or "default"). */
@@ -1743,7 +1768,11 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if (x.link_text !== undefined && f && f.type !== "url") bad(`link_text is for a web address (a url field; ${x.field} is ${f.type})`, "header", "facts", i, "link_text");
     if ((h?.facts ?? []).findIndex((y) => y.field === x.field) !== i) bad(`${x.field} is a fact twice`, "header", "facts", i, "field");
   }
-  for (const [i, n] of (d.notices ?? []).entries()) condition(n.when, "notices", i, "when");
+  for (const [i, n] of (d.notices ?? []).entries()) {
+    condition(n.when, "notices", i, "when");
+    // mold_v0-349: a notice's link opens the row its reference field names (checked against the build's tabs by checkViews).
+    if (n.link?.field !== undefined) { const f = known(n.link.field, "notices", i, "link", "field"); if (f && f.type !== "reference" && f.type !== "link") bad(`a notice's link opens the record a reference or link field names (${n.link.field} is ${f.type ?? "text"})`, "notices", i, "link", "field"); else if (f && (f.multiple || f.type === "link")) bad(`a notice's link opens one record: ${n.link.field} holds a list`, "notices", i, "link", "field"); }
+  }
   const ids = d.tabs.map((t) => detailTabId(t.label));
   for (const [ti, t] of d.tabs.entries()) {
     if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
@@ -2003,6 +2032,18 @@ export function hopProblems(areas: readonly DetailBuildArea[], from: string, h: 
   }
   return t.name;
 }
+/**
+ * mold_v0-349: what is wrong with a match on a field (a computed fact's or an action's unavailable `match_field`): `via`
+ * is a plain field of the target area holding one value, `match_field` one of this area's: a reference or a plain value.
+ */
+function matchProblems(a: Pick<DetailBuildArea, "name" | "fields">, target: Pick<DetailBuildArea, "name" | "fields">, via: string | undefined, matchField: string, bad: (m: string) => void): void {
+  const theirs = via ? target.fields.find((f) => f.name === via) : undefined, mine = a.fields.find((f) => f.name === matchField);
+  if (!via) bad("a match on a field names the field of theirs it matches (via)");
+  else if (!theirs) bad(`via ${via} is not one of ${target.name}'s fields`);
+  else if (theirs.encrypted || theirs.type === "json" || theirs.type === "file") bad(`via ${via} is ${theirs.encrypted ? "encrypted" : `a ${theirs.type} field`}: a match is on one plain value`);
+  if (!mine) bad(`match_field ${matchField} is not one of ${a.name}'s fields`);
+  else if (mine.encrypted || mine.type === "json" || mine.type === "file") bad(`match_field ${matchField} is ${mine.encrypted ? "encrypted" : `a ${mine.type} field`}: a match is on one plain value`);
+}
 /** A build's areas and job kinds as detailBuildProblems reads them (src/metric-spec.ts checkViews passes them). */
 export interface DetailBuildArea {
   pack: string; name: string; scope: string; fields: z.output<typeof RecordFieldSchema>[]; links?: { field: string; area: string }[]; detail?: RecordDetailLayout;
@@ -2091,7 +2132,11 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
       const from = c.through ? hopProblems(areas, a.name, c.through, (m) => at(where, `through: ${m}`)) : a.name;
       if (from === null) continue;
       const back = linksBack(target, from);
-      if (c.via !== undefined) {
+      // mold_v0-349: matched on a field: forward through this record's reference, then back.
+      if (c.match_field !== undefined) {
+        if (c.through) at(where, "a computed fact through a hop reads the hop's records: it has no match_field");
+        matchProblems(a, target, c.via, c.match_field, (m) => at(where, m));
+      } else if (c.via !== undefined) {
         if (!target.fields.some((f) => f.name === c.via)) at(where, `via ${c.via} is not one of ${c.area}'s fields`);
         else if (!back.includes(c.via)) at(where, `${c.area}'s field ${c.via} does not point at ${from}: a computed fact reads the records that point back ${from === a.name ? "here" : `at the ${from} record it goes through`} (${back.length ? `its fields that do: ${back.join(", ")}` : `${c.area} has no reference or link field to ${from}`})`);
       } else if (!back.length) at(where, `${c.area} has no link back to ${from}: a computed fact reads the records that point ${from === a.name ? "here" : `at the ${from} record it goes through`}, through a reference or link field of theirs to ${from}`);
@@ -2112,7 +2157,16 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
     for (const x of d.actions ?? []) for (const [j, u] of (x.unavailable ?? []).entries()) {
       if (!u.related) continue;
       const where = `action ${pageActionId(x)}: unavailable[${j}].related`;
-      hopProblems(areas, a.name, { area: u.related.area, via: u.related.via, where: u.related.where }, (m) => at(where, m));
+      if (u.related.match_field !== undefined) {
+        // mold_v0-349: forward through this record's reference, then back (the records whose via holds its value).
+        const t = areas.find((y) => y.name === u.related!.area);
+        if (!t) at(where, `${u.related.area} is not a record area of this build`);
+        else {
+          matchProblems(a, t, u.related.via, u.related.match_field, (m) => at(where, m));
+          for (const m of conditionIssues(t.fields, (t as { clocks?: { name: string }[] }).clocks ?? [], u.related.where, u.related.area)) at(where, `where: ${m}`);
+          if (t.scope !== "workspace") at(where, `${u.related.area} is shared (platform): an action is unavailable over the workspace's own records`);
+        }
+      } else hopProblems(areas, a.name, { area: u.related.area, via: u.related.via, where: u.related.where }, (m) => at(where, m));
       // Read as the shell from the stored rows: no clock state, no sealed values.
       const w = u.related.where;
       if ([w, ...(w.all ?? []), ...(w.any ?? [])].some((c) => c.clock !== undefined)) at(where, "where: a related record's clock is not read here: test its fields");
@@ -2807,7 +2861,8 @@ export const MetricSchema = z.object({
   if (m.mode === "current" && (m.by_time || !["count", "sum"].includes(m.measure))) bad('mode "current" is for a count or a sum of now (no by_time)', "mode");
   const needs = { sum: "field", average: "field", rate: "rate", duration: "duration" } as const;
   for (const [measure, key] of Object.entries(needs)) {
-    if (m.measure === measure && m[key] === undefined) bad(`a ${measure} metric names its ${key}`, key);
+    // mold_v0-349: a sum over the spend ledger is the ledger's own (no field).
+    if (m.measure === measure && m[key] === undefined && !(m.over === "spend" && key === "field")) bad(`a ${measure} metric names its ${key}`, key);
     if (m.measure !== measure && key !== "field" && m[key] !== undefined) bad(`${key} is for a ${measure} metric`, key);
   }
   if (m.field !== undefined && m.measure !== "sum" && m.measure !== "average") bad("field is for a sum or average metric", "field");
