@@ -31,7 +31,12 @@ before mold_v0-049 (recorded up to 0001, 0003, 0008, 0013 and 0016), each with r
 row comes out identical; their shell tables, columns, defaults, constraints, indexes, functions and policies equal a
 database built from scratch (with the host pack, every one of them does, the product's tables included); a second run
 applies nothing; an edited migration is refused. `MIGRATIONS_PG_URL` runs the same on a real Postgres (plus replicas
-racing to migrate).
+racing to migrate). On PGlite each database at a shell version the per-migration checks start from is built once, from
+the nearest lower version already built, by one more run of the runner (a database upgraded release by release), and
+its catalog is read as it is built; the database with every migration is still built from scratch, and the test ends by
+migrating the top of that chain to the last migration and requiring the catalog of the one built from scratch. The
+checks run in two parts, each in a process of its own, side by side when the machine has 3 GB available, else one after
+the other (`MIGRATIONS_SERIAL=1` forces that); a part that fails fails the test (mold_v0-300).
 
 **The product's tables left the base schema (mold_v0-049).** `0001_baseline.sql` was the product's whole schema; its
 own tables (its products, run definitions, runs and their sessions, agent profiles, tasks and the rest) moved to its host pack's
