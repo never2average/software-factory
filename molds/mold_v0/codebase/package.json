@@ -47,6 +47,7 @@
     "test:record-pages": "tsx scripts/record-pages-test.ts && tsx scripts/record-pages-3-test.ts && tsx scripts/record-page-actions-test.ts && tsx scripts/record-pages-262-test.ts && tsx scripts/record-rail-331-test.ts",
     "test:record-rail": "tsx scripts/record-rail-331-test.ts",
     "test:connect-tab": "tsx scripts/connect-tab-344-test.ts",
+    "test:e2e-fixes": "tsx scripts/e2e-fixes-348-test.ts",
     "test:connect-receiver": "tsx scripts/connect-receiver-347-test.ts",
     "test:blocks-ui": "tsx scripts/blocks-ui-336-test.ts && tsx scripts/blocks-ui-336-server-test.ts",
     "test:record-runs": "tsx scripts/record-runs-test.ts",

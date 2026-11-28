@@ -60,6 +60,19 @@ export function closeRecordPanel() {
 const InPanel = createContext(false);
 
 /**
+ * mold_v0-348: a related record clicked inside a record panel opens in the list's panel too (never a new page): the list
+ * page that draws the panel gives this; outside one (a record's own page) the row's link goes to its page as before.
+ */
+export type OpenRelated = (r: { area: string; key: string; title: string }) => void;
+const OpenRelatedContext = createContext<OpenRelated | null>(null);
+export const OpenRelatedProvider = OpenRelatedContext.Provider;
+/** How a related record opens in the panel, or null (inside no list's panel: its link opens its page). */
+export function useOpenRelated(): OpenRelated | null {
+  const fn = useContext(OpenRelatedContext);
+  return useContext(InPanel) ? fn : null;
+}
+
+/**
  * mold_v0-331: the panel header's slots. A body drawn in the rail style claims them: its own heading row (a status dot,
  * the title, a muted line of context, the main action as a text link) takes the title's place, and its one "⋯" menu
  * (the record's actions, then the panel's own items, `items`) takes the panel's. Unclaimed, the header is as before.

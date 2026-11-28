@@ -97,7 +97,7 @@ export function KeysTab({ offer }: { offer: Offer }) {
             )}
           </div>
         )}
-        empty={<p className='text-muted-foreground py-10 text-center text-sm'>No keys yet. Make one for each server that calls this app.</p>}
+        empty={<p className='text-muted-foreground py-10 text-center text-sm'>{can('manage') ? 'No keys yet. Make one for each server that calls this app.' : 'No keys yet. This workspace\'s owners make them, one for each server that calls this app.'}</p>}
       />
       {making && <NewKeyDialog offer={offer} onClose={() => setMaking(false)} onMade={(key, name) => { setMaking(false); setOnce(onceFor(key, name)); void reload(); }} />}
       {rotating && <RotateDialog k={rotating} onClose={() => setRotating(null)} onMade={(key) => { const n = rotating.name; setRotating(null); setOnce(onceFor(key, n, true)); void reload(); }} />}

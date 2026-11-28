@@ -22,7 +22,7 @@ import { AgentComposer } from './composer/agent-composer';
 import { AgentWelcome, openedFromWords, quickCommandsOn, useAgentCommands, usePromptContext } from './agent-welcome';
 import { openedFromParams, type OpenedFrom } from './composer/quick-commands';
 import { useAgentDock, type DockCheckpoint } from './dock/right-dock';
-import { setBreadcrumbLeaf } from '@/lib/breadcrumb-leaf';
+import { setBreadcrumbLeaf, useBreadcrumbParents } from '@/lib/breadcrumb-leaf';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { featureOn } from '@/config/features';
@@ -642,6 +642,9 @@ function SessionFull({ area, id, call, onChange, onOpenSession, budget }: { area
   // mold_v0-290: the session is a level of the top bar's breadcrumb (Account / Agents / AGI-001): that is the way back.
   const ref = d?.ref ?? null;
   useEffect(() => { setBreadcrumbLeaf(ref); return () => setBreadcrumbLeaf(null); }, [ref]);
+  // mold_v0-348: a session started from a record (Start build on an application) crumbs through that record, the way
+  // back to where it was started (Applications / example-app / AGI-001), never only the agents' list.
+  useBreadcrumbParents(d?.record && !d.workspace ? [{ area: d.record.area, key: d.record.key, title: null }] : null);
   if (error) return <ErrorState error={error} />;
   if (!d) return <LoadingCards count={2} />;
   // The last model call failed and nothing has answered since: say so where the person is looking.

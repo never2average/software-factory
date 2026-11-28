@@ -39,8 +39,9 @@ export function useAccountRole() {
 }
 
 /** Disables its one child when the role lacks `need`; the wrapper carries the tooltip. */
-export function Allowed({ need, children }: { need: AccountPermission; children: ReactElement<{ disabled?: boolean }> }) {
+export function Allowed({ need, children }: { need: AccountPermission; children: ReactElement<{ disabled?: boolean; title?: string }> }) {
   const { can, why } = useAccountRole();
   if (can(need) || !isValidElement(children)) return children;
-  return <span title={why(need)} className='inline-flex cursor-not-allowed'>{cloneElement(children, { disabled: true })}</span>;
+  // mold_v0-348: the reason on the button itself too (its own title, "Invite", would win the tooltip over the wrapper's).
+  return <span title={why(need)} className='inline-flex cursor-not-allowed'>{cloneElement(children, { disabled: true, title: why(need), 'aria-description': why(need) } as { disabled: boolean; title: string })}</span>;
 }

@@ -101,6 +101,8 @@ export function useBreadcrumbs(search = '') {
     // mold_v0-318: a record reached through another record (its area has no entry): crumbed through that record.
     const rec = RECORD_PAGE.exec(pathname);
     if (rec && parents.length) return withGroup(parentTrail(parents, { title: ownTitle || decode(rec[2]!), link: pathname }, areaListCrumbs));
+    // mold_v0-348: an agent session started from a record: through that record to the session's number.
+    if (leaf && AGENT_PAGE.test(pathname) && parents.length) return withGroup(parentTrail(parents, { title: leaf, link: `${pathname}#${leaf}` }, areaListCrumbs));
 
     // If no exact match, fall back to generating breadcrumbs from the path
     const segments = pathname.split('/').filter(Boolean);

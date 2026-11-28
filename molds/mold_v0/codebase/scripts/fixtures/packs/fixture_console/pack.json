@@ -2270,6 +2270,15 @@
           "field": "maturity",
           "empty": false
         },
+        "unavailable": [
+          {
+            "when": {
+              "field": "maturity",
+              "empty": true
+            },
+            "reason": "Not rated yet: nothing to connect for it."
+          }
+        ],
         "fields": [
           "access_key_id"
         ],

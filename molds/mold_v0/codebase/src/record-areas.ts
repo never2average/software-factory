@@ -807,6 +807,19 @@ async function crumbParents(orgId: number, area: RecordArea, record: RecordRow, 
  */
 export async function withRefTitles<T extends { data: Record<string, unknown> }>(orgId: number | null, area: RecordArea, rows: T[], actor: Actor = SYSTEM_ACTOR): Promise<T[]> {
   if (!rows.length || !(await import("./features.js")).featureOn("record_pages")) return rows;
+  // mold_v0-348: a person field's people by name (the workspace's own directory, as its access log names them): a cell
+  // reads "Mia Member", never a user id; someone no longer in the workspace reads "A former member".
+  const personFields = orgId === null || area.scope !== "workspace" ? [] : area.fields.filter((f) => f.type === "person" && !f.encrypted).map((f) => f.name);
+  const ids = new Set(personFields.flatMap((n) => rows.flatMap((r) => (Array.isArray(r.data?.[n]) ? r.data[n] as unknown[] : [r.data?.[n]]).filter((x): x is string => typeof x === "string" && x !== ""))));
+  const people = ids.size ? await (await import("./audit-words.js")).workspacePeople(orgId!).catch(() => new Map<string, { name: string | null; email: string | null }>()) : new Map<string, { name: string | null; email: string | null }>();
+  const personWords = (id: string) => id.startsWith("schedule:") ? "Schedule" : id.startsWith("staff:") ? "Staff" : (() => { const p = people.get(id); return p ? p.name || p.email || "A member" : "A former member"; })();
+  const withPeople = (r: T): T => {
+    const out: Record<string, Record<string, string>> = {};
+    for (const n of personFields) for (const v of Array.isArray(r.data?.[n]) ? r.data[n] as unknown[] : [r.data?.[n]]) if (typeof v === "string" && v) (out[n] ??= {})[v] = personWords(v);
+    return Object.keys(out).length ? { ...r, ref_titles: { ...((r as { ref_titles?: Record<string, Record<string, string>> }).ref_titles ?? {}), ...out } } : r;
+  };
+  // A workspace without a directory to read (or one unreachable) keeps the ids as they were: never "former" for everyone.
+  if (ids.size && people.size) rows = rows.map(withPeople);
   const links = areaLinks(area).filter((l) => {
     const t = findArea(l.area);
     return !!t && !isLive(t) && may(t, "read", actor) && !((area.scope === "platform" || orgId === null) && t.scope === "workspace");
@@ -835,7 +848,8 @@ export async function withRefTitles<T extends { data: Record<string, unknown> }>
   return rows.map((r) => {
     const out: Record<string, Record<string, string>> = {};
     for (const l of links) for (const k of keysOf(r.data?.[l.field])) { const t = titles.get(l.area)?.get(k); if (t) (out[l.field] ??= {})[k] = t; }
-    return Object.keys(out).length ? { ...r, ref_titles: out } : r;
+    const had = (r as { ref_titles?: Record<string, Record<string, string>> }).ref_titles;
+    return Object.keys(out).length || had ? { ...r, ref_titles: { ...(had ?? {}), ...out } } : r;
   });
 }
 

@@ -78,6 +78,10 @@ const PAGES: [RegExp, string | ((m: RegExpExecArray, label: (a: string) => strin
   [/^\/api\/app\/clients\/[^/]+$/, "the connection guide"],
   [/^\/api\/app\/docs(\/.*)?$/, "the docs assistant"],
   [/^\/api\/app\/access$/, "their access"],
+  // mold_v0-348: a list's Ask AI and the workspace agent, in words (never "app › list › answer").
+  [/^\/api\/app\/list\/answer(\/stream)?$/, "a list's Ask AI"],
+  [/^\/api\/agent\/icon$/, "the agent's icon"],
+  [/^\/api\/agent(\/.*)?$/, "the workspace agent"],
   [/^\/api\/home(\/.*)?$/, "the home page"],
   [/^\/api\/notices(\/.*)?$/, "notices"],
   [/^\/api\/onboarding(\/.*)?$/, "the setup steps"],
@@ -191,7 +195,7 @@ async function personById(ids: string[]): Promise<Map<string, Person | null>> {
   return out;
 }
 /** A workspace's own people (its directory's memberships), for its owners' view: nobody outside it. */
-async function workspacePeople(orgId: number): Promise<Map<string, Person>> {
+export async function workspacePeople(orgId: number): Promise<Map<string, Person>> {
   const hit = orgPeople.get(orgId);
   if (hit && Date.now() - hit.at < WHO_TTL_MS) return hit.byId;
   const byId = new Map<string, Person>();

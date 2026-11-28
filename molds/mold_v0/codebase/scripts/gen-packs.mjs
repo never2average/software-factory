@@ -1352,7 +1352,9 @@ for (const [id, json, file] of entries) {
     loaded.push({ id, name: json.name, words: json.words ?? {}, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       // mold_v0-260: what asks for credential_sets (a tenant binding, labelled values), only when it is there.
-      credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label, ...(c.bound_to === "tenant" ? { bound_to: "tenant" } : {}), ...(c.entries ? { entries: true } : {}) })),
+      credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label, ...(c.bound_to === "tenant" ? { bound_to: "tenant" } : {}), ...(c.entries ? { entries: true } : {}),
+        // mold_v0-348: which Settings › Credentials parts it mounts (an OAuth connection, the GitHub connection)
+        ...(c.oauth ? { oauth: true } : {}), ...(c.github_app ? { github_app: true } : {}) })),
       onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
       metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
@@ -2294,8 +2296,8 @@ const ALERT_RULES = !FEATURE_ON.scheduled_alerts ? [] : recordAreas.flatMap((a) 
   if (a.due) rows.push({ area: a.name, area_label: a.label, source: "due", step: "Due date", when: `Daily, from ${a.due.within_days ?? 7} day(s) before ${a.fields.find((f) => f.name === a.due.field)?.label ?? a.due.field}`, who: a.due.notify ?? ["owner"] });
   if (FEATURE_ON.record_clocks && a.scope === "workspace") for (const c of a.clocks ?? []) {
     const base = c.notify ?? ["owner"];
-    (c.remind ?? []).forEach((r, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: `Reminder ${i + 1}`, when: `${r.before} before the deadline`, who: r.notify ?? base }));
-    (c.escalate ?? []).forEach((e, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: e.label ?? `Escalation ${i + 1}`, when: `${e.after} overdue`, who: e.notify ?? base,
+    (c.remind ?? []).forEach((r, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: `Reminder ${i + 1}`, when: /^0+[smhdw]?$/.test(String(r.before)) ? "At the deadline" : `${r.before} before the deadline`, who: r.notify ?? base }));
+    (c.escalate ?? []).forEach((e, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: e.label ?? `Escalation ${i + 1}`, when: /^0+[smhdw]?$/.test(String(e.after)) ? "As soon as it is overdue" : `${e.after} overdue`, who: e.notify ?? base,
       ...(e.reassign || e.raise ? { does: [e.reassign ? `reassigns ${e.reassign.field}` : "", e.raise ? `raises ${e.raise.field}${e.raise.to ? ` to ${e.raise.to}` : ""}` : ""].filter(Boolean).join(", ") } : {}) }));
   }
   return rows;
@@ -3009,6 +3011,11 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   // them out: none, one table, one strip, or a sidebar group per group past 5 tabs).
   "\n/** Settings (mold_v0-218): whether its Credentials and Email tabs show (kept for the pages that ask only that). */\n" +
   `export const settingsPage = ${json({ credentials: SETTINGS_TABS.some((t) => t.id === "credentials"), email: SETTINGS_TABS.some((t) => t.id === "email") })};\n` +
+  // mold_v0-348: which parts of Settings › Credentials this build mounts (src/credential-routes.ts, src/oauth-routes.ts,
+  // src/github-app-routes.ts, the runners): the tab asks only those (a part not mounted answers 404), and a tab whose only
+  // part is the GitHub connection shows once the platform's GitHub App is set up (web/src/features/settings).
+  "\n/** Settings › Credentials (mold_v0-348): the parts this build mounts: the vault's fields, OAuth connections, the GitHub connection, runners. */\n" +
+  `export const credentialsTabParts = ${json({ vault: credentialFields.length > 0, oauth: credentialFields.some((c) => !!c.oauth), github: credentialFields.some((c) => !!c.github_app) || FEATURE_ON.agent_harness === true, runners: privateNetworkKindCount > 0 })};\n` +
   "\n/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */\n" +
   "export interface SettingsTabSpec {\n  id: string;\n  label: string;\n  group: 'access' | 'connections' | 'automation' | 'data_trust';\n" +
   // 'agent' (mold_v0-252) only while agent_harness is on: a quiet_off flag leaves the file as it was while off.

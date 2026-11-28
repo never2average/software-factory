@@ -89,7 +89,8 @@ const preview = () => ENV.APP_PREVIEW === "1";
 export function checkOrigin(v: unknown): string {
   const o = typeof v === "string" ? v.trim().toLowerCase().replace(/\/$/, "") : "";
   if (ORIGIN.test(o) || (preview() && LOCAL_ORIGIN.test(o))) return o;
-  throw new ApiProblem(400, "invalid_origin", "origin: an https origin like https://app.example.com (scheme, host and port only)");
+  // mold_v0-348: a sentence, never the field's name before it.
+  throw new ApiProblem(400, "invalid_origin", "Only an https origin can be allowed, like https://app.example.com (scheme, host and port only).");
 }
 export async function listOrigins(orgId: number): Promise<string[]> {
   return (await asPlatform(async () => (await getDb()).query<{ origin: string }>("SELECT origin FROM developer_origins WHERE org_id = $1 ORDER BY origin", [orgId]))).map((r) => r.origin);

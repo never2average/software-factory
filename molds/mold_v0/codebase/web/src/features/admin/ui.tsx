@@ -192,9 +192,12 @@ export function ConfirmButton({ label, title, description, confirmLabel, onConfi
  * ConfirmButton's question on its own (mold_v0-254): opened by something else (a menu's item, a record page's action),
  * the same words, Cancel and the confirming button.
  */
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, onConfirm, destructive = false }: {
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, onConfirm, destructive = false, cancelLabel }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: string; description: ReactNode; confirmLabel?: string; onConfirm: () => void; destructive?: boolean;
+  /** The button that closes it doing nothing: Cancel, or (mold_v0-348) Keep it beside a confirm that itself cancels something. */
+  cancelLabel?: string;
 }) {
+  const dismiss = cancelLabel ?? (/^cancel\b/i.test(confirmLabel ?? '') ? 'Keep it' : 'Cancel');
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
@@ -203,7 +206,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{dismiss}</AlertDialogCancel>
           <AlertDialogAction variant={destructive ? 'destructive' : 'default'} onClick={() => { onOpenChange(false); onConfirm(); }}>
             {confirmLabel ?? 'Confirm'}
           </AlertDialogAction>

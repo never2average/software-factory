@@ -85,7 +85,7 @@ export interface ActionView {
     /** mold_v0-256: the linked record the run targets (target: {via}), in place of this one. */
     target?: { area: string; key: string; title: string | null } | null };
   /** move: the states it moves to, each with why it is disabled, if it is. */
-  moves?: { to: string; label: string; disabled: string | null }[];
+  moves?: { to: string; label: string; state: string; disabled: string | null }[];
   /** edit: the form's fields (the lifecycle's and file fields left out: they are kept as they are; an area with an
    *  encrypted field has no edit). */
   fields?: FormField[];
@@ -193,7 +193,8 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
             : ways.some((t) => t.to === to && here(t)) ? null
             : anyRole.length ? `Only ${roleWords([...new Set(anyRole.flatMap((t) => t.roles ?? []))])} can move it from ${stateWords(area, from)} to ${stateWords(area, to)}.`
             : `It can't move from ${stateWords(area, from)} to ${stateWords(area, to)}.`;
-          return { to, label, disabled };
+          // mold_v0-348: the state it moves to, in words (the toast says where it went, never the button's verb).
+          return { to, label, state: stateWords(area, to), disabled };
         });
         const open = moves.filter((m) => !m.disabled);
         // mold_v0-337: label_from_move: named by the one move open now (Suspend, Resume, Mark live, Add back).
@@ -258,10 +259,12 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         const { profileOffer } = await import("./agent-profiles.js");
         const prof = await profileOffer(x.profile!, opts.org, { kind: actor.userId ? "person" : "key", role });
         if (!prof) continue;
-        const { fillTemplate } = await import("./agent-profile-spec.js");
+        const { fillTemplate, templateRecord } = await import("./agent-profile-spec.js");
+        // mold_v0-348: references by their titles, options by their labels (read as the person), never bare keys.
+        const words = templateRecord(area.fields, (await withRefTitles(opts.org, area, [record], actor))[0] ?? record);
         out.push({ ...base, label: x.label ?? `Start ${prof.name}`, disabled: unavailable ?? prof.disabled,
           // mold_v0-333: the record it makes has no key until it starts: the preview says so.
-          agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", x.creates ? { ...record, data: { ...record.data, created_key: "(given when it starts)" } } : record) } });
+          agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", x.creates ? { ...words, data: { ...words.data, created_key: "(given when it starts)" } } : words) } });
         break;
       }
       case "start_program": {
@@ -887,10 +890,12 @@ export function recordPageRouter(): Router {
         const c = declared.creates;
         if (c) {
           const S = await import("./session-records.js");
-          const { fillTemplate } = await import("./agent-profile-spec.js");
+          const { fillTemplate, templateRecord } = await import("./agent-profile-spec.js");
           const key = S.createdKey();
           const target = findArea(c.area)!;
-          const message = fillTemplate(declared.first_message ?? "", { ...record, data: { ...record.data, created_key: key } });
+          // mold_v0-348: references by their titles, options by their labels (read as the person), never bare keys.
+          const words = templateRecord(area.fields, (await withRefTitles(s.org, area, [record], actorOf(res)))[0] ?? record);
+          const message = fillTemplate(declared.first_message ?? "", { ...words, data: { ...words.data, created_key: key } });
           const link: import("./session-records.js").CreatedLink = { area: c.area, key, pack: target.pack,
             ...(c.on_session_end ? { on_session_end: c.on_session_end } : {}), ...(c.reason_field ? { reason_field: c.reason_field } : {}), ...(c.children ? { children: c.children } : {}) };
           // mold_v0-337: a title's {{$n}}, one more than the records made from this one so far (counted as the shell).

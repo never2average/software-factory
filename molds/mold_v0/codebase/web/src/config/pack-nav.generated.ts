@@ -115,6 +115,14 @@ export const settingsPage = {
   "email": false
 };
 
+/** Settings › Credentials (mold_v0-348): the parts this build mounts: the vault's fields, OAuth connections, the GitHub connection, runners. */
+export const credentialsTabParts = {
+  "vault": false,
+  "oauth": false,
+  "github": false,
+  "runners": false
+};
+
 /** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */
 export interface SettingsTabSpec {
   id: string;
